@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Upload Diagnostic with Console Capture</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; padding: 20px; background: #1a1a1a; color: #eee; max-width: 900px; margin: 0 auto; }
+        h1 { color: #fff; margin-bottom: 5px; }
+        .subtitle { color: #888; margin-bottom: 20px; }
+        .btn { padding: 10px 20px; font-size: 14px; cursor: pointer; background: #0066cc; color: white; border: none; border-radius: 5px; margin: 5px; }
+        .btn:hover { background: #0077ee; }
+        .btn-copy { background: #444; }
+        .btn-copy:hover { background: #555; }
+        .btn-test { background: #2d5a2d; }
+        .btn-test:hover { background: #3d7a3d; }
+        pre { background: #111; color: #0f0; padding: 15px; border-radius: 5px; overflow-x: auto; max-height: 250px; white-space: pre-wrap; word-wrap: break-word; font-size: 12px; }
+        .section { background: #2a2a2a; padding: 15px; margin: 15px 0; border-radius: 8px; }
+        .success { color: #44ff44; }
+        .error { color: #ff4444; }
+        .warn { color: #ffaa00; }
+        .info { color: #66b3ff; }
+        .header-row { display: flex; justify-content: space-between; align-items: center; }
+        #copy-feedback { color: #44ff44; margin-left: 10px; opacity: 0; transition: opacity 0.3s; }
+        .console-log { color: #888; font-size: 11px; }
+        .console-log.error { color: #ff6666; }
+        .console-log.warn { color: #ffcc00; }
+        .console-log.info { color: #66b3ff; }
+        .test-result { padding: 8px; margin: 5px 0; border-radius: 4px; background: #333; }
+        .test-result.pass { border-left: 3px solid #44ff44; }
+        .test-result.fail { border-left: 3px solid #ff4444; }
+    </style>
+</head>
+<body>
+    <div class="header-row">
+        <div>
+            <h1>🔧 Upload Diagnostic Tool</h1>
+            <div class="subtitle">Captures console logs & tests each step</div>
+        </div>
+        <span id="copy-feedback">Copied!</span>
+    </div>
+
+    <button class="btn" onclick="checkLeads()">🔍 Check Leads</button>
+    <button class="btn" onclick="clearAndCheck()">🗑️ Clear All Data</button>
+    <button class="btn btn-copy" onclick="copyResults()">📋 Copy All Results</button>
+
+    <div class="section">
+        <h3>📊 Lead Status</h3>
+        <pre id="lead-status">Click check leads...</pre>
+    </div>
+
+    <div class="section">
+        <h3>🧪 Test Each Step</h3>
+        <button class="btn test-btn" onclick="testGeocode()">1. Test Geocode API</button>
+        <button class="btn test-btn" onclick="testManualLead()">2. Test Manual Lead Save</button>
+        <button class="btn test-btn" onclick="testGeocodeAndSave()">3. Test Full Flow</button>
+        <div id="test-results"></div>
+    </div>
+
+    <div class="section">
+        <h3>📝 Captured Console Logs</h3>
+        <button class="btn" onclick="clearLogs()">Clear Logs</button>
+        <pre id="console-logs">Console logs will appear here...</pre>
+    </div>
+
+    <script>
+        // Capture console logs
+        const capturedLogs = [];
+        const LEADS_KEY = 'happysolar_leads';
+        const CACHE_KEY = 'happy_solar_geocode_cache';
+        const API_KEY = 'AIzaSyCVbiweX65EncP7RyF6HZk0Y1_1ZosX_D8';
+        const GEOCODE_BASE = 'https://maps.googleapis.com/maps/api/geocode/json';
+
+        function log(msg, type='info') {
+            const entry = { time: new Date().toLocaleTimeString(), msg, type };
+            capturedLogs.push(entry);
+
+            const logDiv = document.getElementById('console-logs');
+            const className = `console-log ${type}`;
+            logDiv.innerHTML += `<span class="${className}">[${entry.time}] ${entry.msg}</span>\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+
+            console.log(`[DIAG] ${msg}`);
+        }
+
+        // Override console methods
+        const origLog = console.log;
+        const origWarn = console.warn;
+        const origError = console.error;
+
+        console.log = function(...args) {
+            log(args.join(' '), 'info');
+            origLog.apply(console, args);
+        };
+        console.warn = function(...args) {
+            log(args.join(' '), 'warn');
+            origWarn.apply(console, args);
+        };
+        console.error = function(...args) {
+            log(args.join(' '), 'error');
+            origError.apply(console, args);
+        };
+
+        function getLeadStatus() {
+            const leads = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+            const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+
+            let text = `Leads: ${leads.length} | Cache: ${Object.keys(cache).length}\n\n`;
+
+            if (leads.length > 0) {
+                text += `✅ ${leads.length} leads in storage:\n`;
+                leads.forEach((l, i) => {
+                    text += `  ${i+1}. ${l.name} - ${l.address}, ${l.city}\n`;
+                });
+            } else {
+                text += `❌ No leads found in storage`;
+            }
+
+            return text;
+        }
+
+        function checkLeads() {
+            document.getElementById('lead-status').innerText = getLeadStatus();
+            log('Checked leads status', 'info');
+        }
+
+        function clearLogs() {
+            capturedLogs.length = 0;
+            document.getElementById('console-logs').innerText = 'Logs cleared...';
+        }
+
+        function clearAndCheck() {
+            localStorage.removeItem(LEADS_KEY);
+            localStorage.removeItem(CACHE_KEY);
+            localStorage.removeItem('happysolar_currentuser');
+            localStorage.removeItem('happysolar_users');
+            capturedLogs.length = 0;
+            document.getElementById('lead-status').innerText = 'Cleared!';
+            document.getElementById('test-results').innerHTML = '';
+            document.getElementById('console-logs').innerText = 'Cleared!';
+            log('All data cleared', 'warn');
+        }
+
+        async function testGeocode() {
+            log('Testing geocode API...', 'info');
+            const testAddress = '1000 S Winton Rd, Rochester, NY 14618';
+            const url = `${GEOCODE_BASE}?address=${encodeURIComponent(testAddress)}&key=${API_KEY}`;
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.status === 'OK') {
+                    const loc = data.results[0].geometry.location;
+                    log(`✅ Geocode API works! Got: ${loc.lat}, ${loc.lng}`, 'success');
+                    showTestResult('Geocode API', true, `Got coordinates: ${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`);
+                    return true;
+                } else {
+                    log(`❌ Geocode failed: ${data.status} - ${data.error_message}`, 'error');
+                    showTestResult('Geocode API', false, data.error_message || data.status);
+                    return false;
+                }
+            } catch (e) {
+                log(`❌ Geocode exception: ${e.message}`, 'error');
+                showTestResult('Geocode API', false, e.message);
+                return false;
+            }
+        }
+
+        function testManualLead() {
+            log('Testing manual lead save...', 'info');
+
+            try {
+                const testLead = {
+                    id: 'test-' + Date.now(),
+                    name: 'Test Lead',
+                    address: '123 Test St',
+                    city: 'Rochester',
+                    state: 'NY',
+                    zip: '14618',
+                    phone: '555-1234',
+                    email: 'test@test.com',
+                    lat: 43.1566,
+                    lng: -77.6088,
+                    status: 'unclaimed',
+                    createdAt: new Date().toISOString(),
+                };
+
+                const leads = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+                leads.push(testLead);
+                localStorage.setItem(LEADS_KEY, JSON.stringify(leads));
+
+                // Verify
+                const verify = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+                const found = verify.find(l => l.id === testLead.id);
+
+                if (found) {
+                    log(`✅ Manual lead saved: ${testLead.name}`, 'success');
+                    showTestResult('Manual Lead Save', true, `Saved and verified: ${found.name}`);
+                    return true;
+                } else {
+                    log(`❌ Lead not found after save`, 'error');
+                    showTestResult('Manual Lead Save', false, 'Lead not found after save');
+                    return false;
+                }
+            } catch (e) {
+                log(`❌ Save exception: ${e.message}`, 'error');
+                showTestResult('Manual Lead Save', false, e.message);
+                return false;
+            }
+        }
+
+        async function testGeocodeAndSave() {
+            log('Testing full flow (geocode + save)...', 'info');
+            const resultsDiv = document.getElementById('test-results');
+
+            const testRow = {
+                name: 'Flow Test Lead',
+                address: '500 E Main St',
+                city: 'Rochester',
+                state: 'NY',
+                zip: '14604'
+            };
+
+            try {
+                // Step 1: Geocode
+                log('Step 1: Geocoding address...', 'info');
+                const query = `${testRow.address}, ${testRow.city}, ${testRow.state} ${testRow.zip}`;
+                const url = `${GEOCODE_BASE}?address=${encodeURIComponent(query)}&key=${API_KEY}`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.status !== 'OK' || !data.results || data.results.length === 0) {
+                    log(`❌ Geocoding failed: ${data.status}`, 'error');
+                    showTestResult('Full Flow', false, `Geocoding failed: ${data.status}`);
+                    return false;
+                }
+
+                const loc = data.results[0].geometry.location;
+                log(`Step 1 complete: ${loc.lat}, ${loc.lng}`, 'success');
+
+                // Step 2: Create lead
+                const lead = {
+                    id: 'flow-' + Date.now(),
+                    name: testRow.name,
+                    address: testRow.address,
+                    city: testRow.city,
+                    state: testRow.state,
+                    zip: testRow.zip,
+                    phone: '555-0000',
+                    email: 'flow@test.com',
+                    lat: loc.lat,
+                    lng: loc.lng,
+                    status: 'unclaimed',
+                    createdAt: new Date().toISOString(),
+                };
+
+                // Step 3: Save
+                const leads = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+                leads.push(lead);
+                localStorage.setItem(LEADS_KEY, JSON.stringify(leads));
+                log(`Step 2 complete: Saved lead ${lead.id}`, 'success');
+
+                // Step 4: Verify
+                const verify = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+                const found = verify.find(l => l.id === lead.id);
+
+                if (found) {
+                    log(`✅ Full flow test PASSED!`, 'success');
+                    showTestResult('Full Flow', true, `Geocoded and saved: ${found.name}`);
+                    return true;
+                } else {
+                    log(`❌ Lead not found after full flow`, 'error');
+                    showTestResult('Full Flow', false, 'Lead not found after save');
+                    return false;
+                }
+            } catch (e) {
+                log(`❌ Full flow exception: ${e.message}`, 'error');
+                showTestResult('Full Flow', false, e.message);
+                return false;
+            }
+        }
+
+        function showTestResult(name, passed, detail) {
+            const resultsDiv = document.getElementById('test-results');
+            const className = passed ? 'pass' : 'fail';
+            const icon = passed ? '✅' : '❌';
+            resultsDiv.innerHTML = `<div class="test-result ${className}"><strong>${icon} ${name}:</strong> ${detail}</div>` + resultsDiv.innerHTML;
+        }
+
+        function copyResults() {
+            const status = getLeadStatus();
+            const logs = capturedLogs.map(l => `[${l.time}] [${l.type.toUpperCase()}] ${l.msg}`).join('\n');
+
+            const text = `=== LEAD STATUS ===\n${status}\n\n=== CAPTURED LOGS ===\n${logs}`;
+
+            navigator.clipboard.writeText(text).then(() => {
+                const feedback = document.getElementById('copy-feedback');
+                feedback.style.opacity = '1';
+                setTimeout(() => feedback.style.opacity = '0', 2000);
+            });
+        }
+
+        window.onload = function() {
+            checkLeads();
+            log('Diagnostic tool loaded', 'info');
+        };
+    </script>
+</body>
+</html>

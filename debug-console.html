@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug App - Happy Solar Leads</title>
+    <style>
+        body { font-family: Arial, sans-paths: 20px; background: #1a1a1a; color: #eee; }
+        h1 { color: #fff; }
+        .section { background: #2a2a2a; padding: 20px; margin: 10px 0; border-radius: 8px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #0066cc; color: white; border: none; border-radius: 5px; margin: 5px; }
+        button:hover { background: #0077ee; }
+        pre { background: #333; color: #0f0; padding: 15px; border-radius: 5px; overflow-x: auto; max-height: 400px; }
+        .error { color: #ff4444; }
+        .success { color: #44ff44; }
+        #console { position: fixed; bottom: 0; left: 0; right: 0; height: 200px; background: #000; border-top: 2px solid #333; padding: 10px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Happy Solar - Debug Console</h1>
+
+    <div class="section">
+        <h3>Step 1: Check LocalStorage Data</h3>
+        <button onclick="checkData()">Check Data</button>
+        <button onclick="clearAll()">Clear All Data</button>
+        <pre id="data-output">Click "Check Data" to see localStorage contents...</pre>
+    </div>
+
+    <div class="section">
+        <h3>Step 2: Test Geocoding</h3>
+        <button onclick="testGeocode()">Test Geocode API</button>
+        <pre id="geocode-output">Click to test geocoding...</pre>
+    </div>
+
+    <div class="section">
+        <h3>Step 3: Test Full Upload Flow</h3>
+        <button onclick="testFullFlow()">Run Full Flow Test</button>
+        <pre id="flow-output">Click to run complete upload test...</pre>
+    </div>
+
+    <div class="section">
+        <h3>Step 4: Open App</h3>
+        <button onclick="openApp()">Open Happy Solar App</button>
+        <p>Or open manually: <a href="http://localhost:3001" target="_blank" style="color: #66b3ff;">http://localhost:3001</a></p>
+    </div>
+
+    <div id="console"></div>
+
+    <script>
+        const API_KEY = 'AIzaSyCVbiweX65EncP7RyF6HZk0Y1_1ZosX_D8';
+        const GEOCODE_BASE = 'https://maps.googleapis.com/maps/api/geocode/json';
+        const LEADS_KEY = 'happysolar_leads';
+        const CACHE_KEY = 'happy_solar_geocode_cache';
+
+        function log(msg, type='info') {
+            const div = document.getElementById('console');
+            const time = new Date().toLocaleTimeString();
+            const color = type === 'error' ? 'red' : type === 'success' ? 'lime' : '#888';
+            div.innerHTML += `<span style="color:${color}">[${time}] ${msg}</span><br>`;
+            div.scrollTop = div.scrollHeight;
+            console.log(msg);
+        }
+
+        function checkData() {
+            log('Checking localStorage data...');
+            const leads = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+            const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+
+            const output = document.getElementById('data-output');
+            output.innerHTML = `Leads: ${leads.length}\n`;
+            output.innerHTML += `Geocode cache entries: ${Object.keys(cache).length}\n\n`;
+            output.innerHTML += `Leads:\n${leads.map(l => `  - ${l.name}: ${l.address}, ${l.city}`).join('\n')}`;
+
+            log(`Found ${leads.length} leads in storage`, 'success');
+            if (leads.length > 0) {
+                log('✅ Leads are being saved!', 'success');
+            } else {
+                log('❌ No leads found - data not persisting', 'error');
+            }
+        }
+
+        function clearAll() {
+            localStorage.removeItem(LEADS_KEY);
+            localStorage.removeItem(CACHE_KEY);
+            localStorage.removeItem('happysolar_currentuser');
+            localStorage.removeItem('happysolar_users');
+            log('All data cleared!');
+            document.getElementById('data-output').innerText = 'Data cleared. Click "Check Data" to verify.';
+            document.getElementById('geocode-output').innerText = 'Geocode cache cleared.';
+            document.getElementById('flow-output').innerText = 'Flow test cache cleared.';
+        }
+
+        async function testGeocode() {
+            const output = document.getElementById('geocode-output');
+            output.innerHTML = 'Testing geocoding...\n';
+            log('Testing Google Geocoding API...');
+
+            const testAddress = '123 Main St, Rochester, NY 14618';
+            const url = `${GEOCODE_BASE}?address=${encodeURIComponent(testAddress)}&key=${API_KEY}`;
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                output.innerHTML += `Status: ${data.status}\n`;
+                if (data.results && data.results.length > 0) {
+                    const loc = data.results[0].geometry.location;
+                    output.innerHTML += `Coords: ${loc.lat}, ${loc.lng}\n`;
+                    log('✅ Geocoding works!', 'success');
+                } else {
+                    output.innerHTML += `Error: ${data.error_message || 'No results'}\n`;
+                    log('❌ Geocoding failed', 'error');
+                }
+            } catch (e) {
+                output.innerHTML += `Exception: ${e.message}`;
+                log(`❌ Exception: ${e.message}`, 'error');
+            }
+        }
+
+        async function testFullFlow() {
+            const output = document.getElementById('flow-output');
+            output.innerHTML = 'Running full upload flow...\n\n';
+            log('Starting full flow test...');
+
+            const testRows = [
+                { name: 'Debug Test 1', address: '1000 S Winton Rd', city: 'Rochester', state: 'NY', zip: '14618', phone: '555-0001', email: 'test1@test.com' },
+                { name: 'Debug Test 2', address: '500 E Main St', city: 'Rochester', state: 'NY', zip: '14604', phone: '555-0002', email: 'test2@test.com' },
+            ];
+
+            let successCount = 0;
+            let failedAddresses = [];
+
+            for (const row of testRows) {
+                const query = `${row.address}, ${row.city}, ${row.state} ${row.zip}`;
+                const url = `${GEOCODE_BASE}?address=${encodeURIComponent(query)}&key=${API_KEY}`;
+
+                output.innerHTML += `Geocoding: ${row.address}... `;
+                log(`Geocoding: ${row.address}...`);
+
+                try {
+                    const response = await fetch(url);
+                    const data = await response.json();
+
+                    if (data.status === 'OK' && data.results && data.results.length > 0) {
+                        const loc = data.results[0].geometry.location;
+
+                        // Save lead
+                        const lead = {
+                            id: `lead-${Date.now()}-${Math.random().toString(36).substr(2,9)}`,
+                            name: row.name,
+                            address: row.address,
+                            city: row.city,
+                            state: row.state,
+                            zip: row.zip,
+                            phone: row.phone,
+                            email: row.email,
+                            lat: loc.lat,
+                            lng: loc.lng,
+                            status: 'unclaimed',
+                            createdAt: new Date().toISOString(),
+                        };
+
+                        const leads = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+                        leads.push(lead);
+                        localStorage.setItem(LEADS_KEY, JSON.stringify(leads));
+
+                        successCount++;
+                        output.innerHTML += `✅ (${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)})\n`;
+                        log(`✅ Saved: ${lead.name}`, 'success');
+                    } else {
+                        failedAddresses.push(query);
+                        output.innerHTML += `❌ (${data.status})\n`;
+                        log(`❌ Failed: ${data.status}`, 'error');
+                    }
+                } catch (e) {
+                    failedAddresses.push(query);
+                    output.innerHTML += `❌ Error: ${e.message}\n`;
+                    log(`❌ Error: ${e.message}`, 'error');
+                }
+
+                // Rate limit delay
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            output.innerHTML += `\n---\n`;
+            output.innerHTML += `Success: ${successCount}/${testRows.length}\n`;
+            output.innerHTML += `Failed: ${failedAddresses.length}\n`;
+
+            // Verify
+            const finalLeads = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+            output.innerHTML += `\nTotal leads in storage: ${finalLeads.length}`;
+
+            if (successCount > 0) {
+                log(`✅ Full flow test passed! ${successCount} leads saved.`, 'success');
+            } else {
+                log('❌ Full flow test failed - no leads saved', 'error');
+            }
+        }
+
+        function openApp() {
+            window.open('http://localhost:3001', '_blank');
+            log('Opening app in new tab...');
+        }
+
+        // Auto-run check on load
+        window.onload = function() {
+            log('Debug console loaded. Click buttons to test.');
+            checkData();
+        };
+    </script>
+</body>
+</html>

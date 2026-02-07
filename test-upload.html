@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Upload - Happy Solar Leads</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .test { background: #f5f5f5; padding: 20px; margin: 10px 0; border-radius: 8px; }
+        .pass { background: #d4edda; color: #155724; }
+        .fail { background: #f8d7da; color: #721c24; }
+        pre { background: #333; color: #0f0; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+        #results { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Happy Solar Leads - Upload Test</h1>
+    <button onclick="runTests()">Run Tests</button>
+    <button onclick="clearAll()">Clear All Data</button>
+    <div id="results"></div>
+
+    <script>
+        const API_KEY = 'AIzaSyCVbiweX65EncP7RyF6HZk0Y1_1ZosX_D8';
+        const GEOCODE_BASE = 'https://maps.googleapis.com/maps/api/geocode/json';
+        const LEADS_KEY = 'happysolar_leads';
+
+        function log(msg, data) {
+            console.log(`[LOG] ${msg}`, data);
+        }
+
+        function test(name, fn) {
+            return new Promise((resolve) => {
+                const div = document.createElement('div');
+                div.className = 'test';
+                div.innerHTML = `<strong>Testing:</strong> ${name}...`;
+                document.getElementById('results').appendChild(div);
+
+                try {
+                    fn().then(result => {
+                        div.classList.add(result ? 'pass' : 'fail');
+                        div.innerHTML += result ? ' ✅ PASS' : ' ❌ FAIL';
+                        if (result && result.detail) {
+                            div.innerHTML += `<br><small>${result.detail}</small>`;
+                        }
+                        resolve(result);
+                    }).catch(e => {
+                        div.classList.add('fail');
+                        div.innerHTML += ` ❌ ERROR: ${e.message}`;
+                        resolve(false);
+                    });
+                } catch (e) {
+                    div.classList.add('fail');
+                    div.innerHTML += ` ❌ ERROR: ${e.message}`;
+                    resolve(false);
+                }
+            });
+        }
+
+        async function runTests() {
+            document.getElementById('results').innerHTML = '<h2>Test Results</h2>';
+            log('Starting tests...');
+
+            // Test 1: localStorage available
+            await test('localStorage available', async () => {
+                try {
+                    localStorage.setItem('test', 'test');
+                    localStorage.removeItem('test');
+                    return { detail: 'localStorage works!' };
+                } catch (e) {
+                    return false;
+                }
+            });
+
+            // Test 2: Google Geocoding API
+            await test('Google Geocoding API', async () => {
+                const url = `${GEOCODE_BASE}?address=123+Main+St,+Rochester,+NY&key=${API_KEY}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                log('Geocoding response:', data);
+
+                if (data.status === 'OK' && data.results && data.results.length > 0) {
+                    const coords = data.results[0].geometry.location;
+                    return { detail: `Got coordinates: ${coords.lat}, ${coords.lng}` };
+                } else if (data.status === 'REQUEST_DENIED') {
+                    throw new Error('API not enabled: ' + data.error_message);
+                }
+                return false;
+            });
+
+            // Test 3: Save and retrieve leads
+            await test('Save/retrieve leads in localStorage', async () => {
+                const testLead = {
+                    id: 'test-' + Date.now(),
+                    name: 'Test Lead',
+                    address: '123 Test St',
+                    city: 'Rochester',
+                    state: 'NY',
+                    zip: '14618',
+                    phone: '555-1234',
+                    email: 'test@test.com',
+                    lat: 43.1566,
+                    lng: -77.6088,
+                    status: 'unclaimed',
+                    createdAt: new Date().toISOString(),
+                };
+
+                // Get existing leads
+                let leads = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+                leads.push(testLead);
+                localStorage.setItem(LEADS_KEY, JSON.stringify(leads));
+
+                // Retrieve
+                const retrieved = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+                const found = retrieved.find(l => l.id === testLead.id);
+
+                return { detail: found ? `Saved and retrieved: ${found.name}` : 'Lead not found' };
+            });
+
+            // Test 4: Geocode batch
+            await test('Geocode batch processing', async () => {
+                const testRows = [
+                    { name: 'Lead 1', address: '1000 S Winton Rd', city: 'Rochester', state: 'NY', zip: '14618' },
+                    { name: 'Lead 2', address: '500 E Main St', city: 'Rochester', state: 'NY', zip: '14604' },
+                    { name: 'Lead 3', address: '999 Elmira Rd', city: 'Rochester', state: 'NY', zip: '14615' },
+                ];
+
+                let successCount = 0;
+                for (const row of testRows) {
+                    const query = `${row.address}, ${row.city}, ${row.state} ${row.zip}`;
+                    const url = `${GEOCODE_BASE}?address=${encodeURIComponent(query)}&key=${API_KEY}`;
+                    const response = await fetch(url);
+                    const data = await response.json();
+
+                    if (data.status === 'OK' && data.results && data.results.length > 0) {
+                        successCount++;
+                    }
+                }
+
+                return { detail: `Geocoded ${successCount}/${testRows.length} addresses` };
+            });
+
+            // Show final state
+            await test('Final leads count', async () => {
+                const leads = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+                return { detail: `Total leads in storage: ${leads.length}` };
+            });
+
+            log('Tests complete');
+        }
+
+        function clearAll() {
+            localStorage.removeItem(LEADS_KEY);
+            localStorage.removeItem('happy_solar_geocode_cache');
+            localStorage.removeItem('happysolar_currentuser');
+            localStorage.removeItem('happysolar_users');
+            document.getElementById('results').innerHTML = '<p style="color:green;">All data cleared!</p>';
+        }
+    </script>
+</body>
+</html>

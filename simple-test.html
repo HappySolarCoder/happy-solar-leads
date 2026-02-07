@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Test</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #1a1a1a; color: #eee; max-width: 600px; margin: 0 auto; }
+        h1 { color: #fff; }
+        button { padding: 12px 24px; font-size: 16px; cursor: pointer; background: #0066cc; color: white; border: none; border-radius: 5px; margin: 5px; }
+        button:hover { background: #0077ee; }
+        pre { background: #222; color: #0f0; padding: 15px; border-radius: 5px; margin-top: 15px; }
+        .pass { color: #44ff44; }
+        .fail { color: #ff4444; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Simple Upload Test</h1>
+    <p>Run these tests IN ORDER:</p>
+
+    <button onclick="test1()">1. Test localStorage</button>
+    <button onclick="test2()">2. Test Geocode API</button>
+    <button onclick="test3()">3. Test Full Save</button>
+
+    <pre id="output"></pre>
+
+    <script>
+        const API_KEY = 'AIzaSyCVbiweX65EncP7RyF6HZk0Y1_1ZosX_D8';
+        const GEOCODE_BASE = 'https://maps.googleapis.com/maps/api/geocode/json';
+
+        function out(msg, type) {
+            const el = document.getElementById('output');
+            const color = type === 'pass' ? 'pass' : type === 'fail' ? 'fail' : '';
+            el.innerHTML += `<span class="${color}">${msg}</span>\n`;
+        }
+
+        function test1() {
+            document.getElementById('output').innerHTML = '';
+            out('Test 1: Testing localStorage...');
+            try {
+                localStorage.setItem('test', 'value');
+                const val = localStorage.getItem('test');
+                localStorage.removeItem('test');
+                if (val === 'value') {
+                    out('✅ PASS: localStorage works', 'pass');
+                } else {
+                    out('❌ FAIL: localStorage returned wrong value', 'fail');
+                }
+            } catch (e) {
+                out('❌ FAIL: ' + e.message, 'fail');
+            }
+        }
+
+        async function test2() {
+            document.getElementById('output').innerHTML = '';
+            out('Test 2: Testing Geocode API...');
+            try {
+                const url = GEOCODE_BASE + '?address=123+Main+St,+Rochester,+NY&key=' + API_KEY;
+                const resp = await fetch(url);
+                const data = await resp.json();
+                if (data.status === 'OK' && data.results && data.results.length > 0) {
+                    const loc = data.results[0].geometry.location;
+                    out('✅ PASS: Got coords ' + loc.lat.toFixed(4) + ', ' + loc.lng.toFixed(4), 'pass');
+                } else {
+                    out('❌ FAIL: ' + data.status + ' - ' + (data.error_message || 'no results'), 'fail');
+                }
+            } catch (e) {
+                out('❌ FAIL: ' + e.message, 'fail');
+            }
+        }
+
+        async function test3() {
+            document.getElementById('output').innerHTML = '';
+            out('Test 3: Testing full save flow...');
+            try {
+                // Geocode first
+                const url = GEOCODE_BASE + '?address=500+E+Main+St,+Rochester,+NY&key=' + API_KEY;
+                const resp = await fetch(url);
+                const data = await resp.json();
+
+                if (data.status !== 'OK' || !data.results || data.results.length === 0) {
+                    out('❌ FAIL: Geocode failed - ' + data.status, 'fail');
+                    return;
+                }
+
+                const loc = data.results[0].geometry.location;
+
+                // Create lead
+                const lead = {
+                    id: 'test-' + Date.now(),
+                    name: 'Test Lead',
+                    address: '500 E Main St',
+                    city: 'Rochester',
+                    state: 'NY',
+                    zip: '14604',
+                    lat: loc.lat,
+                    lng: loc.lng,
+                    status: 'unclaimed',
+                    createdAt: new Date().toISOString()
+                };
+
+                // Save to localStorage
+                const leads = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+                leads.push(lead);
+                localStorage.setItem('happysolar_leads', JSON.stringify(leads));
+
+                // Verify
+                const verify = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+                const found = verify.find(l => l.id === lead.id);
+
+                if (found) {
+                    out('✅ PASS: Lead saved!', 'pass');
+                    out('Total leads: ' + verify.length);
+                } else {
+                    out('❌ FAIL: Lead not found after save', 'fail');
+                }
+            } catch (e) {
+                out('❌ FAIL: ' + e.message, 'fail');
+            }
+        }
+    </script>
+</body>
+</html>

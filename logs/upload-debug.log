@@ -1,0 +1,98 @@
+[2026-02-07T10:49:07.471Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":87}
+[2026-02-07T10:49:07.896Z] [INFO] [UploadModal] Geocode progress | {"current":10,"total":87}
+[2026-02-07T10:49:08.359Z] [INFO] [UploadModal] Geocode progress | {"current":20,"total":87}
+[2026-02-07T10:49:08.787Z] [INFO] [UploadModal] Geocode progress | {"current":30,"total":87}
+[2026-02-07T10:49:09.238Z] [INFO] [UploadModal] Geocode progress | {"current":40,"total":87}
+[2026-02-07T10:49:09.661Z] [INFO] [UploadModal] Geocode progress | {"current":50,"total":87}
+[2026-02-07T10:49:10.098Z] [INFO] [UploadModal] Geocode progress | {"current":60,"total":87}
+[2026-02-07T10:49:10.555Z] [INFO] [UploadModal] Geocode progress | {"current":70,"total":87}
+[2026-02-07T10:49:10.981Z] [INFO] [UploadModal] Geocode progress | {"current":80,"total":87}
+[2026-02-07T10:49:11.377Z] [INFO] [UploadModal] Results | {"successful":87,"failed":0}
+[2026-02-07T10:49:11.404Z] [INFO] [UploadModal] Saving leads | {"count":87}
+[2026-02-07T10:49:11.426Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"1582 Edgewood Ave 14618"}
+[2026-02-07T10:49:11.438Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"59 Hamilton st"}
+[2026-02-07T10:49:11.447Z] [INFO] [UploadModal] Geocode complete | {"resultCount":87}
+[2026-02-07T10:49:11.456Z] [INFO] [UploadModal] Geocode progress | {"current":87,"total":87}
+[2026-02-07T10:49:11.479Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"199 citation dr"}
+[2026-02-07T10:49:11.500Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"3104 County Rd 4"}
+[2026-02-07T10:49:11.567Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"455 Mount Vernon Ave"}
+[2026-02-07T10:49:11.586Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"350 Ransford Ave"}
+[2026-02-07T10:49:11.596Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"73 Meadowbriar Rd"}
+[2026-02-07T10:49:11.607Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"166 Brittany Cir"}
+[2026-02-07T10:49:11.627Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"1965 east ridge road"}
+[2026-02-07T10:49:11.635Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"1640 Waterford Road"}
+[2026-02-07T10:49:11.668Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"Summer sky dr"}
+[2026-02-07T10:49:11.679Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"630 Maris Run"}
+[2026-02-07T10:49:11.706Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"Clovercrest Drive"}
+[2026-02-07T10:49:11.794Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"65 Spartan drive"}
+[2026-02-07T10:49:11.804Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"160 Whittington Road"}
+[2026-02-07T10:49:11.815Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"Po Box 374  Batavia Ny 14021"}
+[2026-02-07T10:49:11.822Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"61 Birchbrook Dr"}
+[2026-02-07T10:52:53.001Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":87}
+[2026-02-07T10:52:53.043Z] [INFO] [UploadModal] Geocode complete | {"resultCount":87}
+[2026-02-07T10:52:53.062Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"199 citation dr"}
+[2026-02-07T10:52:53.080Z] [INFO] [UploadModal] Results | {"successful":87,"failed":0}
+[2026-02-07T10:52:53.101Z] [INFO] [UploadModal] Saving leads | {"count":87}
+[2026-02-07T10:52:53.136Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"1582 Edgewood Ave 14618"}
+[2026-02-07T10:52:53.150Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"59 Hamilton st"}
+[2026-02-07T10:52:53.168Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"3104 County Rd 4"}
+[2026-02-07T10:52:53.178Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"455 Mount Vernon Ave"}
+[2026-02-07T10:52:53.186Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"350 Ransford Ave"}
+[2026-02-07T10:52:53.232Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"73 Meadowbriar Rd"}
+[2026-02-07T10:52:53.284Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"166 Brittany Cir"}
+[2026-02-07T10:52:53.294Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"1965 east ridge road"}
+[2026-02-07T10:52:53.348Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"1640 Waterford Road"}
+[2026-02-07T10:52:53.356Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"Summer sky dr"}
+[2026-02-07T10:52:53.365Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"630 Maris Run"}
+[2026-02-07T10:52:53.371Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"Clovercrest Drive"}
+[2026-02-07T10:52:53.418Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"65 Spartan drive"}
+[2026-02-07T10:52:53.475Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"160 Whittington Road"}
+[2026-02-07T10:52:53.482Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"Po Box 374  Batavia Ny 14021"}
+[2026-02-07T10:52:53.487Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"61 Birchbrook Dr"}
+[2026-02-07T10:52:53.493Z] [INFO] [UploadModal] Adding lead | {"name":"Unknown","address":"3425 Hopkins Road"}
+[2026-02-07T11:00:25.308Z] [INFO] [UploadModal] Results | {"successful":87,"failed":0}
+[2026-02-07T11:00:25.357Z] [INFO] [UploadModal] Adding lead | {"name":"Zah Liran","address":"1582 Edgewood Ave 14618"}
+[2026-02-07T11:00:25.377Z] [INFO] [UploadModal] Geocode complete | {"resultCount":87}
+[2026-02-07T11:00:25.390Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":87}
+[2026-02-07T11:00:25.402Z] [INFO] [UploadModal] Adding lead | {"name":"Rosalie Capps","address":"59 Hamilton st"}
+[2026-02-07T11:00:25.411Z] [INFO] [UploadModal] Saving leads | {"count":87}
+[2026-02-07T11:00:25.462Z] [INFO] [UploadModal] Adding lead | {"name":"Kevin Miller","address":"199 citation dr"}
+[2026-02-07T11:00:25.493Z] [INFO] [UploadModal] Adding lead | {"name":"Lory Morgan","address":"3104 County Rd 4"}
+[2026-02-07T11:00:25.504Z] [INFO] [UploadModal] Adding lead | {"name":"Steven Hanmer","address":"455 Mount Vernon Ave"}
+[2026-02-07T11:00:25.532Z] [INFO] [UploadModal] Adding lead | {"name":"Lauren Bullock","address":"350 Ransford Ave"}
+[2026-02-07T11:00:25.541Z] [INFO] [UploadModal] Adding lead | {"name":"Jamil Glover","address":"73 Meadowbriar Rd"}
+[2026-02-07T11:00:25.632Z] [INFO] [UploadModal] Adding lead | {"name":"Sunny Shin","address":"166 Brittany Cir"}
+[2026-02-07T11:00:25.644Z] [INFO] [UploadModal] Adding lead | {"name":"james cornforth","address":"1965 east ridge road"}
+[2026-02-07T11:00:25.654Z] [INFO] [UploadModal] Adding lead | {"name":"Matthew Miles","address":"1640 Waterford Road"}
+[2026-02-07T11:00:25.670Z] [INFO] [UploadModal] Adding lead | {"name":"Manuel Ortiz","address":"Summer sky dr"}
+[2026-02-07T11:04:07.360Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":87}
+[2026-02-07T11:04:07.799Z] [INFO] [UploadModal] Geocode progress | {"current":10,"total":87}
+[2026-02-07T11:04:08.149Z] [INFO] [UploadModal] Geocode progress | {"current":20,"total":87}
+[2026-02-07T11:04:08.519Z] [INFO] [UploadModal] Geocode progress | {"current":30,"total":87}
+[2026-02-07T11:04:08.867Z] [INFO] [UploadModal] Geocode progress | {"current":40,"total":87}
+[2026-02-07T11:04:09.224Z] [INFO] [UploadModal] Geocode progress | {"current":50,"total":87}
+[2026-02-07T11:04:09.561Z] [INFO] [UploadModal] Geocode progress | {"current":60,"total":87}
+[2026-02-07T11:04:09.899Z] [INFO] [UploadModal] Geocode progress | {"current":70,"total":87}
+[2026-02-07T11:04:10.230Z] [INFO] [UploadModal] Geocode progress | {"current":80,"total":87}
+[2026-02-07T11:04:10.543Z] [INFO] [UploadModal] Geocode complete | {"resultCount":87}
+[2026-02-07T11:04:10.577Z] [INFO] [UploadModal] Results | {"successful":87,"failed":0}
+[2026-02-07T11:04:10.606Z] [INFO] [UploadModal] Geocode progress | {"current":87,"total":87}
+[2026-02-07T11:04:10.619Z] [INFO] [UploadModal] Saving leads | {"count":87}
+[2026-02-07T11:04:10.627Z] [INFO] [UploadModal] Adding lead | {"name":"Zah Liran","address":"1582 Edgewood Ave 14618"}
+[2026-02-07T11:04:10.635Z] [INFO] [UploadModal] Adding lead | {"name":"Rosalie Capps","address":"59 Hamilton st"}
+[2026-02-07T11:04:10.670Z] [INFO] [UploadModal] Adding lead | {"name":"Kevin Miller","address":"199 citation dr"}
+[2026-02-07T11:04:10.760Z] [INFO] [UploadModal] Adding lead | {"name":"Lory Morgan","address":"3104 County Rd 4"}
+[2026-02-07T11:04:10.769Z] [INFO] [UploadModal] Adding lead | {"name":"Steven Hanmer","address":"455 Mount Vernon Ave"}
+[2026-02-07T11:04:10.782Z] [INFO] [UploadModal] Adding lead | {"name":"Lauren Bullock","address":"350 Ransford Ave"}
+[2026-02-07T11:04:10.797Z] [INFO] [UploadModal] Adding lead | {"name":"Jamil Glover","address":"73 Meadowbriar Rd"}
+[2026-02-07T11:04:10.806Z] [INFO] [UploadModal] Adding lead | {"name":"Sunny Shin","address":"166 Brittany Cir"}
+[2026-02-07T11:04:10.829Z] [INFO] [UploadModal] Adding lead | {"name":"james cornforth","address":"1965 east ridge road"}
+[2026-02-07T11:04:10.915Z] [INFO] [UploadModal] Adding lead | {"name":"Matthew Miles","address":"1640 Waterford Road"}
+[2026-02-07T11:04:10.925Z] [INFO] [UploadModal] Adding lead | {"name":"Manuel Ortiz","address":"Summer sky dr"}
+[2026-02-07T11:04:10.985Z] [INFO] [UploadModal] Adding lead | {"name":"Michael Johnson","address":"630 Maris Run"}
+[2026-02-07T11:04:10.995Z] [INFO] [UploadModal] Adding lead | {"name":"Johnny Eff","address":"Clovercrest Drive"}
+[2026-02-07T11:04:11.044Z] [INFO] [UploadModal] Adding lead | {"name":"Leonard Aguayo","address":"65 Spartan drive"}
+[2026-02-07T11:04:11.050Z] [INFO] [UploadModal] Adding lead | {"name":"James Alfieri","address":"160 Whittington Road"}
+[2026-02-07T11:04:11.058Z] [INFO] [UploadModal] Adding lead | {"name":"Julie Smith","address":"Po Box 374  Batavia Ny 14021"}
+[2026-02-07T11:04:11.064Z] [INFO] [UploadModal] Adding lead | {"name":"Scott Morris-Bouza","address":"61 Birchbrook Dr"}
+[2026-02-07T11:04:11.070Z] [INFO] [UploadModal] Adding lead | {"name":"Fred Baer","address":"3425 Hopkins Road"}

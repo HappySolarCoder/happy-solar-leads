@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body style="font-family:Arial;background:#1a1a1a;color:#eee;padding:20px">
+<h1 style="color:#fff">Simple Test</h1>
+<button onclick="runTest()" style="padding:15px 30px;font-size:18px;background:#0066cc;color:white;border:none;border-radius:5px;cursor:pointer">RUN TEST</button>
+<pre id="out" style="background:#222;color:#0f0;padding:15px;border-radius:5px;margin-top:15px"></pre>
+<script>
+function out(m){document.getElementById('out').innerHTML+=m+'\n'}
+function runTest(){
+document.getElementById('out').innerHTML='Running...\n';
+try{
+localStorage.setItem('test','val');
+var x=localStorage.getItem('test');
+localStorage.removeItem('test');
+if(x==='val'){out('1. localStorage: OK');}else{out('1. localStorage: FAIL');return}
+var url='https://maps.googleapis.com/maps/api/geocode/json?address=123+Main+St,Rochester,NY&key=AIzaSyCVbiweX65EncP7RyF6HZk0Y1_1ZosX_D8';
+fetch(url).then(r=>r.json()).then(d=>{
+if(d.status==='OK'){
+out('2. Geocode: OK');
+var lead={id:'t'+Date.now(),name:'Test',address:'123 Main',city:'Rochester',state:'NY',zip:'14618',lat:d.results[0].geometry.location.lat,lng:d.results[0].geometry.location.lng,status:'unclaimed'};
+var l=JSON.parse(localStorage.getItem('happysolar_leads')||'[]');
+l.push(lead);
+localStorage.setItem('happysolar_leads',JSON.stringify(l));
+var v=JSON.parse(localStorage.getItem('happysolar_leads')||'[]');
+if(v.find(x=>x.id===lead.id)){out('3. Save lead: OK ('+v.length+' total)');}else{out('3. Save lead: FAIL');}
+}else{out('2. Geocode: '+d.status);}
+}).catch(e=>out('2. Geocode: '+e.message));
+}catch(e){out('Error: '+e.message);}
+}
+</script>
+</body>
+</html>

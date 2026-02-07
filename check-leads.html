@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Check if App is Saving Leads</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #1a1a1a; color: #eee; max-width: 800px; margin: 0 auto; }
+        h1 { color: #fff; }
+        .btn { padding: 10px 20px; font-size: 14px; cursor: pointer; background: #0066cc; color: white; border: none; border-radius: 5px; margin: 5px; }
+        .btn:hover { background: #0077ee; }
+        .btn-copy { background: #444; }
+        .btn-copy:hover { background: #555; }
+        pre { background: #333; color: #0f0; padding: 15px; border-radius: 5px; overflow-x: auto; max-height: 400px; white-space: pre-wrap; word-wrap: break-word; }
+        .step { background: #2a2a2a; padding: 15px; margin: 10px 0; border-radius: 8px; }
+        .success { color: #44ff44; }
+        .error { color: #ff4444; }
+        .warn { color: #ffaa00; }
+        .header-row { display: flex; justify-content: space-between; align-items: center; }
+        #copy-feedback { color: #44ff44; margin-left: 10px; opacity: 0; transition: opacity 0.3s; }
+    </style>
+</head>
+<body>
+    <div class="header-row">
+        <h1>🔍 Post-Upload Diagnostic</h1>
+        <span id="copy-feedback">Copied!</span>
+    </div>
+    <p>After uploading leads in the app, click "Check Leads" to see if they were saved:</p>
+
+    <button class="btn" onclick="checkLeads()">🔍 Check Leads</button>
+    <button class="btn" onclick="clearAndCheck()">🗑️ Clear & Start Fresh</button>
+    <button class="btn btn-copy" onclick="copyToClipboard()">📋 Copy Results</button>
+
+    <div class="step">
+        <h3>localStorage Status:</h3>
+        <pre id="output">Click "Check Leads" to see...</pre>
+    </div>
+
+    <script>
+        const LEADS_KEY = 'happysolar_leads';
+        const CACHE_KEY = 'happy_solar_geocode_cache';
+
+        function getResults() {
+            const leads = JSON.parse(localStorage.getItem(LEADS_KEY) || '[]');
+            const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+
+            let text = `=== LEAD STATUS ===\n`;
+            text += `Leads count: ${leads.length}\n\n`;
+
+            if (leads.length > 0) {
+                text += `Leads:\n`;
+                leads.forEach((l, i) => {
+                    text += `${i+1}. ${l.name} - ${l.address}, ${l.city} (${l.lat?.toFixed(4)}, ${l.lng?.toFixed(4)})\n`;
+                });
+                text += `\n✅ SUCCESS: ${leads.length} leads are in localStorage!`;
+            } else {
+                text += `❌ No leads found - upload is NOT saving data!`;
+            }
+
+            text += `\n\n=== CACHE ===\n`;
+            text += `Geocode cache entries: ${Object.keys(cache).length}`;
+
+            return text;
+        }
+
+        function checkLeads() {
+            const output = document.getElementById('output');
+            output.innerText = getResults();
+        }
+
+        function clearAndCheck() {
+            localStorage.removeItem(LEADS_KEY);
+            localStorage.removeItem(CACHE_KEY);
+            localStorage.removeItem('happysolar_currentuser');
+            localStorage.removeItem('happysolar_users');
+            document.getElementById('output').innerText = 'Cleared! Now go upload leads in the app, then click "Check Leads"';
+        }
+
+        function copyToClipboard() {
+            const text = getResults();
+            navigator.clipboard.writeText(text).then(() => {
+                const feedback = document.getElementById('copy-feedback');
+                feedback.style.opacity = '1';
+                setTimeout(() => feedback.style.opacity = '0', 2000);
+            });
+        }
+
+        window.onload = checkLeads;
+    </script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Check Saved Leads</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #1a1a1a; color: #eee; max-width: 800px; margin: 0 auto; }
+        button { padding: 10px 20px; background: #0066cc; color: white; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        button:hover { background: #0077ee; }
+        pre { background: #222; color: #0f0; padding: 15px; border-radius: 5px; max-height: 400px; overflow: auto; white-space: pre-wrap; }
+        .good { color: #44ff44; }
+        .bad { color: #ff4444; }
+        .header { display: flex; justify-content: space-between; align-items: center; }
+        #copy-fb { color: #44ff44; opacity: 0; transition: opacity 0.3s; margin-left: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Check Saved Leads</h1>
+        <span id="copy-fb">Copied!</span>
+    </div>
+    <button onclick="checkLeads()">🔍 Check Leads</button>
+    <button onclick="clearAll()">🗑️ Clear All</button>
+    <button onclick="copyResults()">📋 Copy</button>
+    <pre id="out"></pre>
+
+    <script>
+        function checkLeads() {
+            const leads = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+            const out = document.getElementById('out');
+
+            if (leads.length === 0) {
+                out.innerText = 'No leads found!';
+                return;
+            }
+
+            let text = `Found ${leads.length} leads:\n\n`;
+
+            leads.forEach((l, i) => {
+                const hasName = l.name && l.name !== 'Unknown' && l.name.trim() !== '';
+                const icon = hasName ? '✅' : '❌';
+                text += `${icon} Lead ${i+1}:\n`;
+                text += `   Name: "${l.name}" ${hasName ? '' : '(MISSING!)'}\n`;
+                text += `   Address: ${l.address}, ${l.city}\n`;
+                text += `   Status: ${l.status}\n`;
+                text += `\n`;
+            });
+
+            out.innerText = text;
+        }
+
+        function clearAll() {
+            localStorage.removeItem('happysolar_leads');
+            localStorage.removeItem('happy_solar_geocode_cache');
+            checkLeads();
+        }
+
+        function copyResults() {
+            const text = document.getElementById('out').innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                const fb = document.getElementById('copy-fb');
+                fb.style.opacity = '1';
+                setTimeout(() => fb.style.opacity = '0', 2000);
+            });
+        }
+
+        window.onload = checkLeads;
+    </script>
+</body>
+</html>

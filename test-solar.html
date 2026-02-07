@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Solar API via Proxy</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #1a1a1a; color: #eee; max-width: 900px; margin: 0 auto; }
+        button { padding: 12px 24px; background: #0066cc; color: white; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        pre { background: #222; color: #0f0; padding: 15px; border-radius: 5px; max-height: 500px; overflow: auto; white-space: pre-wrap; }
+        .pass { color: #44ff44; }
+        .fail { color: #ff4444; }
+        .info { color: #66b3ff; }
+        .warn { color: #ffaa00; }
+    </style>
+</head>
+<body>
+    <h1>☀️ Test Solar API (via Proxy)</h1>
+    <p>Tests the Solar API using our proxy route</p>
+    <button onclick="testSolarAPI()">☀️ Test Solar API on Leads</button>
+    <pre id="output"></pre>
+
+    <script>
+        function out(msg, type) {
+            const el = document.getElementById('output');
+            const color = type === 'pass' ? 'pass' : type === 'fail' ? 'fail' : type === 'info' ? 'info' : type === 'warn' ? 'warn' : '';
+            el.innerHTML += `<span class="${color}">${msg}</span>\n`;
+        }
+
+        async function testSolarAPI() {
+            document.getElementById('output').innerHTML = '';
+            out('☀️ Testing Google Solar API (via proxy)...\n', 'info');
+
+            // Get saved leads
+            const leads = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+            out(`Found ${leads.length} leads to test\n`, 'info');
+
+            if (leads.length === 0) {
+                out('❌ No leads found. Upload some leads first.', 'fail');
+                return;
+            }
+
+            // Test first 3 leads
+            const testLeads = leads.slice(0, 3);
+
+            for (let i = 0; i < testLeads.length; i++) {
+                const lead = testLeads[i];
+                out(`\n--- Lead ${i + 1}: ${lead.name} ---`, 'info');
+                out(`Address: ${lead.address}, ${lead.city}`);
+                out(`Coords: ${lead.lat}, ${lead.lng}`);
+
+                if (!lead.lat || !lead.lng) {
+                    out('❌ No coordinates - skipping', 'fail');
+                    continue;
+                }
+
+                try {
+                    out('Fetching solar data via proxy...', 'info');
+
+                    const response = await fetch('/api/solar', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ lat: lead.lat, lng: lead.lng })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.error) {
+                        out(`❌ API Error: ${data.error}`, 'fail');
+                        if (data.details) {
+                            out(`Details: ${data.details}`, 'warn');
+                        }
+                        continue;
+                    }
+
+                    out('✅ Solar API Response:', 'pass');
+                    out(JSON.stringify(data, null, 2));
+
+                    // Extract useful fields
+                    if (data.solarPotential) {
+                        out('\n📊 Key Solar Data:', 'info');
+                        out(`  Max Panel Capacity: ${data.solarPotential.maxPanelCapacityWatts || 'N/A'}W`);
+                        out(`  Max Sunshine Hours/Year: ${data.solarPotential.maxSunshineHoursPerYear || 'N/A'}`);
+                        
+                        if (data.solarPotential.buildingRoofStats) {
+                            const stats = data.solarPotential.buildingRoofStats;
+                            out(`  Roof Area: ${stats.areaMeters2 || 'N/A'} sq meters`);
+                            out(`  Max Panels: ${stats.maxArrayAreaMeters2 || 'N/A'} sq meters`);
+                        }
+
+                        if (data.solarPotential.roofSegmentSummaries) {
+                            out(`  Roof Segments: ${data.solarPotential.roofSegmentSummaries.length}`, 'info');
+                        }
+
+                        // Calculate a simple score
+                        const sunshine = data.solarPotential.maxSunshineHoursPerYear || 0;
+                        const score = Math.min(100, Math.round((sunshine / 2000) * 100)); // Normalize to 100
+                        out(`\n⭐ Simple Solar Score: ${score}/100`, 'pass');
+                        out(`   (Based on ${sunshine} sunshine hours/year)`);
+                    } else {
+                        out('⚠️ No solarPotential data - building may not have roof data', 'warn');
+                    }
+
+                } catch (e) {
+                    out(`❌ Exception: ${e.message}`, 'fail');
+                }
+            }
+
+            out('\n☀️ Test complete!', 'pass');
+        }
+    </script>
+</body>
+</html>
