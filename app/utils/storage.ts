@@ -28,7 +28,21 @@ export function getLeads(): Lead[] {
   // For SSR, return empty
   if (typeof window === 'undefined') return [];
   
-  // Return empty for now, will be loaded async
+  // Fallback: read from localStorage if cache is empty
+  try {
+    const data = localStorage.getItem('happysolar_leads');
+    if (data) {
+      const parsed = JSON.parse(data);
+      // Update cache
+      leadsCache = parsed;
+      cacheTimestamp = Date.now();
+      return parsed;
+    }
+  } catch (e) {
+    console.error('Error reading leads from localStorage:', e);
+  }
+  
+  // Return empty cache or empty array
   return leadsCache || [];
 }
 
