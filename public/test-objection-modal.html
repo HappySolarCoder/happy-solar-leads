@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Objection Modal Test</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+  <div class="container mx-auto p-8">
+    <h1 class="text-3xl font-bold mb-6">Objection Modal Test</h1>
+    
+    <button 
+      onclick="showModal()"
+      class="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700"
+    >
+      Show Objection Modal
+    </button>
+    
+    <!-- Simulated LeadDetail Panel (with overflow-hidden) -->
+    <div class="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 overflow-hidden flex flex-col mt-4">
+      <div class="p-4 border-b">
+        <h2 class="font-bold">Lead Detail Panel</h2>
+        <p class="text-sm text-gray-500">This panel has overflow-hidden (z-40)</p>
+      </div>
+      <div class="p-4">
+        <p class="mb-4">This is the detail panel that was clipping the modal.</p>
+        <button 
+          onclick="showModalInside()"
+          class="px-4 py-2 bg-blue-600 text-white rounded"
+        >
+          Modal INSIDE (broken)
+        </button>
+      </div>
+      
+      <!-- Modal rendered INSIDE (gets clipped) -->
+      <div id="modal-inside" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl p-6 max-w-md">
+          <h3 class="text-xl font-bold mb-4">⚠️ Modal Inside Panel</h3>
+          <p class="mb-4">This modal is INSIDE the overflow-hidden div, so it gets clipped!</p>
+          <button onclick="hideModalInside()" class="px-4 py-2 bg-red-600 text-white rounded">Close</button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Modal rendered OUTSIDE (works correctly) -->
+    <div id="modal-outside" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl p-6 max-w-md mx-4">
+        <h3 class="text-xl font-bold text-green-600 mb-4">✅ Modal Outside Panel</h3>
+        <p class="mb-4">This modal is OUTSIDE the overflow-hidden div, so it displays correctly!</p>
+        <button onclick="hideModal()" class="px-4 py-2 bg-green-600 text-white rounded">Close</button>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    function showModal() {
+      document.getElementById('modal-outside').classList.remove('hidden');
+    }
+    function hideModal() {
+      document.getElementById('modal-outside').classList.add('hidden');
+    }
+    function showModalInside() {
+      document.getElementById('modal-inside').classList.remove('hidden');
+    }
+    function hideModalInside() {
+      document.getElementById('modal-inside').classList.add('hidden');
+    }
+  </script>
+</body>
+</html>
