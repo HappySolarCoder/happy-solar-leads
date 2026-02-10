@@ -1,0 +1,4 @@
+name,address,city,state,zip,phone,email,estimatedBill
+Test Lead 1,1600 Amphitheatre Parkway,Mountain View,CA,94043,555-0001,test1@example.com,250
+Test Lead 2,1 Apple Park Way,Cupertino,CA,95014,555-0002,test2@example.com,300
+Test Lead 3,1 Infinite Loop,Cupertino,CA,95014,555-0003,test3@example.com,275

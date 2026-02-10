@@ -109,7 +109,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 overflow-hidden flex flex-col">
+    <>
+      <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 overflow-hidden flex flex-col">
       {/* Header */}
       <div className="p-4 border-b border-gray-200 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -470,20 +471,21 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           </button>
         </div>
       </div>
-
-      {/* Objection Tracker Modal */}
-      {showObjectionTracker && currentUser && (
-        <>
-          {console.log('[DEBUG] Rendering ObjectionTracker modal')}
-          <ObjectionTracker
-            lead={lead}
-            currentUserId={currentUser.id}
-            onSave={handleObjectionSave}
-            onClose={() => setShowObjectionTracker(false)}
-          />
-        </>
-      )}
     </div>
+
+    {/* Objection Tracker Modal - Rendered OUTSIDE detail panel to avoid clipping */}
+    {showObjectionTracker && currentUser && (
+      <>
+        {console.log('[DEBUG] Rendering ObjectionTracker modal')}
+        <ObjectionTracker
+          lead={lead}
+          currentUserId={currentUser.id}
+          onSave={handleObjectionSave}
+          onClose={() => setShowObjectionTracker(false)}
+        />
+      </>
+    )}
+    </>
   );
 }
 
