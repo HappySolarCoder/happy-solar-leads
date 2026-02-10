@@ -24,6 +24,10 @@ const USERS_COLLECTION = 'users';
 // ============================================
 
 export async function getAllLeads(): Promise<Lead[]> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return [];
+  }
   try {
     const leadsRef = collection(db, LEADS_COLLECTION);
     const snapshot = await getDocs(leadsRef);
@@ -66,6 +70,10 @@ export async function getLead(id: string): Promise<Lead | null> {
 }
 
 export async function saveLead(lead: Lead): Promise<void> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return;
+  }
   try {
     const leadRef = doc(db, LEADS_COLLECTION, lead.id);
     const data = {
@@ -136,6 +144,10 @@ export async function getLeadsByUser(userId: string): Promise<Lead[]> {
 // ============================================
 
 export async function getAllUsers(): Promise<User[]> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return [];
+  }
   try {
     const usersRef = collection(db, USERS_COLLECTION);
     const snapshot = await getDocs(usersRef);
