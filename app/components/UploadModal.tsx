@@ -90,8 +90,9 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       const newLeads: Lead[] = [];
       const skippedDuplicates: string[] = [];
       
-      // Load existing leads to check for duplicates
-      const existingLeads = getLeads();
+      // Load existing leads to check for duplicates - read from localStorage directly
+      const existingLeadsJson = localStorage.getItem('happysolar_leads');
+      const existingLeads: Lead[] = existingLeadsJson ? JSON.parse(existingLeadsJson) : [];
       const existingAddresses = new Set(existingLeads.map(l => 
         `${l.address.toLowerCase().trim()}, ${l.city.toLowerCase().trim()}, ${l.state.toLowerCase().trim()} ${l.zip}`
       ));
@@ -215,8 +216,9 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       // Save all good leads
       logToFile('INFO', 'UploadModal', 'Saving leads', { count: newLeads.length });
       
-      // Save to localStorage directly (addLead is async for Firestore, we want immediate localStorage)
-      const existingLeadsToSave = getLeads();
+      // Save to localStorage directly - read existing from localStorage, not cache
+      const existingLeadsData = localStorage.getItem('happysolar_leads');
+      const existingLeadsToSave: Lead[] = existingLeadsData ? JSON.parse(existingLeadsData) : [];
       const allLeads = [...existingLeadsToSave, ...newLeads];
       localStorage.setItem('happysolar_leads', JSON.stringify(allLeads));
 
