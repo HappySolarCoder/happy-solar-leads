@@ -15,6 +15,16 @@ export interface User {
   email: string;
   color: string; // For map pin color
   createdAt: Date;
+  // Auto-assignment fields
+  homeAddress?: string;
+  homeLat?: number;
+  homeLng?: number;
+  assignedLeadCount?: number;
+  isActive?: boolean; // Can receive auto-assigned leads
+  // Optional user metadata
+  role?: string;
+  status?: string;
+  lastLogin?: Date;
 }
 
 export interface Lead {
@@ -26,15 +36,29 @@ export interface Lead {
   zip: string;
   phone?: string;
   email?: string;
-  lat: number;
-  lng: number;
+  estimatedBill?: number;  // Monthly electric bill estimate
+  setterId?: string;  // User who uploaded/assigned this lead
+  lat?: number;
+  lng?: number;
   status: LeadStatus;
-  claimedBy?: string; // User ID
+  claimedBy?: string;
   claimedAt?: Date;
   dispositionedAt?: Date;
   notes?: string;
-  source?: string; // Where this lead came from
+  source?: string;
   createdAt: Date;
+  // Solar data (populated when available)
+  solarScore?: number;        // 0-100 score
+  solarCategory?: 'poor' | 'solid' | 'good' | 'great';
+  solarMaxPanels?: number;
+  solarSunshineHours?: number;
+  hasSouthFacingRoof?: boolean;
+  solarTestedAt?: Date;
+  // Auto-assignment fields
+  assignedTo?: string;        // Setter ID auto-assigned to
+  assignedAt?: Date;          // When auto-assigned
+  autoAssigned?: boolean;     // Was this lead auto-assigned?
+  lastAssignedTo?: string;    // Previous assignee (for stale reassignment)
 }
 
 export interface CSVRow {
@@ -45,6 +69,7 @@ export interface CSVRow {
   zip: string;
   phone?: string;
   email?: string;
+  estimatedBill?: number;  // Monthly electric bill estimate
 }
 
 export const STATUS_LABELS: Record<LeadStatus, string> = {

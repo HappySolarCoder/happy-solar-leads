@@ -96,3 +96,111 @@
 [2026-02-07T11:04:11.058Z] [INFO] [UploadModal] Adding lead | {"name":"Julie Smith","address":"Po Box 374  Batavia Ny 14021"}
 [2026-02-07T11:04:11.064Z] [INFO] [UploadModal] Adding lead | {"name":"Scott Morris-Bouza","address":"61 Birchbrook Dr"}
 [2026-02-07T11:04:11.070Z] [INFO] [UploadModal] Adding lead | {"name":"Fred Baer","address":"3425 Hopkins Road"}
+[2026-02-07T12:39:14.195Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":87}
+[2026-02-07T12:39:14.745Z] [INFO] [UploadModal] Geocode progress | {"current":10,"total":87}
+[2026-02-07T12:39:15.214Z] [INFO] [UploadModal] Geocode progress | {"current":20,"total":87}
+[2026-02-07T12:39:15.657Z] [INFO] [UploadModal] Geocode progress | {"current":30,"total":87}
+[2026-02-07T12:39:16.099Z] [INFO] [UploadModal] Geocode progress | {"current":40,"total":87}
+[2026-02-07T12:39:16.576Z] [INFO] [UploadModal] Geocode progress | {"current":50,"total":87}
+[2026-02-07T12:39:17.039Z] [INFO] [UploadModal] Geocode progress | {"current":60,"total":87}
+[2026-02-07T12:39:17.480Z] [INFO] [UploadModal] Geocode progress | {"current":70,"total":87}
+[2026-02-07T12:39:17.915Z] [INFO] [UploadModal] Geocode progress | {"current":80,"total":87}
+[2026-02-07T12:39:18.297Z] [INFO] [UploadModal] Geocode progress | {"current":87,"total":87}
+[2026-02-07T12:39:18.303Z] [INFO] [UploadModal] Geocode complete | {"success":87,"failed":0}
+[2026-02-07T12:39:39.561Z] [INFO] [UploadModal] Adding lead | {"name":"Rosalie Capps","address":"59 Hamilton st","score":29}
+[2026-02-07T12:39:39.568Z] [INFO] [UploadModal] Adding lead | {"name":"Kevin Miller","address":"199 citation dr","score":77}
+[2026-02-07T12:39:39.596Z] [INFO] [UploadModal] Adding lead | {"name":"Jamil Glover","address":"73 Meadowbriar Rd","score":66}
+[2026-02-07T12:39:39.608Z] [INFO] [UploadModal] Saving leads | {"count":23}
+[2026-02-07T12:39:39.621Z] [INFO] [UploadModal] Final results | {"good":23,"poor":64,"geocodeFailed":0}
+[2026-02-07T12:39:39.630Z] [INFO] [UploadModal] Adding lead | {"name":"Sunny Shin","address":"166 Brittany Cir","score":88}
+[2026-02-07T12:39:39.643Z] [INFO] [UploadModal] Adding lead | {"name":"james cornforth","address":"1965 east ridge road","score":67}
+[2026-02-07T12:39:39.650Z] [INFO] [UploadModal] Adding lead | {"name":"Manuel Ortiz","address":"Summer sky dr","score":26}
+[2026-02-07T12:39:39.657Z] [INFO] [UploadModal] Adding lead | {"name":"Michael Johnson","address":"630 Maris Run","score":61}
+[2026-02-07T12:39:39.667Z] [INFO] [UploadModal] Adding lead | {"name":"Leonard Aguayo","address":"65 Spartan drive","score":67}
+[2026-02-07T12:39:39.682Z] [INFO] [UploadModal] Adding lead | {"name":"James Alfieri","address":"160 Whittington Road","score":75}
+[2026-02-07T12:39:39.692Z] [INFO] [UploadModal] Adding lead | {"name":"Scott Morris-Bouza","address":"61 Birchbrook Dr","score":83}
+[2026-02-07T12:39:39.706Z] [INFO] [UploadModal] Adding lead | {"name":"John Lee","address":"171 Vinal Ave","score":82}
+[2026-02-07T12:39:39.715Z] [INFO] [UploadModal] Adding lead | {"name":"Lizette Porter","address":"2181 S Clinton Ave","score":44}
+[2026-02-07T12:39:39.723Z] [INFO] [UploadModal] Adding lead | {"name":"Jamie Aldrich","address":"283 Gallant Fox Lane","score":99}
+[2026-02-07T12:39:39.769Z] [INFO] [UploadModal] Adding lead | {"name":"Rick Daniels","address":"741 Admiralty Way","score":92}
+[2026-02-07T12:39:39.835Z] [INFO] [UploadModal] Adding lead | {"name":"Mark Taylor","address":"232 Culver Road","score":53}
+[2026-02-07T12:39:39.896Z] [INFO] [UploadModal] Adding lead | {"name":"Doreen Marvin","address":"59 Woodsmeadow Ln","score":50}
+[2026-02-07T12:39:39.903Z] [INFO] [UploadModal] Adding lead | {"name":"Meimei Huber","address":"897 Pathway Lane","score":83}
+[2026-02-07T12:39:39.908Z] [INFO] [UploadModal] Adding lead | {"name":"Jordan Sincerbeaux","address":"8 Harvard St","score":60}
+[2026-02-07T12:39:39.914Z] [INFO] [UploadModal] Adding lead | {"name":"Kristin Kinney","address":"282 Hartsdale Road","score":93}
+[2026-02-07T14:10:50.405Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":87}
+[2026-02-07T14:10:50.413Z] [INFO] [UploadModal] Geocode complete | {"success":87,"failed":0}
+[2026-02-07T14:11:11.348Z] [INFO] [UploadModal] Adding lead | {"name":"Rosalie Capps","address":"59 Hamilton st","score":29}
+[2026-02-07T14:11:11.364Z] [INFO] [UploadModal] Final results | {"good":23,"poor":64,"geocodeFailed":0}
+[2026-02-07T14:11:11.383Z] [INFO] [UploadModal] Adding lead | {"name":"Kevin Miller","address":"199 citation dr","score":77}
+[2026-02-07T14:11:11.394Z] [INFO] [UploadModal] Saving leads | {"count":23}
+[2026-02-07T14:11:11.401Z] [INFO] [UploadModal] Adding lead | {"name":"Sunny Shin","address":"166 Brittany Cir","score":88}
+[2026-02-07T14:11:11.409Z] [INFO] [UploadModal] Adding lead | {"name":"Jamil Glover","address":"73 Meadowbriar Rd","score":66}
+[2026-02-07T14:11:11.423Z] [INFO] [UploadModal] Adding lead | {"name":"james cornforth","address":"1965 east ridge road","score":67}
+[2026-02-07T14:11:11.430Z] [INFO] [UploadModal] Adding lead | {"name":"Manuel Ortiz","address":"Summer sky dr","score":26}
+[2026-02-07T14:11:11.437Z] [INFO] [UploadModal] Adding lead | {"name":"Michael Johnson","address":"630 Maris Run","score":61}
+[2026-02-07T14:11:11.444Z] [INFO] [UploadModal] Adding lead | {"name":"Leonard Aguayo","address":"65 Spartan drive","score":67}
+[2026-02-07T14:11:11.455Z] [INFO] [UploadModal] Adding lead | {"name":"James Alfieri","address":"160 Whittington Road","score":75}
+[2026-02-07T14:11:11.468Z] [INFO] [UploadModal] Adding lead | {"name":"Scott Morris-Bouza","address":"61 Birchbrook Dr","score":83}
+[2026-02-07T14:11:11.485Z] [INFO] [UploadModal] Adding lead | {"name":"John Lee","address":"171 Vinal Ave","score":82}
+[2026-02-07T14:11:11.491Z] [INFO] [UploadModal] Adding lead | {"name":"Lizette Porter","address":"2181 S Clinton Ave","score":44}
+[2026-02-07T14:11:11.500Z] [INFO] [UploadModal] Adding lead | {"name":"Jamie Aldrich","address":"283 Gallant Fox Lane","score":99}
+[2026-02-07T14:11:11.506Z] [INFO] [UploadModal] Adding lead | {"name":"Rick Daniels","address":"741 Admiralty Way","score":92}
+[2026-02-07T14:11:11.615Z] [INFO] [UploadModal] Adding lead | {"name":"Mark Taylor","address":"232 Culver Road","score":53}
+[2026-02-07T14:11:11.726Z] [INFO] [UploadModal] Adding lead | {"name":"Doreen Marvin","address":"59 Woodsmeadow Ln","score":50}
+[2026-02-07T14:11:11.758Z] [INFO] [UploadModal] Adding lead | {"name":"Meimei Huber","address":"897 Pathway Lane","score":83}
+[2026-02-07T14:11:11.774Z] [INFO] [UploadModal] Adding lead | {"name":"Jordan Sincerbeaux","address":"8 Harvard St","score":60}
+[2026-02-07T14:11:11.781Z] [INFO] [UploadModal] Adding lead | {"name":"Kristin Kinney","address":"282 Hartsdale Road","score":93}
+[2026-02-07T14:11:11.788Z] [INFO] [UploadModal] Adding lead | {"name":"Mary Boyce","address":"511 hollybrook","score":79}
+[2026-02-07T21:19:44.143Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":2}
+[2026-02-07T21:19:44.243Z] [INFO] [UploadModal] Geocode progress | {"current":2,"total":2}
+[2026-02-07T21:19:44.260Z] [INFO] [UploadModal] Geocode complete | {"success":0,"failed":2}
+[2026-02-07T21:19:44.276Z] [INFO] [UploadModal] Final results | {"good":0,"poor":0,"geocodeFailed":2}
+[2026-02-07T21:19:44.290Z] [INFO] [UploadModal] Saving leads | {"count":0}
+[2026-02-07T21:20:36.200Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":2}
+[2026-02-07T21:20:36.503Z] [INFO] [UploadModal] Geocode progress | {"current":2,"total":2}
+[2026-02-07T21:20:36.514Z] [INFO] [UploadModal] Geocode complete | {"success":0,"failed":2}
+[2026-02-07T21:20:36.531Z] [INFO] [UploadModal] Final results | {"good":0,"poor":0,"geocodeFailed":2}
+[2026-02-07T21:20:36.544Z] [INFO] [UploadModal] Saving leads | {"count":0}
+[2026-02-07T21:22:05.680Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":2}
+[2026-02-07T21:22:05.914Z] [INFO] [UploadModal] Geocode progress | {"current":2,"total":2}
+[2026-02-07T21:22:05.924Z] [INFO] [UploadModal] Geocode complete | {"success":2,"failed":0}
+[2026-02-07T21:22:06.946Z] [INFO] [UploadModal] Final results | {"good":2,"poor":0,"geocodeFailed":0}
+[2026-02-07T21:22:06.979Z] [INFO] [UploadModal] Saving leads | {"count":2}
+[2026-02-07T21:22:06.992Z] [INFO] [UploadModal] Adding lead | {"name":"Test Lead One","address":"100 East Ave","score":42}
+[2026-02-07T21:22:07.006Z] [INFO] [UploadModal] Adding lead | {"name":"Test Lead Two","address":"400 Andrews St","score":73}
+[2026-02-07T21:30:13.124Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":4}
+[2026-02-07T21:30:13.426Z] [INFO] [UploadModal] Geocode progress | {"current":4,"total":4}
+[2026-02-07T21:30:13.436Z] [INFO] [UploadModal] Geocode complete | {"success":4,"failed":0}
+[2026-02-07T21:30:14.832Z] [INFO] [UploadModal] Final results | {"good":4,"poor":0,"geocodeFailed":0}
+[2026-02-07T21:30:14.844Z] [INFO] [UploadModal] Saving leads | {"count":4}
+[2026-02-07T21:30:14.892Z] [INFO] [UploadModal] Adding lead | {"name":"Redist Lead A","address":"200 East Ave","score":77}
+[2026-02-07T21:30:14.920Z] [INFO] [UploadModal] Adding lead | {"name":"Redist Lead B","address":"300 East Ave","score":67}
+[2026-02-07T21:30:14.970Z] [INFO] [UploadModal] Adding lead | {"name":"Redist Lead C","address":"500 East Ave","score":79}
+[2026-02-07T21:30:14.979Z] [INFO] [UploadModal] Adding lead | {"name":"Redist Lead D","address":"600 East Ave","score":61}
+[2026-02-09T00:32:16.390Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":87}
+[2026-02-09T00:32:16.928Z] [INFO] [UploadModal] Geocode progress | {"current":10,"total":87}
+[2026-02-09T00:32:17.475Z] [INFO] [UploadModal] Geocode progress | {"current":20,"total":87}
+[2026-02-09T00:32:17.973Z] [INFO] [UploadModal] Geocode progress | {"current":30,"total":87}
+[2026-02-09T00:32:18.632Z] [INFO] [UploadModal] Geocode progress | {"current":40,"total":87}
+[2026-02-09T00:32:19.144Z] [INFO] [UploadModal] Geocode progress | {"current":50,"total":87}
+[2026-02-09T00:32:19.679Z] [INFO] [UploadModal] Geocode progress | {"current":60,"total":87}
+[2026-02-09T00:32:20.256Z] [INFO] [UploadModal] Geocode progress | {"current":70,"total":87}
+[2026-02-09T00:32:20.827Z] [INFO] [UploadModal] Geocode progress | {"current":80,"total":87}
+[2026-02-09T00:32:21.377Z] [INFO] [UploadModal] Geocode complete | {"success":87,"failed":0}
+[2026-02-09T00:32:21.382Z] [INFO] [UploadModal] Geocode progress | {"current":87,"total":87}
+[2026-02-09T00:32:32.689Z] [INFO] [UploadModal] Final results | {"good":23,"poor":64,"geocodeFailed":0}
+[2026-02-09T00:32:32.778Z] [INFO] [UploadModal] Adding lead | {"name":"Sunny Shin","address":"166 Brittany Cir","score":88}
+[2026-02-09T00:32:32.782Z] [INFO] [UploadModal] Adding lead | {"name":"Jamil Glover","address":"73 Meadowbriar Rd","score":66}
+[2026-02-09T00:32:32.786Z] [INFO] [UploadModal] Adding lead | {"name":"james cornforth","address":"1965 east ridge road","score":67}
+[2026-02-09T00:32:32.789Z] [INFO] [UploadModal] Adding lead | {"name":"Kevin Miller","address":"199 citation dr","score":77}
+[2026-02-09T00:32:32.793Z] [INFO] [UploadModal] Saving leads | {"count":23}
+[2026-02-09T00:32:32.796Z] [INFO] [UploadModal] Adding lead | {"name":"Rosalie Capps","address":"59 Hamilton st","score":29}
+[2026-02-09T00:32:32.884Z] [INFO] [UploadModal] Adding lead | {"name":"Michael Johnson","address":"630 Maris Run","score":61}
+[2026-02-09T00:32:32.887Z] [INFO] [UploadModal] Adding lead | {"name":"Manuel Ortiz","address":"Summer sky dr","score":26}
+[2026-02-09T00:32:32.910Z] [INFO] [UploadModal] Adding lead | {"name":"James Alfieri","address":"160 Whittington Road","score":75}
+[2026-02-09T00:32:32.916Z] [INFO] [UploadModal] Adding lead | {"name":"Scott Morris-Bouza","address":"61 Birchbrook Dr","score":83}
+[2026-02-09T00:32:32.920Z] [INFO] [UploadModal] Adding lead | {"name":"Leonard Aguayo","address":"65 Spartan drive","score":67}
+[2026-02-09T00:32:32.967Z] [INFO] [UploadModal] Adding lead | {"name":"John Lee","address":"171 Vinal Ave","score":82}
+[2026-02-09T00:32:32.971Z] [INFO] [UploadModal] Adding lead | {"name":"Lizette Porter","address":"2181 S Clinton Ave","score":44}
+[2026-02-09T00:32:32.979Z] [INFO] [UploadModal] Adding lead | {"name":"Jamie Aldrich","address":"283 Gallant Fox Lane","score":99}

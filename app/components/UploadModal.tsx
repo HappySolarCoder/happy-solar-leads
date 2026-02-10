@@ -5,7 +5,7 @@ import { Upload, File, X, MapPin, CheckCircle, AlertCircle } from 'lucide-react'
 import { CSVRow, Lead } from '@/app/types';
 import { parseCSV, validateCSV } from '@/app/utils/csv';
 import { geocodeBatch } from '@/app/utils/geocode';
-import { addLead, generateId } from '@/app/utils/storage';
+import { addLead, getLeads, generateId } from '@/app/utils/storage';
 
 // Client-side logger that sends to server
 function logToFile(level: string, component: string, message: string, data: any = {}) {
@@ -68,60 +68,173 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
     if (rows.length === 0) return;
 
     setStep('processing');
-    setProgress({ current: 0, total: rows.length });
+    setProgress({ current: 0, total: rows.length * 2 }); // Geocode + Solar
     setError(null);
 
     try {
       logToFile('INFO', 'UploadModal', 'Starting geocode batch', { rowCount: rows.length });
-      const results = await geocodeBatch(rows, (current, total) => {
+
+      // Step 1: Geocode all addresses
+      const geocodeResults = await geocodeBatch(rows, (current, total) => {
         logToFile('INFO', 'UploadModal', 'Geocode progress', { current, total });
-        setProgress({ current, total });
+        setProgress({ current, total: rows.length * 2 });
       });
-      logToFile('INFO', 'UploadModal', 'Geocode complete', { resultCount: results.length });
 
-      setGeocoded(results);
+      // Filter successful geocodes
+      const geocodedSuccess = geocodeResults.filter(r => r.lat && r.lng);
+      const geocodedFailed = geocodeResults.filter(r => !r.lat || !r.lng);
 
-      // Count successes and failures
-      const successful = results.filter(r => r.lat && r.lng);
-      const failed = results.filter(r => !r.lat || !r.lng);
+      logToFile('INFO', 'UploadModal', 'Geocode complete', { success: geocodedSuccess.length, failed: geocodedFailed.length });
 
-      logToFile('INFO', 'UploadModal', 'Results', { successful: successful.length, failed: failed.length });
-
-      if (failed.length > 0) {
-        logToFile('WARN', 'UploadModal', 'Failed addresses', { addresses: failed.map(r => `${r.row.address}, ${r.row.city}`) });
+      // Step 2: Fetch solar data for each geocoded lead
+      const newLeads: Lead[] = [];
+      const skippedDuplicates: string[] = [];
+      
+      // Load existing leads to check for duplicates
+      const existingLeads = getLeads();
+      const existingAddresses = new Set(existingLeads.map(l => 
+        `${l.address.toLowerCase().trim()}, ${l.city.toLowerCase().trim()}, ${l.state.toLowerCase().trim()} ${l.zip}`
+      ));
+      
+      for (let i = 0; i < geocodedSuccess.length; i++) {
+        const result = geocodedSuccess[i];
+        
+        // Check for duplicate address
+        const normalizedAddress = `${result.row.address?.toLowerCase().trim()}, ${result.row.city?.toLowerCase().trim()}, ${result.row.state?.toLowerCase().trim()} ${result.row.zip}`;
+        if (existingAddresses.has(normalizedAddress)) {
+          logToFile('INFO', 'UploadModal', 'Skipping duplicate', { address: result.row.address });
+          skippedDuplicates.push(result.row.address || 'Unknown');
+          continue;
+        }
+        
+        try {
+          // Fetch solar data
+          const solarResp = await fetch('/api/solar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat: result.lat, lng: result.lng })
+          });
+          
+          const solarData = await solarResp.json();
+          
+          // Calculate solar score
+          let solarScore = 0;
+          let solarCategory: 'poor' | 'solid' | 'good' | 'great' = 'poor';
+          let hasSouthFacing = false;
+          
+          if (solarData.solarPotential) {
+            const sunshineHours = solarData.solarPotential.maxSunshineHoursPerYear || 0;
+            const maxPanels = solarData.solarPotential.maxArrayPanelsCount || 0;
+            
+            // Check for south-facing roof
+            if (solarData.solarPotential.roofSegmentStats) {
+              for (const segment of solarData.solarPotential.roofSegmentStats) {
+                const azimuthDiff = Math.abs(segment.azimuthDegrees - 180);
+                if (azimuthDiff <= 45) {
+                  hasSouthFacing = true;
+                  break;
+                }
+              }
+            }
+            
+            // Calculate score based on sun hours
+            if (sunshineHours < 1300) {
+              solarScore = Math.round((sunshineHours / 1300) * 25);
+              solarCategory = 'poor';
+            } else if (sunshineHours < 1350) {
+              solarScore = 25 + Math.round(((sunshineHours - 1300) / 50) * 25);
+              solarCategory = 'solid';
+            } else if (sunshineHours < 1400) {
+              solarScore = 50 + Math.round(((sunshineHours - 1350) / 50) * 25);
+              solarCategory = 'good';
+            } else {
+              solarScore = 75 + Math.min(25, Math.round(((sunshineHours - 1400) / 100) * 25));
+              solarCategory = 'great';
+            }
+          }
+          
+          // Only include leads with good solar scores
+          if (solarCategory !== 'poor') {
+            newLeads.push({
+              id: generateId(),
+              name: result.row.name || 'Unknown',
+              address: result.row.address,
+              city: result.row.city,
+              state: result.row.state,
+              zip: result.row.zip,
+              phone: result.row.phone,
+              email: result.row.email,
+              estimatedBill: result.row.estimatedBill,
+              lat: result.lat!,
+              lng: result.lng!,
+              status: 'unclaimed',
+              createdAt: new Date(),
+              solarScore,
+              solarCategory,
+              solarMaxPanels: solarData.solarPotential?.maxArrayPanelsCount,
+              solarSunshineHours: solarData.solarPotential?.maxSunshineHoursPerYear,
+              hasSouthFacingRoof: hasSouthFacing,
+              solarTestedAt: new Date(),
+            });
+          }
+          
+        } catch (e) {
+          logToFile('WARN', 'UploadModal', 'Solar fetch failed', { address: result.row.address, error: e });
+          // Still add lead without solar data
+          newLeads.push({
+            id: generateId(),
+            name: result.row.name || 'Unknown',
+            address: result.row.address,
+            city: result.row.city,
+            state: result.row.state,
+            zip: result.row.zip,
+            phone: result.row.phone,
+            email: result.row.email,
+            estimatedBill: result.row.estimatedBill,
+            lat: result.lat!,
+            lng: result.lng!,
+            status: 'unclaimed',
+            createdAt: new Date(),
+          });
+        }
+        
+        // Update progress
+        setProgress({ current: rows.length + i + 1, total: rows.length * 2 });
       }
 
-      setSuccessCount(successful.length);
-      setFailedAddresses(failed.map(r => `${r.row.address}, ${r.row.city}`));
+      // Count poor leads (not added)
+      const poorCount = geocodedSuccess.length - newLeads.length;
+      const failedCount = geocodedFailed.length;
 
-      // Add successful leads to storage
-      const newLeads: Lead[] = successful.map(result => ({
-        id: generateId(),
-        name: result.row.name || 'Unknown',
-        address: result.row.address,
-        city: result.row.city,
-        state: result.row.state,
-        zip: result.row.zip,
-        phone: result.row.phone,
-        email: result.row.email,
-        lat: result.lat!,
-        lng: result.lng!,
-        status: 'unclaimed',
-        createdAt: new Date(),
-      }));
+      logToFile('INFO', 'UploadModal', 'Final results', { 
+        good: newLeads.length, 
+        poor: poorCount, 
+        geocodeFailed: failedCount 
+      });
 
+      // Save all good leads
       logToFile('INFO', 'UploadModal', 'Saving leads', { count: newLeads.length });
       newLeads.forEach(lead => {
-        logToFile('INFO', 'UploadModal', 'Adding lead', { name: lead.name, address: lead.address });
+        logToFile('INFO', 'UploadModal', 'Adding lead', { name: lead.name, address: lead.address, score: lead.solarScore });
         addLead(lead);
       });
-      logToFile('INFO', 'UploadModal', 'Done saving leads');
+
+      // Show failed info
+      const failedAddresses = [
+        ...geocodedFailed.map(r => `${r.row.address}, ${r.row.city}`),
+        ...(poorCount > 0 ? [`${poorCount} leads had poor solar (<1300 hrs)`] : []),
+        ...(skippedDuplicates.length > 0 ? [`${skippedDuplicates.length} duplicates skipped (existing leads preserved)`] : [])
+      ];
+      
+      setSuccessCount(newLeads.length);
+      setFailedAddresses(failedAddresses.length > 0 ? failedAddresses : []);
 
       setStep('complete');
-      onComplete(successCount);
+      onComplete(newLeads.length);
+      
     } catch (err: any) {
       logToFile('ERROR', 'UploadModal', 'Upload failed', { error: err.message, stack: err.stack });
-      setError('Failed to geocode addresses. Please try again.');
+      setError('Failed to process leads. Please try again.');
       setStep('upload');
     }
   };
@@ -277,7 +390,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               {failedAddresses.length > 0 && (
                 <div className="text-left p-4 bg-amber-50 border border-amber-200 rounded-lg mb-6">
                   <p className="text-sm font-medium text-amber-800 mb-2">
-                    ⚠️ {failedAddresses.length} addresses could not be geocoded:
+                    ⚠️ Skipped addresses:
                   </p>
                   <ul className="text-xs text-amber-700 space-y-1 max-h-32 overflow-y-auto">
                     {failedAddresses.slice(0, 10).map((addr, i) => (

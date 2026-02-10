@@ -32,6 +32,9 @@ export function parseCSV(file: File): Promise<CSVRow[]> {
             zip: normalized.zip || normalized.zipcode || '',
             phone: normalized.phone || normalized.telephone || normalized['phone number'] || '',
             email: normalized.email || normalized['email address'] || '',
+            estimatedBill: normalized.estimatedbill || normalized['estimated bill'] || normalized.monthlybill || normalized['monthly bill'] 
+              ? parseFloat(normalized.estimatedbill || normalized['estimated bill'] || normalized.monthlybill || normalized['monthly bill'] || '0') 
+              : undefined,
           };
           
           // Only add if it has at least an address

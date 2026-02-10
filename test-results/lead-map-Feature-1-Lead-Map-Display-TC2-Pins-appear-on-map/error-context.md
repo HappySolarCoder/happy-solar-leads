@@ -1,0 +1,88 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - heading "Welcome to Happy Solar Leads" [level=2] [ref=e13]
+        - paragraph [ref=e14]: Let's get you set up so you can start knocking.
+        - generic [ref=e15]:
+          - paragraph [ref=e16]: "With this app, you can:"
+          - list [ref=e17]:
+            - listitem [ref=e18]:
+              - img [ref=e19]
+              - text: View leads on an interactive map
+            - listitem [ref=e21]:
+              - img [ref=e22]
+              - text: Claim leads to avoid duplicates
+            - listitem [ref=e24]:
+              - img [ref=e25]
+              - text: Track your dispositions
+            - listitem [ref=e27]:
+              - img [ref=e28]
+              - text: Upload your own lead lists
+      - button "Get Started" [ref=e31]
+    - banner [ref=e32]:
+      - generic [ref=e33]:
+        - heading "Happy Solar Leads" [level=1] [ref=e34]
+        - generic [ref=e35]:
+          - generic [ref=e36]:
+            - generic [ref=e37]: Tested
+            - generic [ref=e38]: 0/0
+          - generic [ref=e39]:
+            - generic [ref=e40]: Unclaimed
+            - generic [ref=e41]: "0"
+          - generic [ref=e42]:
+            - generic [ref=e43]: Interested
+            - generic [ref=e44]: "0"
+          - generic [ref=e45]:
+            - generic [ref=e46]: Appointments
+            - generic [ref=e47]: "0"
+          - generic [ref=e48]:
+            - generic [ref=e49]: Sales
+            - generic [ref=e50]: "0"
+      - generic [ref=e51]:
+        - generic [ref=e52]:
+          - button "Split" [ref=e53]
+          - button "Map" [ref=e54]
+          - button "List" [ref=e55]
+        - button "Upload Leads" [ref=e56]:
+          - img [ref=e57]
+          - generic [ref=e60]: Upload Leads
+        - button "Auto-Assign" [ref=e61]:
+          - img [ref=e62]
+          - generic [ref=e65]: Auto-Assign
+        - combobox [ref=e66]:
+          - option "All Setters" [selected]
+    - generic [ref=e67]:
+      - complementary [ref=e68]:
+        - generic [ref=e69]:
+          - generic [ref=e70]:
+            - generic [ref=e71]:
+              - heading "Leads" [level=2] [ref=e72]
+              - generic [ref=e73]: 0 unclaimed
+            - generic [ref=e74]:
+              - img [ref=e75]
+              - textbox "Search name, address..." [ref=e78]
+            - button "All (0)" [ref=e80]
+          - generic [ref=e82]: 0 of 0 leads
+      - main [ref=e83]:
+        - generic [ref=e84]:
+          - generic:
+            - generic [ref=e85]:
+              - button "Zoom in" [ref=e86] [cursor=pointer]: +
+              - button "Zoom out" [ref=e87] [cursor=pointer]: −
+            - generic [ref=e88]:
+              - link "Leaflet" [ref=e89] [cursor=pointer]:
+                - /url: https://leafletjs.com
+                - img [ref=e90]
+                - text: Leaflet
+              - text: "| ©"
+              - link "OpenStreetMap" [ref=e94] [cursor=pointer]:
+                - /url: https://www.openstreetmap.org/copyright
+  - button "Open Next.js Dev Tools" [ref=e100] [cursor=pointer]:
+    - img [ref=e101]
+  - alert [ref=e104]
+```

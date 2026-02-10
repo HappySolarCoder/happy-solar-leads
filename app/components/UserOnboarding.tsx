@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { User, Check, Users } from 'lucide-react';
+import { User, Check, Users, MapPin, Loader2 } from 'lucide-react';
 import { DEFAULT_COLORS } from '@/app/types';
 import { getUsers, saveUsers, saveCurrentUser, generateId } from '@/app/utils/storage';
 import type { User as UserType } from '@/app/types';
@@ -14,15 +14,66 @@ interface UserOnboardingProps {
 export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingProps) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [homeAddress, setHomeAddress] = useState('');
+  const [homeLat, setHomeLat] = useState<number | undefined>();
+  const [homeLng, setHomeLng] = useState<number | undefined>();
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [geocodeError, setGeocodeError] = useState('');
   const [selectedColor, setSelectedColor] = useState(DEFAULT_COLORS[0]);
   const [step, setStep] = useState<'welcome' | 'form'>('welcome');
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Geocode the home address
+  const geocodeHomeAddress = async (address: string): Promise<{ lat: number; lng: number } | null> => {
+    if (!address.trim()) return null;
+    
+    setIsGeocoding(true);
+    setGeocodeError('');
+    
+    try {
+      const response = await fetch('/api/geocode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          address,
+          apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '',
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.status === 'OK' && data.results && data.results.length > 0) {
+        const location = data.results[0].geometry.location;
+        return { lat: location.lat, lng: location.lng };
+      }
+      
+      setGeocodeError('Address not found. Please check and try again.');
+      return null;
+    } catch (error) {
+      setGeocodeError('Failed to verify address. You can continue without it.');
+      return null;
+    } finally {
+      setIsGeocoding(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!name.trim() || !email.trim()) return;
+
+    // Geocode home address if provided
+    let finalLat = homeLat;
+    let finalLng = homeLng;
+    
+    if (homeAddress.trim() && !homeLat) {
+      const coords = await geocodeHomeAddress(homeAddress);
+      if (coords) {
+        finalLat = coords.lat;
+        finalLng = coords.lng;
+      }
+    }
 
     const newUser: UserType = {
       id: generateId(),
@@ -30,6 +81,12 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
       email: email.trim(),
       color: selectedColor,
       createdAt: new Date(),
+      // Auto-assignment fields
+      homeAddress: homeAddress.trim() || undefined,
+      homeLat: finalLat,
+      homeLng: finalLng,
+      assignedLeadCount: 0,
+      isActive: true,
     };
 
     // Save to users list
@@ -133,6 +190,56 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     required
                   />
+                </div>
+
+                {/* Home Address */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-4 h-4" />
+                      Home Address
+                      <span className="text-gray-400 font-normal">(for lead assignment)</span>
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    value={homeAddress}
+                    onChange={(e) => {
+                      setHomeAddress(e.target.value);
+                      setHomeLat(undefined);
+                      setHomeLng(undefined);
+                      setGeocodeError('');
+                    }}
+                    onBlur={async () => {
+                      if (homeAddress.trim() && !homeLat) {
+                        const coords = await geocodeHomeAddress(homeAddress);
+                        if (coords) {
+                          setHomeLat(coords.lat);
+                          setHomeLng(coords.lng);
+                        }
+                      }
+                    }}
+                    placeholder="123 Main St, Phoenix, AZ 85001"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  {isGeocoding && (
+                    <p className="text-xs text-blue-500 mt-1 flex items-center gap-1">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Verifying address...
+                    </p>
+                  )}
+                  {geocodeError && (
+                    <p className="text-xs text-orange-500 mt-1">{geocodeError}</p>
+                  )}
+                  {homeLat && homeLng && (
+                    <p className="text-xs text-green-500 mt-1 flex items-center gap-1">
+                      <Check className="w-3 h-3" />
+                      Address verified!
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    Leads will be auto-assigned based on distance from your home.
+                  </p>
                 </div>
 
                 {/* Color Picker */}

@@ -55,21 +55,28 @@ export async function geocodeAddress(row: CSVRow): Promise<{ lat: number; lng: n
   }
 
   const query = `${row.address}, ${row.city}, ${row.state} ${row.zip}`;
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
 
   try {
     // Use our own API route as proxy to avoid CORS
     const response = await fetch('/api/geocode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: query, apiKey }),
+      body: JSON.stringify({ address: query }),
     });
+
+    if (!response.ok) {
+      // Cache negative result (address not found)
+      const cache = loadCache();
+      cache.set(getCacheKey(row), null);
+      saveCache();
+      return null;
+    }
 
     const data = await response.json();
 
-    if (data.status === 'OK' && data.results && data.results.length > 0) {
-      const location = data.results[0].geometry.location;
-      const coords = { lat: location.lat, lng: location.lng };
+    // API returns { lat, lng, formattedAddress } directly
+    if (data.lat && data.lng) {
+      const coords = { lat: data.lat, lng: data.lng };
 
       // Save to cache
       const cache = loadCache();
