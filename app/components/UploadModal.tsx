@@ -214,10 +214,11 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
 
       // Save all good leads
       logToFile('INFO', 'UploadModal', 'Saving leads', { count: newLeads.length });
-      newLeads.forEach(lead => {
-        logToFile('INFO', 'UploadModal', 'Adding lead', { name: lead.name, address: lead.address, score: lead.solarScore });
-        addLead(lead);
-      });
+      
+      // Save to localStorage directly (addLead is async for Firestore, we want immediate localStorage)
+      const existingLeadsToSave = getLeads();
+      const allLeads = [...existingLeadsToSave, ...newLeads];
+      localStorage.setItem('happysolar_leads', JSON.stringify(allLeads));
 
       // Show failed info
       const failedAddresses = [

@@ -67,10 +67,10 @@ export default function Home() {
 
   // Handle upload complete
   const handleUploadComplete = (count: number) => {
-    refreshLeads();
     setShowUploadModal(false);
-    // Force reload to ensure fresh data from localStorage
-    setTimeout(() => window.location.reload(), 100);
+    // Refresh data from localStorage
+    setLeads(getLeads());
+    setUsers(getUsers());
   };
 
   // Clear all leads (for testing)
