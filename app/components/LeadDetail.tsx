@@ -444,10 +444,10 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         <div className="text-xs text-gray-400 space-y-1">
           <p>ID: {lead.id}</p>
           {lead.createdAt && (
-            <p>Created: {lead.createdAt.toLocaleDateString()}</p>
+            <p>Created: {new Date(lead.createdAt).toLocaleDateString()}</p>
           )}
           {lead.dispositionedAt && (
-            <p>Last Action: {formatTimeAgo(lead.dispositionedAt)}</p>
+            <p>Last Action: {formatTimeAgo(new Date(lead.dispositionedAt))}</p>
           )}
         </div>
 
