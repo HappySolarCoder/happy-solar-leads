@@ -47,6 +47,10 @@ export async function getAllLeads(): Promise<Lead[]> {
 }
 
 export async function getLead(id: string): Promise<Lead | null> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return null;
+  }
   try {
     const leadRef = doc(db, LEADS_COLLECTION, id);
     const snapshot = await getDoc(leadRef);
@@ -92,6 +96,10 @@ export async function saveLead(lead: Lead): Promise<void> {
 }
 
 export async function updateLead(id: string, updates: Partial<Lead>): Promise<void> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return;
+  }
   try {
     const leadRef = doc(db, LEADS_COLLECTION, id);
     const data: any = { ...updates };
@@ -110,6 +118,10 @@ export async function updateLead(id: string, updates: Partial<Lead>): Promise<vo
 }
 
 export async function deleteLead(id: string): Promise<void> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return;
+  }
   try {
     const leadRef = doc(db, LEADS_COLLECTION, id);
     await deleteDoc(leadRef);
@@ -120,6 +132,10 @@ export async function deleteLead(id: string): Promise<void> {
 }
 
 export async function getLeadsByUser(userId: string): Promise<Lead[]> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return [];
+  }
   try {
     const leadsRef = collection(db, LEADS_COLLECTION);
     const q = query(leadsRef, where('claimedBy', '==', userId));
@@ -164,6 +180,10 @@ export async function getAllUsers(): Promise<User[]> {
 }
 
 export async function getUser(id: string): Promise<User | null> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return null;
+  }
   try {
     const userRef = doc(db, USERS_COLLECTION, id);
     const snapshot = await getDoc(userRef);
@@ -184,6 +204,10 @@ export async function getUser(id: string): Promise<User | null> {
 }
 
 export async function saveUser(user: User): Promise<void> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return;
+  }
   try {
     const userRef = doc(db, USERS_COLLECTION, user.id);
     const data = {
@@ -199,6 +223,10 @@ export async function saveUser(user: User): Promise<void> {
 }
 
 export async function updateUser(id: string, updates: Partial<User>): Promise<void> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return;
+  }
   try {
     const userRef = doc(db, USERS_COLLECTION, id);
     const data: any = { ...updates };
@@ -213,6 +241,10 @@ export async function updateUser(id: string, updates: Partial<User>): Promise<vo
 }
 
 export async function deleteUser(id: string): Promise<void> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return;
+  }
   try {
     const userRef = doc(db, USERS_COLLECTION, id);
     await deleteDoc(userRef);
