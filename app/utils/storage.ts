@@ -104,11 +104,27 @@ let usersCache: User[] | null = null;
 let usersCacheTimestamp = 0;
 
 export function getUsers(): User[] {
+  if (typeof window === 'undefined') return [];
+  
+  // Return cache if fresh
   if (usersCache && Date.now() - usersCacheTimestamp < CACHE_TTL) {
     return usersCache;
   }
-  if (typeof window === 'undefined') return [];
-  return usersCache || [];
+  
+  // Fallback: load from localStorage
+  const data = localStorage.getItem('happysolar_users');
+  if (!data) return [];
+  
+  try {
+    const parsed = JSON.parse(data);
+    return parsed.map((user: User) => ({
+      ...user,
+      createdAt: new Date(user.createdAt),
+      lastLogin: user.lastLogin ? new Date(user.lastLogin) : undefined,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function getUsersAsync(): Promise<User[]> {
@@ -155,9 +171,28 @@ export function getCurrentUser(): User | null {
   const userId = localStorage.getItem(CURRENT_USER_KEY);
   if (!userId) return null;
   
-  // Return from cache if available
+  // Always try to load from localStorage directly if cache doesn't have it
   if (usersCache) {
-    return usersCache.find(u => u.id === userId) || null;
+    const cached = usersCache.find(u => u.id === userId);
+    if (cached) return cached;
+  }
+  
+  // Fallback: load from localStorage
+  const usersData = localStorage.getItem('happysolar_users');
+  if (usersData) {
+    try {
+      const users: User[] = JSON.parse(usersData);
+      const user = users.find(u => u.id === userId);
+      if (user) {
+        return {
+          ...user,
+          createdAt: new Date(user.createdAt),
+          lastLogin: user.lastLogin ? new Date(user.lastLogin) : undefined,
+        };
+      }
+    } catch {
+      return null;
+    }
   }
   
   return null;
