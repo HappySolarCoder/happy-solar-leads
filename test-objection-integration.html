@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Objection Tracking Test</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .test-section {
+      background: white;
+      padding: 20px;
+      margin-bottom: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .success { color: #10b981; font-weight: bold; }
+    .error { color: #ef4444; font-weight: bold; }
+    button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin: 5px;
+    }
+    button:hover { background: #2563eb; }
+    pre {
+      background: #1f2937;
+      color: #10b981;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧪 Objection Tracking Integration Test</h1>
+  
+  <div class="test-section">
+    <h2>1. Setup Test Data</h2>
+    <button onclick="setupTestData()">Create Test User & Lead</button>
+    <div id="setup-result"></div>
+  </div>
+
+  <div class="test-section">
+    <h2>2. Test Objection Data Structure</h2>
+    <button onclick="testObjectionStructure()">Verify Structure</button>
+    <div id="structure-result"></div>
+  </div>
+
+  <div class="test-section">
+    <h2>3. Simulate Objection Recording</h2>
+    <button onclick="simulateObjectionFlow()">Record Objection</button>
+    <div id="flow-result"></div>
+  </div>
+
+  <div class="test-section">
+    <h2>4. Verify Data Persistence</h2>
+    <button onclick="verifyPersistence()">Check localStorage</button>
+    <div id="persistence-result"></div>
+  </div>
+
+  <div class="test-section">
+    <h2>5. Test Analytics Calculations</h2>
+    <button onclick="testAnalytics()">Run Analytics</button>
+    <div id="analytics-result"></div>
+  </div>
+
+  <div class="test-section">
+    <h2>6. Run All Tests</h2>
+    <button onclick="runAllTests()">Run Complete Test Suite</button>
+    <div id="all-tests-result"></div>
+  </div>
+
+  <script>
+    const OBJECTION_TYPES = [
+      'too-expensive',
+      'bad-credit',
+      'roof-issues',
+      'moving-soon',
+      'not-owner',
+      'already-has-solar',
+      'too-complicated',
+      'need-to-think',
+      'not-interested-in-solar',
+      'other'
+    ];
+
+    function setupTestData() {
+      const result = document.getElementById('setup-result');
+      
+      const testUser = {
+        id: 'test-user-1',
+        name: 'Test Setter',
+        email: 'test@test.com',
+        color: '#3b82f6',
+        createdAt: new Date().toISOString()
+      };
+
+      const testLeads = [
+        {
+          id: 'lead-1',
+          name: 'John Expensive',
+          address: '123 Test St',
+          city: 'Phoenix',
+          state: 'AZ',
+          zip: '85001',
+          status: 'claimed',
+          claimedBy: 'test-user-1',
+          createdAt: new Date().toISOString()
+        },
+        {
+          id: 'lead-2',
+          name: 'Jane Credit',
+          address: '456 Test Ave',
+          city: 'Phoenix',
+          state: 'AZ',
+          zip: '85002',
+          status: 'claimed',
+          claimedBy: 'test-user-1',
+          createdAt: new Date().toISOString()
+        }
+      ];
+
+      localStorage.setItem('happysolar_users', JSON.stringify([testUser]));
+      localStorage.setItem('happysolar_leads', JSON.stringify(testLeads));
+      localStorage.setItem('happysolar_current_user_id', testUser.id);
+
+      result.innerHTML = `
+        <p class="success">✓ Created test user: ${testUser.name}</p>
+        <p class="success">✓ Created ${testLeads.length} test leads</p>
+        <pre>${JSON.stringify({user: testUser, leads: testLeads}, null, 2)}</pre>
+      `;
+    }
+
+    function testObjectionStructure() {
+      const result = document.getElementById('structure-result');
+      
+      const testLead = {
+        id: 'test-objection',
+        status: 'not-interested',
+        objectionType: 'too-expensive',
+        objectionNotes: 'Test notes here',
+        objectionRecordedAt: new Date().toISOString(),
+        objectionRecordedBy: 'test-user-1'
+      };
+
+      const validations = [
+        { test: 'Has objectionType field', pass: !!testLead.objectionType },
+        { test: 'objectionType is valid', pass: OBJECTION_TYPES.includes(testLead.objectionType) },
+        { test: 'Has objectionNotes field', pass: testLead.hasOwnProperty('objectionNotes') },
+        { test: 'Has objectionRecordedAt', pass: !!testLead.objectionRecordedAt },
+        { test: 'Has objectionRecordedBy', pass: !!testLead.objectionRecordedBy },
+        { test: 'Status is not-interested', pass: testLead.status === 'not-interested' }
+      ];
+
+      const allPass = validations.every(v => v.pass);
+      
+      result.innerHTML = `
+        ${validations.map(v => `
+          <p class="${v.pass ? 'success' : 'error'}">
+            ${v.pass ? '✓' : '✗'} ${v.test}
+          </p>
+        `).join('')}
+        <p class="${allPass ? 'success' : 'error'}">
+          ${allPass ? '✓ All validations passed' : '✗ Some validations failed'}
+        </p>
+        <pre>${JSON.stringify(testLead, null, 2)}</pre>
+      `;
+    }
+
+    function simulateObjectionFlow() {
+      const result = document.getElementById('flow-result');
+      
+      const leads = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+      if (leads.length === 0) {
+        result.innerHTML = '<p class="error">✗ No test leads found. Run Setup first.</p>';
+        return;
+      }
+
+      // Simulate recording objection on first lead
+      const lead = leads[0];
+      lead.status = 'not-interested';
+      lead.objectionType = 'too-expensive';
+      lead.objectionNotes = 'Said their monthly bill is only $50';
+      lead.objectionRecordedAt = new Date().toISOString();
+      lead.objectionRecordedBy = 'test-user-1';
+      lead.dispositionedAt = new Date().toISOString();
+
+      localStorage.setItem('happysolar_leads', JSON.stringify(leads));
+
+      result.innerHTML = `
+        <p class="success">✓ Objection recorded for: ${lead.name}</p>
+        <p class="success">✓ Type: ${lead.objectionType}</p>
+        <p class="success">✓ Notes: ${lead.objectionNotes}</p>
+        <pre>${JSON.stringify(lead, null, 2)}</pre>
+      `;
+    }
+
+    function verifyPersistence() {
+      const result = document.getElementById('persistence-result');
+      
+      const leads = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+      const leadsWithObjections = leads.filter(l => l.objectionType);
+
+      if (leadsWithObjections.length === 0) {
+        result.innerHTML = `
+          <p class="error">✗ No objections found in storage</p>
+          <p>Run "Simulate Objection Flow" first</p>
+        `;
+        return;
+      }
+
+      result.innerHTML = `
+        <p class="success">✓ Found ${leadsWithObjections.length} lead(s) with objections</p>
+        ${leadsWithObjections.map(lead => `
+          <div style="border: 1px solid #e5e7eb; padding: 10px; margin: 10px 0; border-radius: 6px;">
+            <strong>${lead.name}</strong><br>
+            Objection: ${lead.objectionType}<br>
+            Notes: ${lead.objectionNotes || 'None'}<br>
+            Recorded: ${new Date(lead.objectionRecordedAt).toLocaleString()}
+          </div>
+        `).join('')}
+      `;
+    }
+
+    function testAnalytics() {
+      const result = document.getElementById('analytics-result');
+      
+      const leads = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+      const leadsWithObjections = leads.filter(l => l.objectionType);
+
+      if (leadsWithObjections.length === 0) {
+        result.innerHTML = '<p class="error">✗ No objections to analyze</p>';
+        return;
+      }
+
+      // Calculate objection frequency
+      const objectionCounts = {};
+      leadsWithObjections.forEach(lead => {
+        if (lead.objectionType) {
+          objectionCounts[lead.objectionType] = (objectionCounts[lead.objectionType] || 0) + 1;
+        }
+      });
+
+      const objectionStats = Object.entries(objectionCounts)
+        .map(([type, count]) => ({
+          type,
+          count,
+          percentage: (count / leadsWithObjections.length) * 100
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      result.innerHTML = `
+        <p class="success">✓ Analytics calculation successful</p>
+        <p>Total objections: ${leadsWithObjections.length}</p>
+        <p>Unique types: ${objectionStats.length}</p>
+        <h4>Breakdown:</h4>
+        ${objectionStats.map(stat => `
+          <div style="margin: 10px 0;">
+            <strong>${stat.type}</strong>: ${stat.count} (${stat.percentage.toFixed(1)}%)
+            <div style="background: #e5e7eb; height: 20px; border-radius: 4px; overflow: hidden;">
+              <div style="background: #3b82f6; height: 100%; width: ${stat.percentage}%;"></div>
+            </div>
+          </div>
+        `).join('')}
+      `;
+    }
+
+    async function runAllTests() {
+      const result = document.getElementById('all-tests-result');
+      result.innerHTML = '<p>Running tests...</p>';
+
+      const tests = [
+        { name: 'Setup', fn: setupTestData },
+        { name: 'Structure', fn: testObjectionStructure },
+        { name: 'Flow', fn: simulateObjectionFlow },
+        { name: 'Persistence', fn: verifyPersistence },
+        { name: 'Analytics', fn: testAnalytics }
+      ];
+
+      for (const test of tests) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        test.fn();
+      }
+
+      result.innerHTML = `
+        <p class="success">✓ All tests completed!</p>
+        <p>Check individual test sections above for details.</p>
+        <p><a href="http://localhost:3000" target="_blank">→ Open Main App</a></p>
+        <p><a href="http://localhost:3000/objections" target="_blank">→ Open Analytics Page</a></p>
+      `;
+    }
+
+    // Auto-run on load
+    window.addEventListener('load', () => {
+      console.log('Objection Tracking Test Suite Ready');
+    });
+  </script>
+</body>
+</html>

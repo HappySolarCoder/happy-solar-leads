@@ -84,6 +84,18 @@ export async function deleteLeadAsync(id: string): Promise<void> {
   }
 }
 
+export function deleteLead(id: string): void {
+  // Sync version for backwards compatibility
+  const leads = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+  const filtered = leads.filter((l: Lead) => l.id !== id);
+  localStorage.setItem('happysolar_leads', JSON.stringify(filtered));
+  
+  // Update cache
+  if (leadsCache) {
+    leadsCache = leadsCache.filter(l => l.id !== id);
+  }
+}
+
 // ============================================
 // USERS
 // ============================================
