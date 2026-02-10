@@ -12,6 +12,7 @@ interface ObjectionTrackerProps {
 }
 
 export default function ObjectionTracker({ lead, currentUserId, onSave, onClose }: ObjectionTrackerProps) {
+  console.log('[DEBUG] ObjectionTracker component mounted/rendered');
   const [selectedType, setSelectedType] = useState<ObjectionType | ''>(lead.objectionType || '');
   const [notes, setNotes] = useState(lead.objectionNotes || '');
 

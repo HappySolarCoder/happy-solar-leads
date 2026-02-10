@@ -204,3 +204,8 @@
 [2026-02-09T00:32:32.967Z] [INFO] [UploadModal] Adding lead | {"name":"John Lee","address":"171 Vinal Ave","score":82}
 [2026-02-09T00:32:32.971Z] [INFO] [UploadModal] Adding lead | {"name":"Lizette Porter","address":"2181 S Clinton Ave","score":44}
 [2026-02-09T00:32:32.979Z] [INFO] [UploadModal] Adding lead | {"name":"Jamie Aldrich","address":"283 Gallant Fox Lane","score":99}
+[2026-02-10T18:33:07.241Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":2}
+[2026-02-10T18:33:07.255Z] [INFO] [UploadModal] Final results | {"good":0,"poor":0,"geocodeFailed":2}
+[2026-02-10T18:33:07.267Z] [INFO] [UploadModal] Geocode complete | {"success":0,"failed":2}
+[2026-02-10T18:33:07.279Z] [INFO] [UploadModal] Geocode progress | {"current":2,"total":2}
+[2026-02-10T18:33:07.290Z] [INFO] [UploadModal] Saving leads | {"count":0}

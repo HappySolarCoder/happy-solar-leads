@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Upload Flow</title>
+</head>
+<body>
+  <h1>Testing Upload...</h1>
+  <script>
+    // Create a fake user in localStorage and redirect to main app
+    const user = {
+      id: 'test-user-123',
+      name: 'Test User',
+      email: 'test@test.com',
+      color: '#3b82f6',
+      homeAddress: '123 Main St, Phoenix, AZ 85001',
+      homeCoords: { lat: 33.4484, lng: -112.0740 },
+      role: 'setter',
+      createdAt: new Date().toISOString()
+    };
+    
+    localStorage.setItem('happysolar_users', JSON.stringify([user]));
+    localStorage.setItem('happysolar_current_user_id', user.id);
+    
+    // Redirect to main page
+    window.location.href = '/';
+  </script>
+</body>
+</html>

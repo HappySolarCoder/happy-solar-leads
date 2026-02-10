@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Upload Test</title>
+  <style>
+    body { font-family: system-ui; padding: 20px; max-width: 800px; margin: 0 auto; }
+    button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    #output { margin-top: 20px; padding: 15px; background: #f5f5f5; border-radius: 8px; white-space: pre-wrap; }
+    .success { color: green; font-weight: bold; }
+    .error { color: red; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Upload Flow Test</h1>
+  <button onclick="testUpload()">Test Upload (2 Leads)</button>
+  <div id="output">Click the button to test uploading leads...</div>
+  
+  <script>
+    async function testUpload() {
+      const output = document.getElementById('output');
+      output.innerHTML = '🧪 Starting upload test...\n\n';
+      
+      // Test data
+      const testLeads = [
+        { name: 'Google HQ', address: '1600 Amphitheatre Parkway', city: 'Mountain View', state: 'CA', zip: '94043' },
+        { name: 'Apple Park', address: '1 Apple Park Way', city: 'Cupertino', state: 'CA', zip: '95014' }
+      ];
+      
+      // Geocode
+      output.innerHTML += '📍 Geocoding...\n';
+      const geocoded = [];
+      
+      for (const lead of testLeads) {
+        const addr = `${lead.address}, ${lead.city}, ${lead.state} ${lead.zip}`;
+        try {
+          const res = await fetch('/api/geocode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address: addr })
+          });
+          const data = await res.json();
+          if (data.lat && data.lng) {
+            geocoded.push({ ...lead, lat: data.lat, lng: data.lng });
+            output.innerHTML += `✅ ${lead.name}: ${data.lat}, ${data.lng}\n`;
+          } else {
+            output.innerHTML += `❌ ${lead.name}: Failed\n`;
+          }
+        } catch (err) {
+          output.innerHTML += `❌ ${lead.name}: ${err.message}\n`;
+        }
+      }
+      
+      // Solar data
+      output.innerHTML += '\n☀️ Fetching solar data...\n';
+      const withSolar = [];
+      
+      for (const lead of geocoded) {
+        try {
+          const res = await fetch('/api/solar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat: lead.lat, lng: lead.lng })
+          });
+          const data = await res.json();
+          const hours = data.solarPotential?.maxSunshineHoursPerYear || 0;
+          const panels = data.solarPotential?.maxArrayPanelsCount || 0;
+          
+          withSolar.push({
+            ...lead,
+            solarSunshineHours: hours,
+            solarMaxPanels: panels,
+            id: `lead-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            status: 'unclaimed',
+            createdAt: new Date()
+          });
+          
+          output.innerHTML += `✅ ${lead.name}: ${hours.toFixed(0)} hrs/yr, ${panels} panels\n`;
+        } catch (err) {
+          output.innerHTML += `⚠️  ${lead.name}: Solar failed (${err.message})\n`;
+          withSolar.push({ ...lead, id: `lead-${Date.now()}`, status: 'unclaimed', createdAt: new Date() });
+        }
+      }
+      
+      // Save to localStorage
+      output.innerHTML += '\n💾 Saving to localStorage...\n';
+      try {
+        const existing = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+        const allLeads = [...existing, ...withSolar];
+        localStorage.setItem('happysolar_leads', JSON.stringify(allLeads));
+        output.innerHTML += `✅ Saved ${withSolar.length} new leads (total: ${allLeads.length})\n`;
+      } catch (err) {
+        output.innerHTML += `❌ Save failed: ${err.message}\n`;
+      }
+      
+      // Summary
+      output.innerHTML += `\n<span class="success">✅ UPLOAD COMPLETE!</span>\n`;
+      output.innerHTML += `   ${withSolar.length} leads added to map\n`;
+      output.innerHTML += `\nReload the main app to see them on the map.`;
+    }
+  </script>
+</body>
+</html>
