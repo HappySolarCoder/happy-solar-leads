@@ -209,3 +209,16 @@
 [2026-02-10T18:33:07.267Z] [INFO] [UploadModal] Geocode complete | {"success":0,"failed":2}
 [2026-02-10T18:33:07.279Z] [INFO] [UploadModal] Geocode progress | {"current":2,"total":2}
 [2026-02-10T18:33:07.290Z] [INFO] [UploadModal] Saving leads | {"count":0}
+[2026-02-10T21:36:09.165Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":87}
+[2026-02-10T21:36:09.716Z] [INFO] [UploadModal] Geocode progress | {"current":10,"total":87}
+[2026-02-10T21:36:10.354Z] [INFO] [UploadModal] Geocode progress | {"current":20,"total":87}
+[2026-02-10T21:36:10.912Z] [INFO] [UploadModal] Geocode progress | {"current":30,"total":87}
+[2026-02-10T21:36:11.471Z] [INFO] [UploadModal] Geocode progress | {"current":40,"total":87}
+[2026-02-10T21:36:12.026Z] [INFO] [UploadModal] Geocode progress | {"current":50,"total":87}
+[2026-02-10T21:36:12.553Z] [INFO] [UploadModal] Geocode progress | {"current":60,"total":87}
+[2026-02-10T21:36:13.059Z] [INFO] [UploadModal] Geocode progress | {"current":70,"total":87}
+[2026-02-10T21:36:13.608Z] [INFO] [UploadModal] Geocode progress | {"current":80,"total":87}
+[2026-02-10T21:36:14.122Z] [INFO] [UploadModal] Geocode progress | {"current":87,"total":87}
+[2026-02-10T21:36:14.140Z] [INFO] [UploadModal] Geocode complete | {"success":87,"failed":0}
+[2026-02-10T21:36:33.915Z] [INFO] [UploadModal] Final results | {"good":23,"poor":64,"geocodeFailed":0}
+[2026-02-10T21:36:33.927Z] [INFO] [UploadModal] Saving leads | {"count":23}

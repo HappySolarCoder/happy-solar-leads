@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { AlertCircle, TrendingUp, Users, MapPin, ArrowLeft, BarChart3 } from 'lucide-react';
 import Link from 'next/link';
 import { Lead, ObjectionType, OBJECTION_LABELS, OBJECTION_COLORS, User } from '@/app/types';
-import { getLeads, getUsers } from '@/app/utils/storage';
+import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 
 export default function ObjectionsAnalytics() {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -12,8 +12,13 @@ export default function ObjectionsAnalytics() {
   const [selectedSetter, setSelectedSetter] = useState<string>('all');
 
   useEffect(() => {
-    setLeads(getLeads());
-    setUsers(getUsers());
+    async function loadData() {
+      const loadedLeads = await getLeadsAsync();
+      setLeads(loadedLeads);
+      const loadedUsers = await getUsersAsync();
+      setUsers(loadedUsers);
+    }
+    loadData();
   }, []);
 
   // Filter leads with objections

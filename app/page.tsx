@@ -9,8 +9,8 @@ import UserOnboarding from '@/app/components/UserOnboarding';
 import LeadDetail from '@/app/components/LeadDetail';
 import AutoAssignPanel from '@/app/components/AutoAssignPanel';
 import UserSwitcher from '@/app/components/UserSwitcher';
-import { getLeads, getCurrentUser, getUsers, saveCurrentUser } from '@/app/utils/storage';
-import { Lead, User, STATUS_LABELS, STATUS_COLORS } from '@/app/types';
+import { getLeadsAsync, getCurrentUserAsync, getUsersAsync, saveCurrentUserAsync } from '@/app/utils/storage';
+import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS } from '@/app/types';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -37,20 +37,24 @@ export default function Home() {
   const [setterFilter, setSetterFilter] = useState<string>('all');
   // Load data on mount
   useEffect(() => {
-    const loadedLeads = getLeads();
-    setLeads(loadedLeads);
+    async function loadData() {
+      const loadedLeads = await getLeadsAsync();
+      setLeads(loadedLeads);
 
-    const user = getCurrentUser();
-    if (user) {
-      setCurrentUser(user);
-    } else {
-      setShowUserOnboarding(true);
+      const user = await getCurrentUserAsync();
+      if (user) {
+        setCurrentUser(user);
+      } else {
+        setShowUserOnboarding(true);
+      }
     }
+    loadData();
   }, []);
 
   // Refresh leads when they change
-  const refreshLeads = useCallback(() => {
-    setLeads(getLeads());
+  const refreshLeads = useCallback(async () => {
+    const loadedLeads = await getLeadsAsync();
+    setLeads(loadedLeads);
   }, []);
 
   // Handle user completion
@@ -66,11 +70,11 @@ export default function Home() {
   };
 
   // Handle upload complete
-  const handleUploadComplete = (count: number) => {
+  const handleUploadComplete = async (count: number) => {
     setShowUploadModal(false);
-    // Refresh data from localStorage
-    setLeads(getLeads());
-    setUsers(getUsers());
+    // Refresh data from Firestore
+    const loadedLeads = await getLeadsAsync();
+    setLeads(loadedLeads);
   };
 
   // Clear all leads (for testing)
@@ -86,7 +90,11 @@ export default function Home() {
   // Get users for route builder
   const [users, setUsers] = useState<User[]>([]);
   useEffect(() => {
-    setUsers(getUsers());
+    async function loadUsers() {
+      const loadedUsers = await getUsersAsync();
+      setUsers(loadedUsers);
+    }
+    loadUsers();
   }, []);
 
   // Filter leads for main display (exclude poor solar leads)
@@ -99,12 +107,11 @@ export default function Home() {
     : goodLeads.filter(l => l.claimedBy === setterFilter);
 
   // Delete a poor lead
-  const handleDeletePoorLead = (leadId: string) => {
+  const handleDeletePoorLead = async (leadId: string) => {
     if (confirm('Delete this poor solar lead?')) {
-      const leads = getLeads();
-      const filtered = leads.filter(l => l.id !== leadId);
-      localStorage.setItem('happysolar_leads', JSON.stringify(filtered));
-      refreshLeads();
+      const { deleteLeadAsync } = await import('@/app/utils/storage');
+      await deleteLeadAsync(leadId);
+      await refreshLeads();
     }
   };
 
@@ -249,19 +256,20 @@ export default function Home() {
           {/* Unclaim All (for testing) */}
           {goodLeads.some(l => l.claimedBy) && (
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (confirm('Unclaim all leads? This will make them available for auto-assignment.')) {
-                  const allLeads = getLeads();
+                  const allLeads = await getLeadsAsync();
+                  const { saveLeadsAsync } = await import('@/app/utils/storage');
                   const reset = allLeads.map(l => ({
                     ...l,
                     claimedBy: undefined,
                     claimedAt: undefined,
                     assignedTo: undefined,
                     assignedAt: undefined,
-                    status: 'unclaimed',
+                    status: 'unclaimed' as LeadStatus,
                   }));
-                  localStorage.setItem('happysolar_leads', JSON.stringify(reset));
-                  refreshLeads();
+                  await saveLeadsAsync(reset);
+                  await refreshLeads();
                 }
               }}
               className="px-3 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-medium text-sm transition-colors"

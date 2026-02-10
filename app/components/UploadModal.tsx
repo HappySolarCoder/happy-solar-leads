@@ -5,7 +5,7 @@ import { Upload, File, X, MapPin, CheckCircle, AlertCircle } from 'lucide-react'
 import { CSVRow, Lead } from '@/app/types';
 import { parseCSV, validateCSV } from '@/app/utils/csv';
 import { geocodeBatch } from '@/app/utils/geocode';
-import { addLead, getLeads, generateId } from '@/app/utils/storage';
+import { saveLeadAsync, getLeadsAsync, generateId } from '@/app/utils/storage';
 
 // Client-side logger that sends to server
 function logToFile(level: string, component: string, message: string, data: any = {}) {
@@ -90,9 +90,8 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       const newLeads: Lead[] = [];
       const skippedDuplicates: string[] = [];
       
-      // Load existing leads to check for duplicates - read from localStorage directly
-      const existingLeadsJson = localStorage.getItem('happysolar_leads');
-      const existingLeads: Lead[] = existingLeadsJson ? JSON.parse(existingLeadsJson) : [];
+      // Load existing leads from Firestore to check for duplicates
+      const existingLeads = await getLeadsAsync();
       const existingAddresses = new Set(existingLeads.map(l => 
         `${l.address.toLowerCase().trim()}, ${l.city.toLowerCase().trim()}, ${l.state.toLowerCase().trim()} ${l.zip}`
       ));
@@ -213,14 +212,12 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
         geocodeFailed: failedCount 
       });
 
-      // Save all good leads
-      logToFile('INFO', 'UploadModal', 'Saving leads', { count: newLeads.length });
+      // Save all good leads to Firestore
+      logToFile('INFO', 'UploadModal', 'Saving leads to Firestore', { count: newLeads.length });
       
-      // Save to localStorage directly - read existing from localStorage, not cache
-      const existingLeadsData = localStorage.getItem('happysolar_leads');
-      const existingLeadsToSave: Lead[] = existingLeadsData ? JSON.parse(existingLeadsData) : [];
-      const allLeads = [...existingLeadsToSave, ...newLeads];
-      localStorage.setItem('happysolar_leads', JSON.stringify(allLeads));
+      for (const lead of newLeads) {
+        await saveLeadAsync(lead);
+      }
 
       // Show failed info
       const failedAddresses = [

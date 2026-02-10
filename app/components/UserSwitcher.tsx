@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Users, User, MapPin, ChevronDown, X, RefreshCw } from 'lucide-react';
-import { getUsers, getCurrentUser, saveCurrentUser, saveUsers } from '@/app/utils/storage';
+import { getUsersAsync, getCurrentUserAsync, saveCurrentUserAsync, saveUserAsync } from '@/app/utils/storage';
 import { User as UserType } from '@/app/types';
 
 interface UserSwitcherProps {
@@ -20,13 +20,17 @@ export default function UserSwitcher({ onUserChange }: UserSwitcherProps) {
   const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
-    const user = getCurrentUser();
-    setCurrentUser(user);
-    setAllUsers(getUsers());
+    async function loadData() {
+      const user = await getCurrentUserAsync();
+      setCurrentUser(user);
+      const users = await getUsersAsync();
+      setAllUsers(users);
+    }
+    loadData();
   }, []);
 
-  const handleSwitchUser = (user: UserType) => {
-    saveCurrentUser(user);
+  const handleSwitchUser = async (user: UserType) => {
+    await saveCurrentUserAsync(user);
     setCurrentUser(user);
     setIsOpen(false);
     onUserChange?.(user);
@@ -85,14 +89,14 @@ export default function UserSwitcher({ onUserChange }: UserSwitcherProps) {
       homeLng: newUser.homeLng
     });
     
-    const users = getUsers();
-    users.push(newUser);
-    saveUsers(users);
+    // Save new user to Firestore
+    await saveUserAsync(newUser);
     
+    const users = await getUsersAsync();
     setAllUsers(users);
     
     // Switch to new user
-    saveCurrentUser(newUser);
+    await saveCurrentUserAsync(newUser);
     setCurrentUser(newUser);
     
     setNewUserName('');

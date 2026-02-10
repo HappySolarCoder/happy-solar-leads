@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { User, Check, Users, MapPin, Loader2 } from 'lucide-react';
 import { DEFAULT_COLORS } from '@/app/types';
-import { getUsers, saveUsers, saveCurrentUser, generateId } from '@/app/utils/storage';
+import { getUsersAsync, saveUserAsync, saveCurrentUserAsync, generateId } from '@/app/utils/storage';
 import type { User as UserType } from '@/app/types';
 
 interface UserOnboardingProps {
@@ -89,12 +89,11 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
       isActive: true,
     };
 
-    // Save to users list
-    const existingUsers = getUsers();
-    saveUsers([...existingUsers, newUser]);
+    // Save to Firestore
+    await saveUserAsync(newUser);
     
     // Set as current user
-    saveCurrentUser(newUser);
+    await saveCurrentUserAsync(newUser);
     
     onComplete(newUser);
   };

@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Wand2, RefreshCw, AlertTriangle, Check, Users, MapPin, Loader2 } from 'lucide-react';
-import { getLeads, saveLeads, getUsers, saveUsers } from '@/app/utils/storage';
+import { getLeadsAsync, saveLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { Lead, User } from '@/app/types';
 import { AutoAssignResponse } from '@/app/api/autoassign/route';
 
@@ -16,19 +16,30 @@ export default function AutoAssignPanel({ onComplete }: AutoAssignPanelProps) {
   const [preview, setPreview] = useState<AutoAssignResponse | null>(null);
   const [result, setResult] = useState<AutoAssignResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
   const [options, setOptions] = useState({
     maxDistance: 50,
     reassignStale: false,
     staleDays: 5,
   });
 
+  useEffect(() => {
+    async function loadUsers() {
+      const loadedUsers = await getUsersAsync();
+      setUsers(loadedUsers);
+    }
+    if (isOpen) {
+      loadUsers();
+    }
+  }, [isOpen]);
+
   const runAutoAssign = async (dryRun: boolean = false) => {
     setIsRunning(true);
     setError(null);
     
     try {
-      const leads = getLeads();
-      const users = getUsers();
+      const leads = await getLeadsAsync();
+      const users = await getUsersAsync();
 
       const response = await fetch('/api/autoassign', {
         method: 'POST',
@@ -52,12 +63,9 @@ export default function AutoAssignPanel({ onComplete }: AutoAssignPanelProps) {
       if (dryRun) {
         setPreview(data);
       } else {
-        // Save updated data
+        // Save updated data to Firestore
         if (data.leads) {
-          saveLeads(data.leads);
-        }
-        if (data.users) {
-          saveUsers(data.users);
+          await saveLeadsAsync(data.leads);
         }
         setResult(data);
         onComplete?.();
@@ -69,7 +77,6 @@ export default function AutoAssignPanel({ onComplete }: AutoAssignPanelProps) {
     }
   };
 
-  const users = typeof window !== 'undefined' ? getUsers() : [];
   const eligibleUsers = users.filter(u => u.homeLat && u.homeLng && u.isActive !== false);
 
   if (!isOpen) {
