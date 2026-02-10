@@ -49,9 +49,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     
     // If marking as not-interested, show objection tracker first
     if (newStatus === 'not-interested') {
-      console.log('[DEBUG] Not Interested clicked, showing objection tracker');
       setShowObjectionTracker(true);
-      console.log('[DEBUG] showObjectionTracker set to true');
       return;
     }
     
@@ -475,15 +473,12 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
     {/* Objection Tracker Modal - Rendered OUTSIDE detail panel to avoid clipping */}
     {showObjectionTracker && currentUser && (
-      <>
-        {console.log('[DEBUG] Rendering ObjectionTracker modal')}
-        <ObjectionTracker
-          lead={lead}
-          currentUserId={currentUser.id}
-          onSave={handleObjectionSave}
-          onClose={() => setShowObjectionTracker(false)}
-        />
-      </>
+      <ObjectionTracker
+        lead={lead}
+        currentUserId={currentUser.id}
+        onSave={handleObjectionSave}
+        onClose={() => setShowObjectionTracker(false)}
+      />
     )}
     </>
   );
