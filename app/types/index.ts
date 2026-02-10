@@ -59,7 +59,24 @@ export interface Lead {
   assignedAt?: Date;          // When auto-assigned
   autoAssigned?: boolean;     // Was this lead auto-assigned?
   lastAssignedTo?: string;    // Previous assignee (for stale reassignment)
+  // Objection tracking
+  objectionType?: ObjectionType;
+  objectionNotes?: string;
+  objectionRecordedAt?: Date;
+  objectionRecordedBy?: string; // User ID who recorded the objection
 }
+
+export type ObjectionType = 
+  | 'too-expensive'
+  | 'bad-credit'
+  | 'roof-issues'
+  | 'moving-soon'
+  | 'not-owner'
+  | 'already-has-solar'
+  | 'too-complicated'
+  | 'need-to-think'
+  | 'not-interested-in-solar'
+  | 'other';
 
 export interface CSVRow {
   name: string;
@@ -107,3 +124,29 @@ export const DEFAULT_COLORS = [
   '#d946ef', // Fuchsia
   '#ec4899', // Pink
 ];
+
+export const OBJECTION_LABELS: Record<ObjectionType, string> = {
+  'too-expensive': 'Too Expensive',
+  'bad-credit': 'Bad Credit / Financing Concerns',
+  'roof-issues': 'Roof Condition Issues',
+  'moving-soon': 'Moving Soon',
+  'not-owner': 'Not the Homeowner',
+  'already-has-solar': 'Already Has Solar',
+  'too-complicated': 'Too Complicated / Confusing',
+  'need-to-think': 'Need to Think About It',
+  'not-interested-in-solar': 'Not Interested in Solar',
+  'other': 'Other / Custom Objection',
+};
+
+export const OBJECTION_COLORS: Record<ObjectionType, string> = {
+  'too-expensive': '#ef4444',           // Red
+  'bad-credit': '#f97316',              // Orange
+  'roof-issues': '#f59e0b',             // Amber
+  'moving-soon': '#a855f7',             // Purple
+  'not-owner': '#ec4899',               // Pink
+  'already-has-solar': '#6b7280',       // Gray
+  'too-complicated': '#06b6d4',         // Cyan
+  'need-to-think': '#84cc16',           // Lime
+  'not-interested-in-solar': '#ef4444', // Red
+  'other': '#9ca3af',                   // Gray-400
+};

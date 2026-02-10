@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Lead, LeadStatus, STATUS_LABELS, STATUS_COLORS, User } from '@/app/types';
+import { Lead, LeadStatus, STATUS_LABELS, STATUS_COLORS, User, ObjectionType } from '@/app/types';
 import { 
   X, MapPin, Phone, Mail, Clock, User as UserIcon, 
   CheckCircle, Circle, AlertCircle, Calendar, DollarSign 
 } from 'lucide-react';
 import { updateLeadStatus, claimLead, unclaimLead } from '@/app/utils/storage';
+import ObjectionTracker from './ObjectionTracker';
 
 interface LeadDetailProps {
   lead: Lead;
@@ -37,6 +38,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
   const [showAllStatuses, setShowAllStatuses] = useState(false);
+  const [showObjectionTracker, setShowObjectionTracker] = useState(false);
 
   const isClaimedByMe = currentUser && lead.claimedBy === currentUser.id;
   const canClaim = !lead.claimedBy || isClaimedByMe;
@@ -44,6 +46,12 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
   const handleStatusChange = async (newStatus: LeadStatus) => {
     if (!currentUser) return;
+    
+    // If marking as not-interested, show objection tracker first
+    if (newStatus === 'not-interested') {
+      setShowObjectionTracker(true);
+      return;
+    }
     
     setIsUpdating(true);
     
@@ -60,6 +68,38 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         updateLeadStatus(lead.id, newStatus, currentUser.id);
       }
       
+      onUpdate();
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleObjectionSave = async (objectionType: ObjectionType, objectionNotes: string) => {
+    if (!currentUser) return;
+    
+    setIsUpdating(true);
+    
+    try {
+      // Update lead with objection data
+      const leads = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+      const updatedLeads = leads.map((l: Lead) => {
+        if (l.id === lead.id) {
+          return {
+            ...l,
+            status: 'not-interested' as LeadStatus,
+            objectionType,
+            objectionNotes,
+            objectionRecordedAt: new Date().toISOString(),
+            objectionRecordedBy: currentUser.id,
+            claimedBy: currentUser.id,
+            dispositionedAt: new Date().toISOString(),
+          };
+        }
+        return l;
+      });
+      localStorage.setItem('happysolar_leads', JSON.stringify(updatedLeads));
+      
+      setShowObjectionTracker(false);
       onUpdate();
     } finally {
       setIsUpdating(false);
@@ -428,6 +468,16 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           </button>
         </div>
       </div>
+
+      {/* Objection Tracker Modal */}
+      {showObjectionTracker && currentUser && (
+        <ObjectionTracker
+          lead={lead}
+          currentUserId={currentUser.id}
+          onSave={handleObjectionSave}
+          onClose={() => setShowObjectionTracker(false)}
+        />
+      )}
     </div>
   );
 }
