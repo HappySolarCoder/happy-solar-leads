@@ -96,20 +96,24 @@ export default function DispositionsPage() {
 
     const id = editingDispo?.id || generateDispositionId(formData.name);
     
-    const disposition: Disposition = {
+    const disposition: any = {
       id,
       name: formData.name,
       color: formData.color,
       icon: formData.icon,
       countsAsDoorKnock: formData.countsAsDoorKnock,
-      specialBehavior: formData.specialBehavior === 'none' ? undefined : formData.specialBehavior,
       order: editingDispo?.order ?? dispositions.length,
       isDefault: editingDispo?.isDefault ?? false,
       createdAt: editingDispo?.createdAt ?? new Date(),
       updatedAt: new Date(),
     };
+    
+    // Only add specialBehavior if it's not 'none'
+    if (formData.specialBehavior !== 'none') {
+      disposition.specialBehavior = formData.specialBehavior;
+    }
 
-    await saveDispositionAsync(disposition);
+    await saveDispositionAsync(disposition as Disposition);
     
     // Reload
     const dispos = await getDispositionsAsync();
