@@ -475,9 +475,9 @@ function createCustomIcon(
     solid: '#f59e0b',
   };
   
-  // Use disposition color if available, otherwise fallback
-  const color = disposition?.color 
-    || (solarCategory ? solarColors[solarCategory] : undefined)
+  // PRIORITY: Solar category FIRST (shows lead quality), then disposition color, then fallback
+  const color = (solarCategory ? solarColors[solarCategory] : undefined)
+    || disposition?.color 
     || (STATUS_COLORS as Record<string, string>)[status] 
     || '#6b7280';
   
