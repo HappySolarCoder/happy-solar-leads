@@ -62,7 +62,9 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       const settings = settingsStr ? JSON.parse(settingsStr) : null;
 
       console.log('Settings loaded:', settings ? 'yes' : 'no');
+      console.log('Settings raw:', settingsStr);
       console.log('Webhook URL:', settings?.notificationWebhook ? 'present' : 'missing');
+      console.log('Full settings object:', settings);
 
       // 3. Send webhook notification FIRST (before opening dialer)
       if (settings?.notificationWebhook) {
@@ -103,23 +105,37 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
         console.log('Sending webhook to:', settings.notificationWebhook);
         console.log('Payload type:', settings.notificationType);
 
-        // Send webhook and WAIT for response
+        // Try sendBeacon first (works even when navigating away)
+        const payloadString = JSON.stringify(payload);
+        const blob = new Blob([payloadString], { type: 'application/json' });
+        
+        if (navigator.sendBeacon) {
+          console.log('Using sendBeacon (mobile-friendly)');
+          const sent = navigator.sendBeacon(settings.notificationWebhook, blob);
+          if (sent) {
+            console.log('✅ Webhook queued via sendBeacon');
+          } else {
+            console.warn('⚠️ sendBeacon returned false, trying fetch...');
+          }
+        }
+        
+        // Also try regular fetch as backup
         try {
           const response = await fetch(settings.notificationWebhook, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: payloadString,
+            keepalive: true, // Important for mobile - keeps request alive during navigation
           });
 
           if (response.ok) {
-            console.log('✅ Webhook sent successfully');
+            console.log('✅ Webhook sent successfully via fetch');
           } else {
             console.error('❌ Webhook failed:', response.status, response.statusText);
-            alert('Warning: Notification may not have been sent. Call anyway?');
           }
         } catch (err: any) {
           console.error('❌ Webhook error:', err);
-          alert(`Warning: Could not send notification (${err.message}). Call anyway?`);
+          // Don't alert on mobile - beacon might have worked
         }
       } else {
         console.warn('⚠️ No webhook configured - skipping notification');
