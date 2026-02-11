@@ -43,6 +43,20 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<'split' | 'map' | 'list'>('split');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [setterFilter, setSetterFilter] = useState<string>('all');
+  
+  // Mobile detection - redirect to mobile view
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const isSmallScreen = window.innerWidth < 768;
+      
+      // If mobile device AND not explicitly requesting desktop view
+      if ((isMobile || isSmallScreen) && !window.location.search.includes('desktop=true')) {
+        router.push('/mobile');
+      }
+    }
+  }, [router]);
+  
   // Load data on mount
   useEffect(() => {
     async function loadData() {
