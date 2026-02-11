@@ -447,10 +447,10 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               </div>
               
               <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                Geocoding Addresses
+                Processing Leads
               </h3>
               <p className="text-gray-500 mb-4">
-                Finding coordinates for {progress.total} addresses...
+                Geocoding {rows.length} addresses & fetching solar data...
               </p>
               
               <div className="w-full bg-gray-200 rounded-full h-2">
@@ -461,7 +461,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               </div>
               
               <p className="text-sm text-gray-400 mt-4">
-                {progress.current} of {progress.total}
+                {Math.round((progress.current / progress.total) * 100)}% complete
               </p>
             </div>
           )}
