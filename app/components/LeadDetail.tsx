@@ -279,16 +279,28 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             )}
           </div>
 
-          {/* Address */}
-          <div className="mb-4 p-4 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg">
+          {/* Address - Clickable for Google Maps Directions */}
+          <a
+            href={
+              lead.lat && lead.lng
+                ? `https://www.google.com/maps/dir/?api=1&destination=${lead.lat},${lead.lng}`
+                : `https://maps.google.com/?q=${encodeURIComponent(`${lead.address}, ${lead.city}, ${lead.state} ${lead.zip}`)}`
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block mb-4 p-4 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg hover:bg-[#FF5F5A]/5 hover:border-[#FF5F5A] transition-all group"
+          >
             <div className="flex items-start gap-3">
-              <MapPin className="w-5 h-5 text-[#718096] mt-0.5" />
+              <MapPin className="w-5 h-5 text-[#718096] group-hover:text-[#FF5F5A] mt-0.5 transition-colors" />
               <div className="flex-1">
-                <p className="font-medium text-[#2D3748]">{lead.address}</p>
+                <p className="font-medium text-[#2D3748] group-hover:text-[#FF5F5A] transition-colors">{lead.address}</p>
                 <p className="text-[#718096]">{lead.city}, {lead.state} {lead.zip}</p>
+                <p className="text-xs text-[#FF5F5A] mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  Tap to open in Google Maps →
+                </p>
               </div>
             </div>
-          </div>
+          </a>
 
           {/* Contact Info */}
           {(lead.phone || lead.email) && (
