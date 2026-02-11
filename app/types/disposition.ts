@@ -7,6 +7,7 @@ export interface Disposition {
   countsAsDoorKnock: boolean; // Track for metrics
   order: number; // Display order
   isDefault: boolean; // Can't be deleted
+  specialBehavior?: 'scheduling-manager' | 'none'; // Custom actions
   createdAt: Date;
   updatedAt: Date;
 }

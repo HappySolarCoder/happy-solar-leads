@@ -68,6 +68,7 @@ export default function DispositionsPage() {
     color: '#3B82F6',
     icon: 'circle',
     countsAsDoorKnock: true,
+    specialBehavior: 'none' as 'scheduling-manager' | 'none',
   });
 
   useEffect(() => {
@@ -99,6 +100,7 @@ export default function DispositionsPage() {
       color: formData.color,
       icon: formData.icon,
       countsAsDoorKnock: formData.countsAsDoorKnock,
+      specialBehavior: formData.specialBehavior === 'none' ? undefined : formData.specialBehavior,
       order: editingDispo?.order ?? dispositions.length,
       isDefault: editingDispo?.isDefault ?? false,
       createdAt: editingDispo?.createdAt ?? new Date(),
@@ -113,7 +115,7 @@ export default function DispositionsPage() {
     
     setShowCreateModal(false);
     setEditingDispo(null);
-    setFormData({ name: '', color: '#3B82F6', icon: 'circle', countsAsDoorKnock: true });
+    setFormData({ name: '', color: '#3B82F6', icon: 'circle', countsAsDoorKnock: true, specialBehavior: 'none' });
   };
 
   const handleEdit = (dispo: Disposition) => {
@@ -123,6 +125,7 @@ export default function DispositionsPage() {
       color: dispo.color,
       icon: dispo.icon,
       countsAsDoorKnock: dispo.countsAsDoorKnock,
+      specialBehavior: dispo.specialBehavior || 'none',
     });
     setShowCreateModal(true);
   };
@@ -172,7 +175,7 @@ export default function DispositionsPage() {
             <button
               onClick={() => {
                 setEditingDispo(null);
-                setFormData({ name: '', color: '#3B82F6', icon: 'circle', countsAsDoorKnock: true });
+                setFormData({ name: '', color: '#3B82F6', icon: 'circle', countsAsDoorKnock: true, specialBehavior: 'none' });
                 setShowCreateModal(true);
               }}
               className="flex items-center gap-2 px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-lg font-semibold transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg"
@@ -376,6 +379,27 @@ export default function DispositionsPage() {
                       <div className="text-sm text-[#718096]">Track this disposition in door knock metrics</div>
                     </div>
                   </label>
+                </div>
+
+                {/* Special Behavior */}
+                <div>
+                  <label className="block text-sm font-semibold text-[#2D3748] mb-2">
+                    Special Behavior (Optional)
+                  </label>
+                  <select
+                    value={formData.specialBehavior}
+                    onChange={(e) => setFormData({ ...formData, specialBehavior: e.target.value as any })}
+                    className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-3 focus:ring-[#FF5F5A]/10"
+                  >
+                    <option value="none">None (Standard disposition)</option>
+                    <option value="scheduling-manager">Scheduling Manager (Edit lead + call)</option>
+                  </select>
+                  {formData.specialBehavior === 'scheduling-manager' && (
+                    <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                      ℹ️ This will open lead editor with call button instead of standard disposition.
+                      Configure phone number and notifications in <button onClick={() => router.push('/admin/settings')} className="underline font-semibold">Settings</button>.
+                    </div>
+                  )}
                 </div>
               </div>
 

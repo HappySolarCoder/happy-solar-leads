@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { updateLeadStatus, claimLead, unclaimLead } from '@/app/utils/storage';
 import ObjectionTracker from './ObjectionTracker';
+import LeadEditorModal from './LeadEditorModal';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
 
 interface LeadDetailProps {
@@ -84,6 +85,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [notes, setNotes] = useState(lead.notes || '');
   const [showAllStatuses, setShowAllStatuses] = useState(false);
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
+  const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
 
@@ -112,6 +114,15 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
+    
+    // Check for special behavior dispositions
+    const disposition = dispositions.find(d => d.id === newStatus);
+    
+    // If scheduling manager, show lead editor instead
+    if (disposition?.specialBehavior === 'scheduling-manager') {
+      setShowLeadEditor(true);
+      return;
+    }
     
     // If marking as not-interested, show objection tracker first
     if (newStatus === 'not-interested') {
@@ -440,6 +451,18 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           currentUserId={currentUser.id}
           onSave={handleObjectionSave}
           onClose={() => setShowObjectionTracker(false)}
+        />
+      )}
+
+      {/* Lead Editor Modal (Scheduling Manager) */}
+      {showLeadEditor && (
+        <LeadEditorModal
+          lead={lead}
+          onClose={() => setShowLeadEditor(false)}
+          onSave={() => {
+            setShowLeadEditor(false);
+            onUpdate();
+          }}
         />
       )}
     </>
