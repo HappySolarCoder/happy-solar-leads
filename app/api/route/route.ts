@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Need at least 1 waypoint' }, { status: 400 });
     }
 
-    const key = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+    const key = process.env.GOOGLE_API_KEY;
     if (!key) {
       return NextResponse.json({ error: 'Missing API key' }, { status: 400 });
     }

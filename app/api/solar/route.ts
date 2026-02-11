@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing lat or lng' }, { status: 400 });
     }
 
-    const key = apiKey || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+    const key = apiKey || process.env.GOOGLE_API_KEY;
     if (!key) {
       return NextResponse.json({ error: 'Missing API key' }, { status: 400 });
     }

@@ -174,23 +174,13 @@ export function getCacheStats() {
 }
 
 // Reverse geocoding (address from coordinates)
+// NOTE: This function is not currently used. If needed, create a server-side
+// API route at /api/reverse-geocode to avoid exposing the API key.
 export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
-
   try {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = await response.json();
-
-    if (data.status === 'OK' && data.results && data.results.length > 0) {
-      return data.results[0].formatted_address || null;
-    }
-
+    // TODO: Implement via server-side API route at /api/reverse-geocode
+    // For now, this function is not used anywhere in the codebase
+    console.warn('reverseGeocode: Not implemented - create /api/reverse-geocode route');
     return null;
   } catch (error) {
     return null;

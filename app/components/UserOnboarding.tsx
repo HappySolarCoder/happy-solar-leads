@@ -53,7 +53,7 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           address,
-          apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '',
+          // API key is read server-side in the route
         }),
       });
 
