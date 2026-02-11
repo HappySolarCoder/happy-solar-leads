@@ -3,6 +3,9 @@ import { db } from './firebase';
 import { collection, getDocs, doc, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 import { Disposition, DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 
+// Re-export Disposition type for convenience
+export type { Disposition } from '@/app/types/disposition';
+
 const DISPOSITIONS_COLLECTION = 'dispositions';
 
 // Get all dispositions (with defaults as fallback)
