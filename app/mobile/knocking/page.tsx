@@ -3,10 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, List, Navigation, Filter } from 'lucide-react';
+import { ArrowLeft, List, Navigation, Filter, MapPin } from 'lucide-react';
 import { getLeadsAsync, getCurrentUserAsync } from '@/app/utils/storage';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import LeadDetail from '@/app/components/LeadDetail';
+import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -29,6 +30,12 @@ export default function KnockingPage() {
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [isLoading, setIsLoading] = useState(true);
+
+  // GPS tracking - continuous updates
+  const { position: gpsPosition, error: gpsError, isLoading: gpsLoading } = useGeolocation({
+    enableHighAccuracy: true,
+    watch: true, // Continuous tracking
+  });
 
   // Load data
   useEffect(() => {
@@ -70,6 +77,20 @@ export default function KnockingPage() {
 
   // Exclude poor solar leads
   const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
+
+  // Calculate distances and sort by nearest if GPS available
+  const leadsWithDistance = goodLeads.map(lead => ({
+    ...lead,
+    distance: gpsPosition && lead.lat && lead.lng
+      ? calculateDistance(gpsPosition.lat, gpsPosition.lng, lead.lat, lead.lng)
+      : undefined,
+  })).sort((a, b) => {
+    // Sort by distance (nearest first), then by status
+    if (a.distance !== undefined && b.distance !== undefined) {
+      return a.distance - b.distance;
+    }
+    return 0;
+  });
 
   // Get selected lead
   const selectedLead = leads.find(l => l.id === selectedLeadId);
@@ -127,12 +148,14 @@ export default function KnockingPage() {
       {viewMode === 'map' && (
         <main className="flex-1 relative overflow-hidden">
           <LeadMap
-            leads={goodLeads}
+            leads={leadsWithDistance}
             currentUser={currentUser}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
             assignmentMode="none"
             selectedLeadIdsForAssignment={[]}
+            userPosition={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
+            center={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
           />
 
           {/* Floating Recenter Button */}
@@ -148,13 +171,26 @@ export default function KnockingPage() {
       {/* List View */}
       {viewMode === 'list' && (
         <main className="flex-1 overflow-y-auto px-4 py-4">
+          {/* GPS Status */}
+          {gpsLoading && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800 flex items-center gap-2">
+              <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              Getting your location...
+            </div>
+          )}
+          {gpsError && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+              📍 Location disabled - Enable GPS for distance sorting
+            </div>
+          )}
+          
           <div className="space-y-3">
-            {goodLeads.length === 0 ? (
+            {leadsWithDistance.length === 0 ? (
               <div className="text-center py-12 text-[#718096]">
                 <p>No leads available</p>
               </div>
             ) : (
-              goodLeads.map(lead => (
+              leadsWithDistance.map(lead => (
                 <button
                   key={lead.id}
                   onClick={() => handleLeadSelect(lead)}
@@ -162,7 +198,14 @@ export default function KnockingPage() {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-[#2D3748] truncate">{lead.name}</div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="font-semibold text-[#2D3748] truncate">{lead.name}</div>
+                        {lead.distance !== undefined && (
+                          <span className="text-xs font-semibold text-[#FF5F5A] flex-shrink-0">
+                            📍 {formatDistance(lead.distance)}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-sm text-[#718096] truncate">{lead.address}</div>
                       <div className="text-xs text-[#718096] mt-1">{lead.city}, {lead.state}</div>
                     </div>

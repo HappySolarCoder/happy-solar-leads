@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { MapPin, BarChart3, Lightbulb, LogOut, Menu } from 'lucide-react';
+import { MapPin, BarChart3, Lightbulb, LogOut, Menu, Users } from 'lucide-react';
 import { getCurrentUserAsync } from '@/app/utils/storage';
-import { User } from '@/app/types';
+import { User, canAssignLeads } from '@/app/types';
 
 export default function MobilePage() {
   const router = useRouter();

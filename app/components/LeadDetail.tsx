@@ -122,6 +122,48 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     setIsUpdating(true);
     
     try {
+      // Capture GPS for knock verification (if disposition counts as door knock)
+      const disposition = dispositions.find(d => d.id === newStatus);
+      let gpsData = {};
+      
+      if (disposition?.countsAsDoorKnock && navigator.geolocation) {
+        try {
+          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 5000,
+              maximumAge: 0,
+            });
+          });
+          
+          // Calculate distance from lead address
+          let distanceFromAddress: number | undefined;
+          if (lead.lat && lead.lng) {
+            const R = 6371000; // Earth's radius in meters
+            const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
+            const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
+            const a = 
+              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(position.coords.latitude * Math.PI / 180) * 
+              Math.cos(lead.lat * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            distanceFromAddress = R * c;
+          }
+          
+          gpsData = {
+            knockGpsLat: position.coords.latitude,
+            knockGpsLng: position.coords.longitude,
+            knockGpsAccuracy: position.coords.accuracy,
+            knockGpsTimestamp: new Date(),
+            knockDistanceFromAddress: distanceFromAddress,
+          };
+        } catch (err) {
+          console.warn('GPS capture failed:', err);
+          // Continue without GPS if it fails
+        }
+      }
+      
       if (newStatus === 'claimed') {
         // Handle claim
         claimLead(lead.id, currentUser.id);
@@ -129,8 +171,18 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         // Handle unclaim
         unclaimLead(lead.id);
       } else {
-        // Handle status change
-        updateLeadStatus(lead.id, newStatus, currentUser.id);
+        // Handle status change with GPS data
+        const { saveLeadAsync } = await import('@/app/utils/storage');
+        
+        const updatedLead: Lead = {
+          ...lead,
+          status: newStatus,
+          dispositionedAt: new Date(),
+          claimedBy: currentUser.id,
+          ...gpsData,
+        };
+        
+        await saveLeadAsync(updatedLead);
       }
       
       onUpdate();

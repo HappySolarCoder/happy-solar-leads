@@ -70,6 +70,12 @@ export interface Lead {
   objectionNotes?: string;
   objectionRecordedAt?: Date;
   objectionRecordedBy?: string; // User ID who recorded the objection
+  // GPS knock verification
+  knockGpsLat?: number;          // GPS latitude when knocked
+  knockGpsLng?: number;          // GPS longitude when knocked
+  knockGpsAccuracy?: number;     // GPS accuracy in meters
+  knockGpsTimestamp?: Date;      // Timestamp of GPS capture
+  knockDistanceFromAddress?: number; // Distance from address in meters
 }
 
 export type ObjectionType = 

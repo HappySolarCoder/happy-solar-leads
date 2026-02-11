@@ -18,6 +18,7 @@ interface LeadMapProps {
   assignmentMode?: 'none' | 'manual' | 'territory';
   selectedLeadIdsForAssignment?: string[];
   onTerritoryDrawn?: (leadIds: string[]) => void;
+  userPosition?: [number, number]; // GPS position for blue dot
 }
 
 export default function LeadMap({ 
@@ -31,6 +32,7 @@ export default function LeadMap({
   assignmentMode = 'none',
   selectedLeadIdsForAssignment = [],
   onTerritoryDrawn,
+  userPosition,
 }: LeadMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -38,6 +40,7 @@ export default function LeadMap({
   const routeLineRef = useRef<L.Polyline | null>(null);
   const drawControlRef = useRef<any>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
+  const userMarkerRef = useRef<L.CircleMarker | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
@@ -355,6 +358,61 @@ export default function LeadMap({
     // Re-render markers with selection highlight
     // This is handled in the main markers effect above
   }, [selectedLeadIdsForAssignment, assignmentMode]);
+
+  // Update user position marker (blue dot)
+  useEffect(() => {
+    if (!mapInstanceRef.current || !isClient) return;
+
+    const map = mapInstanceRef.current;
+
+    if (userPosition) {
+      const [lat, lng] = userPosition;
+
+      // Remove old marker
+      if (userMarkerRef.current) {
+        userMarkerRef.current.remove();
+      }
+
+      // Create blue dot with accuracy circle
+      userMarkerRef.current = L.circleMarker([lat, lng], {
+        radius: 8,
+        fillColor: '#3b82f6',
+        color: '#ffffff',
+        weight: 3,
+        opacity: 1,
+        fillOpacity: 0.9,
+      }).addTo(map);
+
+      // Add pulsing effect with CSS
+      const element = userMarkerRef.current.getElement() as HTMLElement;
+      if (element) {
+        element.style.animation = 'pulse 2s infinite';
+        element.style.zIndex = '1000';
+      }
+
+      // Center map on user position (only on first load or if far from current view)
+      const mapCenter = map.getCenter();
+      const distanceFromCenter = map.distance(mapCenter, [lat, lng]);
+      
+      // Recenter if more than 1km away
+      if (distanceFromCenter > 1000) {
+        map.setView([lat, lng], map.getZoom());
+      }
+    } else {
+      // Remove marker if no position
+      if (userMarkerRef.current) {
+        userMarkerRef.current.remove();
+        userMarkerRef.current = null;
+      }
+    }
+
+    return () => {
+      if (userMarkerRef.current) {
+        userMarkerRef.current.remove();
+        userMarkerRef.current = null;
+      }
+    };
+  }, [userPosition, isClient]);
 
   return (
     <div className="relative w-full h-full">
