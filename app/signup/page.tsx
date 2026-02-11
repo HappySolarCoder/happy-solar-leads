@@ -46,6 +46,8 @@ export default function SignupPage() {
         role,
         createdAt: new Date(),
         status: 'active',
+        isActive: true, // For auto-assignment and admin panel
+        color: `#${Math.floor(Math.random()*16777215).toString(16)}`, // Random color for map pins
       });
 
       // Redirect to main app
