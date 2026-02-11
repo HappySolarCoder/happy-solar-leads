@@ -47,10 +47,42 @@ export function getLeads(): Lead[] {
 }
 
 export async function getLeadsAsync(): Promise<Lead[]> {
-  const leads = await firestoreGetAllLeads();
-  leadsCache = leads;
-  cacheTimestamp = Date.now();
-  return leads;
+  try {
+    const leads = await firestoreGetAllLeads();
+    if (leads && leads.length > 0) {
+      leadsCache = leads;
+      cacheTimestamp = Date.now();
+      // Also backup to localStorage
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('happysolar_leads', JSON.stringify(leads));
+      }
+      return leads;
+    }
+    // If Firestore returns empty, try localStorage fallback
+    if (typeof window !== 'undefined') {
+      const fallbackData = localStorage.getItem('happysolar_leads');
+      if (fallbackData) {
+        const fallbackLeads = JSON.parse(fallbackData);
+        leadsCache = fallbackLeads;
+        cacheTimestamp = Date.now();
+        return fallbackLeads;
+      }
+    }
+    return [];
+  } catch (error) {
+    console.error('Firestore getLeads failed, falling back to localStorage:', error);
+    // Fallback to localStorage on error
+    if (typeof window !== 'undefined') {
+      const fallbackData = localStorage.getItem('happysolar_leads');
+      if (fallbackData) {
+        const fallbackLeads = JSON.parse(fallbackData);
+        leadsCache = fallbackLeads;
+        cacheTimestamp = Date.now();
+        return fallbackLeads;
+      }
+    }
+    return [];
+  }
 }
 
 export function saveLeads(leads: Lead[]): void {

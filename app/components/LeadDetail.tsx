@@ -137,7 +137,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             <p className="text-sm text-gray-500 mt-1">
               Claimed by {isClaimedByMe ? 'you' : 'another knocker'}
               {lead.claimedAt && (
-                <> • {formatTimeAgo(lead.claimedAt)}</>
+                <> • {formatTimeAgo(new Date(lead.claimedAt))}</>
               )}
             </p>
           )}
