@@ -62,11 +62,16 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       const settingsStr = localStorage.getItem('raydar_admin_settings');
       const settings = settingsStr ? JSON.parse(settingsStr) : null;
 
-      console.log('Settings loaded:', settings ? 'yes' : 'no');
-      console.log('Webhook URL:', settings?.notificationWebhook ? 'present' : 'missing');
+      console.log('=== DEBUGGING SETTINGS ===');
+      console.log('Settings raw string:', settingsStr);
+      console.log('Settings parsed:', settings);
+      console.log('Webhook URL:', settings?.notificationWebhook);
+      console.log('Notification type:', settings?.notificationType);
+      console.log('All localStorage keys:', Object.keys(localStorage));
 
       if (!settings?.notificationWebhook) {
-        alert('No webhook configured! Go to Admin → Settings to set up Discord/Google Chat notifications.');
+        console.error('Settings check failed:', { settingsStr, settings });
+        alert(`Webhook not configured!\n\nDebug info:\n- Settings in localStorage: ${settingsStr ? 'YES' : 'NO'}\n- Webhook URL: ${settings?.notificationWebhook || 'MISSING'}\n\nAction needed:\n1. On DESKTOP, go to Admin → Settings\n2. Configure Discord webhook\n3. Click Save\n4. Then try again on mobile\n\nOR refresh this page after saving settings.`);
         return;
       }
 
