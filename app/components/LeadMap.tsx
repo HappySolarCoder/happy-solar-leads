@@ -390,14 +390,8 @@ export default function LeadMap({
         element.style.zIndex = '1000';
       }
 
-      // Center map on user position (only on first load or if far from current view)
-      const mapCenter = map.getCenter();
-      const distanceFromCenter = map.distance(mapCenter, [lat, lng]);
-      
-      // Recenter if more than 1km away
-      if (distanceFromCenter > 1000) {
-        map.setView([lat, lng], map.getZoom());
-      }
+      // Don't auto-center - just show blue dot
+      // User can manually recenter with locate button if needed
     } else {
       // Remove marker if no position
       if (userMarkerRef.current) {
@@ -413,6 +407,14 @@ export default function LeadMap({
       }
     };
   }, [userPosition, isClient]);
+
+  // Handle manual recenter when center prop changes
+  useEffect(() => {
+    if (!mapInstanceRef.current || !center) return;
+    
+    const map = mapInstanceRef.current;
+    map.setView(center, map.getZoom());
+  }, [center]);
 
   return (
     <div className="relative w-full h-full">

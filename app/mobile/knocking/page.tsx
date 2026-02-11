@@ -30,6 +30,7 @@ export default function KnockingPage() {
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [isLoading, setIsLoading] = useState(true);
+  const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
 
   // GPS tracking - continuous updates
   const { position: gpsPosition, error: gpsError, isLoading: gpsLoading } = useGeolocation({
@@ -155,16 +156,19 @@ export default function KnockingPage() {
             assignmentMode="none"
             selectedLeadIdsForAssignment={[]}
             userPosition={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
-            center={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
+            center={mapCenter} // Only set when user clicks "locate me"
           />
 
-          {/* Floating Recenter Button */}
-          <button
-            onClick={() => window.location.reload()}
-            className="absolute bottom-6 right-4 w-12 h-12 bg-white border-2 border-[#E2E8F0] rounded-full shadow-lg flex items-center justify-center text-[#FF5F5A] hover:bg-[#FF5F5A] hover:text-white active:scale-95 transition-all"
-          >
-            <Navigation className="w-5 h-5" />
-          </button>
+          {/* Locate Me Button - Recenter on GPS */}
+          {gpsPosition && (
+            <button
+              onClick={() => setMapCenter([gpsPosition.lat, gpsPosition.lng])}
+              className="absolute bottom-6 right-4 w-12 h-12 bg-white border-2 border-[#E2E8F0] rounded-full shadow-lg flex items-center justify-center text-[#FF5F5A] hover:bg-[#FF5F5A] hover:text-white active:scale-95 transition-all"
+              title="Center on my location"
+            >
+              <Navigation className="w-5 h-5" />
+            </button>
+          )}
         </main>
       )}
 
