@@ -68,6 +68,16 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
 
       // 4. Send webhook notification with lead details
       if (settings?.notificationWebhook) {
+        // Build solar data section
+        let solarSection = '';
+        if (lead.solarScore) {
+          solarSection = `\n**☀️ Solar Data:**
+- Solar Score: ${lead.solarScore}/100
+- Sun Hours/Year: ${lead.solarSunshineHours ? Math.round(lead.solarSunshineHours).toLocaleString() : 'N/A'}
+- Max Panels: ${lead.solarMaxPanels || 'N/A'}
+- South-Facing Roof: ${lead.hasSouthFacingRoof !== undefined ? (lead.hasSouthFacingRoof ? 'Yes ✅' : 'No ❌') : 'N/A'}`;
+        }
+
         const leadInfo = `
 📞 **Scheduling Manager Request**
 👤 **Sent by:** ${currentUser?.name || 'Unknown Setter'}
@@ -77,8 +87,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
 📍 Address: ${formData.address}, ${formData.city}, ${formData.state} ${formData.zip}
 📞 Phone: ${formData.phone || 'N/A'}
 📧 Email: ${formData.email || 'N/A'}
-💰 Est. Bill: ${formData.estimatedBill ? `$${formData.estimatedBill}/mo` : 'N/A'}
-☀️ Solar Score: ${lead.solarScore || 'N/A'}/100
+💰 Est. Bill: ${formData.estimatedBill ? `$${formData.estimatedBill}/mo` : 'N/A'}${solarSection}
 
 📝 Notes: ${formData.notes || 'None'}
 
