@@ -183,6 +183,9 @@ export default function LeadMap({
       let isDrawing = false;
 
       const handleMouseDown = (e: L.LeafletMouseEvent) => {
+        e.originalEvent.preventDefault();
+        e.originalEvent.stopPropagation();
+        
         isDrawing = true;
         drawingPoints = [e.latlng];
         
@@ -190,10 +193,15 @@ export default function LeadMap({
         if (tempPolygon) {
           tempPolygon.remove();
         }
+        
+        console.log('[LeadMap] Started drawing at:', e.latlng);
       };
 
       const handleMouseMove = (e: L.LeafletMouseEvent) => {
         if (!isDrawing) return;
+        
+        e.originalEvent.preventDefault();
+        e.originalEvent.stopPropagation();
         
         // Add point every few pixels to smooth the line
         const lastPoint = drawingPoints[drawingPoints.length - 1];
@@ -223,12 +231,20 @@ export default function LeadMap({
             }).addTo(map);
             tempPolygon = line as any;
           }
+          
+          console.log('[LeadMap] Drawing - points:', drawingPoints.length);
         }
       };
 
       const handleMouseUp = (e: L.LeafletMouseEvent) => {
         if (!isDrawing) return;
+        
+        e.originalEvent.preventDefault();
+        e.originalEvent.stopPropagation();
+        
         isDrawing = false;
+        
+        console.log('[LeadMap] Finished drawing - points:', drawingPoints.length);
         
         if (drawingPoints.length < 3) {
           // Not enough points, clear and alert
@@ -260,6 +276,8 @@ export default function LeadMap({
           const point = L.latLng(lead.lat, lead.lng);
           return polygon.getBounds().contains(point) && isPointInPolygon(point, drawingPoints);
         });
+
+        console.log('[LeadMap] Leads found in territory:', leadsInside.length);
 
         // Call callback with lead IDs
         if (onTerritoryDrawn) {

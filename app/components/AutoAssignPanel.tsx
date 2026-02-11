@@ -7,11 +7,12 @@ import { Lead, User } from '@/app/types';
 import { AutoAssignResponse } from '@/app/api/autoassign/route';
 
 interface AutoAssignPanelProps {
+  isOpen: boolean;
+  onClose: () => void;
   onComplete?: () => void;
 }
 
-export default function AutoAssignPanel({ onComplete }: AutoAssignPanelProps) {
-  const [isOpen, setIsOpen] = useState(false);
+export default function AutoAssignPanel({ isOpen, onClose, onComplete }: AutoAssignPanelProps) {
   const [isRunning, setIsRunning] = useState(false);
   const [preview, setPreview] = useState<AutoAssignResponse | null>(null);
   const [result, setResult] = useState<AutoAssignResponse | null>(null);
@@ -79,24 +80,14 @@ export default function AutoAssignPanel({ onComplete }: AutoAssignPanelProps) {
 
   const eligibleUsers = users.filter(u => u.homeLat && u.homeLng && u.isActive !== false);
 
-  if (!isOpen) {
-    return (
-      <button
-        onClick={() => setIsOpen(true)}
-        className="flex items-center gap-2 px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-colors"
-      >
-        <Wand2 className="w-4 h-4" />
-        <span className="hidden sm:inline">Auto-Assign</span>
-      </button>
-    );
-  }
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={() => setIsOpen(false)}
+        onClick={onClose}
       />
 
       {/* Modal */}
@@ -239,7 +230,7 @@ export default function AutoAssignPanel({ onComplete }: AutoAssignPanelProps) {
         <div className="px-6 py-4 border-t border-gray-200 flex justify-between">
           <button
             onClick={() => {
-              setIsOpen(false);
+              onClose();
               setPreview(null);
               setResult(null);
               setError(null);
@@ -273,7 +264,7 @@ export default function AutoAssignPanel({ onComplete }: AutoAssignPanelProps) {
             {result && (
               <button
                 onClick={() => {
-                  setIsOpen(false);
+                  onClose();
                   window.location.reload();
                 }}
                 className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2"

@@ -254,29 +254,14 @@ export default function Home() {
       />
 
       {/* Auto-Assign Panel */}
-      {showAutoAssignPanel && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-[#E2E8F0] p-6 flex items-center justify-between">
-              <h2 className="text-2xl font-bold text-[#2D3748]">Auto-Assign Leads</h2>
-              <button
-                onClick={() => setShowAutoAssignPanel(false)}
-                className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-[#718096]" />
-              </button>
-            </div>
-            <div className="p-6">
-              <AutoAssignPanel
-                onComplete={() => {
-                  setShowAutoAssignPanel(false);
-                  refreshLeads();
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      <AutoAssignPanel
+        isOpen={showAutoAssignPanel}
+        onClose={() => setShowAutoAssignPanel(false)}
+        onComplete={() => {
+          setShowAutoAssignPanel(false);
+          refreshLeads();
+        }}
+      />
 
       {/* Header - Clean Flat Design */}
       <header className="sticky top-0 z-30 bg-white border-b border-[#E2E8F0] shadow-sm">

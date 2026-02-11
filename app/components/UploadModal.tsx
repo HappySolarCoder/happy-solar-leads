@@ -169,49 +169,61 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
           
           // Only include leads with good solar scores
           if (solarCategory !== 'poor') {
-            newLeads.push({
+            const leadData: any = {
               id: generateId(),
               name: result.row.name || 'Unknown',
               address: result.row.address,
               city: result.row.city,
               state: result.row.state,
               zip: result.row.zip,
-              phone: result.row.phone,
-              email: result.row.email,
-              estimatedBill: result.row.estimatedBill,
               lat: result.lat!,
               lng: result.lng!,
               status: 'unclaimed',
               createdAt: new Date(),
-              tags: selectedTags.length > 0 ? selectedTags : undefined,
               solarScore,
               solarCategory,
-              solarMaxPanels: solarData.solarPotential?.maxArrayPanelsCount,
-              solarSunshineHours: solarData.solarPotential?.maxSunshineHoursPerYear,
               hasSouthFacingRoof: hasSouthFacing,
               solarTestedAt: new Date(),
-            });
+            };
+            
+            // Only add optional fields if they exist
+            if (result.row.phone) leadData.phone = result.row.phone;
+            if (result.row.email) leadData.email = result.row.email;
+            if (result.row.estimatedBill) leadData.estimatedBill = result.row.estimatedBill;
+            if (selectedTags.length > 0) leadData.tags = selectedTags;
+            if (solarData.solarPotential?.maxArrayPanelsCount) {
+              leadData.solarMaxPanels = solarData.solarPotential.maxArrayPanelsCount;
+            }
+            if (solarData.solarPotential?.maxSunshineHoursPerYear) {
+              leadData.solarSunshineHours = solarData.solarPotential.maxSunshineHoursPerYear;
+            }
+            
+            newLeads.push(leadData as Lead);
           }
           
         } catch (e) {
           logToFile('WARN', 'UploadModal', 'Solar fetch failed', { address: result.row.address, error: e });
-          // Still add lead without solar data
-          newLeads.push({
+          // Still add lead without solar data (clean undefined fields)
+          const leadData: any = {
             id: generateId(),
             name: result.row.name || 'Unknown',
             address: result.row.address,
             city: result.row.city,
             state: result.row.state,
             zip: result.row.zip,
-            phone: result.row.phone,
-            email: result.row.email,
-            estimatedBill: result.row.estimatedBill,
             lat: result.lat!,
             lng: result.lng!,
             status: 'unclaimed',
             createdAt: new Date(),
-            tags: selectedTags.length > 0 ? selectedTags : undefined,
-          });
+          };
+          
+          // Only add optional fields if they exist
+          if (result.row.phone) leadData.phone = result.row.phone;
+          if (result.row.email) leadData.email = result.row.email;
+          if (result.row.estimatedBill) leadData.estimatedBill = result.row.estimatedBill;
+          if (selectedTags.length > 0) leadData.tags = selectedTags;
+          
+          newLeads.push(leadData as Lead);
         }
         
         // Update progress
