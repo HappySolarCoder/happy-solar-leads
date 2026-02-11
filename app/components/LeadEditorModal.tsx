@@ -61,12 +61,10 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       const settingsStr = localStorage.getItem('raydar_admin_settings');
       const settings = settingsStr ? JSON.parse(settingsStr) : null;
 
-      // 3. Open phone dialer
-      const phoneNumber = settings?.schedulingManagerPhone || '(716) 272-9889';
-      const cleanPhone = phoneNumber.replace(/\D/g, '');
-      window.location.href = `tel:${cleanPhone}`;
+      console.log('Settings loaded:', settings ? 'yes' : 'no');
+      console.log('Webhook URL:', settings?.notificationWebhook ? 'present' : 'missing');
 
-      // 4. Send webhook notification with lead details
+      // 3. Send webhook notification FIRST (before opening dialer)
       if (settings?.notificationWebhook) {
         // Build solar data section
         let solarSection = '';
@@ -102,13 +100,36 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
           ? { text: leadInfo }
           : { message: leadInfo };
 
-        // Send in background (don't wait for response)
-        fetch(settings.notificationWebhook, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }).catch(err => console.error('Webhook failed:', err));
+        console.log('Sending webhook to:', settings.notificationWebhook);
+        console.log('Payload type:', settings.notificationType);
+
+        // Send webhook and WAIT for response
+        try {
+          const response = await fetch(settings.notificationWebhook, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          if (response.ok) {
+            console.log('✅ Webhook sent successfully');
+          } else {
+            console.error('❌ Webhook failed:', response.status, response.statusText);
+            alert('Warning: Notification may not have been sent. Call anyway?');
+          }
+        } catch (err: any) {
+          console.error('❌ Webhook error:', err);
+          alert(`Warning: Could not send notification (${err.message}). Call anyway?`);
+        }
+      } else {
+        console.warn('⚠️ No webhook configured - skipping notification');
       }
+
+      // 4. THEN open phone dialer
+      const phoneNumber = settings?.schedulingManagerPhone || '(716) 272-9889';
+      const cleanPhone = phoneNumber.replace(/\D/g, '');
+      console.log('Opening dialer:', cleanPhone);
+      window.location.href = `tel:${cleanPhone}`;
 
       // Close modal after short delay
       setTimeout(() => {
