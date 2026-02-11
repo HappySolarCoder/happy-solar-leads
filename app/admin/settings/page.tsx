@@ -5,12 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Save, Bell, MessageSquare, Send } from 'lucide-react';
 import { getCurrentUserAsync } from '@/app/utils/storage';
 import { canManageUsers } from '@/app/types';
-
-interface AdminSettings {
-  schedulingManagerPhone: string;
-  notificationWebhook: string;
-  notificationType: 'discord' | 'googlechat' | 'slack' | 'webhook';
-}
+import { getAdminSettingsAsync, saveAdminSettingsAsync, AdminSettings } from '@/app/utils/adminSettings';
 
 export default function AdminSettingsPage() {
   const router = useRouter();
@@ -20,32 +15,38 @@ export default function AdminSettingsPage() {
     notificationType: 'discord',
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [testResult, setTestResult] = useState<string | null>(null);
 
   useEffect(() => {
-    async function checkAuth() {
+    async function loadData() {
       const user = await getCurrentUserAsync();
       if (!user || !canManageUsers(user.role)) {
         router.push('/');
         return;
       }
 
-      // Load settings from localStorage
-      const saved = localStorage.getItem('raydar_admin_settings');
+      // Load settings from Firestore (with localStorage fallback)
+      const saved = await getAdminSettingsAsync();
       if (saved) {
-        setSettings(JSON.parse(saved));
+        setSettings(saved);
       }
+      
+      setIsLoading(false);
     }
-    checkAuth();
+    loadData();
   }, [router]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setIsSaving(true);
-    localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
-    setTimeout(() => {
+    try {
+      await saveAdminSettingsAsync(settings);
+      alert('Settings saved successfully! ✅\n\nNow synced across all devices.');
+    } catch (error: any) {
+      alert(`Error saving settings: ${error.message}`);
+    } finally {
       setIsSaving(false);
-      alert('Settings saved successfully!');
-    }, 500);
+    }
   };
 
   const handleTest = async () => {
@@ -81,6 +82,17 @@ export default function AdminSettingsPage() {
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-[#F7FAFC]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+          <p className="text-sm text-[#718096]">Loading settings...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F7FAFC]">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
@@ -94,7 +106,7 @@ export default function AdminSettingsPage() {
             Back to Admin
           </button>
           <h1 className="text-3xl font-bold text-[#2D3748]">Admin Settings</h1>
-          <p className="text-[#718096] mt-2">Configure system-wide settings and integrations</p>
+          <p className="text-[#718096] mt-2">Configure system-wide settings and integrations (synced across all devices)</p>
         </div>
 
         {/* Scheduling Manager Settings */}

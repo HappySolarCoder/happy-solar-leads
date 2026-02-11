@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead } from '@/app/types';
 import { saveLeadAsync, getCurrentUserAsync } from '@/app/utils/storage';
+import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 
 interface LeadEditorModalProps {
   lead: Lead;
@@ -58,20 +59,16 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       // 1. Get current user
       const currentUser = await getCurrentUserAsync();
       
-      // 2. Get admin settings
-      const settingsStr = localStorage.getItem('raydar_admin_settings');
-      const settings = settingsStr ? JSON.parse(settingsStr) : null;
+      // 2. Get admin settings from Firestore (synced across devices)
+      const settings = await getAdminSettingsAsync();
 
-      console.log('=== DEBUGGING SETTINGS ===');
-      console.log('Settings raw string:', settingsStr);
-      console.log('Settings parsed:', settings);
+      console.log('=== SETTINGS DEBUG ===');
+      console.log('Settings loaded from Firestore:', settings);
       console.log('Webhook URL:', settings?.notificationWebhook);
-      console.log('Notification type:', settings?.notificationType);
-      console.log('All localStorage keys:', Object.keys(localStorage));
 
       if (!settings?.notificationWebhook) {
-        console.error('Settings check failed:', { settingsStr, settings });
-        alert(`Webhook not configured!\n\nDebug info:\n- Settings in localStorage: ${settingsStr ? 'YES' : 'NO'}\n- Webhook URL: ${settings?.notificationWebhook || 'MISSING'}\n\nAction needed:\n1. On DESKTOP, go to Admin → Settings\n2. Configure Discord webhook\n3. Click Save\n4. Then try again on mobile\n\nOR refresh this page after saving settings.`);
+        console.error('Settings check failed:', { settings });
+        alert(`Webhook not configured!\n\nGo to Admin → Settings and configure Discord webhook.\n\n(Settings are now synced via Firestore - works on all devices!)`);
         return;
       }
 
@@ -133,9 +130,8 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     }
   };
 
-  const handleCall = () => {
-    const settingsStr = localStorage.getItem('raydar_admin_settings');
-    const settings = settingsStr ? JSON.parse(settingsStr) : null;
+  const handleCall = async () => {
+    const settings = await getAdminSettingsAsync();
     
     const phoneNumber = settings?.schedulingManagerPhone || '(716) 272-9889';
     const cleanPhone = phoneNumber.replace(/\D/g, '');
