@@ -94,7 +94,18 @@ export async function saveLead(lead: Lead): Promise<void> {
       return null;
     };
     
-    const data = {
+    // Helper to remove undefined values (Firestore doesn't accept undefined)
+    const cleanObject = (obj: any): any => {
+      const cleaned: any = {};
+      for (const key in obj) {
+        if (obj[key] !== undefined) {
+          cleaned[key] = obj[key];
+        }
+      }
+      return cleaned;
+    };
+    
+    const data = cleanObject({
       ...lead,
       createdAt: toTimestamp(lead.createdAt) || Timestamp.now(),
       claimedAt: toTimestamp(lead.claimedAt),
@@ -102,7 +113,7 @@ export async function saveLead(lead: Lead): Promise<void> {
       assignedAt: toTimestamp(lead.assignedAt),
       solarTestedAt: toTimestamp(lead.solarTestedAt),
       objectionRecordedAt: toTimestamp((lead as any).objectionRecordedAt),
-    };
+    });
     await setDoc(leadRef, data);
   } catch (error) {
     console.error('Error saving lead:', error);
