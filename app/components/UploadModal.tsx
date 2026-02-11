@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { Upload, File, X, MapPin, CheckCircle, AlertCircle } from 'lucide-react';
-import { CSVRow, Lead } from '@/app/types';
+import { useState, useRef, useEffect } from 'react';
+import { Upload, File, X, MapPin, CheckCircle, AlertCircle, Tag } from 'lucide-react';
+import { CSVRow, Lead, LeadTag, LEAD_TAG_LABELS, LEAD_TAG_COLORS, LEAD_TAG_DESCRIPTIONS } from '@/app/types';
 import { parseCSV, validateCSV } from '@/app/utils/csv';
 import { geocodeBatch } from '@/app/utils/geocode';
-import { saveLeadAsync, getLeadsAsync, generateId } from '@/app/utils/storage';
+import { saveLeadAsync, getLeadsAsync, generateId, getCurrentUserAsync } from '@/app/utils/storage';
+import { canManageUsers } from '@/app/types';
 
 // Client-side logger that sends to server
 function logToFile(level: string, component: string, message: string, data: any = {}) {
@@ -33,7 +34,20 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
   const [error, setError] = useState<string | null>(null);
   const [successCount, setSuccessCount] = useState(0);
   const [failedAddresses, setFailedAddresses] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<LeadTag[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check if user is admin on mount
+  useEffect(() => {
+    async function checkAdmin() {
+      const user = await getCurrentUserAsync();
+      setIsAdmin(user ? canManageUsers(user.role) : false);
+    }
+    if (isOpen) {
+      checkAdmin();
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -169,6 +183,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               lng: result.lng!,
               status: 'unclaimed',
               createdAt: new Date(),
+              tags: selectedTags.length > 0 ? selectedTags : undefined,
               solarScore,
               solarCategory,
               solarMaxPanels: solarData.solarPotential?.maxArrayPanelsCount,
@@ -195,6 +210,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             lng: result.lng!,
             status: 'unclaimed',
             createdAt: new Date(),
+            tags: selectedTags.length > 0 ? selectedTags : undefined,
           });
         }
         
@@ -247,12 +263,13 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
     setError(null);
     setSuccessCount(0);
     setFailedAddresses([]);
+    setSelectedTags([]);
     setStep('upload');
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
@@ -260,7 +277,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       />
 
       {/* Modal */}
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900">
@@ -321,6 +338,69 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
                     <p className="text-sm text-red-700 whitespace-pre-line">
                       {error}
                     </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Tag Selection - Admin Only */}
+              {isAdmin && rows.length > 0 && !error && (
+                <div className="mt-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Tag className="w-5 h-5 text-gray-700" />
+                    <label className="text-sm font-semibold text-gray-900">
+                      Lead Tags (Optional)
+                    </label>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Tag these leads for reporting and analytics
+                  </p>
+                  <div className="space-y-2">
+                    {(['solar-data', 'homeowner', 'home-data'] as LeadTag[]).map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          if (selectedTags.includes(tag)) {
+                            setSelectedTags(selectedTags.filter(t => t !== tag));
+                          } else {
+                            setSelectedTags([...selectedTags, tag]);
+                          }
+                        }}
+                        className={`w-full flex items-start gap-3 p-4 rounded-2xl border-2 transition-all duration-200 text-left ${
+                          selectedTags.includes(tag)
+                            ? 'border-blue-500 bg-gradient-to-r from-blue-50 to-blue-50/50 shadow-sm'
+                            : 'border-gray-200 hover:border-gray-300 bg-white hover:shadow-sm'
+                        }`}
+                      >
+                        <div className="flex-shrink-0 mt-0.5">
+                          <div
+                            className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-200 ${
+                              selectedTags.includes(tag)
+                                ? 'bg-gradient-to-br from-blue-500 to-blue-600 border-blue-600'
+                                : 'border-gray-300 bg-white'
+                            }`}
+                          >
+                            {selectedTags.includes(tag) && (
+                              <CheckCircle className="w-3.5 h-3.5 text-white" strokeWidth={3} />
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`font-semibold ${selectedTags.includes(tag) ? 'text-blue-900' : 'text-gray-900'}`}>
+                              {LEAD_TAG_LABELS[tag]}
+                            </span>
+                            <span
+                              className="w-2 h-2 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: LEAD_TAG_COLORS[tag] }}
+                            />
+                          </div>
+                          <p className={`text-xs ${selectedTags.includes(tag) ? 'text-blue-700' : 'text-gray-500'}`}>
+                            {LEAD_TAG_DESCRIPTIONS[tag]}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}

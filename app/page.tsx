@@ -2,15 +2,18 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Plus, Upload, Users, Menu, X, Map as MapIcon, List, Navigation, Wand2 } from 'lucide-react';
+import { Plus, Upload, Users, Menu, X, Map as MapIcon, List, Navigation, Wand2, UserPlus, Shield } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import LeadList from '@/app/components/LeadList';
 import UploadModal from '@/app/components/UploadModal';
 import UserOnboarding from '@/app/components/UserOnboarding';
 import LeadDetail from '@/app/components/LeadDetail';
 import AutoAssignPanel from '@/app/components/AutoAssignPanel';
 import UserSwitcher from '@/app/components/UserSwitcher';
+import LeadAssignmentPanel from '@/app/components/LeadAssignmentPanel';
+import AppMenu from '@/app/components/AppMenu';
 import { getLeadsAsync, getCurrentUserAsync, getUsersAsync, saveCurrentUserAsync } from '@/app/utils/storage';
-import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS } from '@/app/types';
+import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -26,12 +29,16 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
 });
 
 export default function Home() {
+  const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showUserOnboarding, setShowUserOnboarding] = useState(false);
+  const [showAssignmentPanel, setShowAssignmentPanel] = useState(false);
+  const [assignmentMode, setAssignmentMode] = useState<'none' | 'manual' | 'territory'>('none');
+  const [selectedLeadIdsForAssignment, setSelectedLeadIdsForAssignment] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'split' | 'map' | 'list'>('split');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [setterFilter, setSetterFilter] = useState<string>('all');
@@ -65,8 +72,41 @@ export default function Home() {
 
   // Handle lead selection from map
   const handleLeadSelect = (lead: Lead) => {
-    setSelectedLeadId(lead.id);
-    setShowLeadDetail(true);
+    // If in assignment mode, toggle lead selection
+    if (assignmentMode === 'manual') {
+      setSelectedLeadIdsForAssignment(prev => {
+        if (prev.includes(lead.id)) {
+          return prev.filter(id => id !== lead.id);
+        } else {
+          return [...prev, lead.id];
+        }
+      });
+    } else {
+      // Normal mode - show lead detail
+      setSelectedLeadId(lead.id);
+      setShowLeadDetail(true);
+    }
+  };
+
+  // Handle assignment mode change
+  const handleAssignmentModeChange = (mode: 'none' | 'manual' | 'territory') => {
+    setAssignmentMode(mode);
+    if (mode === 'none') {
+      setSelectedLeadIdsForAssignment([]);
+    }
+  };
+
+  // Handle territory drawn
+  const handleTerritoryDrawn = (leadIds: string[]) => {
+    setSelectedLeadIdsForAssignment(leadIds);
+  };
+
+  // Handle assignment complete
+  const handleAssignmentComplete = () => {
+    setShowAssignmentPanel(false);
+    setAssignmentMode('none');
+    setSelectedLeadIdsForAssignment([]);
+    refreshLeads();
   };
 
   // Handle upload complete
@@ -80,8 +120,8 @@ export default function Home() {
   // Clear all leads (for testing)
   const handleClearAllLeads = () => {
     if (confirm('Delete ALL leads? This cannot be undone.')) {
-      localStorage.removeItem('happysolar_leads');
-      localStorage.removeItem('happy_solar_geocode_cache');
+      localStorage.removeItem('raydar_leads');
+      localStorage.removeItem('raydar_geocode_cache');
       setLeads([]);
       refreshLeads();
     }
@@ -97,13 +137,22 @@ export default function Home() {
     loadUsers();
   }, []);
 
+  // Filter leads based on user role
+  const roleFilteredLeads = currentUser && !canSeeAllLeads(currentUser.role)
+    ? leads.filter(l =>
+        l.status === 'unclaimed' || // Show unclaimed leads to everyone
+        l.claimedBy === currentUser.id || // Show user's claimed leads
+        l.assignedTo === currentUser.id // Show auto-assigned leads
+      )
+    : leads; // Managers and admins see all leads
+
   // Filter leads for main display (exclude poor solar leads)
-  const goodLeads = leads.filter(l => l.solarCategory !== 'poor');
-  const poorLeads = leads.filter(l => l.solarCategory === 'poor');
-  
+  const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
+  const poorLeads = roleFilteredLeads.filter(l => l.solarCategory === 'poor');
+
   // Filter by setter if selected
-  const filteredLeads = setterFilter === 'all' 
-    ? goodLeads 
+  const filteredLeads = setterFilter === 'all'
+    ? goodLeads
     : goodLeads.filter(l => l.claimedBy === setterFilter);
 
   // Delete a poor lead
@@ -119,7 +168,7 @@ export default function Home() {
   const handleDeleteAllPoorLeads = () => {
     if (confirm(`Delete all ${poorLeads.length} poor solar leads? This cannot be undone.`)) {
       const filtered = leads.filter(l => l.solarCategory !== 'poor');
-      localStorage.setItem('happysolar_leads', JSON.stringify(filtered));
+      localStorage.setItem('raydar_leads', JSON.stringify(filtered));
       refreshLeads();
     }
   };
@@ -140,10 +189,10 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-gray-100 overflow-hidden">
+    <div className="h-screen flex flex-col overflow-hidden max-w-full bg-white">
       {/* User Onboarding Modal */}
-      <UserOnboarding 
-        isOpen={showUserOnboarding} 
+      <UserOnboarding
+        isOpen={showUserOnboarding}
         onComplete={handleUserComplete}
       />
 
@@ -167,120 +216,133 @@ export default function Home() {
         />
       )}
 
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between z-10">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold text-gray-900">
-            Happy Solar <span className="text-blue-500">Leads</span>
-          </h1>
-          
-          {/* Stats Pills */}
-          <div className="hidden md:flex items-center gap-2 ml-8">
-            <StatPill label="Tested" value={`${stats.tested}/${stats.total}`} color="#3b82f6" />
-            {stats.poor > 0 && (
-              <StatPill label="Poor" value={stats.poor} color="#ef4444" />
-            )}
-            <StatPill label="Unclaimed" value={stats.unclaimed} color="#22c55e" />
-            <StatPill label="Interested" value={stats.interested} color="#3b82f6" />
-            <StatPill label="Appointments" value={stats.appointments} color="#8b5cf6" />
-            <StatPill label="Sales" value={stats.sales} color="#10b981" />
+      {/* Lead Assignment Panel */}
+      <LeadAssignmentPanel
+        isOpen={showAssignmentPanel}
+        onClose={() => {
+          setShowAssignmentPanel(false);
+          setAssignmentMode('none');
+          setSelectedLeadIdsForAssignment([]);
+        }}
+        currentUser={currentUser}
+        leads={leads}
+        onAssignComplete={handleAssignmentComplete}
+        onModeChange={handleAssignmentModeChange}
+        selectedLeadIds={selectedLeadIdsForAssignment}
+        onLeadSelect={(leadId) => {
+          setSelectedLeadIdsForAssignment(prev => {
+            if (prev.includes(leadId)) {
+              return prev.filter(id => id !== leadId);
+            } else {
+              return [...prev, leadId];
+            }
+          });
+        }}
+      />
+
+      {/* Header - Clean Flat Design */}
+      <header className="sticky top-0 z-30 bg-white border-b border-[#E2E8F0] shadow-sm">
+        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 py-4">
+          <div className="flex items-center justify-between gap-4">
+            {/* Logo */}
+            <div className="flex items-center gap-6 min-w-0 flex-1">
+              <div className="flex items-center group cursor-pointer">
+                {/* Mobile: Icon only */}
+                <img
+                  src="/raydar-icon.png"
+                  alt="Raydar"
+                  className="h-10 w-auto object-contain sm:hidden"
+                />
+                {/* Desktop: Horizontal logo */}
+                <img
+                  src="/raydar-horizontal.png"
+                  alt="Raydar"
+                  className="h-11 w-auto object-contain hidden sm:block"
+                />
+              </div>
+
+              {/* Stats Pills - Flat Design */}
+              <div className="hidden xl:flex items-center gap-3 ml-8">
+                <div className="px-4 py-2 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg">
+                  <span className="text-base font-semibold text-[#2D3748]">{stats.tested}</span>
+                  <span className="text-xs text-[#718096] ml-2 uppercase tracking-wide">tested</span>
+                </div>
+                <div className="px-4 py-2 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg">
+                  <span className="text-base font-semibold text-[#FF5F5A]">{stats.unclaimed}</span>
+                  <span className="text-xs text-[#718096] ml-2 uppercase tracking-wide">available</span>
+                </div>
+                <div className="px-4 py-2 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg">
+                  <span className="text-base font-semibold text-[#2D3748]">{stats.appointments}</span>
+                  <span className="text-xs text-[#718096] ml-2 uppercase tracking-wide">appointments</span>
+                </div>
+                <div className="px-4 py-2 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg">
+                  <span className="text-base font-semibold text-[#48BB78]">{stats.sales}</span>
+                  <span className="text-xs text-[#718096] ml-2 uppercase tracking-wide">sales</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+              {/* View Mode Toggle - Flat Design */}
+              <div className="hidden sm:flex items-center bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg p-1">
+                <button
+                  onClick={() => setViewMode('split')}
+                  className={`px-4 py-2 rounded-md text-sm font-semibold transition-all duration-150 ${
+                    viewMode === 'split' 
+                      ? 'bg-[#FF5F5A] text-white' 
+                      : 'text-[#718096] hover:text-[#2D3748] hover:bg-white'
+                  }`}
+                >
+                  Split
+                </button>
+                <button
+                  onClick={() => setViewMode('map')}
+                  className={`px-4 py-2 rounded-md text-sm font-semibold transition-all duration-150 ${
+                    viewMode === 'map' 
+                      ? 'bg-[#FF5F5A] text-white' 
+                      : 'text-[#718096] hover:text-[#2D3748] hover:bg-white'
+                  }`}
+                >
+                  Map
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`px-4 py-2 rounded-md text-sm font-semibold transition-all duration-150 ${
+                    viewMode === 'list' 
+                      ? 'bg-[#FF5F5A] text-white' 
+                      : 'text-[#718096] hover:text-[#2D3748] hover:bg-white'
+                  }`}
+                >
+                  List
+                </button>
+              </div>
+
+              {/* Upload Button - Flat Primary Button */}
+              {currentUser && canUploadLeads(currentUser.role) && (
+                <button
+                  onClick={() => setShowUploadModal(true)}
+                  className="flex items-center gap-2 px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-lg font-semibold transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#FF5F5A]/25 text-sm"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span className="hidden md:inline">Upload</span>
+                </button>
+              )}
+
+              {/* User Switcher */}
+              <UserSwitcher onUserChange={refreshLeads} />
+
+              {/* Hamburger Menu - Always far right */}
+              <AppMenu
+                currentUser={currentUser}
+                onAssignClick={() => setShowAssignmentPanel(true)}
+                setterFilter={setterFilter}
+                onFilterChange={setSetterFilter}
+                users={users}
+                goodLeads={goodLeads}
+              />
+            </div>
           </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* View Mode Toggle */}
-          <div className="hidden sm:flex items-center bg-gray-100 rounded-lg p-1">
-            <button
-              onClick={() => setViewMode('split')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'split' ? 'bg-white shadow text-gray-900' : 'text-gray-500'
-              }`}
-            >
-              Split
-            </button>
-            <button
-              onClick={() => setViewMode('map')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'map' ? 'bg-white shadow text-gray-900' : 'text-gray-500'
-              }`}
-            >
-              Map
-            </button>
-            <button
-              onClick={() => setViewMode('list')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'list' ? 'bg-white shadow text-gray-900' : 'text-gray-500'
-              }`}
-            >
-              List
-            </button>
-          </div>
-
-          {/* Upload Button */}
-          <button
-            onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors"
-          >
-            <Upload className="w-4 h-4" />
-            <span className="hidden sm:inline">Upload Leads</span>
-          </button>
-
-          {/* AI Auto-Assign Button */}
-          <AutoAssignPanel onComplete={refreshLeads} />
-
-          {/* Setter Filter */}
-          <select
-            value={setterFilter}
-            onChange={(e) => setSetterFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Setters</option>
-            {users.map(user => (
-              <option key={user.id} value={user.id}>
-                {user.name} ({goodLeads.filter(l => l.claimedBy === user.id).length})
-              </option>
-            ))}
-          </select>
-
-          {/* Clear All (for testing) */}
-          {leads.length > 0 && (
-            <button
-              onClick={handleClearAllLeads}
-              className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg font-medium text-sm transition-colors"
-              title="Delete all leads"
-            >
-              🗑️ Clear All
-            </button>
-          )}
-
-          {/* Unclaim All (for testing) */}
-          {goodLeads.some(l => l.claimedBy) && (
-            <button
-              onClick={async () => {
-                if (confirm('Unclaim all leads? This will make them available for auto-assignment.')) {
-                  const allLeads = await getLeadsAsync();
-                  const { saveLeadsAsync } = await import('@/app/utils/storage');
-                  const reset = allLeads.map(l => ({
-                    ...l,
-                    claimedBy: undefined,
-                    claimedAt: undefined,
-                    assignedTo: undefined,
-                    assignedAt: undefined,
-                    status: 'unclaimed' as LeadStatus,
-                  }));
-                  await saveLeadsAsync(reset);
-                  await refreshLeads();
-                }
-              }}
-              className="px-3 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-medium text-sm transition-colors"
-              title="Unclaim all leads"
-            >
-              ↩️ Unclaim All
-            </button>
-          )}
-
-          {/* User Switcher */}
-          <UserSwitcher onUserChange={refreshLeads} />
         </div>
       </header>
 
@@ -306,6 +368,9 @@ export default function Home() {
               currentUser={currentUser}
               onLeadClick={handleLeadSelect}
               selectedLeadId={selectedLeadId}
+              assignmentMode={assignmentMode}
+              selectedLeadIdsForAssignment={selectedLeadIdsForAssignment}
+              onTerritoryDrawn={handleTerritoryDrawn}
             />
 
             {/* Mobile Floating Action Button */}
@@ -335,7 +400,7 @@ export default function Home() {
               Delete All
             </button>
           </div>
-          
+
           <p className="text-sm text-red-600 mb-3">
             {poorLeads.length} of {leads.length} leads ({Math.round(poorLeads.length / leads.length * 100)}%) have poor solar potential (&lt;1300 sun hrs/yr)
           </p>
@@ -368,7 +433,7 @@ export default function Home() {
 // Stat Pill Component
 function StatPill({ label, value, color }: { label: string; value: number | string; color: string }) {
   return (
-    <div 
+    <div
       className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-50 rounded-full"
       style={{ borderLeft: `3px solid ${color}` }}
     >

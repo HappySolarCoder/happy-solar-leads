@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Users, User, MapPin, ChevronDown, X, RefreshCw } from 'lucide-react';
+import { Users, User, MapPin, ChevronDown, X, RefreshCw, LogOut } from 'lucide-react';
 import { getUsersAsync, getCurrentUserAsync, saveCurrentUserAsync, saveUserAsync } from '@/app/utils/storage';
 import { User as UserType } from '@/app/types';
 
@@ -36,6 +36,15 @@ export default function UserSwitcher({ onUserChange }: UserSwitcherProps) {
     onUserChange?.(user);
   };
 
+  const handleLogout = async () => {
+    if (confirm('Log out? You can sign back in anytime.')) {
+      // Clear current user ID from storage
+      localStorage.removeItem('raydar_current_user_id');
+      // Refresh the page to trigger onboarding
+      window.location.reload();
+    }
+  };
+
   const handleCreateUser = async () => {
     if (!newUserName.trim() || !newUserEmail.trim()) return;
     
@@ -43,14 +52,13 @@ export default function UserSwitcher({ onUserChange }: UserSwitcherProps) {
     
     const newUser: UserType = {
       id: Date.now().toString(),
-      email: newUserEmail,
       name: newUserName,
+      email: newUserEmail,
       role: 'setter',
-      status: 'active',
       color: `hsl(${Math.random() * 360}, 70%, 50%)`,
-      assignedLeadCount: 0,
       createdAt: new Date(),
-      lastLogin: new Date(),
+      assignedLeadCount: 0,
+      isActive: true,
     };
     
     // Geocode home address if provided
@@ -225,9 +233,18 @@ export default function UserSwitcher({ onUserChange }: UserSwitcherProps) {
 
             {/* Footer */}
             <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
-              <p className="text-xs text-gray-500">
-                {allUsers.length} users • {allUsers.filter(u => u.homeLat && u.homeLng).length} with home address
-              </p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-gray-500">
+                  {allUsers.length} users • {allUsers.filter(u => u.homeLat && u.homeLng).length} with home address
+                </p>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                Log Out
+              </button>
             </div>
           </div>
         </>

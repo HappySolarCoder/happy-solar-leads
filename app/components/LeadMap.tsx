@@ -14,6 +14,9 @@ interface LeadMapProps {
   routeWaypoints?: RouteWaypoint[];
   center?: [number, number];
   zoom?: number;
+  assignmentMode?: 'none' | 'manual' | 'territory';
+  selectedLeadIdsForAssignment?: string[];
+  onTerritoryDrawn?: (leadIds: string[]) => void;
 }
 
 export default function LeadMap({ 
@@ -24,12 +27,18 @@ export default function LeadMap({
   routeWaypoints,
   center = [43.0884, -77.6758],
   zoom = 12,
+  assignmentMode = 'none',
+  selectedLeadIdsForAssignment = [],
+  onTerritoryDrawn,
 }: LeadMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
+  const drawControlRef = useRef<any>(null);
+  const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
   const [isClient, setIsClient] = useState(false);
+  const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
 
   const leads = useMemo(() => leadsProp, [leadsProp]);
 
@@ -116,14 +125,16 @@ export default function LeadMap({
       const isSelected = lead.id === selectedLeadId;
       const isClaimedByMe = currentUser != null && lead.claimedBy != null && lead.claimedBy === currentUser.id;
       const canClaim = lead.claimedBy == null || isClaimedByMe;
+      const isSelectedForAssignment = selectedLeadIdsForAssignment.includes(lead.id);
 
       const icon = createCustomIcon(
         lead.solarCategory,
         lead.status,
-        Boolean(isSelected),
+        Boolean(isSelected || isSelectedForAssignment),
         Boolean(isClaimedByMe),
         Boolean(canClaim),
-        Boolean(lead.claimedBy)
+        Boolean(lead.claimedBy),
+        isSelectedForAssignment
       );
 
       const marker = L.marker([lead.lat!, lead.lng!], { icon });
@@ -140,9 +151,207 @@ export default function LeadMap({
     }
   }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient]);
 
+  // Handle territory drawing mode
+  useEffect(() => {
+    if (!mapInstanceRef.current || !isClient) return;
+
+    const map = mapInstanceRef.current;
+    
+    if (assignmentMode === 'territory') {
+      // Disable map dragging and zooming during drawing
+      map.dragging.disable();
+      map.touchZoom.disable();
+      map.doubleClickZoom.disable();
+      map.scrollWheelZoom.disable();
+      map.boxZoom.disable();
+      map.keyboard.disable();
+      
+      // Change cursor to crosshair
+      if (mapRef.current) {
+        mapRef.current.style.cursor = 'crosshair';
+      }
+
+      // Territory mode: freeform drawing (click and drag)
+      let drawingPoints: L.LatLng[] = [];
+      let tempPolygon: L.Polygon | null = null;
+      let isDrawing = false;
+
+      const handleMouseDown = (e: L.LeafletMouseEvent) => {
+        isDrawing = true;
+        drawingPoints = [e.latlng];
+        
+        // Create initial polygon
+        if (tempPolygon) {
+          tempPolygon.remove();
+        }
+      };
+
+      const handleMouseMove = (e: L.LeafletMouseEvent) => {
+        if (!isDrawing) return;
+        
+        // Add point every few pixels to smooth the line
+        const lastPoint = drawingPoints[drawingPoints.length - 1];
+        const distance = map.distance(lastPoint, e.latlng);
+        
+        // Only add point if moved enough (prevents too many points)
+        if (distance > 10) {
+          drawingPoints.push(e.latlng);
+          
+          // Update polygon
+          if (tempPolygon) {
+            tempPolygon.remove();
+          }
+          
+          if (drawingPoints.length >= 3) {
+            tempPolygon = L.polygon(drawingPoints, {
+              color: '#8b5cf6',
+              fillColor: '#8b5cf6',
+              fillOpacity: 0.2,
+              weight: 3,
+            }).addTo(map);
+          } else if (drawingPoints.length >= 2) {
+            // Show line while drawing
+            const line = L.polyline(drawingPoints, {
+              color: '#8b5cf6',
+              weight: 3,
+            }).addTo(map);
+            tempPolygon = line as any;
+          }
+        }
+      };
+
+      const handleMouseUp = (e: L.LeafletMouseEvent) => {
+        if (!isDrawing) return;
+        isDrawing = false;
+        
+        if (drawingPoints.length < 3) {
+          // Not enough points, clear and alert
+          if (tempPolygon) tempPolygon.remove();
+          drawingPoints = [];
+          tempPolygon = null;
+          alert('Draw a larger area (move your mouse while clicking)');
+          return;
+        }
+
+        // Close the polygon
+        drawingPoints.push(drawingPoints[0]);
+        
+        // Redraw final polygon
+        if (tempPolygon) {
+          tempPolygon.remove();
+        }
+        tempPolygon = L.polygon(drawingPoints, {
+          color: '#8b5cf6',
+          fillColor: '#8b5cf6',
+          fillOpacity: 0.3,
+          weight: 3,
+        }).addTo(map);
+
+        // Find leads within polygon
+        const polygon = L.polygon(drawingPoints);
+        const leadsInside = leads.filter(lead => {
+          if (!lead.lat || !lead.lng) return false;
+          const point = L.latLng(lead.lat, lead.lng);
+          return polygon.getBounds().contains(point) && isPointInPolygon(point, drawingPoints);
+        });
+
+        // Call callback with lead IDs
+        if (onTerritoryDrawn) {
+          onTerritoryDrawn(leadsInside.map(l => l.id));
+        }
+
+        // Clean up after delay so user can see the result
+        setTimeout(() => {
+          if (tempPolygon) tempPolygon.remove();
+          drawingPoints = [];
+          tempPolygon = null;
+        }, 500);
+      };
+
+      map.on('mousedown', handleMouseDown);
+      map.on('mousemove', handleMouseMove);
+      map.on('mouseup', handleMouseUp);
+
+      return () => {
+        map.off('mousedown', handleMouseDown);
+        map.off('mousemove', handleMouseMove);
+        map.off('mouseup', handleMouseUp);
+        
+        // Re-enable map controls
+        map.dragging.enable();
+        map.touchZoom.enable();
+        map.doubleClickZoom.enable();
+        map.scrollWheelZoom.enable();
+        map.boxZoom.enable();
+        map.keyboard.enable();
+        
+        // Reset cursor
+        if (mapRef.current) {
+          mapRef.current.style.cursor = '';
+        }
+        
+        if (tempPolygon) tempPolygon.remove();
+      };
+    } else {
+      // Not in territory mode - ensure map controls are enabled
+      map.dragging.enable();
+      map.touchZoom.enable();
+      map.doubleClickZoom.enable();
+      map.scrollWheelZoom.enable();
+      map.boxZoom.enable();
+      map.keyboard.enable();
+      
+      if (mapRef.current) {
+        mapRef.current.style.cursor = '';
+      }
+    }
+  }, [assignmentMode, leads, onTerritoryDrawn, isClient]);
+
+  // Update marker styling for selected leads in assignment mode
+  useEffect(() => {
+    if (!markersLayerRef.current || assignmentMode === 'none') return;
+
+    // Re-render markers with selection highlight
+    // This is handled in the main markers effect above
+  }, [selectedLeadIdsForAssignment, assignmentMode]);
+
   return (
-    <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
+    <div className="relative w-full h-full">
+      <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
+      
+      {/* Drawing Instructions */}
+      {assignmentMode === 'territory' && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-purple-500 text-white px-6 py-3 rounded-lg shadow-lg z-10">
+          <p className="text-sm font-medium">
+            🖊️ Click and drag to draw territory • Release to select leads
+          </p>
+        </div>
+      )}
+
+      {/* Manual Selection Instructions */}
+      {assignmentMode === 'manual' && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-blue-500 text-white px-6 py-3 rounded-lg shadow-lg z-10">
+          <p className="text-sm font-medium">
+            👆 Click leads to select • {selectedLeadIdsForAssignment.length} selected
+          </p>
+        </div>
+      )}
+    </div>
   );
+}
+
+// Helper function to check if point is inside polygon
+function isPointInPolygon(point: L.LatLng, polygon: L.LatLng[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].lat, yi = polygon[i].lng;
+    const xj = polygon[j].lat, yj = polygon[j].lng;
+    
+    const intersect = ((yi > point.lng) !== (yj > point.lng))
+        && (point.lat < (xj - xi) * (point.lng - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 function createCustomIcon(
@@ -151,10 +360,15 @@ function createCustomIcon(
   isSelected: boolean,
   isClaimedByMe: boolean,
   canClaim: boolean,
-  isClaimed: boolean
+  isClaimed: boolean,
+  isSelectedForAssignment: boolean = false
 ): L.DivIcon {
   const size = isSelected ? 44 : 36;
-  const border = isSelected ? '3px solid white' : '2px solid white';
+  const border = isSelectedForAssignment 
+    ? '4px solid #8b5cf6' // Purple border for assignment selection
+    : isSelected 
+    ? '3px solid white' 
+    : '2px solid white';
   const opacity = isClaimed && !canClaim ? 0.7 : 1;
   
   const solarColors: Record<string, string> = {

@@ -222,3 +222,24 @@
 [2026-02-10T21:36:14.140Z] [INFO] [UploadModal] Geocode complete | {"success":87,"failed":0}
 [2026-02-10T21:36:33.915Z] [INFO] [UploadModal] Final results | {"good":23,"poor":64,"geocodeFailed":0}
 [2026-02-10T21:36:33.927Z] [INFO] [UploadModal] Saving leads | {"count":23}
+[2026-02-11T03:20:53.851Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":87}
+[2026-02-11T03:20:54.359Z] [INFO] [UploadModal] Geocode progress | {"current":10,"total":87}
+[2026-02-11T03:20:54.835Z] [INFO] [UploadModal] Geocode progress | {"current":20,"total":87}
+[2026-02-11T03:20:55.324Z] [INFO] [UploadModal] Geocode progress | {"current":30,"total":87}
+[2026-02-11T03:20:55.819Z] [INFO] [UploadModal] Geocode progress | {"current":40,"total":87}
+[2026-02-11T03:20:56.281Z] [INFO] [UploadModal] Geocode progress | {"current":50,"total":87}
+[2026-02-11T03:20:56.744Z] [INFO] [UploadModal] Geocode progress | {"current":60,"total":87}
+[2026-02-11T03:20:57.206Z] [INFO] [UploadModal] Geocode progress | {"current":70,"total":87}
+[2026-02-11T03:20:57.675Z] [INFO] [UploadModal] Geocode progress | {"current":80,"total":87}
+[2026-02-11T03:20:58.042Z] [INFO] [UploadModal] Geocode progress | {"current":87,"total":87}
+[2026-02-11T03:20:58.052Z] [INFO] [UploadModal] Geocode complete | {"success":87,"failed":0}
+[2026-02-11T03:21:17.346Z] [INFO] [UploadModal] Final results | {"good":23,"poor":64,"geocodeFailed":0}
+[2026-02-11T03:21:17.358Z] [INFO] [UploadModal] Saving leads to Firestore | {"count":23}
+[2026-02-11T03:21:19.320Z] [ERROR] [UploadModal] Upload failed | {"error":"Function setDoc() called with invalid data. Unsupported field value: undefined (found in field estimatedBill in document leads/1770780066718-k4ibphlxp)","stack":"FirebaseError: Function setDoc() called with invalid data. Unsupported field value: undefined (found in field estimatedBill in document leads/1770780066718-k4ibphlxp)"}
+[2026-02-11T03:21:26.278Z] [INFO] [UploadModal] Starting geocode batch | {"rowCount":7}
+[2026-02-11T03:21:26.291Z] [INFO] [UploadModal] Geocode complete | {"success":7,"failed":0}
+[2026-02-11T03:21:26.806Z] [INFO] [UploadModal] Skipping duplicate | {"address":"59 Hamilton st"}
+[2026-02-11T03:21:26.820Z] [INFO] [UploadModal] Skipping duplicate | {"address":"199 citation dr"}
+[2026-02-11T03:21:27.732Z] [INFO] [UploadModal] Skipping duplicate | {"address":"73 Meadowbriar Rd"}
+[2026-02-11T03:21:27.743Z] [INFO] [UploadModal] Final results | {"good":0,"poor":7,"geocodeFailed":0}
+[2026-02-11T03:21:27.752Z] [INFO] [UploadModal] Saving leads to Firestore | {"count":0}

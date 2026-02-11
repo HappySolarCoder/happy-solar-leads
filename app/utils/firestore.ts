@@ -288,9 +288,9 @@ export async function migrateFromLocalStorage(): Promise<void> {
   
   try {
     // Get data from localStorage
-    const leadsData = localStorage.getItem('happysolar_leads');
-    const usersData = localStorage.getItem('happysolar_users');
-    const currentUserData = localStorage.getItem('happysolar_current_user');
+    const leadsData = localStorage.getItem('raydar_leads');
+    const usersData = localStorage.getItem('raydar_users');
+    const currentUserData = localStorage.getItem('raydar_current_user');
     
     if (leadsData) {
       const leads: Lead[] = JSON.parse(leadsData);

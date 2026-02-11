@@ -1,0 +1,379 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { 
+  Users, Edit2, Trash2, Check, X, ArrowLeft, AlertTriangle 
+} from 'lucide-react';
+import { 
+  User, UserRole, ROLE_LABELS, canManageUsers 
+} from '@/app/types';
+import { 
+  getUsersAsync, getCurrentUserAsync, saveUserAsync, deleteUserAsync 
+} from '@/app/utils/storage';
+
+export default function UsersManagementPage() {
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Partial<User>>({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Load current user and check permissions
+  useEffect(() => {
+    async function loadData() {
+      const user = await getCurrentUserAsync();
+      
+      if (!user || !canManageUsers(user.role)) {
+        router.push('/');
+        return;
+      }
+      
+      setCurrentUser(user);
+      const allUsers = await getUsersAsync();
+      setUsers(allUsers);
+      setIsLoading(false);
+    }
+    
+    loadData();
+  }, [router]);
+
+  const handleEditStart = (user: User) => {
+    setEditingUserId(user.id);
+    setEditForm({
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      homeAddress: user.homeAddress,
+      isActive: user.isActive,
+      territory: user.territory,
+    });
+  };
+
+  const handleEditCancel = () => {
+    setEditingUserId(null);
+    setEditForm({});
+  };
+
+  const handleEditSave = async (userId: string) => {
+    setIsSaving(true);
+    
+    try {
+      const user = users.find(u => u.id === userId);
+      if (!user) return;
+
+      const updatedUser: User = {
+        ...user,
+        ...editForm,
+        name: editForm.name || user.name,
+        email: editForm.email || user.email,
+        role: editForm.role || user.role,
+      };
+
+      await saveUserAsync(updatedUser);
+      
+      // Refresh users list
+      const allUsers = await getUsersAsync();
+      setUsers(allUsers);
+      
+      setEditingUserId(null);
+      setEditForm({});
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+
+    if (user.id === currentUser?.id) {
+      alert('You cannot delete your own account');
+      return;
+    }
+
+    if (!confirm(`Delete user "${user.name}"? This cannot be undone.`)) {
+      return;
+    }
+
+    await deleteUserAsync(userId);
+    
+    // Refresh users list
+    const allUsers = await getUsersAsync();
+    setUsers(allUsers);
+  };
+
+  const handleToggleActive = async (userId: string) => {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+
+    const updatedUser: User = {
+      ...user,
+      isActive: !user.isActive,
+    };
+
+    await saveUserAsync(updatedUser);
+    
+    // Refresh users list
+    const allUsers = await getUsersAsync();
+    setUsers(allUsers);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFC]">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-[#718096]">Loading users...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) return null;
+
+  const roleColors: Record<UserRole, string> = {
+    setter: 'bg-green-100 text-green-800',
+    closer: 'bg-blue-100 text-blue-800',
+    manager: 'bg-purple-100 text-purple-800',
+    admin: 'bg-red-100 text-red-800',
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F7FAFC]">
+      {/* Header */}
+      <header className="bg-white border-b border-[#E2E8F0]">
+        <div className="max-w-7xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => router.push('/admin')}
+                className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
+              >
+                <ArrowLeft className="w-5 h-5 text-[#718096]" />
+              </button>
+              <div>
+                <h1 className="text-2xl font-bold text-[#2D3748]">User Management</h1>
+                <p className="text-sm text-[#718096]">Manage user accounts, roles, and permissions</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Content */}
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        {/* Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-6">
+            <div className="text-sm text-[#718096] mb-1">Total Users</div>
+            <div className="text-3xl font-bold text-[#2D3748]">{users.length}</div>
+          </div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-6">
+            <div className="text-sm text-[#718096] mb-1">Setters</div>
+            <div className="text-3xl font-bold text-[#48BB78]">{users.filter(u => u.role === 'setter').length}</div>
+          </div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-6">
+            <div className="text-sm text-[#718096] mb-1">Closers</div>
+            <div className="text-3xl font-bold text-[#4299E1]">{users.filter(u => u.role === 'closer').length}</div>
+          </div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-6">
+            <div className="text-sm text-[#718096] mb-1">Managers</div>
+            <div className="text-3xl font-bold text-[#8B5CF6]">{users.filter(u => u.role === 'manager').length}</div>
+          </div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-6">
+            <div className="text-sm text-[#718096] mb-1">Admins</div>
+            <div className="text-3xl font-bold text-[#FF5F5A]">{users.filter(u => u.role === 'admin').length}</div>
+          </div>
+        </div>
+
+        {/* Users Table */}
+        <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
+          <div className="px-6 py-4 border-b border-[#E2E8F0]">
+            <h2 className="text-lg font-semibold text-[#2D3748]">All Users</h2>
+          </div>
+
+          <div className="overflow-x-auto w-full">
+            <table className="w-full min-w-[640px]">
+              <thead className="bg-[#F7FAFC] border-b border-[#E2E8F0]">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                    User
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                    Role
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                    Territory
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-[#E2E8F0]">
+                {users.map((user) => (
+                  <tr key={user.id} className="hover:bg-[#F7FAFC] transition-colors">
+                    {editingUserId === user.id ? (
+                      <>
+                        {/* Edit Mode */}
+                        <td className="px-6 py-4">
+                          <input
+                            type="text"
+                            value={editForm.name || ''}
+                            onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                            className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                            placeholder="Name"
+                          />
+                          <input
+                            type="email"
+                            value={editForm.email || ''}
+                            onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                            className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm mt-2 focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                            placeholder="Email"
+                          />
+                        </td>
+                        <td className="px-6 py-4">
+                          <select
+                            value={editForm.role || user.role}
+                            onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
+                            className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                          >
+                            {(['setter', 'closer', 'manager', 'admin'] as UserRole[]).map(role => (
+                              <option key={role} value={role}>
+                                {ROLE_LABELS[role]}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-6 py-4">
+                          <input
+                            type="text"
+                            value={editForm.territory || ''}
+                            onChange={(e) => setEditForm({ ...editForm, territory: e.target.value })}
+                            className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                            placeholder="Territory name"
+                          />
+                        </td>
+                        <td className="px-6 py-4">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editForm.isActive ?? user.isActive}
+                              onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
+                              className="w-4 h-4 text-[#FF5F5A] border-[#E2E8F0] rounded focus:ring-[#FF5F5A]"
+                            />
+                            <span className="text-sm text-[#2D3748]">Active</span>
+                          </label>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleEditSave(user.id)}
+                              disabled={isSaving}
+                              className="p-2 text-[#48BB78] hover:bg-green-50 rounded-lg transition-colors"
+                              title="Save"
+                            >
+                              <Check className="w-5 h-5" />
+                            </button>
+                            <button
+                              onClick={handleEditCancel}
+                              disabled={isSaving}
+                              className="p-2 text-[#F56565] hover:bg-red-50 rounded-lg transition-colors"
+                              title="Cancel"
+                            >
+                              <X className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        {/* View Mode */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold"
+                              style={{ backgroundColor: user.color }}
+                            >
+                              {user.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="font-medium text-[#2D3748]">{user.name}</div>
+                              <div className="text-sm text-[#718096]">{user.email}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${roleColors[user.role]}`}>
+                            {ROLE_LABELS[user.role]}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-sm text-[#2D3748]">
+                            {user.territory || '—'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <button
+                            onClick={() => handleToggleActive(user.id)}
+                            className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                              user.isActive
+                                ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                                : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                            }`}
+                          >
+                            {user.isActive ? 'Active' : 'Inactive'}
+                          </button>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleEditStart(user)}
+                              className="p-2 text-[#4299E1] hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Edit user"
+                            >
+                              <Edit2 className="w-5 h-5" />
+                            </button>
+                            {user.id !== currentUser.id && (
+                              <button
+                                onClick={() => handleDeleteUser(user.id)}
+                                className="p-2 text-[#F56565] hover:bg-red-50 rounded-lg transition-colors"
+                                title="Delete user"
+                              >
+                                <Trash2 className="w-5 h-5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Warning */}
+        <div className="mt-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-amber-900 mb-1">Admin Access Required</h3>
+              <p className="text-sm text-amber-700">
+                Only users with Admin role can access this page. Be careful when changing user roles
+                or deleting accounts - these actions cannot be undone.
+              </p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}

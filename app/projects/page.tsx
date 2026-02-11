@@ -23,14 +23,14 @@ interface Project {
 }
 
 // Local storage key
-const STORAGE_KEY = 'happysolar_projects';
+const STORAGE_KEY = 'raydar_projects';
 
 const DEFAULT_PROJECTS: Project[] = [
   {
-    id: 'happy-solar',
-    name: 'Happy Solar Leads',
+    id: 'raydar',
+    name: 'Raydar',
     description: 'Lead management and solar scoring app',
-    icon: '☀️',
+    icon: '⚡',
     color: '#f59e0b',
     collapsed: false,
     features: [

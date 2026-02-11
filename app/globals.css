@@ -1,44 +1,65 @@
+/* Import Inter font first */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 @import "tailwindcss";
 
 :root {
-  --background: #f9fafb;
-  --foreground: #111827;
+  /* Raydar Official Brand Colors */
+  --raydar-red: #FF5F5A;
+  --raydar-red-hover: #E54E49;
+  --charcoal: #2D3748;
+  --pure-white: #FFFFFF;
+  
+  /* Secondary Colors */
+  --light-gray: #F7FAFC;
+  --medium-gray: #E2E8F0;
+  --dark-gray: #718096;
+  
+  /* Accent Colors */
+  --success: #48BB78;
+  --warning: #ED8936;
+  --error: #F56565;
+  --info: #4299E1;
+  
+  --background: #FFFFFF;
+  --foreground: #2D3748;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #FFFFFF;
+  color: #2D3748;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom scrollbar */
+/* Scrollbar - Raydar Red */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
-  border-radius: 3px;
+  background: #F7FAFC;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
+  background: #E2E8F0;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #FF5F5A;
 }
 
-/* Hide scrollbar for horizontal scrolling elements */
 .scrollbar-hide {
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -50,68 +71,68 @@ body {
 
 /* Map marker styles */
 .custom-marker {
-  transition: transform 0.2s ease;
+  transition: transform 200ms ease-out;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
 }
 
 .custom-marker:hover {
-  transform: scale(1.2);
+  transform: scale(1.1) translateY(-2px);
+  filter: drop-shadow(0 4px 8px rgba(255, 95, 90, 0.3));
 }
 
-/* Leaflet popup customization */
+/* Leaflet popup - Clean white */
 .leaflet-popup-content-wrapper {
-  border-radius: 12px;
+  background: white !important;
+  border: 1px solid #E2E8F0 !important;
+  border-radius: 8px !important;
   padding: 0;
   overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  color: #2D3748;
 }
 
 .leaflet-popup-content {
   margin: 0 !important;
+  color: #2D3748;
 }
 
 .leaflet-popup-tip {
-  box-shadow: none;
+  background: white !important;
+  border: 1px solid #E2E8F0 !important;
 }
 
-/* Animation utilities */
+/* Clean animations */
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { 
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes slideIn {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  from { 
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to { 
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.3s ease;
+  animation: fadeIn 200ms ease-out;
 }
 
 .animate-slide-in {
-  animation: slideIn 0.3s ease;
+  animation: slideIn 300ms ease-out;
 }
 
-/* Status badge pulse for claimed leads */
-@keyframes pulse-ring {
-  0% {
-    transform: scale(0.8);
-    opacity: 0.8;
-  }
-  50% {
-    transform: scale(1);
-    opacity: 0.4;
-  }
-  100% {
-    transform: scale(0.8);
-    opacity: 0.8;
-  }
-}
-
-.pulse-ring {
-  animation: pulse-ring 2s infinite;
-}
-
-/* Touch-friendly tap targets for mobile */
+/* Touch-friendly */
 @media (max-width: 768px) {
   button,
   [role="button"] {
@@ -119,3 +140,76 @@ body {
     min-width: 44px;
   }
 }
+
+/* Selection - Raydar Red */
+::selection {
+  background: rgba(255, 95, 90, 0.2);
+  color: #2D3748;
+}
+
+::-moz-selection {
+  background: rgba(255, 95, 90, 0.2);
+  color: #2D3748;
+}
+
+/* Focus rings - Raydar Red */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #FF5F5A;
+  outline-offset: 2px;
+}
+
+/* Flat button styles (no gradients) */
+.btn-primary {
+  background: #FF5F5A;
+  color: white;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 16px;
+  transition: all 150ms ease-out;
+  border: none;
+}
+
+.btn-primary:hover {
+  background: #E54E49;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 95, 90, 0.25);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+/* Clean card */
+.card {
+  background: white;
+  border: 1px solid #E2E8F0;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+/* Form inputs */
+.input {
+  padding: 12px 16px;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  font-size: 16px;
+  font-family: 'Inter', sans-serif;
+  transition: all 150ms ease-out;
+}
+
+.input:focus {
+  border-color: #FF5F5A;
+  box-shadow: 0 0 0 3px rgba(255, 95, 90, 0.1);
+  outline: none;
+}
+
+/* 8px grid system helpers */
+.gap-grid { gap: 8px; }
+.gap-grid-2 { gap: 16px; }
+.gap-grid-3 { gap: 24px; }
+.gap-grid-4 { gap: 32px; }

@@ -1,19 +1,20 @@
 // Lead and User Types
 
-export type LeadStatus = 
-  | 'unclaimed'
-  | 'claimed'
-  | 'not-home'
-  | 'interested'
-  | 'not-interested'
-  | 'appointment'
-  | 'sale';
+// LeadStatus is now dynamic - can be any disposition ID from Firestore
+export type LeadStatus = string;
+
+export type UserRole = 
+  | 'setter'
+  | 'closer'
+  | 'manager'
+  | 'admin';
 
 export interface User {
   id: string;
   name: string;
   email: string;
   color: string; // For map pin color
+  role: UserRole; // User permission level
   createdAt: Date;
   // Auto-assignment fields
   homeAddress?: string;
@@ -22,10 +23,13 @@ export interface User {
   assignedLeadCount?: number;
   isActive?: boolean; // Can receive auto-assigned leads
   // Optional user metadata
-  role?: string;
   status?: string;
   lastLogin?: Date;
+  // Territory (for team organization)
+  territory?: string;
 }
+
+export type LeadTag = 'solar-data' | 'homeowner' | 'home-data';
 
 export interface Lead {
   id: string;
@@ -47,6 +51,8 @@ export interface Lead {
   notes?: string;
   source?: string;
   createdAt: Date;
+  // Tags (admin only)
+  tags?: LeadTag[];
   // Solar data (populated when available)
   solarScore?: number;        // 0-100 score
   solarCategory?: 'poor' | 'solid' | 'good' | 'great';
@@ -89,9 +95,11 @@ export interface CSVRow {
   estimatedBill?: number;  // Monthly electric bill estimate
 }
 
-export const STATUS_LABELS: Record<LeadStatus, string> = {
-  'unclaimed': 'Unclaimed',
-  'claimed': 'Claimed',
+// DEPRECATED: Use getDispositionsAsync() from utils/dispositions instead
+// These are kept for backwards compatibility during migration
+export const STATUS_LABELS: Record<string, string> = {
+  'unclaimed': 'Available',
+  'claimed': 'My Targets',
   'not-home': 'Not Home',
   'interested': 'Interested',
   'not-interested': 'Not Interested',
@@ -99,7 +107,8 @@ export const STATUS_LABELS: Record<LeadStatus, string> = {
   'sale': 'Sale!',
 };
 
-export const STATUS_COLORS: Record<LeadStatus, string> = {
+// DEPRECATED: Use getDispositionByIdAsync() from utils/dispositions instead
+export const STATUS_COLORS: Record<string, string> = {
   'unclaimed': '#22c55e',      // Green
   'claimed': '#f59e0b',        // Orange
   'not-home': '#6b7280',       // Gray
@@ -108,6 +117,20 @@ export const STATUS_COLORS: Record<LeadStatus, string> = {
   'appointment': '#8b5cf6',    // Purple
   'sale': '#10b981',           // Emerald
 };
+
+// Get status label based on user role (for managers/admins who see all leads)
+// DEPRECATED: Use getDispositionByIdAsync() from utils/dispositions instead
+export function getStatusLabel(status: LeadStatus, userRole?: UserRole): string {
+  if (status === 'claimed') {
+    // Managers and admins see "Claimed" since they view all users' leads
+    if (userRole === 'manager' || userRole === 'admin') {
+      return 'Claimed';
+    }
+    // Setters/closers see "My Targets" since they only see their own
+    return 'My Targets';
+  }
+  return STATUS_LABELS[status] || status;
+}
 
 export const DEFAULT_COLORS = [
   '#ef4444', // Red
@@ -149,4 +172,71 @@ export const OBJECTION_COLORS: Record<ObjectionType, string> = {
   'need-to-think': '#84cc16',           // Lime
   'not-interested-in-solar': '#ef4444', // Red
   'other': '#9ca3af',                   // Gray-400
+};
+
+// User Roles
+export const ROLE_LABELS: Record<UserRole, string> = {
+  'setter': 'Setter',
+  'closer': 'Closer',
+  'manager': 'Manager',
+  'admin': 'Admin',
+};
+
+export const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
+  'setter': 'Can use app, see own/unclaimed leads, disposition',
+  'closer': 'Same as setter (for tracking purposes)',
+  'manager': 'Setter + assign leads + team data',
+  'admin': 'Full access: upload, reassign, delete, permissions',
+};
+
+// Permission Helpers
+export function canUploadLeads(role: UserRole): boolean {
+  return role === 'admin';
+}
+
+export function canAssignLeads(role: UserRole): boolean {
+  return role === 'manager' || role === 'admin';
+}
+
+export function canSeeAllLeads(role: UserRole): boolean {
+  return role === 'manager' || role === 'admin';
+}
+
+export function canManageUsers(role: UserRole): boolean {
+  return role === 'admin';
+}
+
+export function canSeeTeamData(role: UserRole): boolean {
+  return role === 'manager' || role === 'admin';
+}
+
+export function canReassignLeads(role: UserRole): boolean {
+  return role === 'admin';
+}
+
+export function canDeleteUsers(role: UserRole): boolean {
+  return role === 'admin';
+}
+
+export function canChangePermissions(role: UserRole): boolean {
+  return role === 'admin';
+}
+
+// Lead Tags
+export const LEAD_TAG_LABELS: Record<LeadTag, string> = {
+  'solar-data': 'Solar Data Leads',
+  'homeowner': 'Homeowner Leads',
+  'home-data': 'Home Data Leads',
+};
+
+export const LEAD_TAG_COLORS: Record<LeadTag, string> = {
+  'solar-data': '#f59e0b',  // Amber - sun/solar
+  'homeowner': '#3b82f6',   // Blue - home/property
+  'home-data': '#10b981',   // Green - data/info
+};
+
+export const LEAD_TAG_DESCRIPTIONS: Record<LeadTag, string> = {
+  'solar-data': 'Leads with solar panel analysis and roof data',
+  'homeowner': 'Verified homeowner contact information',
+  'home-data': 'Property details, square footage, home characteristics',
 };

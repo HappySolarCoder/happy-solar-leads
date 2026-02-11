@@ -43,7 +43,7 @@ export function getLeads(): Lead[] {
   
   // Fallback: read from localStorage if cache is empty
   try {
-    const data = localStorage.getItem('happysolar_leads');
+    const data = localStorage.getItem('raydar_leads');
     if (data) {
       const parsed = JSON.parse(data);
       // Convert date strings to Date objects
@@ -69,13 +69,13 @@ export async function getLeadsAsync(): Promise<Lead[]> {
       cacheTimestamp = Date.now();
       // Also backup to localStorage
       if (typeof window !== 'undefined') {
-        localStorage.setItem('happysolar_leads', JSON.stringify(leads));
+        localStorage.setItem('raydar_leads', JSON.stringify(leads));
       }
       return leads;
     }
     // If Firestore returns empty, try localStorage fallback
     if (typeof window !== 'undefined') {
-      const fallbackData = localStorage.getItem('happysolar_leads');
+      const fallbackData = localStorage.getItem('raydar_leads');
       if (fallbackData) {
         const fallbackLeads = JSON.parse(fallbackData).map(convertLeadDates);
         leadsCache = fallbackLeads;
@@ -88,7 +88,7 @@ export async function getLeadsAsync(): Promise<Lead[]> {
     console.error('Firestore getLeads failed, falling back to localStorage:', error);
     // Fallback to localStorage on error
     if (typeof window !== 'undefined') {
-      const fallbackData = localStorage.getItem('happysolar_leads');
+      const fallbackData = localStorage.getItem('raydar_leads');
       if (fallbackData) {
         const fallbackLeads = JSON.parse(fallbackData).map(convertLeadDates);
         leadsCache = fallbackLeads;
@@ -147,9 +147,9 @@ export async function deleteLeadAsync(id: string): Promise<void> {
 
 export function deleteLead(id: string): void {
   // Sync version for backwards compatibility
-  const leads = JSON.parse(localStorage.getItem('happysolar_leads') || '[]');
+  const leads = JSON.parse(localStorage.getItem('raydar_leads') || '[]');
   const filtered = leads.filter((l: Lead) => l.id !== id);
-  localStorage.setItem('happysolar_leads', JSON.stringify(filtered));
+  localStorage.setItem('raydar_leads', JSON.stringify(filtered));
   
   // Update cache
   if (leadsCache) {
@@ -173,7 +173,7 @@ export function getUsers(): User[] {
   }
   
   // Fallback: load from localStorage
-  const data = localStorage.getItem('happysolar_users');
+  const data = localStorage.getItem('raydar_users');
   if (!data) return [];
   
   try {
@@ -220,11 +220,20 @@ export async function saveUserAsync(user: User): Promise<void> {
   }
 }
 
+export async function deleteUserAsync(userId: string): Promise<void> {
+  const { deleteUser } = await import('./firestore');
+  await deleteUser(userId);
+  // Update cache
+  if (usersCache) {
+    usersCache = usersCache.filter(u => u.id !== userId);
+  }
+}
+
 // ============================================
 // CURRENT USER
 // ============================================
 
-const CURRENT_USER_KEY = 'happysolar_current_user_id';
+const CURRENT_USER_KEY = 'raydar_current_user_id';
 
 export function getCurrentUser(): User | null {
   if (typeof window === 'undefined') return null;
@@ -239,7 +248,7 @@ export function getCurrentUser(): User | null {
   }
   
   // Fallback: load from localStorage
-  const usersData = localStorage.getItem('happysolar_users');
+  const usersData = localStorage.getItem('raydar_users');
   if (usersData) {
     try {
       const users: User[] = JSON.parse(usersData);

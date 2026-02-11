@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { User, Check, Users, MapPin, Loader2 } from 'lucide-react';
-import { DEFAULT_COLORS } from '@/app/types';
+import { DEFAULT_COLORS, ROLE_LABELS, ROLE_DESCRIPTIONS } from '@/app/types';
 import { getUsersAsync, saveUserAsync, saveCurrentUserAsync, generateId } from '@/app/utils/storage';
-import type { User as UserType } from '@/app/types';
+import type { User as UserType, UserRole } from '@/app/types';
 
 interface UserOnboardingProps {
   isOpen: boolean;
@@ -20,7 +20,23 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [geocodeError, setGeocodeError] = useState('');
   const [selectedColor, setSelectedColor] = useState(DEFAULT_COLORS[0]);
+  const [selectedRole, setSelectedRole] = useState<UserRole>('setter');
+  const [isFirstUser, setIsFirstUser] = useState(false);
   const [step, setStep] = useState<'welcome' | 'form'>('welcome');
+
+  // Check if this is the first user (should be admin)
+  useEffect(() => {
+    async function checkFirstUser() {
+      const users = await getUsersAsync();
+      if (users.length === 0) {
+        setIsFirstUser(true);
+        setSelectedRole('admin');
+      }
+    }
+    if (isOpen) {
+      checkFirstUser();
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -80,14 +96,22 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
       name: name.trim(),
       email: email.trim(),
       color: selectedColor,
+      role: selectedRole,
       createdAt: new Date(),
-      // Auto-assignment fields
-      homeAddress: homeAddress.trim() || undefined,
-      homeLat: finalLat,
-      homeLng: finalLng,
       assignedLeadCount: 0,
       isActive: true,
     };
+
+    // Add optional fields only if they exist (Firestore doesn't allow undefined)
+    if (homeAddress.trim()) {
+      newUser.homeAddress = homeAddress.trim();
+    }
+    if (finalLat !== undefined) {
+      newUser.homeLat = finalLat;
+    }
+    if (finalLng !== undefined) {
+      newUser.homeLng = finalLng;
+    }
 
     // Save to Firestore
     await saveUserAsync(newUser);
@@ -99,12 +123,12 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
 
       {/* Modal */}
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         {step === 'welcome' ? (
           <>
             <div className="p-8 text-center">
@@ -113,7 +137,7 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
               </div>
               
               <h2 className="text-2xl font-bold text-gray-900 mb-2">
-                Welcome to Happy Solar Leads
+                Welcome to Raydar
               </h2>
               <p className="text-gray-500 mb-6">
                 Let's get you set up so you can start knocking.
@@ -191,13 +215,51 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
                   />
                 </div>
 
+                {/* Role */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Role
+                    {isFirstUser && (
+                      <span className="ml-2 text-xs text-blue-600 font-normal">
+                        (First user - auto-set to Admin)
+                      </span>
+                    )}
+                  </label>
+                  <div className="space-y-2">
+                    {(['setter', 'closer', 'manager', 'admin'] as UserRole[]).map((role) => (
+                      <label
+                        key={role}
+                        className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors ${
+                          selectedRole === role
+                            ? 'border-blue-500 bg-blue-50'
+                            : 'border-gray-300 hover:border-gray-400'
+                        } ${isFirstUser && role !== 'admin' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="role"
+                          value={role}
+                          checked={selectedRole === role}
+                          onChange={(e) => !isFirstUser && setSelectedRole(e.target.value as UserRole)}
+                          disabled={isFirstUser && role !== 'admin'}
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium text-gray-900">{ROLE_LABELS[role]}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">{ROLE_DESCRIPTIONS[role]}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Home Address */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     <span className="flex items-center gap-1">
                       <MapPin className="w-4 h-4" />
                       Home Address
-                      <span className="text-gray-400 font-normal">(for lead assignment)</span>
+                      <span className="text-gray-400 font-normal">(optional - for auto-assignment)</span>
                     </span>
                   </label>
                   <input
@@ -209,16 +271,7 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
                       setHomeLng(undefined);
                       setGeocodeError('');
                     }}
-                    onBlur={async () => {
-                      if (homeAddress.trim() && !homeLat) {
-                        const coords = await geocodeHomeAddress(homeAddress);
-                        if (coords) {
-                          setHomeLat(coords.lat);
-                          setHomeLng(coords.lng);
-                        }
-                      }
-                    }}
-                    placeholder="123 Main St, Phoenix, AZ 85001"
+                    placeholder="123 Main St, Phoenix, AZ 85001 (skip for now if needed)"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                   {isGeocoding && (
@@ -227,9 +280,6 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
                       Verifying address...
                     </p>
                   )}
-                  {geocodeError && (
-                    <p className="text-xs text-orange-500 mt-1">{geocodeError}</p>
-                  )}
                   {homeLat && homeLng && (
                     <p className="text-xs text-green-500 mt-1 flex items-center gap-1">
                       <Check className="w-3 h-3" />
@@ -237,7 +287,7 @@ export default function UserOnboarding({ isOpen, onComplete }: UserOnboardingPro
                     </p>
                   )}
                   <p className="text-xs text-gray-500 mt-1">
-                    Leads will be auto-assigned based on distance from your home.
+                    You can add this later for distance-based lead assignment.
                   </p>
                 </div>
 

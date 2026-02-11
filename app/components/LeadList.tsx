@@ -60,7 +60,7 @@ export default function LeadList({
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">Leads</h2>
           <span className="text-sm text-gray-500">
-            {unclaimedCount} unclaimed
+            {unclaimedCount} available
           </span>
         </div>
 
