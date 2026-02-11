@@ -59,10 +59,25 @@ export async function saveDispositionAsync(disposition: Disposition): Promise<vo
   try {
     if (!db) throw new Error('Firebase not initialized');
     
-    await setDoc(doc(db, DISPOSITIONS_COLLECTION, disposition.id), {
-      ...disposition,
+    // Clean undefined fields (Firestore doesn't accept undefined)
+    const cleanData: any = {
+      id: disposition.id,
+      name: disposition.name,
+      color: disposition.color,
+      icon: disposition.icon,
+      countsAsDoorKnock: disposition.countsAsDoorKnock,
+      order: disposition.order,
+      isDefault: disposition.isDefault,
+      createdAt: disposition.createdAt,
       updatedAt: new Date(),
-    });
+    };
+    
+    // Only add specialBehavior if it's defined
+    if (disposition.specialBehavior) {
+      cleanData.specialBehavior = disposition.specialBehavior;
+    }
+    
+    await setDoc(doc(db, DISPOSITIONS_COLLECTION, disposition.id), cleanData);
   } catch (error) {
     console.error('Error saving disposition:', error);
     throw error;
