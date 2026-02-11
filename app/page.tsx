@@ -37,6 +37,7 @@ export default function Home() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showUserOnboarding, setShowUserOnboarding] = useState(false);
   const [showAssignmentPanel, setShowAssignmentPanel] = useState(false);
+  const [showAutoAssignPanel, setShowAutoAssignPanel] = useState(false);
   const [assignmentMode, setAssignmentMode] = useState<'none' | 'manual' | 'territory'>('none');
   const [selectedLeadIdsForAssignment, setSelectedLeadIdsForAssignment] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'split' | 'map' | 'list'>('split');
@@ -56,6 +57,18 @@ export default function Home() {
       }
     }
     loadData();
+  }, []);
+
+  // Check for autoassign query parameter
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('autoassign') === 'true') {
+        setShowAutoAssignPanel(true);
+        // Clean URL
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    }
   }, []);
 
   // Refresh leads when they change
@@ -239,6 +252,31 @@ export default function Home() {
           });
         }}
       />
+
+      {/* Auto-Assign Panel */}
+      {showAutoAssignPanel && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-[#E2E8F0] p-6 flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-[#2D3748]">Auto-Assign Leads</h2>
+              <button
+                onClick={() => setShowAutoAssignPanel(false)}
+                className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-[#718096]" />
+              </button>
+            </div>
+            <div className="p-6">
+              <AutoAssignPanel
+                onComplete={() => {
+                  setShowAutoAssignPanel(false);
+                  refreshLeads();
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header - Clean Flat Design */}
       <header className="sticky top-0 z-30 bg-white border-b border-[#E2E8F0] shadow-sm">

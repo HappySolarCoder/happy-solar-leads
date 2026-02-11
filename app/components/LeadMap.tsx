@@ -158,18 +158,24 @@ export default function LeadMap({
     const map = mapInstanceRef.current;
     
     if (assignmentMode === 'territory') {
-      // Disable map dragging and zooming during drawing
-      map.dragging.disable();
-      map.touchZoom.disable();
-      map.doubleClickZoom.disable();
-      map.scrollWheelZoom.disable();
-      map.boxZoom.disable();
-      map.keyboard.disable();
+      // CRITICAL: Disable ALL map interactions to allow drawing
+      if (map.dragging) map.dragging.disable();
+      if (map.touchZoom) map.touchZoom.disable();
+      if (map.doubleClickZoom) map.doubleClickZoom.disable();
+      if (map.scrollWheelZoom) map.scrollWheelZoom.disable();
+      if (map.boxZoom) map.boxZoom.disable();
+      if (map.keyboard) map.keyboard.disable();
+      
+      // Disable default click behavior on map
+      map.off('click');
+      map.off('dblclick');
       
       // Change cursor to crosshair
       if (mapRef.current) {
         mapRef.current.style.cursor = 'crosshair';
       }
+      
+      console.log('[LeadMap] Territory mode enabled - map interactions disabled');
 
       // Territory mode: freeform drawing (click and drag)
       let drawingPoints: L.LatLng[] = [];
@@ -277,13 +283,13 @@ export default function LeadMap({
         map.off('mousemove', handleMouseMove);
         map.off('mouseup', handleMouseUp);
         
-        // Re-enable map controls
-        map.dragging.enable();
-        map.touchZoom.enable();
-        map.doubleClickZoom.enable();
-        map.scrollWheelZoom.enable();
-        map.boxZoom.enable();
-        map.keyboard.enable();
+        // Re-enable ALL map controls
+        if (map.dragging) map.dragging.enable();
+        if (map.touchZoom) map.touchZoom.enable();
+        if (map.doubleClickZoom) map.doubleClickZoom.enable();
+        if (map.scrollWheelZoom) map.scrollWheelZoom.enable();
+        if (map.boxZoom) map.boxZoom.enable();
+        if (map.keyboard) map.keyboard.enable();
         
         // Reset cursor
         if (mapRef.current) {
@@ -291,15 +297,17 @@ export default function LeadMap({
         }
         
         if (tempPolygon) tempPolygon.remove();
+        
+        console.log('[LeadMap] Territory mode disabled - map interactions restored');
       };
     } else {
       // Not in territory mode - ensure map controls are enabled
-      map.dragging.enable();
-      map.touchZoom.enable();
-      map.doubleClickZoom.enable();
-      map.scrollWheelZoom.enable();
-      map.boxZoom.enable();
-      map.keyboard.enable();
+      if (map.dragging) map.dragging.enable();
+      if (map.touchZoom) map.touchZoom.enable();
+      if (map.doubleClickZoom) map.doubleClickZoom.enable();
+      if (map.scrollWheelZoom) map.scrollWheelZoom.enable();
+      if (map.boxZoom) map.boxZoom.enable();
+      if (map.keyboard) map.keyboard.enable();
       
       if (mapRef.current) {
         mapRef.current.style.cursor = '';
