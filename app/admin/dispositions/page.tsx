@@ -210,9 +210,12 @@ export default function DispositionsPage() {
             </div>
             <button
               onClick={() => {
+                console.log('=== NEW DISPOSITION CLICKED ===');
+                console.log('Current showCreateModal:', showCreateModal);
                 setEditingDispo(null);
                 setFormData({ name: '', color: '#3B82F6', icon: 'circle', countsAsDoorKnock: true, specialBehavior: 'none' });
                 setShowCreateModal(true);
+                console.log('Set showCreateModal to true');
               }}
               className="flex items-center gap-2 px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-lg font-semibold transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg"
             >
@@ -316,6 +319,11 @@ export default function DispositionsPage() {
       {/* Create/Edit Modal */}
       {showCreateModal && (
         <>
+          {console.log('=== MODAL RENDERING ===', { showCreateModal, editingDispo, formData })}
+          {/* DEBUG: Bright red indicator to see if modal is rendering */}
+          <div className="fixed top-0 left-0 w-32 h-32 bg-red-500 z-[9999]" style={{ background: 'red' }}>
+            MODAL HERE
+          </div>
           <div 
             className="fixed inset-0 bg-black/40 z-50"
             onClick={() => setShowCreateModal(false)}
