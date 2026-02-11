@@ -19,6 +19,15 @@ export const metadata: Metadata = {
     icon: '/raydar-icon.png',
     apple: '/raydar-icon.png',
   },
+  viewport: {
+    width: 'device-width',
+    initialScale: 1,
+    maximumScale: 5,
+    userScalable: true,
+  },
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
 };
 
 export default function RootLayout({
@@ -30,6 +39,7 @@ export default function RootLayout({
     <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        style={{ userSelect: 'auto', WebkitUserSelect: 'auto' }}
       >
         {children}
       </body>
