@@ -89,7 +89,7 @@ export default function LeadMap({
 
     // Create marker cluster group with smart clustering
     markersLayerRef.current = L.markerClusterGroup({
-      disableClusteringAtZoom: 16, // Show individual pins at zoom 16+ (close enough to see streets)
+      disableClusteringAtZoom: 14, // Show individual pins at zoom 14+ (earlier than before)
       maxClusterRadius: 80, // Cluster radius in pixels
       spiderfyOnMaxZoom: true, // Spread out markers when clicking cluster at max zoom
       showCoverageOnHover: false, // Don't show cluster bounds on hover (cleaner UX)
@@ -446,9 +446,45 @@ export default function LeadMap({
     }
   }, [center]);
 
+  // Handle GPS locate button click
+  const handleLocateMe = () => {
+    if (!mapInstanceRef.current || !userPosition) return;
+    
+    const map = mapInstanceRef.current;
+    // Center on GPS location and zoom to street level
+    map.setView([userPosition[0], userPosition[1]], 17, {
+      animate: true,
+      duration: 0.5,
+    });
+  };
+
   return (
     <div className="relative w-full h-full">
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
+      
+      {/* GPS Locate Button */}
+      {userPosition && (
+        <button
+          onClick={handleLocateMe}
+          className="absolute bottom-6 right-6 w-12 h-12 bg-white hover:bg-[#FF5F5A] border-2 border-[#E2E8F0] rounded-full shadow-lg flex items-center justify-center text-[#FF5F5A] hover:text-white transition-all duration-200 hover:scale-110 active:scale-95 z-20"
+          title="Center on my location"
+          style={{ boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polygon points="3 11 22 2 13 21 11 13 3 11" />
+          </svg>
+        </button>
+      )}
       
       {/* Drawing Instructions */}
       {assignmentMode === 'territory' && (

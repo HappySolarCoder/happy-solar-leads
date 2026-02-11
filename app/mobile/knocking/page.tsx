@@ -206,17 +206,7 @@ export default function KnockingPage() {
             center={mapCenter} // Set ONCE on GPS load, then only on manual recenter
             zoom={15} // Closer zoom for mobile
           />
-
-          {/* Locate Me Button - Recenter on GPS */}
-          {gpsPosition && (
-            <button
-              onClick={() => setMapCenter([gpsPosition.lat, gpsPosition.lng])}
-              className="absolute bottom-6 right-4 w-12 h-12 bg-white border-2 border-[#E2E8F0] rounded-full shadow-lg flex items-center justify-center text-[#FF5F5A] hover:bg-[#FF5F5A] hover:text-white active:scale-95 transition-all"
-              title="Center on my location"
-            >
-              <Navigation className="w-5 h-5" />
-            </button>
-          )}
+          {/* GPS Locate button is now built into LeadMap component */}
         </main>
       )}
 
