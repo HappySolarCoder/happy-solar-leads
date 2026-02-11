@@ -31,12 +31,21 @@ export default function KnockingPage() {
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [isLoading, setIsLoading] = useState(true);
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
+  const [hasInitializedMap, setHasInitializedMap] = useState(false);
 
   // GPS tracking - continuous updates
   const { position: gpsPosition, error: gpsError, isLoading: gpsLoading } = useGeolocation({
     enableHighAccuracy: true,
     watch: true, // Continuous tracking
   });
+
+  // Set map center to GPS position ONCE when GPS first loads
+  useEffect(() => {
+    if (gpsPosition && !hasInitializedMap) {
+      setMapCenter([gpsPosition.lat, gpsPosition.lng]);
+      setHasInitializedMap(true);
+    }
+  }, [gpsPosition, hasInitializedMap]);
 
   // Load data
   useEffect(() => {
@@ -156,7 +165,8 @@ export default function KnockingPage() {
             assignmentMode="none"
             selectedLeadIdsForAssignment={[]}
             userPosition={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
-            center={mapCenter} // Only set when user clicks "locate me"
+            center={mapCenter} // Set ONCE on GPS load, then only on manual recenter
+            zoom={15} // Closer zoom for mobile
           />
 
           {/* Locate Me Button - Recenter on GPS */}

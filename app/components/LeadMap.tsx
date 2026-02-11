@@ -368,30 +368,27 @@ export default function LeadMap({
     if (userPosition) {
       const [lat, lng] = userPosition;
 
-      // Remove old marker
       if (userMarkerRef.current) {
-        userMarkerRef.current.remove();
+        // Update existing marker position (more performant than remove/recreate)
+        userMarkerRef.current.setLatLng([lat, lng]);
+      } else {
+        // Create blue dot first time
+        userMarkerRef.current = L.circleMarker([lat, lng], {
+          radius: 8,
+          fillColor: '#3b82f6',
+          color: '#ffffff',
+          weight: 3,
+          opacity: 1,
+          fillOpacity: 0.9,
+        }).addTo(map);
+
+        // Add pulsing effect with CSS
+        const element = userMarkerRef.current.getElement() as HTMLElement;
+        if (element) {
+          element.style.animation = 'pulse 2s infinite';
+          element.style.zIndex = '1000';
+        }
       }
-
-      // Create blue dot with accuracy circle
-      userMarkerRef.current = L.circleMarker([lat, lng], {
-        radius: 8,
-        fillColor: '#3b82f6',
-        color: '#ffffff',
-        weight: 3,
-        opacity: 1,
-        fillOpacity: 0.9,
-      }).addTo(map);
-
-      // Add pulsing effect with CSS
-      const element = userMarkerRef.current.getElement() as HTMLElement;
-      if (element) {
-        element.style.animation = 'pulse 2s infinite';
-        element.style.zIndex = '1000';
-      }
-
-      // Don't auto-center - just show blue dot
-      // User can manually recenter with locate button if needed
     } else {
       // Remove marker if no position
       if (userMarkerRef.current) {
@@ -409,11 +406,21 @@ export default function LeadMap({
   }, [userPosition, isClient]);
 
   // Handle manual recenter when center prop changes
+  const prevCenterRef = useRef<[number, number] | undefined>(undefined);
   useEffect(() => {
     if (!mapInstanceRef.current || !center) return;
     
-    const map = mapInstanceRef.current;
-    map.setView(center, map.getZoom());
+    // Only recenter if center actually changed (not just re-rendered with same value)
+    const prevCenter = prevCenterRef.current;
+    const centerChanged = !prevCenter || 
+      prevCenter[0] !== center[0] || 
+      prevCenter[1] !== center[1];
+    
+    if (centerChanged) {
+      const map = mapInstanceRef.current;
+      map.setView(center, map.getZoom());
+      prevCenterRef.current = center;
+    }
   }, [center]);
 
   return (
