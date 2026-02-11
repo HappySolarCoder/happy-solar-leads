@@ -24,7 +24,8 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     notes: lead.notes || '',
   });
   const [isSaving, setIsSaving] = useState(false);
-  const [isCalling, setIsCalling] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [infoSent, setInfoSent] = useState(false);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -50,8 +51,8 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     }
   };
 
-  const handleCallSchedulingManager = async () => {
-    setIsCalling(true);
+  const handleSendInfo = async () => {
+    setIsSending(true);
 
     try {
       // 1. Get current user
@@ -62,23 +63,24 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       const settings = settingsStr ? JSON.parse(settingsStr) : null;
 
       console.log('Settings loaded:', settings ? 'yes' : 'no');
-      console.log('Settings raw:', settingsStr);
       console.log('Webhook URL:', settings?.notificationWebhook ? 'present' : 'missing');
-      console.log('Full settings object:', settings);
 
-      // 3. Send webhook notification FIRST (before opening dialer)
-      if (settings?.notificationWebhook) {
-        // Build solar data section
-        let solarSection = '';
-        if (lead.solarScore) {
-          solarSection = `\n**☀️ Solar Data:**
+      if (!settings?.notificationWebhook) {
+        alert('No webhook configured! Go to Admin → Settings to set up Discord/Google Chat notifications.');
+        return;
+      }
+
+      // 3. Build and send webhook notification
+      let solarSection = '';
+      if (lead.solarScore) {
+        solarSection = `\n**☀️ Solar Data:**
 - Solar Score: ${lead.solarScore}/100
 - Sun Hours/Year: ${lead.solarSunshineHours ? Math.round(lead.solarSunshineHours).toLocaleString() : 'N/A'}
 - Max Panels: ${lead.solarMaxPanels || 'N/A'}
 - South-Facing Roof: ${lead.hasSouthFacingRoof !== undefined ? (lead.hasSouthFacingRoof ? 'Yes ✅' : 'No ❌') : 'N/A'}`;
-        }
+      }
 
-        const leadInfo = `
+      const leadInfo = `
 📞 **Scheduling Manager Request**
 👤 **Sent by:** ${currentUser?.name || 'Unknown Setter'}
 
@@ -92,68 +94,53 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
 📝 Notes: ${formData.notes || 'None'}
 
 🎯 **Action Required:** Call customer to schedule appointment
-        `.trim();
+      `.trim();
 
-        const payload = settings.notificationType === 'discord'
-          ? { content: leadInfo }
-          : settings.notificationType === 'googlechat'
-          ? { text: leadInfo }
-          : settings.notificationType === 'slack'
-          ? { text: leadInfo }
-          : { message: leadInfo };
+      const payload = settings.notificationType === 'discord'
+        ? { content: leadInfo }
+        : settings.notificationType === 'googlechat'
+        ? { text: leadInfo }
+        : settings.notificationType === 'slack'
+        ? { text: leadInfo }
+        : { message: leadInfo };
 
-        console.log('Sending webhook to:', settings.notificationWebhook);
-        console.log('Payload type:', settings.notificationType);
+      console.log('Sending webhook to:', settings.notificationWebhook);
 
-        // Try sendBeacon first (works even when navigating away)
-        const payloadString = JSON.stringify(payload);
-        const blob = new Blob([payloadString], { type: 'application/json' });
-        
-        if (navigator.sendBeacon) {
-          console.log('Using sendBeacon (mobile-friendly)');
-          const sent = navigator.sendBeacon(settings.notificationWebhook, blob);
-          if (sent) {
-            console.log('✅ Webhook queued via sendBeacon');
-          } else {
-            console.warn('⚠️ sendBeacon returned false, trying fetch...');
-          }
-        }
-        
-        // Also try regular fetch as backup
-        try {
-          const response = await fetch(settings.notificationWebhook, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: payloadString,
-            keepalive: true, // Important for mobile - keeps request alive during navigation
-          });
+      // Send webhook
+      const response = await fetch(settings.notificationWebhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-          if (response.ok) {
-            console.log('✅ Webhook sent successfully via fetch');
-          } else {
-            console.error('❌ Webhook failed:', response.status, response.statusText);
-          }
-        } catch (err: any) {
-          console.error('❌ Webhook error:', err);
-          // Don't alert on mobile - beacon might have worked
-        }
+      if (response.ok) {
+        console.log('✅ Webhook sent successfully');
+        setInfoSent(true);
       } else {
-        console.warn('⚠️ No webhook configured - skipping notification');
+        console.error('❌ Webhook failed:', response.status, response.statusText);
+        alert(`Failed to send notification: ${response.status} ${response.statusText}`);
       }
-
-      // 4. THEN open phone dialer
-      const phoneNumber = settings?.schedulingManagerPhone || '(716) 272-9889';
-      const cleanPhone = phoneNumber.replace(/\D/g, '');
-      console.log('Opening dialer:', cleanPhone);
-      window.location.href = `tel:${cleanPhone}`;
-
-      // Close modal after short delay
-      setTimeout(() => {
-        onClose();
-      }, 1000);
+    } catch (err: any) {
+      console.error('❌ Webhook error:', err);
+      alert(`Error sending notification: ${err.message}`);
     } finally {
-      setIsCalling(false);
+      setIsSending(false);
     }
+  };
+
+  const handleCall = () => {
+    const settingsStr = localStorage.getItem('raydar_admin_settings');
+    const settings = settingsStr ? JSON.parse(settingsStr) : null;
+    
+    const phoneNumber = settings?.schedulingManagerPhone || '(716) 272-9889';
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    console.log('Opening dialer:', cleanPhone);
+    window.location.href = `tel:${cleanPhone}`;
+
+    // Close modal after short delay
+    setTimeout(() => {
+      onClose();
+    }, 500);
   };
 
   return (
@@ -326,24 +313,50 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
           </div>
 
           {/* Footer Actions */}
-          <div className="sticky bottom-0 bg-white border-t border-[#E2E8F0] px-6 py-4 flex gap-3">
+          <div className="sticky bottom-0 bg-white border-t border-[#E2E8F0] px-6 py-4 space-y-3">
+            {/* Save Button */}
             <button
               onClick={handleSave}
               disabled={isSaving}
-              className="flex-1 px-4 py-3 bg-[#4299E1] hover:bg-[#3182CE] text-white rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full px-4 py-3 bg-[#4299E1] hover:bg-[#3182CE] text-white rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <Save className="w-5 h-5" />
               {isSaving ? 'Saving...' : 'Save Changes'}
             </button>
-            
-            <button
-              onClick={handleCallSchedulingManager}
-              disabled={isCalling}
-              className="flex-1 px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              <Phone className="w-5 h-5" />
-              {isCalling ? 'Calling...' : 'Call Scheduling Manager'}
-            </button>
+
+            {/* Step 1: Send Info */}
+            {!infoSent ? (
+              <button
+                onClick={handleSendInfo}
+                disabled={isSending}
+                className="w-full px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Send className="w-5 h-5" />
+                {isSending ? 'Sending...' : 'Send Info to Scheduling Manager'}
+              </button>
+            ) : (
+              <>
+                {/* Success Message */}
+                <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-center">
+                  <div className="text-green-800 font-semibold flex items-center justify-center gap-2">
+                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    Info Sent Successfully!
+                  </div>
+                  <div className="text-sm text-green-600 mt-1">Scheduling manager has been notified</div>
+                </div>
+
+                {/* Step 2: Call Button (only shows after send) */}
+                <button
+                  onClick={handleCall}
+                  className="w-full px-4 py-3 bg-[#48BB78] hover:bg-[#38A169] text-white rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
+                >
+                  <Phone className="w-5 h-5" />
+                  Call Scheduling Manager
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
