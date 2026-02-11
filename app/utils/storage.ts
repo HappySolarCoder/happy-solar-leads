@@ -19,6 +19,19 @@ let leadsCache: Lead[] | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL = 5000; // 5 seconds
 
+// Helper: Convert date strings from JSON to Date objects
+function convertLeadDates(lead: any): Lead {
+  return {
+    ...lead,
+    createdAt: lead.createdAt ? new Date(lead.createdAt) : new Date(),
+    claimedAt: lead.claimedAt ? new Date(lead.claimedAt) : undefined,
+    dispositionedAt: lead.dispositionedAt ? new Date(lead.dispositionedAt) : undefined,
+    assignedAt: lead.assignedAt ? new Date(lead.assignedAt) : undefined,
+    solarTestedAt: lead.solarTestedAt ? new Date(lead.solarTestedAt) : undefined,
+    objectionRecordedAt: lead.objectionRecordedAt ? new Date(lead.objectionRecordedAt) : undefined,
+  };
+}
+
 export function getLeads(): Lead[] {
   // Return cache if fresh
   if (leadsCache && Date.now() - cacheTimestamp < CACHE_TTL) {
@@ -33,10 +46,12 @@ export function getLeads(): Lead[] {
     const data = localStorage.getItem('happysolar_leads');
     if (data) {
       const parsed = JSON.parse(data);
+      // Convert date strings to Date objects
+      const leads = parsed.map(convertLeadDates);
       // Update cache
-      leadsCache = parsed;
+      leadsCache = leads;
       cacheTimestamp = Date.now();
-      return parsed;
+      return leads;
     }
   } catch (e) {
     console.error('Error reading leads from localStorage:', e);
@@ -62,7 +77,7 @@ export async function getLeadsAsync(): Promise<Lead[]> {
     if (typeof window !== 'undefined') {
       const fallbackData = localStorage.getItem('happysolar_leads');
       if (fallbackData) {
-        const fallbackLeads = JSON.parse(fallbackData);
+        const fallbackLeads = JSON.parse(fallbackData).map(convertLeadDates);
         leadsCache = fallbackLeads;
         cacheTimestamp = Date.now();
         return fallbackLeads;
@@ -75,7 +90,7 @@ export async function getLeadsAsync(): Promise<Lead[]> {
     if (typeof window !== 'undefined') {
       const fallbackData = localStorage.getItem('happysolar_leads');
       if (fallbackData) {
-        const fallbackLeads = JSON.parse(fallbackData);
+        const fallbackLeads = JSON.parse(fallbackData).map(convertLeadDates);
         leadsCache = fallbackLeads;
         cacheTimestamp = Date.now();
         return fallbackLeads;
