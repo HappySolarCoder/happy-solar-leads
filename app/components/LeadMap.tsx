@@ -44,6 +44,7 @@ export default function LeadMap({
   const [isClient, setIsClient] = useState(false);
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
+  const [mapZoom, setMapZoom] = useState(zoom);
 
   const leads = useMemo(() => leadsProp, [leadsProp]);
 
@@ -86,6 +87,11 @@ export default function LeadMap({
     markersLayerRef.current = L.layerGroup().addTo(map);
     mapInstanceRef.current = map;
 
+    // Listen for zoom changes to update marker sizes
+    map.on('zoomend', () => {
+      setMapZoom(map.getZoom());
+    });
+
     return () => {
       if (routeLineRef.current) routeLineRef.current.remove();
       map.remove();
@@ -105,6 +111,9 @@ export default function LeadMap({
       routeLineRef.current.remove();
       routeLineRef.current = null;
     }
+
+    // Get current zoom level for scaling
+    const currentZoom = map.getZoom();
 
     // Show route mode
     if (routeWaypoints && routeWaypoints.length > 0) {
@@ -152,7 +161,8 @@ export default function LeadMap({
         Boolean(canClaim),
         Boolean(lead.claimedBy),
         isSelectedForAssignment,
-        disposition
+        disposition,
+        currentZoom
       );
 
       const marker = L.marker([lead.lat!, lead.lng!], { icon });
@@ -167,7 +177,7 @@ export default function LeadMap({
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
       map.fitBounds(bounds, { padding: [50, 50] });
     }
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient]);
+  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, mapZoom, dispositions]);
 
   // Handle territory drawing mode
   useEffect(() => {
@@ -526,14 +536,38 @@ function createCustomIcon(
   canClaim: boolean,
   isClaimed: boolean,
   isSelectedForAssignment: boolean = false,
-  disposition?: Disposition
+  disposition?: Disposition,
+  zoom: number = 12
 ): L.DivIcon {
-  const size = isSelected ? 44 : 36;
+  // Zoom-based sizing
+  // Zoom < 12: Simple dots (8px)
+  // Zoom 12-14: Small pins (16px)
+  // Zoom 14-16: Medium pins (24px)
+  // Zoom > 16: Full pins (36px)
+  let baseSize = 36;
+  let showIcon = true;
+  
+  if (zoom < 12) {
+    baseSize = 8;
+    showIcon = false;
+  } else if (zoom < 14) {
+    baseSize = 16;
+    showIcon = false;
+  } else if (zoom < 16) {
+    baseSize = 24;
+    showIcon = true;
+  }
+  
+  const size = isSelected ? baseSize * 1.2 : baseSize;
+  
+  // For simple dots (zoomed out), use circles instead of teardrops
+  const isSimpleDot = zoom < 14;
+  
   const border = isSelectedForAssignment 
-    ? '4px solid #8b5cf6' // Purple border for assignment selection
+    ? '3px solid #8b5cf6' // Purple border for assignment selection
     : isSelected 
-    ? '3px solid white' 
-    : '2px solid white';
+    ? '2px solid white' 
+    : isSimpleDot ? 'none' : '2px solid white';
   const opacity = isClaimed && !canClaim ? 0.7 : 1;
   
   const solarColors: Record<string, string> = {
@@ -553,9 +587,21 @@ function createCustomIcon(
     ? (ICON_TO_UNICODE[disposition.icon] || '●')
     : '●';
   
+  // Simple dot for zoomed out
+  if (isSimpleDot) {
+    const html = `
+      <div style="width:${size}px;height:${size}px;background:${color};border:${border};border-radius:50%;opacity:${opacity};box-shadow:0 2px 4px rgba(0,0,0,0.2);"></div>
+    `;
+    return L.divIcon({ html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
+  }
+  
+  // Teardrop pin for zoomed in
+  const fontSize = showIcon ? size * 0.5 : 0;
+  const iconDisplay = showIcon ? icon : '';
+  
   const html = `
     <div style="width:${size}px;height:${size}px;background:${color};border:${border};border-radius:50% 50% 50% 0;transform:rotate(-45deg);opacity:${opacity};box-shadow:0 3px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;">
-      <span style="transform:rotate(45deg);color:white;font-size:${size * 0.5}px;font-weight:bold;">${icon}</span>
+      ${showIcon ? `<span style="transform:rotate(45deg);color:white;font-size:${fontSize}px;font-weight:bold;">${iconDisplay}</span>` : ''}
     </div>
   `;
 
