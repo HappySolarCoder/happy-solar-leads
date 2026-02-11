@@ -11,7 +11,7 @@ const DISPOSITIONS_COLLECTION = 'dispositions';
 // Get all dispositions (with defaults as fallback)
 export async function getDispositionsAsync(): Promise<Disposition[]> {
   try {
-    if (typeof window === 'undefined') {
+    if (typeof window === 'undefined' || !db) {
       return DEFAULT_DISPOSITIONS;
     }
 
@@ -40,6 +40,8 @@ export async function getDispositionsAsync(): Promise<Disposition[]> {
 // Initialize default dispositions in Firestore
 export async function initializeDefaultDispositions(): Promise<void> {
   try {
+    if (!db) return;
+    
     for (const dispo of DEFAULT_DISPOSITIONS) {
       await setDoc(doc(db, DISPOSITIONS_COLLECTION, dispo.id), {
         ...dispo,
@@ -55,6 +57,8 @@ export async function initializeDefaultDispositions(): Promise<void> {
 // Save disposition (create or update)
 export async function saveDispositionAsync(disposition: Disposition): Promise<void> {
   try {
+    if (!db) throw new Error('Firebase not initialized');
+    
     await setDoc(doc(db, DISPOSITIONS_COLLECTION, disposition.id), {
       ...disposition,
       updatedAt: new Date(),
@@ -68,6 +72,8 @@ export async function saveDispositionAsync(disposition: Disposition): Promise<vo
 // Delete disposition (only if not default)
 export async function deleteDispositionAsync(id: string): Promise<void> {
   try {
+    if (!db) throw new Error('Firebase not initialized');
+    
     const dispositions = await getDispositionsAsync();
     const disposition = dispositions.find(d => d.id === id);
     

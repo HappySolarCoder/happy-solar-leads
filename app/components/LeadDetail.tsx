@@ -331,10 +331,10 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       </div>
 
       {/* Objection Tracker Modal */}
-      {showObjectionTracker && (
+      {showObjectionTracker && currentUser && (
         <ObjectionTracker
           lead={lead}
-          currentUser={currentUser}
+          currentUserId={currentUser.id}
           onSave={handleObjectionSave}
           onClose={() => setShowObjectionTracker(false)}
         />
