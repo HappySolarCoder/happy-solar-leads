@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, List, Navigation, Filter, MapPin } from 'lucide-react';
-import { getLeadsAsync, getCurrentUserAsync } from '@/app/utils/storage';
+import { getLeadsAsync } from '@/app/utils/storage';
+import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import LeadDetail from '@/app/components/LeadDetail';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
@@ -50,9 +51,9 @@ export default function KnockingPage() {
   // Load data
   useEffect(() => {
     async function loadData() {
-      const user = await getCurrentUserAsync();
+      const user = await getCurrentAuthUser();
       if (!user) {
-        router.push('/');
+        router.push('/login');
         return;
       }
       setCurrentUser(user);
