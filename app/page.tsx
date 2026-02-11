@@ -44,14 +44,15 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [setterFilter, setSetterFilter] = useState<string>('all');
   
-  // Mobile detection - redirect to mobile view
+  // Mobile detection - redirect to mobile view (but allow admin pages)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
       const isSmallScreen = window.innerWidth < 768;
+      const isAdminPage = window.location.pathname.startsWith('/admin');
       
-      // If mobile device AND not explicitly requesting desktop view
-      if ((isMobile || isSmallScreen) && !window.location.search.includes('desktop=true')) {
+      // If mobile device AND not explicitly requesting desktop view AND not on admin page
+      if ((isMobile || isSmallScreen) && !window.location.search.includes('desktop=true') && !isAdminPage) {
         router.push('/mobile');
       }
     }

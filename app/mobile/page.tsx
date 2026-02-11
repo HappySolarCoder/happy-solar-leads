@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { MapPin, BarChart3, Lightbulb, LogOut, Menu, Users } from 'lucide-react';
+import { MapPin, BarChart3, Lightbulb, LogOut, Menu, Users, Settings } from 'lucide-react';
 import { getCurrentUserAsync } from '@/app/utils/storage';
-import { User, canAssignLeads } from '@/app/types';
+import { User, canAssignLeads, canManageUsers } from '@/app/types';
 
 export default function MobilePage() {
   const router = useRouter();
@@ -91,6 +91,24 @@ export default function MobilePage() {
               </div>
             </div>
           </button>
+
+          {/* Admin Settings - Only for Admins */}
+          {currentUser && canManageUsers(currentUser.role) && (
+            <button
+              onClick={() => router.push('/admin/settings')}
+              className="w-full bg-[#4299E1] text-white rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <Settings className="w-6 h-6" />
+                </div>
+                <div className="text-left">
+                  <div className="text-lg font-bold">Admin Settings</div>
+                  <div className="text-sm text-white/80">Configure notifications</div>
+                </div>
+              </div>
+            </button>
+          )}
 
           {/* Data - Coming Soon */}
           <button
