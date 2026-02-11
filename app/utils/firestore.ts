@@ -31,15 +31,19 @@ export async function getAllLeads(): Promise<Lead[]> {
   try {
     const leadsRef = collection(db, LEADS_COLLECTION);
     const snapshot = await getDocs(leadsRef);
-    return snapshot.docs.map(doc => ({
-      ...doc.data(),
-      id: doc.id,
-      createdAt: doc.data().createdAt?.toDate() || new Date(),
-      claimedAt: doc.data().claimedAt?.toDate(),
-      dispositionedAt: doc.data().dispositionedAt?.toDate(),
-      assignedAt: doc.data().assignedAt?.toDate(),
-      solarTestedAt: doc.data().solarTestedAt?.toDate(),
-    } as Lead));
+    return snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        ...data,
+        id: doc.id,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
+        claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
+        dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
+        assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
+        solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
+        objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
+      } as Lead;
+    });
   } catch (error) {
     console.error('Error getting leads:', error);
     return [];
@@ -59,11 +63,12 @@ export async function getLead(id: string): Promise<Lead | null> {
       return {
         ...data,
         id: snapshot.id,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        claimedAt: data.claimedAt?.toDate(),
-        dispositionedAt: data.dispositionedAt?.toDate(),
-        assignedAt: data.assignedAt?.toDate(),
-        solarTestedAt: data.solarTestedAt?.toDate(),
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
+        claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
+        dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
+        assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
+        solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
+        objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
       } as Lead;
     }
     return null;
@@ -80,13 +85,23 @@ export async function saveLead(lead: Lead): Promise<void> {
   }
   try {
     const leadRef = doc(db, LEADS_COLLECTION, lead.id);
+    
+    // Helper to convert any date format to Timestamp
+    const toTimestamp = (date: any): Timestamp | null => {
+      if (!date) return null;
+      if (date instanceof Date) return Timestamp.fromDate(date);
+      if (typeof date === 'string') return Timestamp.fromDate(new Date(date));
+      return null;
+    };
+    
     const data = {
       ...lead,
-      createdAt: lead.createdAt instanceof Date ? Timestamp.fromDate(lead.createdAt) : Timestamp.now(),
-      claimedAt: lead.claimedAt ? Timestamp.fromDate(lead.claimedAt) : null,
-      dispositionedAt: lead.dispositionedAt ? Timestamp.fromDate(lead.dispositionedAt) : null,
-      assignedAt: lead.assignedAt ? Timestamp.fromDate(lead.assignedAt) : null,
-      solarTestedAt: lead.solarTestedAt ? Timestamp.fromDate(lead.solarTestedAt) : null,
+      createdAt: toTimestamp(lead.createdAt) || Timestamp.now(),
+      claimedAt: toTimestamp(lead.claimedAt),
+      dispositionedAt: toTimestamp(lead.dispositionedAt),
+      assignedAt: toTimestamp(lead.assignedAt),
+      solarTestedAt: toTimestamp(lead.solarTestedAt),
+      objectionRecordedAt: toTimestamp((lead as any).objectionRecordedAt),
     };
     await setDoc(leadRef, data);
   } catch (error) {
@@ -104,11 +119,21 @@ export async function updateLead(id: string, updates: Partial<Lead>): Promise<vo
     const leadRef = doc(db, LEADS_COLLECTION, id);
     const data: any = { ...updates };
     
+    // Helper to convert any date format to Timestamp
+    const toTimestamp = (date: any): Timestamp | null => {
+      if (!date) return null;
+      if (date instanceof Date) return Timestamp.fromDate(date);
+      if (typeof date === 'string') return Timestamp.fromDate(new Date(date));
+      return null;
+    };
+    
     // Convert Date objects to Timestamps
-    if (data.claimedAt) data.claimedAt = Timestamp.fromDate(data.claimedAt);
-    if (data.dispositionedAt) data.dispositionedAt = Timestamp.fromDate(data.dispositionedAt);
-    if (data.assignedAt) data.assignedAt = Timestamp.fromDate(data.assignedAt);
-    if (data.solarTestedAt) data.solarTestedAt = Timestamp.fromDate(data.solarTestedAt);
+    if (data.createdAt) data.createdAt = toTimestamp(data.createdAt);
+    if (data.claimedAt) data.claimedAt = toTimestamp(data.claimedAt);
+    if (data.dispositionedAt) data.dispositionedAt = toTimestamp(data.dispositionedAt);
+    if (data.assignedAt) data.assignedAt = toTimestamp(data.assignedAt);
+    if (data.solarTestedAt) data.solarTestedAt = toTimestamp(data.solarTestedAt);
+    if (data.objectionRecordedAt) data.objectionRecordedAt = toTimestamp(data.objectionRecordedAt);
     
     await updateDoc(leadRef, data);
   } catch (error) {
