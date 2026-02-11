@@ -12,7 +12,8 @@ import AutoAssignPanel from '@/app/components/AutoAssignPanel';
 import UserSwitcher from '@/app/components/UserSwitcher';
 import LeadAssignmentPanel from '@/app/components/LeadAssignmentPanel';
 import AppMenu from '@/app/components/AppMenu';
-import { getLeadsAsync, getCurrentUserAsync, getUsersAsync, saveCurrentUserAsync } from '@/app/utils/storage';
+import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
 
 // Dynamic import for map (client-side only)
@@ -61,18 +62,21 @@ export default function Home() {
   // Load data on mount
   useEffect(() => {
     async function loadData() {
+      const user = await getCurrentAuthUser();
+      
+      if (!user) {
+        // Not authenticated - redirect to login
+        router.push('/login');
+        return;
+      }
+      
+      setCurrentUser(user);
+      
       const loadedLeads = await getLeadsAsync();
       setLeads(loadedLeads);
-
-      const user = await getCurrentUserAsync();
-      if (user) {
-        setCurrentUser(user);
-      } else {
-        setShowUserOnboarding(true);
-      }
     }
     loadData();
-  }, []);
+  }, [router]);
 
   // Check for autoassign query parameter
   useEffect(() => {

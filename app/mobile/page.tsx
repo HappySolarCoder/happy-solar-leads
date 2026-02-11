@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { MapPin, BarChart3, Lightbulb, LogOut, Menu, Users, Settings } from 'lucide-react';
-import { getCurrentUserAsync } from '@/app/utils/storage';
+import { getCurrentAuthUser, signOut } from '@/app/utils/auth';
 import { User, canAssignLeads, canManageUsers } from '@/app/types';
 
 export default function MobilePage() {
@@ -13,10 +13,10 @@ export default function MobilePage() {
 
   useEffect(() => {
     async function loadUser() {
-      const user = await getCurrentUserAsync();
+      const user = await getCurrentAuthUser();
       if (!user) {
-        // No user - redirect to onboarding
-        router.push('/');
+        // Not authenticated - redirect to login
+        router.push('/login');
       } else {
         setCurrentUser(user);
       }
@@ -25,9 +25,9 @@ export default function MobilePage() {
     loadUser();
   }, [router]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('raydar_current_user_id');
-    router.push('/');
+  const handleLogout = async () => {
+    await signOut();
+    router.push('/login');
   };
 
   if (isLoading) {
