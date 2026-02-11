@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead } from '@/app/types';
-import { saveLeadAsync } from '@/app/utils/storage';
+import { saveLeadAsync, getCurrentUserAsync } from '@/app/utils/storage';
 
 interface LeadEditorModalProps {
   lead: Lead;
@@ -54,19 +54,23 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     setIsCalling(true);
 
     try {
-      // 1. Get admin settings
+      // 1. Get current user
+      const currentUser = await getCurrentUserAsync();
+      
+      // 2. Get admin settings
       const settingsStr = localStorage.getItem('raydar_admin_settings');
       const settings = settingsStr ? JSON.parse(settingsStr) : null;
 
-      // 2. Open phone dialer
+      // 3. Open phone dialer
       const phoneNumber = settings?.schedulingManagerPhone || '(716) 272-9889';
       const cleanPhone = phoneNumber.replace(/\D/g, '');
       window.location.href = `tel:${cleanPhone}`;
 
-      // 3. Send webhook notification with lead details
+      // 4. Send webhook notification with lead details
       if (settings?.notificationWebhook) {
         const leadInfo = `
 📞 **Scheduling Manager Request**
+👤 **Sent by:** ${currentUser?.name || 'Unknown Setter'}
 
 **Lead Details:**
 👤 Name: ${formData.name}
