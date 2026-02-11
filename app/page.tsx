@@ -44,6 +44,7 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<'split' | 'map' | 'list'>('split');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [setterFilter, setSetterFilter] = useState<string>('all');
+  const [solarFilter, setSolarFilter] = useState<'all' | 'solid' | 'good' | 'great'>('all');
   
   // Mobile detection - redirect to mobile view (but allow admin pages)
   useEffect(() => {
@@ -183,9 +184,14 @@ export default function Home() {
   const poorLeads = roleFilteredLeads.filter(l => l.solarCategory === 'poor');
 
   // Filter by setter if selected
-  const filteredLeads = setterFilter === 'all'
+  let filteredLeads = setterFilter === 'all'
     ? goodLeads
     : goodLeads.filter(l => l.claimedBy === setterFilter);
+  
+  // Filter by solar category if selected
+  if (solarFilter !== 'all') {
+    filteredLeads = filteredLeads.filter(l => l.solarCategory === solarFilter);
+  }
 
   // Delete a poor lead
   const handleDeletePoorLead = async (leadId: string) => {
@@ -380,6 +386,8 @@ export default function Home() {
                 onAssignClick={() => setShowAssignmentPanel(true)}
                 setterFilter={setterFilter}
                 onFilterChange={setSetterFilter}
+                solarFilter={solarFilter}
+                onSolarFilterChange={setSolarFilter}
                 users={users}
                 goodLeads={goodLeads}
               />

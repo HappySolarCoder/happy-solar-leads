@@ -33,6 +33,8 @@ export default function KnockingPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
+  const [solarFilter, setSolarFilter] = useState<'all' | 'solid' | 'good' | 'great'>('all');
+  const [showFilters, setShowFilters] = useState(false);
 
   // GPS tracking - continuous updates
   const { position: gpsPosition, error: gpsError, isLoading: gpsLoading } = useGeolocation({
@@ -87,7 +89,12 @@ export default function KnockingPage() {
     : leads;
 
   // Exclude poor solar leads
-  const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
+  let goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
+  
+  // Filter by solar category if selected
+  if (solarFilter !== 'all') {
+    goodLeads = goodLeads.filter(l => l.solarCategory === solarFilter);
+  }
 
   // Calculate distances and sort by nearest if GPS available
   const leadsWithDistance = goodLeads.map(lead => ({
@@ -144,6 +151,14 @@ export default function KnockingPage() {
               </div>
             </div>
 
+            {/* Filter Toggle */}
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`p-2 transition-all ${showFilters ? 'text-[#FF5F5A]' : 'text-[#718096] hover:text-[#FF5F5A]'} active:scale-95`}
+            >
+              <Filter className="w-5 h-5" />
+            </button>
+
             {/* View Toggle */}
             <button
               onClick={() => setViewMode(viewMode === 'map' ? 'list' : 'map')}
@@ -153,6 +168,28 @@ export default function KnockingPage() {
             </button>
           </div>
         </div>
+
+        {/* Solar Filter Dropdown */}
+        {showFilters && (
+          <div className="px-4 py-3 border-t border-[#E2E8F0] bg-[#F7FAFC]">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-base">☀️</span>
+              <label className="text-xs font-semibold text-[#2D3748]">
+                Solar Score Filter
+              </label>
+            </div>
+            <select
+              value={solarFilter}
+              onChange={(e) => setSolarFilter(e.target.value as 'all' | 'solid' | 'good' | 'great')}
+              className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+            >
+              <option value="all">All Solar Scores</option>
+              <option value="solid">⭐ Solid (60-74)</option>
+              <option value="good">⭐⭐ Good (75-84)</option>
+              <option value="great">⭐⭐⭐ Great (85+)</option>
+            </select>
+          </div>
+        )}
       </header>
 
       {/* Map View - Full Screen */}

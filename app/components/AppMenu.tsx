@@ -13,6 +13,8 @@ interface AppMenuProps {
   onAssignClick: () => void;
   setterFilter: string;
   onFilterChange: (value: string) => void;
+  solarFilter: 'all' | 'solid' | 'good' | 'great';
+  onSolarFilterChange: (value: 'all' | 'solid' | 'good' | 'great') => void;
   users: any[];
   goodLeads: any[];
 }
@@ -22,6 +24,8 @@ export default function AppMenu({
   onAssignClick,
   setterFilter,
   onFilterChange,
+  solarFilter,
+  onSolarFilterChange,
   users,
   goodLeads,
 }: AppMenuProps) {
@@ -158,30 +162,55 @@ export default function AppMenu({
         {/* Menu Items */}
         <div className="overflow-y-auto h-full pb-32">
           {/* Filter Section */}
-          {canSeeAllLeads(currentUser.role) && (
-            <div className="p-6 border-b border-[#E2E8F0]">
+          <div className="p-6 border-b border-[#E2E8F0] space-y-4">
+            {/* Setter Filter - Managers/Admins only */}
+            {canSeeAllLeads(currentUser.role) && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Filter className="w-4 h-4 text-[#718096]" />
+                  <label className="text-sm font-semibold text-[#2D3748]">
+                    Filter by Setter
+                  </label>
+                </div>
+                <select
+                  value={setterFilter}
+                  onChange={(e) => {
+                    onFilterChange(e.target.value);
+                  }}
+                  className="w-full px-4 py-3 bg-white border border-[#E2E8F0] rounded-lg font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-3 focus:ring-[#FF5F5A]/10 transition-all"
+                >
+                  <option value="all">All Setters</option>
+                  {users.map(user => (
+                    <option key={user.id} value={user.id}>
+                      {user.name} ({goodLeads.filter(l => l.claimedBy === user.id).length})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            
+            {/* Solar Score Filter - Everyone */}
+            <div>
               <div className="flex items-center gap-2 mb-3">
-                <Filter className="w-4 h-4 text-[#718096]" />
+                <span className="text-base">☀️</span>
                 <label className="text-sm font-semibold text-[#2D3748]">
-                  Filter by Setter
+                  Filter by Solar Score
                 </label>
               </div>
               <select
-                value={setterFilter}
+                value={solarFilter}
                 onChange={(e) => {
-                  onFilterChange(e.target.value);
+                  onSolarFilterChange(e.target.value as 'all' | 'solid' | 'good' | 'great');
                 }}
                 className="w-full px-4 py-3 bg-white border border-[#E2E8F0] rounded-lg font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-3 focus:ring-[#FF5F5A]/10 transition-all"
               >
-                <option value="all">All Setters</option>
-                {users.map(user => (
-                  <option key={user.id} value={user.id}>
-                    {user.name} ({goodLeads.filter(l => l.claimedBy === user.id).length})
-                  </option>
-                ))}
+                <option value="all">All Solar Scores</option>
+                <option value="solid">⭐ Solid (60-74)</option>
+                <option value="good">⭐⭐ Good (75-84)</option>
+                <option value="great">⭐⭐⭐ Great (85+)</option>
               </select>
             </div>
-          )}
+          </div>
 
           {/* Navigation Items */}
           <div className="p-4 space-y-2">
