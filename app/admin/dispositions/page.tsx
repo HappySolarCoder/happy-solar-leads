@@ -22,6 +22,7 @@ import {
   getDispositionsAsync, 
   saveDispositionAsync, 
   deleteDispositionAsync,
+  updateDispositionOrderAsync,
   generateDispositionId 
 } from '@/app/utils/dispositions';
 import { Disposition, AVAILABLE_ICONS, DISPOSITION_COLORS } from '@/app/types/disposition';
@@ -63,6 +64,7 @@ export default function DispositionsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [editingDispo, setEditingDispo] = useState<Disposition | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     color: '#3B82F6',
@@ -142,6 +144,40 @@ export default function DispositionsPage() {
     }
   };
 
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = async (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    
+    if (draggedIndex === null || draggedIndex === dropIndex) {
+      setDraggedIndex(null);
+      return;
+    }
+
+    const newDispositions = [...dispositions];
+    const [draggedItem] = newDispositions.splice(draggedIndex, 1);
+    newDispositions.splice(dropIndex, 0, draggedItem);
+
+    setDispositions(newDispositions);
+    setDraggedIndex(null);
+
+    // Save new order to Firestore
+    try {
+      await updateDispositionOrderAsync(newDispositions);
+    } catch (error) {
+      console.error('Error saving order:', error);
+      alert('Failed to save new order');
+    }
+  };
+
   const IconComponent = ICON_MAP[formData.icon] || Circle;
   
   const doorKnockCount = dispositions.filter(d => d.countsAsDoorKnock).length;
@@ -189,7 +225,7 @@ export default function DispositionsPage() {
 
       {/* Stats */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           <div className="bg-white border border-[#E2E8F0] rounded-lg p-6">
             <div className="text-sm text-[#718096] mb-1">Total Dispositions</div>
             <div className="text-3xl font-bold text-[#2D3748]">{dispositions.length}</div>
@@ -198,61 +234,82 @@ export default function DispositionsPage() {
             <div className="text-sm text-[#718096] mb-1">Door Knock Tracking</div>
             <div className="text-3xl font-bold text-[#FF5F5A]">{doorKnockCount}</div>
           </div>
-          <div className="bg-white border border-[#E2E8F0] rounded-lg p-6">
-            <div className="text-sm text-[#718096] mb-1">Default (Protected)</div>
-            <div className="text-3xl font-bold text-[#2D3748]">{dispositions.filter(d => d.isDefault).length}</div>
-          </div>
         </div>
 
         {/* Dispositions List */}
-        <div className="bg-white border border-[#E2E8F0] rounded-lg divide-y divide-[#E2E8F0]">
-          {dispositions.map(dispo => {
-            const Icon = ICON_MAP[dispo.icon] || Circle;
-            return (
-              <div key={dispo.id} className="p-6 hover:bg-[#F7FAFC] transition-colors">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div 
-                      className="w-12 h-12 rounded-lg flex items-center justify-center"
-                      style={{ backgroundColor: `${dispo.color}20` }}
-                    >
-                      <Icon className="w-6 h-6" style={{ color: dispo.color }} />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-[#2D3748]">{dispo.name}</h3>
-                        {dispo.isDefault && (
-                          <span className="text-xs px-2 py-0.5 bg-[#E2E8F0] text-[#718096] rounded">Default</span>
-                        )}
-                        {dispo.countsAsDoorKnock && (
-                          <span className="text-xs px-2 py-0.5 bg-[#FF5F5A]/10 text-[#FF5F5A] rounded font-medium">Door Knock</span>
-                        )}
+        <div className="bg-white border border-[#E2E8F0] rounded-lg">
+          <div className="p-4 border-b border-[#E2E8F0] bg-[#F7FAFC]">
+            <p className="text-sm text-[#718096]">💡 Drag and drop to reorder dispositions</p>
+          </div>
+          <div className="divide-y divide-[#E2E8F0]">
+            {dispositions.map((dispo, index) => {
+              const Icon = ICON_MAP[dispo.icon] || Circle;
+              const isDragging = draggedIndex === index;
+              return (
+                <div
+                  key={dispo.id}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, index)}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, index)}
+                  className={`p-6 transition-all cursor-move ${
+                    isDragging ? 'opacity-50 bg-[#FF5F5A]/5' : 'hover:bg-[#F7FAFC]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      {/* Drag Handle */}
+                      <div className="cursor-grab active:cursor-grabbing">
+                        <svg className="w-5 h-5 text-[#718096]" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M7 2a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 2zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 14zm6-8a2 2 0 1 0-.001-4.001A2 2 0 0 0 13 6zm0 2a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 14z"></path>
+                        </svg>
                       </div>
-                      <div className="text-sm text-[#718096] mt-1">
-                        Color: {dispo.color} • Icon: {dispo.icon}
+                      
+                      {/* Icon */}
+                      <div 
+                        className="w-12 h-12 rounded-lg flex items-center justify-center"
+                        style={{ backgroundColor: `${dispo.color}20` }}
+                      >
+                        <Icon className="w-6 h-6" style={{ color: dispo.color }} />
+                      </div>
+                      
+                      {/* Info */}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-[#2D3748]">{dispo.name}</h3>
+                          {dispo.countsAsDoorKnock && (
+                            <span className="text-xs px-2 py-0.5 bg-[#FF5F5A]/10 text-[#FF5F5A] rounded font-medium">Door Knock</span>
+                          )}
+                          {dispo.specialBehavior === 'scheduling-manager' && (
+                            <span className="text-xs px-2 py-0.5 bg-[#4299E1]/10 text-[#4299E1] rounded font-medium">Special</span>
+                          )}
+                        </div>
+                        <div className="text-sm text-[#718096] mt-1">
+                          Color: {dispo.color} • Icon: {dispo.icon}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleEdit(dispo)}
-                      className="p-2 hover:bg-white border border-transparent hover:border-[#E2E8F0] rounded-lg transition-colors"
-                    >
-                      <Edit2 className="w-4 h-4 text-[#718096]" />
-                    </button>
-                    {!dispo.isDefault && (
+                    
+                    {/* Actions */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleEdit(dispo)}
+                        className="p-2 hover:bg-white border border-transparent hover:border-[#E2E8F0] rounded-lg transition-colors"
+                      >
+                        <Edit2 className="w-4 h-4 text-[#718096]" />
+                      </button>
                       <button
                         onClick={() => handleDelete(dispo.id)}
                         className="p-2 hover:bg-red-50 border border-transparent hover:border-red-200 rounded-lg transition-colors"
                       >
                         <Trash2 className="w-4 h-4 text-red-500" />
                       </button>
-                    )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
 

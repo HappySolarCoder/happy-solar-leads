@@ -69,21 +69,36 @@ export async function saveDispositionAsync(disposition: Disposition): Promise<vo
   }
 }
 
-// Delete disposition (only if not default)
+// Delete disposition (admin can delete any disposition)
 export async function deleteDispositionAsync(id: string): Promise<void> {
   try {
     if (!db) throw new Error('Firebase not initialized');
     
-    const dispositions = await getDispositionsAsync();
-    const disposition = dispositions.find(d => d.id === id);
-    
-    if (disposition?.isDefault) {
-      throw new Error('Cannot delete default disposition');
-    }
-    
     await deleteDoc(doc(db, DISPOSITIONS_COLLECTION, id));
   } catch (error) {
     console.error('Error deleting disposition:', error);
+    throw error;
+  }
+}
+
+// Update disposition order (for drag-and-drop)
+export async function updateDispositionOrderAsync(dispositions: Disposition[]): Promise<void> {
+  try {
+    if (!db) throw new Error('Firebase not initialized');
+    
+    // Update order field for each disposition
+    const updates = dispositions.map((dispo, index) => {
+      if (!db) return Promise.resolve();
+      return setDoc(doc(db, DISPOSITIONS_COLLECTION, dispo.id), {
+        ...dispo,
+        order: index,
+        updatedAt: new Date(),
+      });
+    });
+    
+    await Promise.all(updates);
+  } catch (error) {
+    console.error('Error updating disposition order:', error);
     throw error;
   }
 }
