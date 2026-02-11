@@ -92,6 +92,22 @@ export default function MobilePage() {
             </div>
           </button>
 
+          {/* Dashboard */}
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="w-full bg-white border-2 border-[#E2E8F0] rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98 hover:border-[#FF5F5A]"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <BarChart3 className="w-6 h-6 text-teal-600" />
+              </div>
+              <div className="flex-1 text-left">
+                <div className="text-lg font-bold text-[#2D3748]">Daily Dashboard</div>
+                <div className="text-sm text-[#718096]">View today's stats</div>
+              </div>
+            </div>
+          </button>
+
           {/* Admin Settings - Only for Admins */}
           {currentUser && canManageUsers(currentUser.role) && (
             <button

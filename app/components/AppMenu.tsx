@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Menu, X, Shield, Map, UserPlus, Filter, Users, Settings,
-  Wand2, LogOut, ChevronRight
+  Wand2, LogOut, ChevronRight, BarChart3
 } from 'lucide-react';
 import { User, canManageUsers, canAssignLeads, canSeeAllLeads } from '@/app/types';
 
@@ -35,6 +35,20 @@ export default function AppMenu({
   if (!currentUser) return null;
 
   const menuItems = [
+    // Everyone - Dashboard
+    {
+      icon: BarChart3,
+      label: 'Daily Dashboard',
+      description: 'View today\'s stats',
+      onClick: () => {
+        router.push('/dashboard');
+        setIsOpen(false);
+      },
+      color: 'from-teal-500 to-teal-600',
+      iconColor: 'text-teal-600',
+      bgColor: 'bg-teal-50',
+    },
+    
     // Manager/Admin features
     ...(canAssignLeads(currentUser.role) ? [{
       icon: UserPlus,
