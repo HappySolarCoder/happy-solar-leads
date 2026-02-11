@@ -104,7 +104,10 @@ export default function LeadAssignmentPanel({
       />
 
       {/* Panel */}
-      <div className="fixed right-0 top-0 bottom-0 w-96 bg-white shadow-2xl z-40 flex flex-col">
+      <div 
+        className="fixed right-0 top-0 bottom-0 w-96 bg-white shadow-2xl z-40 flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200">
           <div className="flex items-center justify-between mb-4">

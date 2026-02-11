@@ -5,6 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
 import { RouteWaypoint } from './RouteBuilder';
+import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
 
 interface LeadMapProps {
   leads: Lead[];
@@ -39,8 +40,18 @@ export default function LeadMap({
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
 
   const leads = useMemo(() => leadsProp, [leadsProp]);
+
+  // Load dispositions
+  useEffect(() => {
+    async function loadDispositions() {
+      const dispos = await getDispositionsAsync();
+      setDispositions(dispos);
+    }
+    loadDispositions();
+  }, []);
 
   // Fix Leaflet icons
   useEffect(() => {
@@ -127,6 +138,9 @@ export default function LeadMap({
       const canClaim = lead.claimedBy == null || isClaimedByMe;
       const isSelectedForAssignment = selectedLeadIdsForAssignment.includes(lead.id);
 
+      // Find disposition for this lead
+      const disposition = dispositions.find(d => d.id === lead.status);
+
       const icon = createCustomIcon(
         lead.solarCategory,
         lead.status,
@@ -134,7 +148,8 @@ export default function LeadMap({
         Boolean(isClaimedByMe),
         Boolean(canClaim),
         Boolean(lead.claimedBy),
-        isSelectedForAssignment
+        isSelectedForAssignment,
+        disposition
       );
 
       const marker = L.marker([lead.lat!, lead.lng!], { icon });
@@ -380,6 +395,62 @@ function isPointInPolygon(point: L.LatLng, polygon: L.LatLng[]): boolean {
   return inside;
 }
 
+// Map Lucide icon names to unicode characters for map markers
+const ICON_TO_UNICODE: Record<string, string> = {
+  'circle': '●',
+  'target': '◆',
+  'home': '🏠',
+  'star': '★',
+  'x-circle': '✗',
+  'check-circle': '✓',
+  'calendar': '📅',
+  'phone': '📞',
+  'mail': '✉',
+  'user': '👤',
+  'users': '👥',
+  'clock': '🕐',
+  'alert-circle': '⚠',
+  'help-circle': '?',
+  'thumbs-up': '👍',
+  'thumbs-down': '👎',
+  'flag': '🚩',
+  'bookmark': '🔖',
+  'heart': '❤',
+  'map-pin': '📍',
+  'door-open': '🚪',
+  'door-closed': '🚪',
+  'bell': '🔔',
+  'message-square': '💬',
+  'file-text': '📄',
+  'clipboard': '📋',
+  'dollar-sign': '💰',
+  'zap': '⚡',
+  'sun': '☀',
+  'cloud': '☁',
+  'umbrella': '☂',
+  'car': '🚗',
+  'truck': '🚚',
+  'building': '🏢',
+  'briefcase': '💼',
+  'coffee': '☕',
+  'gift': '🎁',
+  'shield': '🛡',
+  'lock': '🔒',
+  'unlock': '🔓',
+  'key': '🔑',
+  'trash': '🗑',
+  'archive': '📦',
+  'ban': '🚫',
+  'slash': '⃠',
+  'minus-circle': '⊖',
+  'plus-circle': '⊕',
+  'info': 'ℹ',
+  'x': '✕',
+  'check': '✓',
+  'arrow-right': '→',
+  'arrow-left': '←',
+};
+
 function createCustomIcon(
   solarCategory: string | undefined,
   status: string,
@@ -387,7 +458,8 @@ function createCustomIcon(
   isClaimedByMe: boolean,
   canClaim: boolean,
   isClaimed: boolean,
-  isSelectedForAssignment: boolean = false
+  isSelectedForAssignment: boolean = false,
+  disposition?: Disposition
 ): L.DivIcon {
   const size = isSelected ? 44 : 36;
   const border = isSelectedForAssignment 
@@ -403,19 +475,16 @@ function createCustomIcon(
     solid: '#f59e0b',
   };
   
-  const color = solarCategory ? solarColors[solarCategory] || (STATUS_COLORS as Record<string, string>)[status] || '#6b7280' : (STATUS_COLORS as Record<string, string>)[status] || '#6b7280';
+  // Use disposition color if available, otherwise fallback
+  const color = disposition?.color 
+    || (solarCategory ? solarColors[solarCategory] : undefined)
+    || (STATUS_COLORS as Record<string, string>)[status] 
+    || '#6b7280';
   
-  const statusIcons: Record<string, string> = {
-    unclaimed: '●',
-    claimed: '◆',
-    'not-home': '○',
-    interested: '★',
-    'not-interested': '✗',
-    appointment: '📅',
-    sale: '💰',
-  };
-  
-  const icon = statusIcons[status] || '●';
+  // Use disposition icon if available, otherwise fallback to default
+  const icon = disposition 
+    ? (ICON_TO_UNICODE[disposition.icon] || '●')
+    : '●';
   
   const html = `
     <div style="width:${size}px;height:${size}px;background:${color};border:${border};border-radius:50% 50% 50% 0;transform:rotate(-45deg);opacity:${opacity};box-shadow:0 3px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;">

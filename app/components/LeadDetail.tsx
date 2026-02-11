@@ -7,7 +7,10 @@ import {
   CheckCircle, Circle, AlertCircle, Calendar, DollarSign,
   Home, Star, XCircle, Target, Users as UsersIcon, HelpCircle,
   ThumbsUp, ThumbsDown, Flag, Bookmark, Heart, Pin,
-  DoorOpen, DoorClosed, Bell, MessageSquare, FileText, Clipboard
+  DoorOpen, DoorClosed, Bell, MessageSquare, FileText, Clipboard,
+  Zap, Sun, Cloud, Umbrella, Car, Truck, Building, Briefcase,
+  Coffee, Gift, Shield, Lock, Unlock, Key, Trash, Archive,
+  Ban, Slash, MinusCircle, PlusCircle, Info, ArrowRight, ArrowLeft
 } from 'lucide-react';
 import { updateLeadStatus, claimLead, unclaimLead } from '@/app/utils/storage';
 import ObjectionTracker from './ObjectionTracker';
@@ -48,6 +51,32 @@ const ICON_MAP: Record<string, any> = {
   'message-square': MessageSquare,
   'file-text': FileText,
   'clipboard': Clipboard,
+  'dollar-sign': DollarSign,
+  'zap': Zap,
+  'sun': Sun,
+  'cloud': Cloud,
+  'umbrella': Umbrella,
+  'car': Car,
+  'truck': Truck,
+  'building': Building,
+  'briefcase': Briefcase,
+  'coffee': Coffee,
+  'gift': Gift,
+  'shield': Shield,
+  'lock': Lock,
+  'unlock': Unlock,
+  'key': Key,
+  'trash': Trash,
+  'archive': Archive,
+  'ban': Ban,
+  'slash': Slash,
+  'minus-circle': MinusCircle,
+  'plus-circle': PlusCircle,
+  'info': Info,
+  'x': XCircle,
+  'check': CheckCircle,
+  'arrow-right': ArrowRight,
+  'arrow-left': ArrowLeft,
 };
 
 export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: LeadDetailProps) {
@@ -227,7 +256,29 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
                 <span className="text-sm font-semibold text-amber-900">Solar Potential</span>
                 <span className="text-2xl font-bold text-amber-600">{lead.solarScore}/100</span>
               </div>
-              <div className="text-xs text-amber-700 capitalize">{lead.solarCategory} fit for solar</div>
+              <div className="text-xs text-amber-700 capitalize mb-2">{lead.solarCategory} fit for solar</div>
+              
+              {/* Solar Details */}
+              <div className="space-y-1 text-xs text-amber-800 pt-2 border-t border-amber-200">
+                {lead.solarSunshineHours && (
+                  <div className="flex items-center justify-between">
+                    <span>☀️ Sunshine Hours/Year:</span>
+                    <span className="font-semibold">{Math.round(lead.solarSunshineHours).toLocaleString()}</span>
+                  </div>
+                )}
+                {lead.solarMaxPanels && (
+                  <div className="flex items-center justify-between">
+                    <span>📊 Max Panels:</span>
+                    <span className="font-semibold">{lead.solarMaxPanels}</span>
+                  </div>
+                )}
+                {lead.hasSouthFacingRoof !== undefined && (
+                  <div className="flex items-center justify-between">
+                    <span>🏠 South-Facing Roof:</span>
+                    <span className="font-semibold">{lead.hasSouthFacingRoof ? 'Yes ✅' : 'No'}</span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
