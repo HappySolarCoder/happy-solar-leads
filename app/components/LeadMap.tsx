@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import 'leaflet.markercluster';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
 import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
@@ -36,7 +39,7 @@ export default function LeadMap({
 }: LeadMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
-  const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
   const routeLineRef = useRef<L.Polyline | null>(null);
   const drawControlRef = useRef<any>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
@@ -84,7 +87,17 @@ export default function LeadMap({
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     }).addTo(map);
 
-    markersLayerRef.current = L.layerGroup().addTo(map);
+    // Create marker cluster group with smart clustering
+    markersLayerRef.current = L.markerClusterGroup({
+      disableClusteringAtZoom: 16, // Show individual pins at zoom 16+ (close enough to see streets)
+      maxClusterRadius: 80, // Cluster radius in pixels
+      spiderfyOnMaxZoom: true, // Spread out markers when clicking cluster at max zoom
+      showCoverageOnHover: false, // Don't show cluster bounds on hover (cleaner UX)
+      zoomToBoundsOnClick: true, // Zoom into cluster when clicked
+      chunkedLoading: true, // Better performance for large datasets
+      removeOutsideVisibleBounds: true, // Remove markers outside view (huge performance boost)
+    }).addTo(map);
+    
     mapInstanceRef.current = map;
 
     // Listen for zoom changes to update marker sizes
