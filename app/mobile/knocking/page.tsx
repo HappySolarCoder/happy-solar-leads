@@ -9,6 +9,7 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import LeadDetail from '@/app/components/LeadDetail';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -34,7 +35,9 @@ export default function KnockingPage() {
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
   const [solarFilter, setSolarFilter] = useState<'all' | 'solid' | 'good' | 'great'>('all');
+  const [dispositionFilter, setDispositionFilter] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [dispositions, setDispositions] = useState<any[]>([]);
 
   // GPS tracking - continuous updates
   const { position: gpsPosition, error: gpsError, isLoading: gpsLoading } = useGeolocation({
@@ -66,6 +69,11 @@ export default function KnockingPage() {
     }
     loadData();
   }, [router]);
+  
+  // Load dispositions
+  useEffect(() => {
+    getDispositionsAsync().then(setDispositions);
+  }, []);
 
   // Refresh leads
   const refreshLeads = useCallback(async () => {
@@ -94,6 +102,11 @@ export default function KnockingPage() {
   // Filter by solar category if selected
   if (solarFilter !== 'all') {
     goodLeads = goodLeads.filter(l => l.solarCategory === solarFilter);
+  }
+  
+  // Filter by disposition if selected
+  if (dispositionFilter !== 'all') {
+    goodLeads = goodLeads.filter(l => l.disposition === dispositionFilter);
   }
 
   // Calculate distances and sort by nearest if GPS available
@@ -188,6 +201,28 @@ export default function KnockingPage() {
               <option value="good">⭐⭐ Good (75-84)</option>
               <option value="great">⭐⭐⭐ Great (85+)</option>
             </select>
+            
+            {/* Disposition Filter */}
+            <div className="mt-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-base">📋</span>
+                <label className="text-xs font-semibold text-[#2D3748]">
+                  Disposition Filter
+                </label>
+              </div>
+              <select
+                value={dispositionFilter}
+                onChange={(e) => setDispositionFilter(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+              >
+                <option value="all">All Dispositions</option>
+                {dispositions.map(dispo => (
+                  <option key={dispo.id} value={dispo.name}>
+                    {dispo.emoji} {dispo.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
       </header>

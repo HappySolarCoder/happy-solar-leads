@@ -47,6 +47,7 @@ export interface Lead {
   status: LeadStatus;
   claimedBy?: string;
   claimedAt?: Date;
+  disposition?: string;       // Disposition name (from dispositions collection)
   dispositionedAt?: Date;
   notes?: string;
   source?: string;

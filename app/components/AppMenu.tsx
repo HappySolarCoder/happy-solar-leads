@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Menu, X, Shield, Map, UserPlus, Filter, Users, Settings,
   Wand2, LogOut, ChevronRight, BarChart3
 } from 'lucide-react';
 import { User, canManageUsers, canAssignLeads, canSeeAllLeads } from '@/app/types';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
 
 interface AppMenuProps {
   currentUser: User | null;
@@ -15,6 +16,8 @@ interface AppMenuProps {
   onFilterChange: (value: string) => void;
   solarFilter: 'all' | 'solid' | 'good' | 'great';
   onSolarFilterChange: (value: 'all' | 'solid' | 'good' | 'great') => void;
+  dispositionFilter: string;
+  onDispositionFilterChange: (value: string) => void;
   users: any[];
   goodLeads: any[];
 }
@@ -26,11 +29,19 @@ export default function AppMenu({
   onFilterChange,
   solarFilter,
   onSolarFilterChange,
+  dispositionFilter,
+  onDispositionFilterChange,
   users,
   goodLeads,
 }: AppMenuProps) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
+  const [dispositions, setDispositions] = useState<any[]>([]);
+  
+  // Load dispositions
+  useEffect(() => {
+    getDispositionsAsync().then(setDispositions);
+  }, []);
 
   if (!currentUser) return null;
 
@@ -222,6 +233,31 @@ export default function AppMenu({
                 <option value="solid">⭐ Solid (60-74)</option>
                 <option value="good">⭐⭐ Good (75-84)</option>
                 <option value="great">⭐⭐⭐ Great (85+)</option>
+              </select>
+            </div>
+            
+            {/* Disposition Filter - Everyone */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-base">📋</span>
+                <label className="text-sm font-semibold text-[#2D3748]">
+                  Filter by Disposition
+                </label>
+              </div>
+              <select
+                value={dispositionFilter}
+                onChange={(e) => {
+                  onDispositionFilterChange(e.target.value);
+                  setIsOpen(false);
+                }}
+                className="w-full px-4 py-3 bg-white border border-[#E2E8F0] rounded-lg font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-3 focus:ring-[#FF5F5A]/10 transition-all"
+              >
+                <option value="all">All Dispositions</option>
+                {dispositions.map(dispo => (
+                  <option key={dispo.id} value={dispo.name}>
+                    {dispo.emoji} {dispo.name}
+                  </option>
+                ))}
               </select>
             </div>
           </div>

@@ -45,6 +45,7 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [setterFilter, setSetterFilter] = useState<string>('all');
   const [solarFilter, setSolarFilter] = useState<'all' | 'solid' | 'good' | 'great'>('all');
+  const [dispositionFilter, setDispositionFilter] = useState<string>('all');
   
   // Mobile detection - redirect to mobile view (but allow admin pages)
   useEffect(() => {
@@ -191,6 +192,11 @@ export default function Home() {
   // Filter by solar category if selected
   if (solarFilter !== 'all') {
     filteredLeads = filteredLeads.filter(l => l.solarCategory === solarFilter);
+  }
+  
+  // Filter by disposition if selected
+  if (dispositionFilter !== 'all') {
+    filteredLeads = filteredLeads.filter(l => l.disposition === dispositionFilter);
   }
 
   // Delete a poor lead
@@ -388,6 +394,8 @@ export default function Home() {
                 onFilterChange={setSetterFilter}
                 solarFilter={solarFilter}
                 onSolarFilterChange={setSolarFilter}
+                dispositionFilter={dispositionFilter}
+                onDispositionFilterChange={setDispositionFilter}
                 users={users}
                 goodLeads={goodLeads}
               />
