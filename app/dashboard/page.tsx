@@ -227,8 +227,8 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Activity Stream */}
-        <div className="mb-8">
+        {/* Activity Stream - Desktop Only */}
+        <div className="mb-8 hidden md:block">
           <ActivityStream />
         </div>
 

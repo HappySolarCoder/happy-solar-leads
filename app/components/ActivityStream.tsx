@@ -29,43 +29,57 @@ export default function ActivityStream() {
 
   // Listen to today's disposition changes in real-time
   useEffect(() => {
-    if (!db || users.length === 0) return;
+    if (!db || users.length === 0) {
+      setIsLoading(false);
+      return;
+    }
 
     // Get start of today (midnight)
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
+    // Simple query without orderBy to avoid Firestore index requirement
     const q = query(
       collection(db, 'leads'),
       where('dispositionedAt', '>=', Timestamp.fromDate(startOfToday)),
-      orderBy('dispositionedAt', 'desc'),
-      limit(50)
+      limit(100)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const acts: Activity[] = [];
-      
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        if (data.disposition && data.claimedBy) {
-          const setter = users.find(u => u.id === data.claimedBy);
-          if (setter) {
-            acts.push({
-              id: doc.id,
-              setterName: setter.name,
-              setterColor: setter.color || '#FF5F5A',
-              address: data.address || 'Unknown Address',
-              disposition: data.disposition,
-              dispositionEmoji: getDispositionEmoji(data.disposition),
-              timestamp: data.dispositionedAt?.toDate() || new Date(),
-            });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const acts: Activity[] = [];
+        
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.disposition && data.claimedBy && data.dispositionedAt) {
+            const setter = users.find(u => u.id === data.claimedBy);
+            if (setter) {
+              acts.push({
+                id: doc.id,
+                setterName: setter.name,
+                setterColor: setter.color || '#FF5F5A',
+                address: data.address || 'Unknown Address',
+                disposition: data.disposition,
+                dispositionEmoji: getDispositionEmoji(data.disposition),
+                timestamp: data.dispositionedAt?.toDate() || new Date(),
+              });
+            }
           }
-        }
-      });
-      
-      setActivities(acts);
-      setIsLoading(false);
-    });
+        });
+        
+        // Sort by timestamp descending (most recent first) in client
+        acts.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        
+        // Take only last 50
+        setActivities(acts.slice(0, 50));
+        setIsLoading(false);
+      },
+      (error) => {
+        console.error('Activity stream error:', error);
+        setIsLoading(false);
+      }
+    );
 
     return () => unsubscribe();
   }, [users]);
