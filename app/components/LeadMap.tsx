@@ -9,6 +9,7 @@ import 'leaflet.markercluster';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
 import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
+import AddLeadModal from './AddLeadModal';
 
 interface LeadMapProps {
   leads: Lead[];
@@ -48,6 +49,10 @@ export default function LeadMap({
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [mapZoom, setMapZoom] = useState(zoom);
+  const [showAddLeadModal, setShowAddLeadModal] = useState(false);
+  const [dropPinLocation, setDropPinLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [dropPinAddress, setDropPinAddress] = useState({ address: '', city: '', state: '', zip: '' });
+  const tempPinRef = useRef<L.Marker | null>(null);
 
   const leads = useMemo(() => leadsProp, [leadsProp]);
 
@@ -103,6 +108,41 @@ export default function LeadMap({
     // Listen for zoom changes to update marker sizes
     map.on('zoomend', () => {
       setMapZoom(map.getZoom());
+    });
+
+    // Handle right-click to drop pin (desktop)
+    map.on('contextmenu', (e: L.LeafletMouseEvent) => {
+      handleDropPin(e.latlng);
+    });
+
+    // Handle long-press to drop pin (mobile)
+    let longPressTimer: NodeJS.Timeout;
+    let longPressStartPos: L.LatLng | null = null;
+    
+    map.on('mousedown', (e: L.LeafletMouseEvent) => {
+      longPressStartPos = e.latlng;
+      longPressTimer = setTimeout(() => {
+        if (longPressStartPos) {
+          handleDropPin(longPressStartPos);
+        }
+      }, 800); // 800ms for long-press
+    });
+    
+    map.on('touchstart', (e: L.LeafletEvent) => {
+      const mouseEvent = e as any;
+      if (mouseEvent.latlng) {
+        longPressStartPos = mouseEvent.latlng;
+        longPressTimer = setTimeout(() => {
+          if (longPressStartPos) {
+            handleDropPin(longPressStartPos);
+          }
+        }, 800);
+      }
+    });
+    
+    map.on('mouseup touchend mousemove', () => {
+      clearTimeout(longPressTimer);
+      longPressStartPos = null;
     });
 
     return () => {
@@ -446,6 +486,138 @@ export default function LeadMap({
     }
   }, [center]);
 
+  // Handle dropping a pin
+  const handleDropPin = async (latlng: L.LatLng) => {
+    if (!mapInstanceRef.current || assignmentMode !== 'none') return;
+
+    const map = mapInstanceRef.current;
+
+    // Remove existing temp pin if any
+    if (tempPinRef.current) {
+      tempPinRef.current.remove();
+    }
+
+    // Add temporary pin
+    const tempPin = L.marker([latlng.lat, latlng.lng], {
+      icon: L.divIcon({
+        html: '<div style="width:40px;height:40px;background:#FF5F5A;border:4px solid white;border-radius:50%;box-shadow:0 4px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-center;"><span style="color:white;font-size:20px;">+</span></div>',
+        className: 'temp-pin',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+      }),
+    }).addTo(map);
+
+    tempPinRef.current = tempPin;
+
+    // Reverse geocode to get address
+    try {
+      const response = await fetch(
+        `/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`
+      );
+      const data = await response.json();
+
+      if (data.results && data.results[0]) {
+        const result = data.results[0];
+        const components = result.address_components || [];
+
+        let street = '';
+        let city = '';
+        let state = '';
+        let zip = '';
+
+        components.forEach((component: any) => {
+          if (component.types.includes('street_number')) {
+            street = component.long_name + ' ' + street;
+          }
+          if (component.types.includes('route')) {
+            street += component.long_name;
+          }
+          if (component.types.includes('locality')) {
+            city = component.long_name;
+          }
+          if (component.types.includes('administrative_area_level_1')) {
+            state = component.short_name;
+          }
+          if (component.types.includes('postal_code')) {
+            zip = component.long_name;
+          }
+        });
+
+        setDropPinAddress({ address: street.trim(), city, state, zip });
+      }
+    } catch (error) {
+      console.error('Reverse geocoding failed:', error);
+      setDropPinAddress({ address: '', city: '', state: '', zip: '' });
+    }
+
+    setDropPinLocation({ lat: latlng.lat, lng: latlng.lng });
+    setShowAddLeadModal(true);
+  };
+
+  // Handle saving new lead from dropped pin
+  const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
+    try {
+      // Generate ID
+      const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      const newLead: Lead = {
+        ...leadData,
+        id,
+        status: 'unclaimed',
+        createdAt: new Date(),
+        setterId: currentUser?.id,
+      } as Lead;
+
+      // Save to Firestore
+      const { saveLeadAsync } = await import('@/app/utils/storage');
+      await saveLeadAsync(newLead);
+
+      // Run Solar API in background
+      if (newLead.lat && newLead.lng) {
+        fetch('/api/solar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            address: `${newLead.address}, ${newLead.city}, ${newLead.state} ${newLead.zip}`,
+            lat: newLead.lat,
+            lng: newLead.lng,
+          }),
+        })
+          .then((res) => res.json())
+          .then((solarData) => {
+            if (solarData.solarScore) {
+              // Update lead with solar data
+              saveLeadAsync({
+                ...newLead,
+                solarScore: solarData.solarScore,
+                solarCategory: solarData.solarCategory,
+                solarMaxPanels: solarData.maxPanels,
+                solarSunshineHours: solarData.sunshineHours,
+                hasSouthFacingRoof: solarData.hasSouthFacingRoof,
+                solarTestedAt: new Date(),
+              });
+            }
+          })
+          .catch((err) => console.error('Solar API error:', err));
+      }
+
+      // Remove temp pin
+      if (tempPinRef.current) {
+        tempPinRef.current.remove();
+        tempPinRef.current = null;
+      }
+
+      setShowAddLeadModal(false);
+      setDropPinLocation(null);
+
+      // Refresh page to show new lead
+      window.location.reload();
+    } catch (error) {
+      console.error('Error saving dropped lead:', error);
+      throw error;
+    }
+  };
+
   // Handle GPS locate button click
   const handleLocateMe = () => {
     if (!mapInstanceRef.current || !userPosition) return;
@@ -502,6 +674,28 @@ export default function LeadMap({
             👆 Click leads to select • {selectedLeadIdsForAssignment.length} selected
           </p>
         </div>
+      )}
+
+      {/* Add Lead Modal */}
+      {dropPinLocation && (
+        <AddLeadModal
+          isOpen={showAddLeadModal}
+          onClose={() => {
+            setShowAddLeadModal(false);
+            setDropPinLocation(null);
+            if (tempPinRef.current) {
+              tempPinRef.current.remove();
+              tempPinRef.current = null;
+            }
+          }}
+          onSave={handleSaveDroppedLead}
+          initialAddress={dropPinAddress.address}
+          initialCity={dropPinAddress.city}
+          initialState={dropPinAddress.state}
+          initialZip={dropPinAddress.zip}
+          lat={dropPinLocation.lat}
+          lng={dropPinLocation.lng}
+        />
       )}
     </div>
   );
