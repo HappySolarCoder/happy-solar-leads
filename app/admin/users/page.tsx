@@ -9,8 +9,9 @@ import {
   User, UserRole, ROLE_LABELS, canManageUsers 
 } from '@/app/types';
 import { 
-  getUsersAsync, getCurrentUserAsync, saveUserAsync, deleteUserAsync 
+  getUsersAsync, saveUserAsync, deleteUserAsync 
 } from '@/app/utils/storage';
+import { getCurrentAuthUser } from '@/app/utils/auth';
 
 export default function UsersManagementPage() {
   const router = useRouter();
@@ -24,17 +25,30 @@ export default function UsersManagementPage() {
   // Load current user and check permissions
   useEffect(() => {
     async function loadData() {
-      const user = await getCurrentUserAsync();
-      
-      if (!user || !canManageUsers(user.role)) {
+      try {
+        const user = await getCurrentAuthUser();
+        
+        if (!user) {
+          console.error('No user found, redirecting to login');
+          router.push('/login');
+          return;
+        }
+        
+        if (!canManageUsers(user.role)) {
+          console.error('User not authorized for user management');
+          router.push('/');
+          return;
+        }
+        
+        setCurrentUser(user);
+        const allUsers = await getUsersAsync();
+        setUsers(allUsers);
+        setIsLoading(false);
+      } catch (error) {
+        console.error('User management page load error:', error);
+        setIsLoading(false);
         router.push('/');
-        return;
       }
-      
-      setCurrentUser(user);
-      const allUsers = await getUsersAsync();
-      setUsers(allUsers);
-      setIsLoading(false);
     }
     
     loadData();

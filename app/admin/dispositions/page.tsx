@@ -10,7 +10,7 @@ import {
   DoorOpen, DoorClosed, Bell, MessageSquare, FileText, Clipboard
 } from 'lucide-react';
 import { canManageUsers } from '@/app/types';
-import { getCurrentUserAsync } from '@/app/utils/storage';
+import { getCurrentAuthUser } from '@/app/utils/auth';
 
 // Simple User type for this page
 interface User {
@@ -75,17 +75,30 @@ export default function DispositionsPage() {
 
   useEffect(() => {
     async function loadData() {
-      const user = await getCurrentUserAsync();
-      
-      if (!user || !canManageUsers(user.role)) {
+      try {
+        const user = await getCurrentAuthUser();
+        
+        if (!user) {
+          console.error('No user found, redirecting to login');
+          router.push('/login');
+          return;
+        }
+        
+        if (!canManageUsers(user.role)) {
+          console.error('User not authorized for dispositions management');
+          router.push('/');
+          return;
+        }
+        
+        setCurrentUser(user);
+        const dispos = await getDispositionsAsync();
+        setDispositions(dispos);
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Dispositions page load error:', error);
+        setIsLoading(false);
         router.push('/');
-        return;
       }
-      
-      setCurrentUser(user);
-      const dispos = await getDispositionsAsync();
-      setDispositions(dispos);
-      setIsLoading(false);
     }
     
     loadData();
