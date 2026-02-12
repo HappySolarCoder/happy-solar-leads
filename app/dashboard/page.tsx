@@ -9,6 +9,7 @@ import {
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
+import ActivityStream from '@/app/components/ActivityStream';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -224,6 +225,11 @@ export default function DashboardPage() {
               <div className="text-xs text-[#718096]">Total Sales</div>
             </div>
           </div>
+        </div>
+
+        {/* Activity Stream */}
+        <div className="mb-8">
+          <ActivityStream />
         </div>
 
         {/* Active Team Members */}
