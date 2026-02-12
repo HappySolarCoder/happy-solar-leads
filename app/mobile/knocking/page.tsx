@@ -4,9 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, List, Navigation, Filter, MapPin } from 'lucide-react';
-import { getLeadsAsync } from '@/app/utils/storage';
+import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
-import { Lead, User, canSeeAllLeads } from '@/app/types';
+import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
 import LeadDetail from '@/app/components/LeadDetail';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
@@ -36,8 +36,10 @@ export default function KnockingPage() {
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
   const [solarFilter, setSolarFilter] = useState<'all' | 'solid' | 'good' | 'great'>('all');
   const [dispositionFilter, setDispositionFilter] = useState<string>('all');
+  const [setterFilter, setSetterFilter] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [dispositions, setDispositions] = useState<any[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
 
   // GPS tracking - continuous updates
   const { position: gpsPosition, error: gpsError, isLoading: gpsLoading } = useGeolocation({
@@ -70,9 +72,10 @@ export default function KnockingPage() {
     loadData();
   }, [router]);
   
-  // Load dispositions
+  // Load dispositions and users
   useEffect(() => {
     getDispositionsAsync().then(setDispositions);
+    getUsersAsync().then(setUsers);
   }, []);
 
   // Refresh leads
@@ -98,6 +101,11 @@ export default function KnockingPage() {
 
   // Exclude poor solar leads
   let goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
+  
+  // Filter by setter if selected (Admin/Manager only)
+  if (setterFilter !== 'all') {
+    goodLeads = goodLeads.filter(l => l.claimedBy === setterFilter);
+  }
   
   // Filter by solar category if selected
   if (solarFilter !== 'all') {
@@ -182,9 +190,34 @@ export default function KnockingPage() {
           </div>
         </div>
 
-        {/* Solar Filter Dropdown */}
+        {/* Filters Panel */}
         {showFilters && (
           <div className="px-4 py-3 border-t border-[#E2E8F0] bg-[#F7FAFC]">
+            {/* Setter Filter - Admin/Manager only */}
+            {currentUser && canSeeAllLeads(currentUser.role) && (
+              <div className="mb-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-base">👥</span>
+                  <label className="text-xs font-semibold text-[#2D3748]">
+                    Filter by Setter
+                  </label>
+                </div>
+                <select
+                  value={setterFilter}
+                  onChange={(e) => setSetterFilter(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                >
+                  <option value="all">All Setters</option>
+                  {users.map(user => (
+                    <option key={user.id} value={user.id}>
+                      {user.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            
+            {/* Solar Score Filter */}
             <div className="flex items-center gap-2 mb-2">
               <span className="text-base">☀️</span>
               <label className="text-xs font-semibold text-[#2D3748]">
