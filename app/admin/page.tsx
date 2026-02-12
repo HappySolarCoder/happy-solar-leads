@@ -9,9 +9,8 @@ import {
 import { 
   User, UserRole, canManageUsers 
 } from '@/app/types';
-import { 
-  getUsersAsync, getCurrentUserAsync 
-} from '@/app/utils/storage';
+import { getUsersAsync } from '@/app/utils/storage';
+import { getCurrentAuthUser } from '@/app/utils/auth';
 
 export default function AdminPage() {
   const router = useRouter();
@@ -22,18 +21,30 @@ export default function AdminPage() {
   // Load current user and check permissions
   useEffect(() => {
     async function loadData() {
-      const user = await getCurrentUserAsync();
-      
-      if (!user || !canManageUsers(user.role)) {
-        // Not admin - redirect to home
+      try {
+        const user = await getCurrentAuthUser();
+        
+        if (!user) {
+          console.error('No user found, redirecting to login');
+          router.push('/login');
+          return;
+        }
+        
+        if (!canManageUsers(user.role)) {
+          console.error('User not authorized for admin panel');
+          router.push('/');
+          return;
+        }
+        
+        setCurrentUser(user);
+        const allUsers = await getUsersAsync();
+        setUsers(allUsers);
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Admin page load error:', error);
+        setIsLoading(false);
         router.push('/');
-        return;
       }
-      
-      setCurrentUser(user);
-      const allUsers = await getUsersAsync();
-      setUsers(allUsers);
-      setIsLoading(false);
     }
     
     loadData();
@@ -50,16 +61,24 @@ export default function AdminPage() {
     );
   }
 
-  if (!currentUser) return null;
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFC]">
+        <div className="text-center">
+          <p className="text-[#718096]">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   const stats = {
-    totalUsers: users.length,
-    setters: users.filter(u => u.role === 'setter').length,
-    closers: users.filter(u => u.role === 'closer').length,
-    managers: users.filter(u => u.role === 'manager').length,
-    admins: users.filter(u => u.role === 'admin').length,
-    activeUsers: users.filter(u => u.isActive).length,
-    territories: new Set(users.map(u => u.territory).filter(Boolean)).size,
+    totalUsers: users?.length || 0,
+    setters: users?.filter(u => u.role === 'setter').length || 0,
+    closers: users?.filter(u => u.role === 'closer').length || 0,
+    managers: users?.filter(u => u.role === 'manager').length || 0,
+    admins: users?.filter(u => u.role === 'admin').length || 0,
+    activeUsers: users?.filter(u => u.isActive).length || 0,
+    territories: new Set((users || []).map(u => u.territory).filter(Boolean)).size,
   };
 
   return (
