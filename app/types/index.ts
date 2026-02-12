@@ -77,6 +77,9 @@ export interface Lead {
   knockGpsAccuracy?: number;     // GPS accuracy in meters
   knockGpsTimestamp?: Date;      // Timestamp of GPS capture
   knockDistanceFromAddress?: number; // Distance from address in meters
+  // Easter Eggs
+  hasEasterEgg?: boolean;        // HIDDEN - only for hidden pin eggs
+  easterEggId?: string;          // Which egg is hidden here
 }
 
 export type ObjectionType = 

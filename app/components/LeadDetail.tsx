@@ -16,6 +16,9 @@ import { updateLeadStatus, claimLead, unclaimLead } from '@/app/utils/storage';
 import ObjectionTracker from './ObjectionTracker';
 import LeadEditorModal from './LeadEditorModal';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
+import { checkEasterEggTrigger } from '@/app/utils/easterEggs';
+import { EasterEgg } from '@/app/types/easterEgg';
+import EasterEggWinModal from './EasterEggWinModal';
 
 interface LeadDetailProps {
   lead: Lead;
@@ -88,6 +91,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
+  const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
 
   const isClaimedByMe = currentUser && lead.claimedBy === currentUser.id;
   const canClaim = !lead.claimedBy || isClaimedByMe;
@@ -194,6 +198,23 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         };
         
         await saveLeadAsync(updatedLead);
+      }
+      
+      // Check for Easter Egg win!
+      try {
+        const eggWon = await checkEasterEggTrigger(
+          lead.id,
+          currentUser.id,
+          currentUser.name,
+          lead.address
+        );
+        
+        if (eggWon) {
+          setWonEasterEgg(eggWon);
+        }
+      } catch (err) {
+        console.error('Easter egg check failed:', err);
+        // Don't block the disposition save if egg check fails
       }
       
       onUpdate();
@@ -475,6 +496,14 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             setShowLeadEditor(false);
             onUpdate();
           }}
+        />
+      )}
+      
+      {/* Easter Egg Win Modal */}
+      {wonEasterEgg && (
+        <EasterEggWinModal
+          egg={wonEasterEgg}
+          onClose={() => setWonEasterEgg(null)}
         />
       )}
     </>

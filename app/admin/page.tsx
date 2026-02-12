@@ -330,6 +330,48 @@ export default function AdminPage() {
             </button>
           </div>
         </section>
+
+        {/* Section 5: Gamification & Motivation */}
+        <section className="mt-8">
+          <h2 className="text-xl font-bold text-[#2D3748] mb-4 flex items-center gap-2">
+            <span className="text-2xl">🎮</span>
+            Gamification & Motivation
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button
+              onClick={() => router.push('/admin/easter-eggs')}
+              className="bg-white border border-[#E2E8F0] rounded-lg p-6 hover:border-[#FF5F5A] hover:shadow-md transition-all text-left group"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-3 bg-gradient-to-br from-[#FF5F5A] to-[#F27141] rounded-lg">
+                  <span className="text-2xl">🥚</span>
+                </div>
+                <ArrowRight className="w-5 h-5 text-[#718096] group-hover:text-[#FF5F5A] group-hover:translate-x-1 transition-all" />
+              </div>
+              <h3 className="font-semibold text-[#2D3748] mb-1">Easter Eggs</h3>
+              <p className="text-sm text-[#718096]">
+                Random rewards & treasure hunts to motivate team behavior
+              </p>
+            </button>
+
+            <button
+              onClick={() => router.push('/admin/leaderboards')}
+              className="bg-white border border-[#E2E8F0] rounded-lg p-6 hover:border-[#FF5F5A] hover:shadow-md transition-all text-left group opacity-50 cursor-not-allowed"
+              disabled
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-3 bg-[#F6AD55]/10 rounded-lg">
+                  <span className="text-2xl">🏆</span>
+                </div>
+                <span className="text-xs px-2 py-1 bg-[#718096]/10 text-[#718096] rounded font-medium">Coming Soon</span>
+              </div>
+              <h3 className="font-semibold text-[#2D3748] mb-1">Leaderboards</h3>
+              <p className="text-sm text-[#718096]">
+                Rankings, achievements, and performance tracking
+              </p>
+            </button>
+          </div>
+        </section>
       </main>
     </div>
   );
