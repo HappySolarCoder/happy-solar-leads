@@ -132,6 +132,7 @@ export default function AppMenu({
     <>
       {/* Hamburger Button - Flat Design */}
       <button
+        type="button"
         onClick={() => setIsOpen(true)}
         className="flex items-center justify-center w-10 h-10 bg-[#F7FAFC] hover:bg-[#FF5F5A] border border-[#E2E8F0] rounded-lg transition-all duration-150"
       >
@@ -160,6 +161,7 @@ export default function AppMenu({
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-2xl font-bold text-[#2D3748]">Menu</h2>
             <button
+              type="button"
               onClick={() => setIsOpen(false)}
               className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
             >
@@ -267,7 +269,12 @@ export default function AppMenu({
             {menuItems.map((item, index) => (
               <button
                 key={index}
-                onClick={item.onClick}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  item.onClick();
+                }}
                 className="w-full flex items-center gap-3 p-4 hover:bg-[#F7FAFC] border border-transparent hover:border-[#E2E8F0] rounded-lg transition-all duration-150"
               >
                 <div className={`p-2.5 ${item.bgColor} rounded-lg`}>
@@ -285,6 +292,7 @@ export default function AppMenu({
           {/* Settings Section */}
           <div className="p-4 border-t border-[#E2E8F0]">
             <button
+              type="button"
               onClick={() => {
                 setIsOpen(false);
               }}
