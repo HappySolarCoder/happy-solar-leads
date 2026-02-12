@@ -89,7 +89,7 @@ export default function EasterEggsAdminPage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8">
         {/* Stats Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
           <div className="bg-gradient-to-br from-[#FF5F5A] to-[#F27141] rounded-2xl p-6 text-white">
             <div className="text-3xl font-bold mb-1">{eggs.length}</div>
             <div className="text-white/80 text-sm">Total Eggs</div>
@@ -105,6 +105,12 @@ export default function EasterEggsAdminPage() {
           <div className="bg-gradient-to-br from-[#F6AD55] to-[#ED8936] rounded-2xl p-6 text-white">
             <div className="text-3xl font-bold mb-1">{eggs.filter(e => e.type === 'hidden').length}</div>
             <div className="text-white/80 text-sm">Hidden Pins</div>
+          </div>
+          <div className="bg-gradient-to-br from-[#9F7AEA] to-[#805AD5] rounded-2xl p-6 text-white">
+            <div className="text-3xl font-bold mb-1">
+              {eggs.reduce((sum, egg) => sum + (egg.wonBy?.length || 0), 0)}
+            </div>
+            <div className="text-white/80 text-sm">Total Winners</div>
           </div>
         </div>
 
@@ -194,6 +200,33 @@ export default function EasterEggsAdminPage() {
                         <p className="text-[#718096] italic">{egg.prizeDescription}</p>
                       )}
                     </div>
+                    
+                    {/* Winners List */}
+                    {egg.wonBy && egg.wonBy.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-[#E2E8F0]">
+                        <h4 className="text-sm font-semibold text-[#2D3748] mb-2">🏆 Winners</h4>
+                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                          {egg.wonBy.map((winner, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-xs bg-[#F7FAFC] rounded-lg p-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 bg-gradient-to-br from-[#FF5F5A] to-[#F27141] rounded-full flex items-center justify-center text-white font-bold text-[10px]">
+                                  {winner.userName.charAt(0)}
+                                </div>
+                                <span className="font-medium text-[#2D3748]">{winner.userName}</span>
+                              </div>
+                              <span className="text-[#718096]">
+                                {new Date(winner.wonAt).toLocaleString('en-US', { 
+                                  month: 'short', 
+                                  day: 'numeric',
+                                  hour: 'numeric',
+                                  minute: '2-digit'
+                                })}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Right: Actions */}
