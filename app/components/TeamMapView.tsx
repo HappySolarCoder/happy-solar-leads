@@ -27,8 +27,8 @@ export default function TeamMapView({ teamMembers, onMemberClick }: Props) {
 
   useEffect(() => {
     if (!mapRef.current) {
-      // Initialize map
-      const map = L.map('team-map').setView([33.4484, -112.0740], 12); // Phoenix default
+      // Initialize map - Rochester/Buffalo area for admin oversight
+      const map = L.map('team-map').setView([43.1566, -77.6088], 11); // Rochester, NY
       
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',

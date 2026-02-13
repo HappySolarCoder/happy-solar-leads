@@ -31,8 +31,8 @@ export default function LeadMap({
   onLeadClick, 
   selectedLeadId,
   routeWaypoints,
-  center = [43.0884, -77.6758],
-  zoom = 12,
+  center = [43.1566, -77.6088], // Rochester, NY - default for admin oversight
+  zoom = 11,
   assignmentMode = 'none',
   selectedLeadIdsForAssignment = [],
   onTerritoryDrawn,
