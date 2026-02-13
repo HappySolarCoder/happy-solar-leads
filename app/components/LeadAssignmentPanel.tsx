@@ -97,10 +97,15 @@ export default function LeadAssignmentPanel({
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop - only close if not in active mode */}
       <div 
         className="fixed inset-0 bg-black/20 z-30"
-        onClick={onClose}
+        onClick={(e) => {
+          // Don't close if user is in manual or territory mode (they need to interact with map)
+          if (mode === 'none') {
+            onClose();
+          }
+        }}
       />
 
       {/* Panel */}
