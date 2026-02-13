@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { User, canManageUsers, canAssignLeads, canSeeAllLeads } from '@/app/types';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { signOut } from 'firebase/auth';
+import { auth } from '@/app/utils/firebase';
 
 interface AppMenuProps {
   currentUser: User | null;
@@ -289,23 +291,32 @@ export default function AppMenu({
             ))}
           </div>
 
-          {/* Settings Section */}
+          {/* Logout Section */}
           <div className="p-4 border-t border-[#E2E8F0]">
             <button
               type="button"
-              onClick={() => {
-                setIsOpen(false);
+              onClick={async () => {
+                try {
+                  if (auth) {
+                    await signOut(auth);
+                  }
+                  router.push('/login');
+                  setIsOpen(false);
+                } catch (error) {
+                  console.error('Logout error:', error);
+                  alert('Failed to logout. Please try again.');
+                }
               }}
-              className="w-full flex items-center gap-3 p-4 hover:bg-[#F7FAFC] rounded-lg transition-colors"
+              className="w-full flex items-center gap-3 p-4 hover:bg-[#FED7D7] rounded-lg transition-colors group"
             >
-              <div className="p-2.5 bg-[#F7FAFC] rounded-lg">
-                <Settings className="w-5 h-5 text-[#718096]" />
+              <div className="p-2.5 bg-[#FED7D7] group-hover:bg-[#FC8181] rounded-lg transition-colors">
+                <LogOut className="w-5 h-5 text-[#E53E3E] group-hover:text-white transition-colors" />
               </div>
               <div className="flex-1 text-left">
-                <div className="font-semibold text-[#2D3748]">Settings</div>
-                <div className="text-xs text-[#718096]">App preferences</div>
+                <div className="font-semibold text-[#2D3748] group-hover:text-[#E53E3E] transition-colors">Logout</div>
+                <div className="text-xs text-[#718096]">Sign out of your account</div>
               </div>
-              <ChevronRight className="w-4 h-4 text-[#E2E8F0] flex-shrink-0" />
+              <ChevronRight className="w-4 h-4 text-[#E2E8F0] group-hover:text-[#E53E3E] flex-shrink-0 transition-colors" />
             </button>
           </div>
         </div>
