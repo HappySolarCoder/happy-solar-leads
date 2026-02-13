@@ -5,7 +5,8 @@ import { Upload, File, X, MapPin, CheckCircle, AlertCircle, Tag } from 'lucide-r
 import { CSVRow, Lead, LeadTag, LEAD_TAG_LABELS, LEAD_TAG_COLORS, LEAD_TAG_DESCRIPTIONS } from '@/app/types';
 import { parseCSV, validateCSV } from '@/app/utils/csv';
 import { geocodeBatch } from '@/app/utils/geocode';
-import { saveLeadAsync, getLeadsAsync, generateId, getCurrentUserAsync } from '@/app/utils/storage';
+import { saveLeadAsync, getLeadsAsync, generateId } from '@/app/utils/storage';
+import { getCurrentAuthUser } from '@/app/utils/auth';
 import { canManageUsers } from '@/app/types';
 
 // Client-side logger that sends to server
@@ -41,8 +42,13 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
   // Check if user is admin on mount
   useEffect(() => {
     async function checkAdmin() {
-      const user = await getCurrentUserAsync();
-      setIsAdmin(user ? canManageUsers(user.role) : false);
+      try {
+        const user = await getCurrentAuthUser();
+        setIsAdmin(user ? canManageUsers(user.role) : false);
+      } catch (error) {
+        console.error('Failed to check admin status:', error);
+        setIsAdmin(false);
+      }
     }
     if (isOpen) {
       checkAdmin();
