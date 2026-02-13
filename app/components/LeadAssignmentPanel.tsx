@@ -97,11 +97,14 @@ export default function LeadAssignmentPanel({
 
   return (
     <>
-      {/* Backdrop - only close if not in active mode */}
+      {/* Backdrop - allow clicks through to map when in assignment mode */}
       <div 
         className="fixed inset-0 bg-black/20 z-30"
+        style={{
+          pointerEvents: mode === 'none' ? 'auto' : 'none' // Let clicks pass through to map when drawing/selecting
+        }}
         onClick={(e) => {
-          // Don't close if user is in manual or territory mode (they need to interact with map)
+          // Only close if user is not in manual or territory mode
           if (mode === 'none') {
             onClose();
           }
@@ -111,6 +114,7 @@ export default function LeadAssignmentPanel({
       {/* Panel */}
       <div 
         className="fixed right-0 top-0 bottom-0 w-96 bg-white shadow-2xl z-40 flex flex-col"
+        style={{ pointerEvents: 'auto' }} // Always receive clicks on panel itself
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
