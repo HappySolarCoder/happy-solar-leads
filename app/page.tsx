@@ -171,14 +171,8 @@ export default function Home() {
     loadUsers();
   }, []);
 
-  // Filter leads based on user role
-  const roleFilteredLeads = currentUser && !canSeeAllLeads(currentUser.role)
-    ? leads.filter(l =>
-        l.status === 'unclaimed' || // Show unclaimed leads to everyone
-        l.claimedBy === currentUser.id || // Show user's claimed leads
-        l.assignedTo === currentUser.id // Show auto-assigned leads
-      )
-    : leads; // Managers and admins see all leads
+  // Everyone sees all leads now (role filter removed per user request)
+  const roleFilteredLeads = leads;
 
   // Filter leads for main display (exclude poor solar leads)
   const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');

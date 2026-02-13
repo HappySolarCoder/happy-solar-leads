@@ -98,14 +98,8 @@ export default function KnockingPage() {
     setShowLeadDetail(true);
   };
 
-  // Filter leads based on user role
-  const roleFilteredLeads = currentUser && !canSeeAllLeads(currentUser.role)
-    ? leads.filter(l =>
-        l.status === 'unclaimed' ||
-        l.claimedBy === currentUser.id ||
-        l.assignedTo === currentUser.id
-      )
-    : leads;
+  // Everyone sees all leads now (role filter removed per user request)
+  const roleFilteredLeads = leads;
 
   // Exclude poor solar leads
   let goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
