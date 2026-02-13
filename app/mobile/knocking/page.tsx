@@ -47,13 +47,21 @@ export default function KnockingPage() {
     watch: true, // Continuous tracking
   });
 
-  // Set map center to GPS position ONCE when GPS first loads
+  // Set map center based on user role
   useEffect(() => {
-    if (gpsPosition && !hasInitializedMap) {
+    if (!currentUser || hasInitializedMap) return;
+    
+    // Admins/Managers: center on Rochester for oversight
+    if (currentUser.role === 'admin' || currentUser.role === 'manager') {
+      setMapCenter([43.1566, -77.6088]); // Rochester, NY
+      setHasInitializedMap(true);
+    }
+    // Setters/Closers: center on GPS for field work
+    else if (gpsPosition) {
       setMapCenter([gpsPosition.lat, gpsPosition.lng]);
       setHasInitializedMap(true);
     }
-  }, [gpsPosition, hasInitializedMap]);
+  }, [gpsPosition, currentUser, hasInitializedMap]);
 
   // Load data
   useEffect(() => {
