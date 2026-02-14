@@ -60,6 +60,10 @@ export default function AIManagerPage() {
 
   // Generate analyses
   const runAnalysis = async () => {
+    console.log('[AI Manager] Running analysis for date:', selectedDate);
+    console.log('[AI Manager] Users to analyze:', users.length);
+    console.log('[AI Manager] Total leads:', leads.length);
+    
     setGenerating(true);
     const date = new Date(selectedDate);
     const newAnalyses: AIAnalysis[] = [];
@@ -100,6 +104,7 @@ export default function AIManagerPage() {
       });
     }
 
+    console.log('[AI Manager] Analysis complete. Generated', newAnalyses.length, 'analyses');
     setAnalyses(newAnalyses.sort((a, b) => b.metrics.doorsKnocked - a.metrics.doorsKnocked));
     setGenerating(false);
   };
@@ -153,6 +158,7 @@ export default function AIManagerPage() {
             </div>
             
             <button
+              type="button"
               onClick={runAnalysis}
               disabled={generating}
               className="px-6 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg hover:from-purple-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
