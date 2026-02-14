@@ -215,7 +215,8 @@ export default function LeadMap({
         Boolean(lead.claimedBy),
         isSelectedForAssignment,
         disposition,
-        currentZoom
+        currentZoom,
+        lead.tags // Pass tags for special styling
       );
 
       const marker = L.marker([lead.lat!, lead.lng!], { icon });
@@ -780,8 +781,12 @@ function createCustomIcon(
   isClaimed: boolean,
   isSelectedForAssignment: boolean = false,
   disposition?: Disposition,
-  zoom: number = 12
+  zoom: number = 12,
+  tags?: string[]
 ): L.DivIcon {
+  // Check if this is a homeowner/home-data lead (subtle gray pins)
+  const isHomeownerLead = tags && (tags.includes('homeowner') || tags.includes('home-data'));
+  
   // Zoom-based sizing
   // Zoom < 12: Simple dots (8px)
   // Zoom 12-14: Small pins (16px)
@@ -801,17 +806,15 @@ function createCustomIcon(
     showIcon = true;
   }
   
+  // Homeowner leads are 70% smaller (more subtle)
+  if (isHomeownerLead) {
+    baseSize = Math.round(baseSize * 0.7);
+  }
+  
   const size = isSelected ? baseSize * 1.2 : baseSize;
   
   // For simple dots (zoomed out), use circles instead of teardrops
   const isSimpleDot = zoom < 14;
-  
-  const border = isSelectedForAssignment 
-    ? '3px solid #8b5cf6' // Purple border for assignment selection
-    : isSelected 
-    ? '2px solid white' 
-    : isSimpleDot ? 'none' : '2px solid white';
-  const opacity = isClaimed && !canClaim ? 0.7 : 1;
   
   const solarColors: Record<string, string> = {
     great: '#10b981',
@@ -819,11 +822,43 @@ function createCustomIcon(
     solid: '#f59e0b',
   };
   
-  // PRIORITY: Solar category FIRST (shows lead quality), then disposition color, then fallback
-  const color = (solarCategory ? solarColors[solarCategory] : undefined)
-    || disposition?.color 
-    || (STATUS_COLORS as Record<string, string>)[status] 
-    || '#6b7280';
+  // Homeowner leads: gray pin with solar rating as border color
+  let color: string;
+  let border: string;
+  
+  if (isHomeownerLead) {
+    // Gray pin body for homeowner/home-data leads
+    color = '#6b7280';
+    
+    // Solar rating determines border color
+    const solarBorderColor = solarCategory ? solarColors[solarCategory] : undefined;
+    
+    if (isSelectedForAssignment) {
+      border = '3px solid #8b5cf6'; // Purple for assignment
+    } else if (isSelected) {
+      border = '2px solid white';
+    } else if (solarBorderColor) {
+      border = `3px solid ${solarBorderColor}`; // Solar rating color border!
+    } else if (isSimpleDot) {
+      border = 'none';
+    } else {
+      border = '2px solid #9ca3af'; // Light gray border if no solar data
+    }
+  } else {
+    // Solar data leads (or no tags): colorful pins as before
+    color = (solarCategory ? solarColors[solarCategory] : undefined)
+      || disposition?.color 
+      || (STATUS_COLORS as Record<string, string>)[status] 
+      || '#6b7280';
+    
+    border = isSelectedForAssignment 
+      ? '3px solid #8b5cf6'
+      : isSelected 
+      ? '2px solid white' 
+      : isSimpleDot ? 'none' : '2px solid white';
+  }
+  
+  const opacity = isClaimed && !canClaim ? 0.7 : 1;
   
   // Use disposition icon if available, otherwise fallback to default
   const icon = disposition 
