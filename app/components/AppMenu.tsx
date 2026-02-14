@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Menu, X, Shield, Map, UserPlus, Filter, Users, Settings,
-  Wand2, LogOut, ChevronRight, BarChart3
+  Wand2, LogOut, ChevronRight, BarChart3, Brain
 } from 'lucide-react';
 import { User, canManageUsers, canAssignLeads, canSeeAllLeads } from '@/app/types';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
@@ -87,6 +87,19 @@ export default function AppMenu({
       color: 'from-indigo-500 to-indigo-600',
       iconColor: 'text-indigo-600',
       bgColor: 'bg-indigo-50',
+    }] : []),
+    
+    ...(canSeeAllLeads(currentUser.role) ? [{
+      icon: Brain,
+      label: 'Virtual Manager AI',
+      description: 'Performance & coaching',
+      onClick: () => {
+        router.push('/ai-manager');
+        setIsOpen(false);
+      },
+      color: 'from-purple-500 to-purple-600',
+      iconColor: 'text-purple-600',
+      bgColor: 'bg-purple-50',
     }] : []),
     
     ...(canAssignLeads(currentUser.role) ? [{
