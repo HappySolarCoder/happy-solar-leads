@@ -83,8 +83,13 @@ export default function AIManagerPage() {
 
       const metrics = calculateDailyMetrics(user.id, user.name, leads, date);
       
+      console.log(`[AI Manager] ${user.name}: ${metrics.doorsKnocked} doors knocked on ${selectedDate}`);
+      
       // Skip if no activity
-      if (metrics.doorsKnocked === 0) continue;
+      if (metrics.doorsKnocked === 0) {
+        console.log(`[AI Manager] Skipping ${user.name} - no activity`);
+        continue;
+      }
 
       const redFlags = detectRedFlags(metrics, daysSinceStart);
       const insights = generateInsights(metrics, redFlags, daysSinceStart);

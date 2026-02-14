@@ -55,6 +55,25 @@ export function calculateDailyMetrics(
 ): DailyMetrics {
   const dateStr = date.toISOString().split('T')[0];
   
+  // Debug: Check how many leads belong to this setter
+  const setterLeads = leads.filter(l => l.claimedBy === setterId);
+  const leadsWithGPS = setterLeads.filter(l => l.knockGpsTimestamp);
+  
+  // Show sample GPS dates
+  if (leadsWithGPS.length > 0) {
+    const sampleDates = leadsWithGPS.slice(0, 3).map(l => {
+      try {
+        const d = new Date(l.knockGpsTimestamp!);
+        return isNaN(d.getTime()) ? 'INVALID' : d.toISOString().split('T')[0];
+      } catch {
+        return 'ERROR';
+      }
+    });
+    console.log(`[calculateDailyMetrics] ${setterName}: Sample GPS dates:`, sampleDates, `looking for: ${dateStr}`);
+  }
+  
+  console.log(`[calculateDailyMetrics] ${setterName}: ${setterLeads.length} claimed leads, ${leadsWithGPS.length} with GPS timestamp`);
+  
   // Filter leads for this setter and this date
   const todayLeads = leads.filter(lead => {
     if (lead.claimedBy !== setterId) return false;
@@ -72,6 +91,8 @@ export function calculateDailyMetrics(
       return false;
     }
   });
+
+  console.log(`[calculateDailyMetrics] ${setterName}: Found ${todayLeads.length} leads for ${dateStr}`);
 
   const doorsKnocked = todayLeads.length;
   const appointments = todayLeads.filter(l => 
