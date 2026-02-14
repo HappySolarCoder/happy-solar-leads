@@ -5,7 +5,7 @@ import { Upload, File, X, MapPin, CheckCircle, AlertCircle, Tag } from 'lucide-r
 import { CSVRow, Lead, LeadTag, LEAD_TAG_LABELS, LEAD_TAG_COLORS, LEAD_TAG_DESCRIPTIONS } from '@/app/types';
 import { parseCSV, validateCSV } from '@/app/utils/csv';
 import { geocodeBatch } from '@/app/utils/geocode';
-import { saveLeadAsync, getLeadsAsync, generateId } from '@/app/utils/storage';
+import { saveLeadAsync, batchSaveLeadsAsync, getLeadsAsync, generateId } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { canManageUsers } from '@/app/types';
 
@@ -293,12 +293,18 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
         geocodeFailed: failedCount 
       });
 
-      // Save all good leads to Firestore
+      // Save all good leads to Firestore in batches
       logToFile('INFO', 'UploadModal', 'Saving leads to Firestore', { count: newLeads.length });
       
-      for (const lead of newLeads) {
-        await saveLeadAsync(lead);
-      }
+      await batchSaveLeadsAsync(newLeads, (saved, total) => {
+        // Update progress during save
+        const percentageSaved = Math.round((saved / total) * 100);
+        setProgress({ 
+          current: rows.length * 2 + saved, 
+          total: rows.length * 2 + total 
+        });
+        console.log(`[UploadModal] Saved ${saved}/${total} leads (${percentageSaved}%)`);
+      });
 
       // Show failed info
       const failedAddresses = [

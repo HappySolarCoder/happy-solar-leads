@@ -4,6 +4,7 @@ import {
   getAllLeads as firestoreGetAllLeads,
   getLeadsInBounds as firestoreGetLeadsInBounds,
   saveLead as firestoreSaveLead,
+  batchSaveLeads as firestoreBatchSaveLeads,
   updateLead as firestoreUpdateLead,
   deleteLead as firestoreDeleteLead,
   getAllUsers as firestoreGetAllUsers,
@@ -68,35 +69,14 @@ export async function getLeadsAsync(): Promise<Lead[]> {
     if (leads && leads.length > 0) {
       leadsCache = leads;
       cacheTimestamp = Date.now();
-      // Also backup to localStorage
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('raydar_leads', JSON.stringify(leads));
-      }
+      // Note: Removed localStorage backup - causes QuotaExceededError with large datasets (11K+ leads)
+      // Firestore is source of truth now
       return leads;
-    }
-    // If Firestore returns empty, try localStorage fallback
-    if (typeof window !== 'undefined') {
-      const fallbackData = localStorage.getItem('raydar_leads');
-      if (fallbackData) {
-        const fallbackLeads = JSON.parse(fallbackData).map(convertLeadDates);
-        leadsCache = fallbackLeads;
-        cacheTimestamp = Date.now();
-        return fallbackLeads;
-      }
     }
     return [];
   } catch (error) {
-    console.error('Firestore getLeads failed, falling back to localStorage:', error);
-    // Fallback to localStorage on error
-    if (typeof window !== 'undefined') {
-      const fallbackData = localStorage.getItem('raydar_leads');
-      if (fallbackData) {
-        const fallbackLeads = JSON.parse(fallbackData).map(convertLeadDates);
-        leadsCache = fallbackLeads;
-        cacheTimestamp = Date.now();
-        return fallbackLeads;
-      }
-    }
+    console.error('Firestore getLeads failed:', error);
+    // Return empty array on error - no localStorage fallback for large datasets
     return [];
   }
 }
@@ -145,6 +125,21 @@ export async function saveLeadAsync(lead: Lead): Promise<void> {
       leadsCache.push(lead);
     }
   }
+}
+
+/**
+ * Batch save leads (for large uploads)
+ * Uses Firestore WriteBatch for efficiency
+ * Saves 500 leads at a time (Firestore limit)
+ */
+export async function batchSaveLeadsAsync(
+  leads: Lead[],
+  onProgress?: (saved: number, total: number) => void
+): Promise<void> {
+  await firestoreBatchSaveLeads(leads, onProgress);
+  // Invalidate cache so next getLeadsAsync() fetches fresh data
+  leadsCache = null;
+  cacheTimestamp = 0;
 }
 
 export async function updateLeadAsync(id: string, updates: Partial<Lead>): Promise<void> {

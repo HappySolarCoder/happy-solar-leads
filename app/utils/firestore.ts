@@ -11,7 +11,8 @@ import {
   where,
   orderBy,
   Timestamp,
-  limit
+  limit,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { Lead, User } from '@/app/types';
@@ -184,6 +185,83 @@ export async function saveLead(lead: Lead): Promise<void> {
     await setDoc(leadRef, data);
   } catch (error) {
     console.error('Error saving lead:', error);
+    throw error;
+  }
+}
+
+/**
+ * Batch save leads in groups of 500 (Firestore limit)
+ * Much faster and more reliable for large uploads
+ * Returns progress callback for UI updates
+ */
+export async function batchSaveLeads(
+  leads: Lead[],
+  onProgress?: (saved: number, total: number) => void
+): Promise<void> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return;
+  }
+
+  const BATCH_SIZE = 500; // Firestore WriteBatch limit
+  const totalLeads = leads.length;
+  let savedCount = 0;
+
+  // Helper to convert any date format to Timestamp
+  const toTimestamp = (date: any): Timestamp | null => {
+    if (!date) return null;
+    if (date instanceof Date) return Timestamp.fromDate(date);
+    if (typeof date === 'string') return Timestamp.fromDate(new Date(date));
+    return null;
+  };
+
+  // Helper to remove undefined values
+  const cleanObject = (obj: any): any => {
+    const cleaned: any = {};
+    for (const key in obj) {
+      if (obj[key] !== undefined) {
+        cleaned[key] = obj[key];
+      }
+    }
+    return cleaned;
+  };
+
+  try {
+    // Process in batches of 500
+    for (let i = 0; i < totalLeads; i += BATCH_SIZE) {
+      const batch = writeBatch(db);
+      const batchLeads = leads.slice(i, Math.min(i + BATCH_SIZE, totalLeads));
+
+      for (const lead of batchLeads) {
+        const leadRef = doc(db, LEADS_COLLECTION, lead.id);
+        const data = cleanObject({
+          ...lead,
+          createdAt: toTimestamp(lead.createdAt) || Timestamp.now(),
+          claimedAt: toTimestamp(lead.claimedAt),
+          dispositionedAt: toTimestamp(lead.dispositionedAt),
+          assignedAt: toTimestamp(lead.assignedAt),
+          solarTestedAt: toTimestamp(lead.solarTestedAt),
+          objectionRecordedAt: toTimestamp((lead as any).objectionRecordedAt),
+          knockGpsTimestamp: toTimestamp((lead as any).knockGpsTimestamp),
+        });
+        batch.set(leadRef, data);
+      }
+
+      // Commit this batch
+      await batch.commit();
+      savedCount += batchLeads.length;
+
+      // Report progress
+      if (onProgress) {
+        onProgress(savedCount, totalLeads);
+      }
+
+      console.log(`[Firestore] Saved batch ${Math.floor(i / BATCH_SIZE) + 1}: ${savedCount}/${totalLeads} leads`);
+    }
+
+    console.log(`[Firestore] Successfully saved ${totalLeads} leads in batches`);
+  } catch (error) {
+    console.error(`[Firestore] Batch save failed at ${savedCount}/${totalLeads}:`, error);
     throw error;
   }
 }
