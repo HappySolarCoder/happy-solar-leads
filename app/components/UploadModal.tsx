@@ -112,19 +112,44 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       
       // Load existing leads from Firestore to check for duplicates
       const existingLeads = await getLeadsAsync();
-      const existingAddresses = new Set(existingLeads.map(l => 
-        `${l.address.toLowerCase().trim()}, ${l.city.toLowerCase().trim()}, ${l.state.toLowerCase().trim()} ${l.zip}`
-      ));
+      
+      // Create a map for faster lookup (address -> lead)
+      const existingLeadsMap = new Map<string, Lead>();
+      existingLeads.forEach(lead => {
+        const normalizedAddress = `${lead.address.toLowerCase().trim()}, ${lead.city.toLowerCase().trim()}, ${lead.state.toLowerCase().trim()} ${lead.zip}`;
+        existingLeadsMap.set(normalizedAddress, lead);
+      });
       
       for (let i = 0; i < geocodedSuccess.length; i++) {
         const result = geocodedSuccess[i];
         
         // Check for duplicate address
         const normalizedAddress = `${result.row.address?.toLowerCase().trim()}, ${result.row.city?.toLowerCase().trim()}, ${result.row.state?.toLowerCase().trim()} ${result.row.zip}`;
-        if (existingAddresses.has(normalizedAddress)) {
-          logToFile('INFO', 'UploadModal', 'Skipping duplicate', { address: result.row.address });
-          skippedDuplicates.push(result.row.address || 'Unknown');
-          continue;
+        const existingLead = existingLeadsMap.get(normalizedAddress);
+        
+        // Determine if we should skip this lead based on tags
+        // RULE: solar-data always wins! If new lead will have solar-data tag, it should update/replace existing
+        const newLeadWillHaveSolarDataTag = selectedTags.includes('solar-data');
+        const existingHasSolarDataTag = existingLead?.tags?.includes('solar-data');
+        
+        if (existingLead) {
+          // Case 1: Existing has solar-data, new doesn't → SKIP (preserve solar-data)
+          if (existingHasSolarDataTag && !newLeadWillHaveSolarDataTag) {
+            logToFile('INFO', 'UploadModal', 'Skipping duplicate - existing has solar-data', { address: result.row.address });
+            skippedDuplicates.push(result.row.address || 'Unknown');
+            continue;
+          }
+          
+          // Case 2: New has solar-data, existing doesn't → Will UPDATE (processed below)
+          // Case 3: Both have solar-data or neither → SKIP (preserve existing)
+          if (!newLeadWillHaveSolarDataTag || (existingHasSolarDataTag && newLeadWillHaveSolarDataTag)) {
+            logToFile('INFO', 'UploadModal', 'Skipping duplicate - preserving existing', { address: result.row.address });
+            skippedDuplicates.push(result.row.address || 'Unknown');
+            continue;
+          }
+          
+          // If we get here: new has solar-data, existing doesn't → will UPDATE below
+          logToFile('INFO', 'UploadModal', 'Upgrading existing lead to solar-data', { address: result.row.address });
         }
         
         try {
@@ -175,7 +200,16 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
           
           // Only include leads with good solar scores
           if (solarCategory !== 'poor') {
-            const leadData: any = {
+            // If updating existing lead, preserve some fields
+            const leadData: any = existingLead ? {
+              ...existingLead, // Preserve existing data
+              // Update with new solar data
+              solarScore,
+              solarCategory,
+              hasSouthFacingRoof: hasSouthFacing,
+              solarTestedAt: new Date(),
+            } : {
+              // New lead
               id: generateId(),
               name: result.row.name || 'Unknown',
               address: result.row.address,
@@ -192,10 +226,14 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               solarTestedAt: new Date(),
             };
             
-            // Only add optional fields if they exist
-            if (result.row.phone) leadData.phone = result.row.phone;
-            if (result.row.email) leadData.email = result.row.email;
-            if (result.row.estimatedBill) leadData.estimatedBill = result.row.estimatedBill;
+            // Only add optional fields if they exist (for new leads) or update them (for existing)
+            if (!existingLead) {
+              // New lead - only add if provided in CSV
+              if (result.row.phone) leadData.phone = result.row.phone;
+              if (result.row.email) leadData.email = result.row.email;
+              if (result.row.estimatedBill) leadData.estimatedBill = result.row.estimatedBill;
+            }
+            // For both new and existing: update tags and solar data
             if (selectedTags.length > 0) leadData.tags = selectedTags;
             if (solarData.solarPotential?.maxArrayPanelsCount) {
               leadData.solarMaxPanels = solarData.solarPotential.maxArrayPanelsCount;
@@ -209,7 +247,16 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
           
         } catch (e) {
           logToFile('WARN', 'UploadModal', 'Solar fetch failed', { address: result.row.address, error: e });
-          // Still add lead without solar data (clean undefined fields)
+          
+          // If this was going to be an update (upgrade to solar-data), skip it
+          // We don't want to upgrade without solar data
+          if (existingLead) {
+            logToFile('WARN', 'UploadModal', 'Skipping update - solar fetch failed', { address: result.row.address });
+            skippedDuplicates.push(result.row.address || 'Unknown');
+            continue;
+          }
+          
+          // Still add NEW lead without solar data (clean undefined fields)
           const leadData: any = {
             id: generateId(),
             name: result.row.name || 'Unknown',
