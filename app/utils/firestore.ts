@@ -10,7 +10,8 @@ import {
   query,
   where,
   orderBy,
-  Timestamp
+  Timestamp,
+  limit
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { Lead, User } from '@/app/types';
@@ -46,6 +47,72 @@ export async function getAllLeads(): Promise<Lead[]> {
     });
   } catch (error) {
     console.error('Error getting leads:', error);
+    return [];
+  }
+}
+
+/**
+ * Get leads within geographic bounds (for map viewport lazy loading)
+ * This dramatically reduces read operations by only loading visible leads
+ */
+export async function getLeadsInBounds(
+  south: number,
+  north: number,
+  west: number,
+  east: number,
+  maxLeads: number = 2000
+): Promise<Lead[]> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return [];
+  }
+  
+  try {
+    const leadsRef = collection(db, LEADS_COLLECTION);
+    
+    // Query leads within latitude bounds
+    // Note: Firestore doesn't support compound geo queries, so we filter by lat first
+    // then filter lng in memory
+    const q = query(
+      leadsRef,
+      where('lat', '>=', south),
+      where('lat', '<=', north),
+      limit(maxLeads)
+    );
+    
+    const snapshot = await getDocs(q);
+    const allLeads = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        ...data,
+        id: doc.id,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
+        claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
+        dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
+        assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
+        solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
+        objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
+      } as Lead;
+    });
+    
+    // Filter by longitude in memory (Firestore doesn't support multiple range queries)
+    const leadsInBounds = allLeads.filter(lead => {
+      if (!lead.lng) return false;
+      
+      // Handle longitude wraparound at date line
+      if (west > east) {
+        // Bounds cross date line
+        return lead.lng >= west || lead.lng <= east;
+      } else {
+        return lead.lng >= west && lead.lng <= east;
+      }
+    });
+    
+    console.log(`[Firestore] Loaded ${leadsInBounds.length} leads in bounds (${south.toFixed(4)}, ${west.toFixed(4)}) to (${north.toFixed(4)}, ${east.toFixed(4)})`);
+    
+    return leadsInBounds;
+  } catch (error) {
+    console.error('Error getting leads in bounds:', error);
     return [];
   }
 }

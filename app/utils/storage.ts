@@ -2,6 +2,7 @@
 import { Lead, User, LeadStatus } from '@/app/types';
 import { 
   getAllLeads as firestoreGetAllLeads,
+  getLeadsInBounds as firestoreGetLeadsInBounds,
   saveLead as firestoreSaveLead,
   updateLead as firestoreUpdateLead,
   deleteLead as firestoreDeleteLead,
@@ -96,6 +97,26 @@ export async function getLeadsAsync(): Promise<Lead[]> {
         return fallbackLeads;
       }
     }
+    return [];
+  }
+}
+
+/**
+ * Get leads within geographic bounds (lazy loading for map)
+ * Dramatically reduces read operations by only loading visible leads
+ */
+export async function getLeadsInBoundsAsync(
+  south: number,
+  north: number,
+  west: number,
+  east: number,
+  maxLeads: number = 2000
+): Promise<Lead[]> {
+  try {
+    const leads = await firestoreGetLeadsInBounds(south, north, west, east, maxLeads);
+    return leads;
+  } catch (error) {
+    console.error('Error getting leads in bounds:', error);
     return [];
   }
 }
