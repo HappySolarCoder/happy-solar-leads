@@ -61,7 +61,7 @@ export default function Home() {
     }
   }, [router]);
   
-  // Load data on mount
+  // Load data on mount - optimized for large datasets
   useEffect(() => {
     async function loadData() {
       const user = await getCurrentAuthUser();
@@ -74,8 +74,17 @@ export default function Home() {
       
       setCurrentUser(user);
       
-      const loadedLeads = await getLeadsAsync();
-      setLeads(loadedLeads);
+      // Show map immediately with empty leads, then load in background
+      // This prevents white screen while loading 18K+ leads
+      setLeads([]);
+      
+      // Load leads in background (non-blocking)
+      setTimeout(async () => {
+        console.log('[Page] Loading leads in background...');
+        const loadedLeads = await getLeadsAsync();
+        console.log('[Page] Loaded', loadedLeads.length, 'leads');
+        setLeads(loadedLeads);
+      }, 100);
     }
     loadData();
   }, [router]);

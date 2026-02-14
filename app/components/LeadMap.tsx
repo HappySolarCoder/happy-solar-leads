@@ -152,12 +152,16 @@ export default function LeadMap({
     };
   }, [isClient]);
 
-  // Update markers and route
+  // Update markers and route (optimized for large datasets)
   useEffect(() => {
     if (!mapInstanceRef.current || !markersLayerRef.current || !isClient) return;
 
     const map = mapInstanceRef.current;
     const layer = markersLayerRef.current;
+
+    // Performance: Log start time
+    const startTime = Date.now();
+    console.log(`[LeadMap] Updating ${leads.length} markers...`);
 
     layer.clearLayers();
     if (routeLineRef.current) {
@@ -231,6 +235,10 @@ export default function LeadMap({
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
       map.fitBounds(bounds, { padding: [50, 50] });
     }
+
+    // Performance: Log completion time
+    const duration = Date.now() - startTime;
+    console.log(`[LeadMap] Rendered ${leads.length} markers in ${duration}ms`);
   }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, mapZoom, dispositions]);
 
   // Handle territory drawing mode
