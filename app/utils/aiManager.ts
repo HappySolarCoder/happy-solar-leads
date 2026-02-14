@@ -60,8 +60,17 @@ export function calculateDailyMetrics(
     if (lead.claimedBy !== setterId) return false;
     if (!lead.knockGpsTimestamp) return false;
     
-    const knockDate = new Date(lead.knockGpsTimestamp).toISOString().split('T')[0];
-    return knockDate === dateStr;
+    try {
+      const knockDateObj = new Date(lead.knockGpsTimestamp);
+      // Check if date is valid
+      if (isNaN(knockDateObj.getTime())) return false;
+      
+      const knockDate = knockDateObj.toISOString().split('T')[0];
+      return knockDate === dateStr;
+    } catch (error) {
+      // Invalid date, skip this lead
+      return false;
+    }
   });
 
   const doorsKnocked = todayLeads.length;
@@ -78,8 +87,16 @@ export function calculateDailyMetrics(
 
   // Calculate pace (doors per hour)
   const timestamps = todayLeads
-    .filter(l => l.knockGpsTimestamp)
-    .map(l => new Date(l.knockGpsTimestamp!).getTime())
+    .filter(l => {
+      if (!l.knockGpsTimestamp) return false;
+      const d = new Date(l.knockGpsTimestamp);
+      return !isNaN(d.getTime());
+    })
+    .map(l => {
+      const d = new Date(l.knockGpsTimestamp!);
+      return d.getTime();
+    })
+    .filter(t => !isNaN(t))
     .sort((a, b) => a - b);
   
   let pace = 0;
@@ -97,9 +114,15 @@ export function calculateDailyMetrics(
   
   const primeTimeKnocks = todayLeads.filter(l => {
     if (!l.knockGpsTimestamp) return false;
-    const knockTime = new Date(l.knockGpsTimestamp);
-    const hourDecimal = knockTime.getHours() + (knockTime.getMinutes() / 60);
-    return hourDecimal >= primeTimeStart && hourDecimal <= primeTimeEnd;
+    try {
+      const knockTime = new Date(l.knockGpsTimestamp);
+      if (isNaN(knockTime.getTime())) return false;
+      
+      const hourDecimal = knockTime.getHours() + (knockTime.getMinutes() / 60);
+      return hourDecimal >= primeTimeStart && hourDecimal <= primeTimeEnd;
+    } catch (error) {
+      return false;
+    }
   }).length;
 
   const primeTimePercentage = doorsKnocked > 0 ? (primeTimeKnocks / doorsKnocked) * 100 : 0;

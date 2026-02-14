@@ -66,8 +66,13 @@ export default function AIManagerPage() {
 
     for (const user of users) {
       // Calculate days since user created
+      const userCreatedDate = user.createdAt ? new Date(user.createdAt) : new Date();
+      
+      // Skip if invalid date
+      if (isNaN(userCreatedDate.getTime())) continue;
+      
       const daysSinceStart = Math.floor(
-        (date.getTime() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24)
+        (date.getTime() - userCreatedDate.getTime()) / (1000 * 60 * 60 * 24)
       );
 
       if (daysSinceStart < 0) continue; // Skip if date is before user created
