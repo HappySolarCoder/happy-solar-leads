@@ -49,6 +49,7 @@ export default function LeadMap({
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [mapZoom, setMapZoom] = useState(zoom);
+  const [zoomTier, setZoomTier] = useState(0); // Tier system to avoid re-rendering on every zoom
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [dropPinLocation, setDropPinLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [dropPinAddress, setDropPinAddress] = useState({ address: '', city: '', state: '', zip: '' });
@@ -107,9 +108,19 @@ export default function LeadMap({
     
     mapInstanceRef.current = map;
 
-    // Listen for zoom changes to update marker sizes
+    // Listen for zoom changes - update tier only when crossing thresholds
     map.on('zoomend', () => {
-      setMapZoom(map.getZoom());
+      const currentZoom = map.getZoom();
+      setMapZoom(currentZoom);
+      
+      // Calculate zoom tier (only re-render markers when tier changes, not on every zoom)
+      // Tiers: 0 (<12), 1 (12-14), 2 (14-16), 3 (>16)
+      let newTier = 0;
+      if (currentZoom >= 16) newTier = 3;
+      else if (currentZoom >= 14) newTier = 2;
+      else if (currentZoom >= 12) newTier = 1;
+      
+      setZoomTier(newTier);
     });
 
     // Handle right-click to drop pin (desktop)
@@ -241,10 +252,10 @@ export default function LeadMap({
 
     // Performance: Log completion time
     const duration = Date.now() - startTime;
-    console.log(`[LeadMap] Rendered ${leads.length} markers in ${duration}ms`);
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions]);
-  // Note: Removed mapZoom from dependencies - markers don't need full re-render on zoom
-  // Clustering library handles zoom-based display automatically
+    console.log(`[LeadMap] Rendered ${leads.length} markers in ${duration}ms (zoom tier: ${zoomTier})`);
+  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, mapZoom]);
+  // Note: Using zoomTier instead of direct mapZoom - only re-renders when crossing zoom thresholds
+  // This prevents constant re-renders on every zoom event (just 4 tiers: <12, 12-14, 14-16, >16)
 
   // Handle territory drawing mode
   useEffect(() => {
