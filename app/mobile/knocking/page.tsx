@@ -258,6 +258,14 @@ export default function KnockingPage() {
                 ))}
               </select>
             </div>
+            
+            {/* Apply Button - Closes filter panel */}
+            <button
+              onClick={() => setShowFilters(false)}
+              className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-[#FF5F5A] to-[#FF7A6B] text-white font-semibold rounded-xl shadow-sm active:scale-95 transition-transform"
+            >
+              Apply Filters
+            </button>
           </div>
         )}
       </header>
