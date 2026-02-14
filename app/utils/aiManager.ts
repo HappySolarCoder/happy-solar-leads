@@ -61,9 +61,23 @@ export function calculateDailyMetrics(
   
   // Show sample GPS dates
   if (leadsWithGPS.length > 0) {
+    const firstLead = leadsWithGPS[0];
+    console.log(`[calculateDailyMetrics] ${setterName}: Sample GPS timestamp RAW VALUE:`, firstLead.knockGpsTimestamp, `TYPE:`, typeof firstLead.knockGpsTimestamp);
+    
     const sampleDates = leadsWithGPS.slice(0, 3).map(l => {
       try {
-        const d = new Date(l.knockGpsTimestamp!);
+        // Handle Firestore Timestamp objects
+        const timestamp = l.knockGpsTimestamp;
+        let d: Date;
+        
+        if (timestamp && typeof timestamp === 'object' && 'toDate' in timestamp) {
+          // Firestore Timestamp object
+          d = (timestamp as any).toDate();
+        } else {
+          // Regular date string or number
+          d = new Date(timestamp!);
+        }
+        
         return isNaN(d.getTime()) ? 'INVALID' : d.toISOString().split('T')[0];
       } catch {
         return 'ERROR';
@@ -80,7 +94,18 @@ export function calculateDailyMetrics(
     if (!lead.knockGpsTimestamp) return false;
     
     try {
-      const knockDateObj = new Date(lead.knockGpsTimestamp);
+      const timestamp = lead.knockGpsTimestamp;
+      let knockDateObj: Date;
+      
+      // Handle Firestore Timestamp objects
+      if (timestamp && typeof timestamp === 'object' && 'toDate' in timestamp) {
+        knockDateObj = (timestamp as any).toDate();
+      } else if (timestamp instanceof Date) {
+        knockDateObj = timestamp;
+      } else {
+        knockDateObj = new Date(timestamp);
+      }
+      
       // Check if date is valid
       if (isNaN(knockDateObj.getTime())) return false;
       
@@ -110,11 +135,31 @@ export function calculateDailyMetrics(
   const timestamps = todayLeads
     .filter(l => {
       if (!l.knockGpsTimestamp) return false;
-      const d = new Date(l.knockGpsTimestamp);
-      return !isNaN(d.getTime());
+      try {
+        const timestamp = l.knockGpsTimestamp;
+        let d: Date;
+        
+        if (timestamp && typeof timestamp === 'object' && 'toDate' in timestamp) {
+          d = (timestamp as any).toDate();
+        } else {
+          d = new Date(timestamp);
+        }
+        
+        return !isNaN(d.getTime());
+      } catch {
+        return false;
+      }
     })
     .map(l => {
-      const d = new Date(l.knockGpsTimestamp!);
+      const timestamp = l.knockGpsTimestamp!;
+      let d: Date;
+      
+      if (timestamp && typeof timestamp === 'object' && 'toDate' in timestamp) {
+        d = (timestamp as any).toDate();
+      } else {
+        d = new Date(timestamp);
+      }
+      
       return d.getTime();
     })
     .filter(t => !isNaN(t))
@@ -136,7 +181,16 @@ export function calculateDailyMetrics(
   const primeTimeKnocks = todayLeads.filter(l => {
     if (!l.knockGpsTimestamp) return false;
     try {
-      const knockTime = new Date(l.knockGpsTimestamp);
+      const timestamp = l.knockGpsTimestamp;
+      let knockTime: Date;
+      
+      // Handle Firestore Timestamp objects
+      if (timestamp && typeof timestamp === 'object' && 'toDate' in timestamp) {
+        knockTime = (timestamp as any).toDate();
+      } else {
+        knockTime = new Date(timestamp);
+      }
+      
       if (isNaN(knockTime.getTime())) return false;
       
       const hourDecimal = knockTime.getHours() + (knockTime.getMinutes() / 60);
