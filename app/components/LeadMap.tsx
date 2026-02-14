@@ -54,6 +54,8 @@ export default function LeadMap({
   const [dropPinAddress, setDropPinAddress] = useState({ address: '', city: '', state: '', zip: '' });
   const tempPinRef = useRef<L.Marker | null>(null);
 
+  // Use leadsProp directly - parent already handles filtering if needed
+  // For large datasets, we only render what's passed in
   const leads = useMemo(() => leadsProp, [leadsProp]);
 
   // Load dispositions
@@ -152,7 +154,7 @@ export default function LeadMap({
     };
   }, [isClient]);
 
-  // Update markers and route (optimized for large datasets)
+  // Update markers and route (optimized for large datasets - only render when needed)
   useEffect(() => {
     if (!mapInstanceRef.current || !markersLayerRef.current || !isClient) return;
 
@@ -163,6 +165,7 @@ export default function LeadMap({
     const startTime = Date.now();
     console.log(`[LeadMap] Updating ${leads.length} markers...`);
 
+    // Clear existing markers
     layer.clearLayers();
     if (routeLineRef.current) {
       routeLineRef.current.remove();
@@ -239,7 +242,9 @@ export default function LeadMap({
     // Performance: Log completion time
     const duration = Date.now() - startTime;
     console.log(`[LeadMap] Rendered ${leads.length} markers in ${duration}ms`);
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, mapZoom, dispositions]);
+  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions]);
+  // Note: Removed mapZoom from dependencies - markers don't need full re-render on zoom
+  // Clustering library handles zoom-based display automatically
 
   // Handle territory drawing mode
   useEffect(() => {
