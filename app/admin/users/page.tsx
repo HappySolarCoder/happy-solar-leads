@@ -9,10 +9,10 @@ import {
   User, UserRole, ROLE_LABELS, canManageUsers 
 } from '@/app/types';
 import { 
-  getUsersAsync, saveUserAsync, deleteUserAsync 
+  getUsersAsync, saveUserAsync 
 } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
-import { createSecondaryAuth } from '@/app/utils/firebase';
+import { auth, createSecondaryAuth } from '@/app/utils/firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 
 export default function UsersManagementPage() {
@@ -29,6 +29,7 @@ export default function UsersManagementPage() {
   );
   const [createError, setCreateError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   // Load current user and check permissions
   useEffect(() => {
@@ -123,11 +124,33 @@ export default function UsersManagementPage() {
       return;
     }
 
-    await deleteUserAsync(userId);
-    
-    // Refresh users list
-    const allUsers = await getUsersAsync();
-    setUsers(allUsers);
+    try {
+      setDeletingUserId(userId);
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const response = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ userId }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to delete user');
+      }
+
+      const allUsers = await getUsersAsync();
+      setUsers(allUsers);
+    } catch (error: any) {
+      console.error('Delete user failed:', error);
+      alert(error?.message || 'Failed to delete user');
+    } finally {
+      setDeletingUserId(null);
+    }
   };
 
   const handleToggleActive = async (userId: string) => {
@@ -486,10 +509,15 @@ export default function UsersManagementPage() {
                             {user.id !== currentUser.id && (
                               <button
                                 onClick={() => handleDeleteUser(user.id)}
-                                className="p-2 text-[#F56565] hover:bg-red-50 rounded-lg transition-colors"
+                                disabled={deletingUserId === user.id}
+                                className={`p-2 rounded-lg transition-colors ${deletingUserId === user.id ? 'text-[#F56565]/50 bg-red-50' : 'text-[#F56565] hover:bg-red-50'}`}
                                 title="Delete user"
                               >
-                                <Trash2 className="w-5 h-5" />
+                                {deletingUserId === user.id ? (
+                                  <div className="w-4 h-4 border-2 border-[#F56565] border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-5 h-5" />
+                                )}
                               </button>
                             )}
                           </div>
