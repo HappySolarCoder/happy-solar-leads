@@ -36,6 +36,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
   const [successCount, setSuccessCount] = useState(0);
   const [failedAddresses, setFailedAddresses] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<LeadTag[]>([]);
+  const [excludeApartments, setExcludeApartments] = useState(true); // Filter out apartments by default
   const [isAdmin, setIsAdmin] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -123,6 +124,13 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       for (let i = 0; i < geocodedSuccess.length; i++) {
         const result = geocodedSuccess[i];
         
+        // Skip apartments if filter is enabled
+        if (excludeApartments && result.propertyType === 'apartment') {
+          logToFile('INFO', 'UploadModal', 'Skipping apartment', { address: result.row.address });
+          skippedDuplicates.push(`${result.row.address} (apartment)`);
+          continue;
+        }
+        
         // Check for duplicate address
         const normalizedAddress = `${result.row.address?.toLowerCase().trim()}, ${result.row.city?.toLowerCase().trim()}, ${result.row.state?.toLowerCase().trim()} ${result.row.zip}`;
         const existingLead = existingLeadsMap.get(normalizedAddress);
@@ -208,6 +216,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               solarCategory,
               hasSouthFacingRoof: hasSouthFacing,
               solarTestedAt: new Date(),
+              propertyType: result.propertyType || 'unknown', // Update property type
             } : {
               // New lead
               id: generateId(),
@@ -224,6 +233,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               solarCategory,
               hasSouthFacingRoof: hasSouthFacing,
               solarTestedAt: new Date(),
+              propertyType: result.propertyType || 'unknown', // From geocoding API
             };
             
             // Only add optional fields if they exist (for new leads) or update them (for existing)
@@ -335,6 +345,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
     setSuccessCount(0);
     setFailedAddresses([]);
     setSelectedTags([]);
+    setExcludeApartments(true); // Reset to default (exclude apartments)
     setStep('upload');
     onClose();
   };
@@ -475,6 +486,43 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
                   </div>
                 </div>
               )}
+
+              {/* Apartment Filter */}
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={() => setExcludeApartments(!excludeApartments)}
+                  className={`w-full flex items-start gap-3 p-4 rounded-2xl border-2 transition-all duration-200 text-left ${
+                    excludeApartments
+                      ? 'border-orange-500 bg-gradient-to-r from-orange-50 to-orange-50/50 shadow-sm'
+                      : 'border-gray-200 hover:border-gray-300 bg-white hover:shadow-sm'
+                  }`}
+                >
+                  <div className="flex-shrink-0 mt-0.5">
+                    <div
+                      className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-200 ${
+                        excludeApartments
+                          ? 'bg-gradient-to-br from-orange-500 to-orange-600 border-orange-600'
+                          : 'border-gray-300 bg-white'
+                      }`}
+                    >
+                      {excludeApartments && (
+                        <CheckCircle className="w-3.5 h-3.5 text-white" strokeWidth={3} />
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`font-semibold ${excludeApartments ? 'text-orange-900' : 'text-gray-900'}`}>
+                        🏢 Exclude Apartments
+                      </span>
+                    </div>
+                    <p className={`text-xs ${excludeApartments ? 'text-orange-700' : 'text-gray-500'}`}>
+                      Automatically filter out apartment units (multi-family dwellings) and only process single-family homes
+                    </p>
+                  </div>
+                </button>
+              </div>
 
               {/* File Info */}
               {rows.length > 0 && !error && (

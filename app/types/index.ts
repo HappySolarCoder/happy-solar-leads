@@ -30,6 +30,7 @@ export interface User {
 }
 
 export type LeadTag = 'solar-data' | 'homeowner' | 'home-data';
+export type PropertyType = 'house' | 'apartment' | 'commercial' | 'unknown';
 
 export interface Lead {
   id: string;
@@ -54,6 +55,8 @@ export interface Lead {
   createdAt: Date;
   // Tags (admin only)
   tags?: LeadTag[];
+  // Property type (from Geocoding API)
+  propertyType?: PropertyType;
   // Solar data (populated when available)
   solarScore?: number;        // 0-100 score
   solarCategory?: 'poor' | 'solid' | 'good' | 'great';

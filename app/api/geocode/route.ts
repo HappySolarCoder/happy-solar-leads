@@ -81,6 +81,7 @@ export async function POST(request: NextRequest) {
       lat: location.lat,
       lng: location.lng,
       formattedAddress: result.formatted_address,
+      types: result.types || [], // Property type indicators
     });
 
   } catch (error: any) {

@@ -1,6 +1,26 @@
 // Geocoding utility using Next.js API proxy to avoid CORS
 
-import { CSVRow, Lead } from '@/app/types';
+import { CSVRow, Lead, PropertyType } from '@/app/types';
+
+// Determine property type from Google's place types
+function determinePropertyType(types: string[]): PropertyType {
+  if (!types || types.length === 0) return 'unknown';
+  
+  // Apartment indicators
+  if (types.includes('subpremise')) return 'apartment';
+  
+  // Commercial indicators
+  if (types.includes('establishment') || types.includes('point_of_interest')) {
+    return 'commercial';
+  }
+  
+  // House/residential indicators
+  if (types.includes('premise') || types.includes('street_address') || types.includes('route')) {
+    return 'house';
+  }
+  
+  return 'unknown';
+}
 
 // Cache key for geocoding results
 const GEOCODE_CACHE_KEY = 'happy_solar_geocode_cache';
@@ -47,11 +67,12 @@ export function getCachedCoordinates(row: CSVRow | Lead): { lat: number; lng: nu
 }
 
 // Geocode a single address using our proxy API (bypasses CORS)
-export async function geocodeAddress(row: CSVRow): Promise<{ lat: number; lng: number } | null> {
+export async function geocodeAddress(row: CSVRow): Promise<{ lat: number; lng: number; propertyType: PropertyType } | null> {
   // Check cache first
   const cached = getCachedCoordinates(row);
   if (cached) {
-    return cached;
+    // Note: Cached results don't have propertyType (old cache), will need re-geocoding to get it
+    return { ...cached, propertyType: 'unknown' };
   }
 
   const query = `${row.address}, ${row.city}, ${row.state} ${row.zip}`;
@@ -74,16 +95,17 @@ export async function geocodeAddress(row: CSVRow): Promise<{ lat: number; lng: n
 
     const data = await response.json();
 
-    // API returns { lat, lng, formattedAddress } directly
+    // API returns { lat, lng, formattedAddress, types } directly
     if (data.lat && data.lng) {
       const coords = { lat: data.lat, lng: data.lng };
+      const propertyType = determinePropertyType(data.types || []);
 
-      // Save to cache
+      // Save to cache (coords only, not propertyType - cache is simple)
       const cache = loadCache();
       cache.set(getCacheKey(row), coords);
       saveCache();
 
-      return coords;
+      return { ...coords, propertyType };
     }
 
     // Cache negative result (address not found)
@@ -101,8 +123,8 @@ export async function geocodeAddress(row: CSVRow): Promise<{ lat: number; lng: n
 export async function geocodeBatch(
   rows: CSVRow[],
   onProgress?: (current: number, total: number) => void
-): Promise<Array<{ row: CSVRow; lat?: number; lng?: number }>> {
-  const results: Array<{ row: CSVRow; lat?: number; lng?: number }> = [];
+): Promise<Array<{ row: CSVRow; lat?: number; lng?: number; propertyType?: PropertyType }>> {
+  const results: Array<{ row: CSVRow; lat?: number; lng?: number; propertyType?: PropertyType }> = [];
   const cache = loadCache();
 
   // Separate rows that need geocoding vs cached
@@ -112,7 +134,7 @@ export async function geocodeBatch(
   for (let i = 0; i < rows.length; i++) {
     const cached = getCachedCoordinates(rows[i]);
     if (cached) {
-      results.push({ row: rows[i], lat: cached.lat, lng: cached.lng });
+      results.push({ row: rows[i], lat: cached.lat, lng: cached.lng, propertyType: 'unknown' });
     } else {
       uncachedRows.push(rows[i]);
       uncachedIndices.push(i);
@@ -130,18 +152,19 @@ export async function geocodeBatch(
 
     // Fire all requests in parallel
     const promises = batch.map(async (row, idx) => {
-      const coords = await geocodeAddress(row);
-      return { coords, originalIndex: batchIndices[idx] };
+      const result = await geocodeAddress(row);
+      return { result, originalIndex: batchIndices[idx] };
     });
 
     const batchResults = await Promise.all(promises);
 
     // Collect results
-    for (const { coords, originalIndex } of batchResults) {
+    for (const { result, originalIndex } of batchResults) {
       results[originalIndex] = {
         row: rows[originalIndex],
-        lat: coords?.lat,
-        lng: coords?.lng,
+        lat: result?.lat,
+        lng: result?.lng,
+        propertyType: result?.propertyType || 'unknown',
       };
     }
 
