@@ -1,5 +1,5 @@
 // Firebase Configuration and Initialization
-import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
+import { initializeApp, getApps, getApp, FirebaseApp, deleteApp } from 'firebase/app';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getAuth, Auth } from 'firebase/auth';
 
@@ -24,4 +24,22 @@ if (typeof window !== 'undefined' && firebaseConfig.apiKey) {
   auth = getAuth(app);
 }
 
-export { db, auth, app as default };
+// Helper to create secondary app for privileged actions (e.g., admin creating users)
+export async function createSecondaryAuth() {
+  if (typeof window === 'undefined' || !firebaseConfig.apiKey) return null;
+  const name = `secondary-${Date.now()}`;
+  const secondaryApp = initializeApp(firebaseConfig, name);
+  const secondaryAuth = getAuth(secondaryApp);
+  return {
+    auth: secondaryAuth,
+    dispose: async () => {
+      try {
+        await deleteApp(secondaryApp);
+      } catch (error) {
+        console.warn('Error disposing secondary Firebase app:', error);
+      }
+    },
+  };
+}
+
+export { db, auth, firebaseConfig, app as default };

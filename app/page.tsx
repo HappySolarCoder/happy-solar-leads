@@ -72,6 +72,11 @@ export default function Home() {
         return;
       }
       
+      if (user.approvalStatus === 'pending') {
+        router.push('/pending-approval');
+        return;
+      }
+      
       setCurrentUser(user);
       
       // Show map immediately with empty leads, then load in background

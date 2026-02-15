@@ -9,12 +9,18 @@ export type UserRole =
   | 'manager'
   | 'admin';
 
+export type ApprovalStatus = 'approved' | 'pending';
+
 export interface User {
   id: string;
   name: string;
   email: string;
   color: string; // For map pin color
-  role: UserRole; // User permission level
+  role: UserRole; // Current active permission level
+  requestedRole?: UserRole; // What they originally asked for
+  approved?: boolean; // false if awaiting approval for elevated role
+  approvalStatus?: ApprovalStatus;
+  approvalRequestedAt?: Date;
   createdAt: Date;
   // Auto-assignment fields
   homeAddress?: string;
@@ -233,6 +239,10 @@ export function canDeleteUsers(role: UserRole): boolean {
 
 export function canChangePermissions(role: UserRole): boolean {
   return role === 'admin';
+}
+
+export function requiresRoleApproval(role: UserRole): boolean {
+  return role === 'manager' || role === 'admin';
 }
 
 // Lead Tags

@@ -71,6 +71,10 @@ export default function KnockingPage() {
         router.push('/login');
         return;
       }
+      if (user.approvalStatus === 'pending') {
+        router.push('/pending-approval');
+        return;
+      }
       setCurrentUser(user);
 
       const loadedLeads = await getLeadsAsync();

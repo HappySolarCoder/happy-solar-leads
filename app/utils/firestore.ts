@@ -353,6 +353,7 @@ export async function getAllUsers(): Promise<User[]> {
       id: doc.id,
       createdAt: doc.data().createdAt?.toDate() || new Date(),
       lastLogin: doc.data().lastLogin?.toDate(),
+      approvalRequestedAt: doc.data().approvalRequestedAt?.toDate?.() || doc.data().approvalRequestedAt,
     } as User));
   } catch (error) {
     console.error('Error getting users:', error);
@@ -375,6 +376,7 @@ export async function getUser(id: string): Promise<User | null> {
         id: snapshot.id,
         createdAt: data.createdAt?.toDate() || new Date(),
         lastLogin: data.lastLogin?.toDate(),
+        approvalRequestedAt: data.approvalRequestedAt?.toDate?.() || data.approvalRequestedAt,
       } as User;
     }
     return null;
@@ -395,8 +397,9 @@ export async function saveUser(user: User): Promise<void> {
       ...user,
       createdAt: user.createdAt instanceof Date ? Timestamp.fromDate(user.createdAt) : Timestamp.now(),
       lastLogin: user.lastLogin ? Timestamp.fromDate(user.lastLogin) : null,
+      approvalRequestedAt: user.approvalRequestedAt ? Timestamp.fromDate(user.approvalRequestedAt) : null,
     };
-    await setDoc(userRef, data);
+    await setDoc(userRef, data, { merge: true });
   } catch (error) {
     console.error('Error saving user:', error);
     throw error;
@@ -413,6 +416,7 @@ export async function updateUser(id: string, updates: Partial<User>): Promise<vo
     const data: any = { ...updates };
     
     if (data.lastLogin) data.lastLogin = Timestamp.fromDate(data.lastLogin);
+    if (data.approvalRequestedAt) data.approvalRequestedAt = Timestamp.fromDate(data.approvalRequestedAt);
     
     await updateDoc(userRef, data);
   } catch (error) {

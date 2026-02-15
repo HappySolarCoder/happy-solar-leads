@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
-  Users, Edit2, Trash2, Check, X, ArrowLeft, AlertTriangle 
+  Users, Edit2, Trash2, Check, X, ArrowLeft, AlertTriangle, UserPlus 
 } from 'lucide-react';
 import { 
   User, UserRole, ROLE_LABELS, canManageUsers 
@@ -12,6 +12,8 @@ import {
   getUsersAsync, saveUserAsync, deleteUserAsync 
 } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
+import { createSecondaryAuth } from '@/app/utils/firebase';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
 
 export default function UsersManagementPage() {
   const router = useRouter();
@@ -21,6 +23,12 @@ export default function UsersManagementPage() {
   const [editForm, setEditForm] = useState<Partial<User>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createForm, setCreateForm] = useState<{ name: string; email: string; password: string; role: UserRole }>(
+    { name: '', email: '', password: '', role: 'setter' }
+  );
+  const [createError, setCreateError] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
 
   // Load current user and check permissions
   useEffect(() => {
@@ -84,6 +92,9 @@ export default function UsersManagementPage() {
         name: editForm.name || user.name,
         email: editForm.email || user.email,
         role: editForm.role || user.role,
+        requestedRole: editForm.role || user.requestedRole || user.role,
+        approved: true,
+        approvalStatus: 'approved',
       };
 
       await saveUserAsync(updatedUser);
@@ -135,6 +146,72 @@ export default function UsersManagementPage() {
     setUsers(allUsers);
   };
 
+  const handleApprovePending = async (userId: string) => {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+
+    const updatedUser: User = {
+      ...user,
+      role: user.requestedRole || user.role,
+      approved: true,
+      approvalStatus: 'approved',
+      status: 'active',
+      isActive: true,
+    };
+
+    await saveUserAsync(updatedUser);
+    const allUsers = await getUsersAsync();
+    setUsers(allUsers);
+  };
+
+  const randomColor = () => `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')}`;
+
+  const handleCreateUser = async () => {
+    setCreateError('');
+    setIsCreating(true);
+    try {
+      if (!createForm.name || !createForm.email || !createForm.password) {
+        setCreateError('All fields are required');
+        setIsCreating(false);
+        return;
+      }
+
+      const secondary = await createSecondaryAuth();
+      if (!secondary) {
+        throw new Error('Firebase not initialized');
+      }
+
+      const cred = await createUserWithEmailAndPassword(secondary.auth, createForm.email, createForm.password);
+      await secondary.dispose?.();
+
+      const now = new Date();
+      const newUser: User = {
+        id: cred.user.uid,
+        name: createForm.name,
+        email: createForm.email,
+        role: createForm.role,
+        requestedRole: createForm.role,
+        approved: true,
+        approvalStatus: 'approved',
+        createdAt: now,
+        status: 'active',
+        isActive: true,
+        color: randomColor(),
+      };
+
+      await saveUserAsync(newUser);
+      const allUsers = await getUsersAsync();
+      setUsers(allUsers);
+      setShowCreateModal(false);
+      setCreateForm({ name: '', email: '', password: '', role: 'setter' });
+    } catch (error: any) {
+      console.error('Create user failed:', error);
+      setCreateError(error?.message || 'Failed to create user');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F7FAFC]">
@@ -155,6 +232,8 @@ export default function UsersManagementPage() {
     admin: 'bg-red-100 text-red-800',
   };
 
+  const pendingUsers = users.filter((u) => u.approvalStatus === 'pending');
+
   return (
     <div className="min-h-screen bg-[#F7FAFC]">
       {/* Header */}
@@ -173,6 +252,13 @@ export default function UsersManagementPage() {
                 <p className="text-sm text-[#718096]">Manage user accounts, roles, and permissions</p>
               </div>
             </div>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="inline-flex items-center gap-2 bg-[#FF5F5A] text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-[#E54E49] transition"
+            >
+              <UserPlus className="w-4 h-4" />
+              Create User
+            </button>
           </div>
         </div>
       </header>
@@ -202,6 +288,44 @@ export default function UsersManagementPage() {
             <div className="text-3xl font-bold text-[#FF5F5A]">{users.filter(u => u.role === 'admin').length}</div>
           </div>
         </div>
+
+        {pendingUsers.length > 0 && (
+          <div className="bg-white border border-[#FBD38D] rounded-lg p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-[#B7791F]">Pending Approvals</h2>
+                <p className="text-sm text-[#B7791F]/80">Review manager/admin requests before they get access</p>
+              </div>
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-[#FBD38D] text-[#744210]">
+                {pendingUsers.length} awaiting
+              </span>
+            </div>
+            <div className="space-y-3">
+              {pendingUsers.map((user) => (
+                <div key={user.id} className="flex items-center justify-between border border-[#FEEBC8] rounded-xl p-4 bg-[#FFF9F2]">
+                  <div>
+                    <p className="font-semibold text-[#2D3748]">{user.name}</p>
+                    <p className="text-sm text-[#718096]">Requested: {ROLE_LABELS[user.requestedRole || user.role]}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleApprovePending(user.id)}
+                      className="px-3 py-1 rounded-lg text-sm font-semibold bg-[#48BB78] text-white hover:bg-[#38A169] transition"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleEditStart(user)}
+                      className="px-3 py-1 rounded-lg text-sm font-semibold border border-[#E2E8F0] text-[#2D3748] hover:bg-[#F7FAFC] transition"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Users Table */}
         <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
@@ -323,10 +447,15 @@ export default function UsersManagementPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="px-6 py-4 space-y-2">
                           <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${roleColors[user.role]}`}>
                             {ROLE_LABELS[user.role]}
                           </span>
+                          {user.approvalStatus === 'pending' && (
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-[#FEEBC8] text-[#C05621]">
+                              Pending {ROLE_LABELS[user.requestedRole || user.role]}
+                            </span>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-sm text-[#2D3748]">
@@ -388,6 +517,92 @@ export default function UsersManagementPage() {
           </div>
         </div>
       </main>
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-[#E2E8F0]">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-semibold text-[#2D3748]">Create User</h3>
+                <p className="text-sm text-[#718096]">Generate an account and share the credentials</p>
+              </div>
+              <button onClick={() => setShowCreateModal(false)} className="p-2 text-[#718096] hover:text-[#FF5F5A]">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-semibold text-[#2D3748] mb-1 block">Full Name</label>
+                <input
+                  type="text"
+                  value={createForm.name}
+                  onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                  placeholder="Jane Setter"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-[#2D3748] mb-1 block">Email</label>
+                <input
+                  type="email"
+                  value={createForm.email}
+                  onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                  placeholder="user@company.com"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-[#2D3748] mb-1 block">Temporary Password</label>
+                <input
+                  type="password"
+                  value={createForm.password}
+                  onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                  placeholder="Minimum 6 characters"
+                />
+                <p className="text-xs text-[#718096] mt-1">Share this password manually — user can reset later.</p>
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-[#2D3748] mb-1 block">Role</label>
+                <select
+                  value={createForm.role}
+                  onChange={(e) => setCreateForm({ ...createForm, role: e.target.value as UserRole })}
+                  className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                >
+                  {(['setter', 'closer', 'manager', 'admin'] as UserRole[]).map((role) => (
+                    <option key={role} value={role}>
+                      {ROLE_LABELS[role]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {createError && (
+                <div className="p-3 rounded-lg border border-red-200 bg-red-50 text-sm text-red-700">
+                  {createError}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="px-4 py-2 rounded-lg border border-[#E2E8F0] text-[#2D3748] font-semibold hover:bg-[#F7FAFC]"
+                disabled={isCreating}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateUser}
+                disabled={isCreating}
+                className="px-4 py-2 rounded-lg bg-[#FF5F5A] text-white font-semibold flex items-center gap-2 disabled:opacity-50"
+              >
+                {isCreating && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Create User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

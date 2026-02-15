@@ -198,6 +198,7 @@ export function getUsers(): User[] {
       ...user,
       createdAt: new Date(user.createdAt),
       lastLogin: user.lastLogin ? new Date(user.lastLogin) : undefined,
+      approvalRequestedAt: (user as any).approvalRequestedAt ? new Date((user as any).approvalRequestedAt) : undefined,
     }));
   } catch {
     return [];
@@ -274,6 +275,7 @@ export function getCurrentUser(): User | null {
           ...user,
           createdAt: new Date(user.createdAt),
           lastLogin: user.lastLogin ? new Date(user.lastLogin) : undefined,
+          approvalRequestedAt: (user as any).approvalRequestedAt ? new Date((user as any).approvalRequestedAt) : undefined,
         };
       }
     } catch {

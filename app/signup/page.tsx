@@ -6,6 +6,7 @@ import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '@/app/utils/firebase';
 import { ArrowRight, Mail, Lock, User as UserIcon, AlertCircle, Shield } from 'lucide-react';
+import { requiresRoleApproval } from '@/app/types';
 
 type UserRole = 'setter' | 'closer' | 'manager' | 'admin';
 
@@ -34,6 +35,10 @@ export default function SignupPage() {
         return;
       }
 
+      const needsApproval = requiresRoleApproval(role);
+      const assignedRole: UserRole = needsApproval ? 'setter' : role;
+      const now = new Date();
+
       // Create Firebase Auth account
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const uid = userCredential.user.uid;
@@ -43,15 +48,22 @@ export default function SignupPage() {
         id: uid,
         name,
         email,
-        role,
-        createdAt: new Date(),
-        status: 'active',
-        isActive: true, // For auto-assignment and admin panel
+        role: assignedRole,
+        requestedRole: role,
+        approved: !needsApproval,
+        approvalStatus: needsApproval ? 'pending' : 'approved',
+        approvalRequestedAt: needsApproval ? now : null,
+        createdAt: now,
+        status: needsApproval ? 'Pending Approval' : 'active',
+        isActive: !needsApproval, // Pending users shouldn't auto-assign leads
         color: `#${Math.floor(Math.random()*16777215).toString(16)}`, // Random color for map pins
       });
 
-      // Redirect to main app
-      router.push('/');
+      if (needsApproval) {
+        router.push('/pending-approval');
+      } else {
+        router.push('/');
+      }
     } catch (err: any) {
       console.error('Signup error:', err);
       
