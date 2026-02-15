@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import InstallPrompt from './components/InstallPrompt';
+import ServiceWorkerRegister from './components/ServiceWorkerRegister';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -19,14 +21,21 @@ export const metadata: Metadata = {
     icon: '/raydar-icon.png',
     apple: '/raydar-icon.png',
   },
+  manifest: '/manifest.json',
   viewport: {
     width: 'device-width',
     initialScale: 1,
     maximumScale: 5,
     userScalable: true,
   },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Raydar',
+  },
   other: {
     'mobile-web-app-capable': 'yes',
+    'apple-mobile-web-app-capable': 'yes',
   },
 };
 
@@ -41,6 +50,8 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         style={{ userSelect: 'auto', WebkitUserSelect: 'auto' }}
       >
+        <ServiceWorkerRegister />
+        <InstallPrompt />
         {children}
       </body>
     </html>
