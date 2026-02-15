@@ -217,15 +217,18 @@ export default function KnockingPage() {
                 }`}
               >
                 {nextBest ? (
-                  <>⭐ {nextBestDistance} {nextBestDirection}</>
+                  <div className="flex flex-col leading-tight text-left">
+                    <span className="text-[10px] uppercase tracking-wide opacity-80">Nearest 3⭐</span>
+                    <span className="text-sm">{nextBestDistance} {nextBestDirection}</span>
+                  </div>
                 ) : (
-                  <>⭐ No leads</>
+                  <span className="text-sm">3⭐ Not Found</span>
                 )}
               </button>
               
               {/* Today's Knocks */}
               <div className="px-3 py-1 bg-[#F7FAFC] border border-[#E2E8F0] text-[#718096] rounded-full font-semibold">
-                🔥 {todaysKnocks} Today
+                🚪 {todaysKnocks} Today
               </div>
             </div>
 
