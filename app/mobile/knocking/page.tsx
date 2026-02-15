@@ -158,14 +158,18 @@ export default function KnockingPage() {
     ['solid', 'good', 'great'].includes(l.solarCategory)
   );
   const nextBest = unclaimedQuality.length > 0 ? unclaimedQuality[0] : null;
-  const nextBestDistance = nextBest?.distance !== undefined 
-    ? nextBest.distance < 0.1 
-      ? `${Math.round(nextBest.distance * 5280)} ft`
-      : `${nextBest.distance.toFixed(1)} mi`
+  const nextBestDistanceRaw = nextBest?.distance;
+  const nextBestDistance = nextBestDistanceRaw !== undefined 
+    ? nextBestDistanceRaw < 0.1 
+      ? `${Math.round(nextBestDistanceRaw * 5280)} ft`
+      : nextBestDistanceRaw > 25 
+        ? `${Math.round(nextBestDistanceRaw)} mi`
+        : `${nextBestDistanceRaw.toFixed(1)} mi`
     : null;
   const nextBestDirection = nextBest && gpsPosition 
     ? getDirection(gpsPosition.lat, gpsPosition.lng, nextBest.lat!, nextBest.lng!)
     : null;
+  const nextBestIsFar = (nextBestDistanceRaw || 0) > 50;
 
   // Stats: Today's Knocks (leads dispositioned today by current user)
   const todayStart = new Date();
@@ -210,16 +214,19 @@ export default function KnockingPage() {
                   }
                 }}
                 disabled={!nextBest}
-                className={`px-3 py-1 rounded-full font-semibold transition-all ${
+                className={`min-w-[120px] max-w-[140px] px-3 py-1 rounded-full font-semibold transition-all ${
                   nextBest
                     ? 'bg-gradient-to-r from-[#FF5F5A] to-[#FF7A6B] text-white shadow-sm active:scale-95'
                     : 'bg-gray-100 text-gray-400'
                 }`}
               >
                 {nextBest ? (
-                  <div className="flex flex-col leading-tight text-left">
+                  <div className="flex flex-col leading-tight text-left whitespace-nowrap">
                     <span className="text-[10px] uppercase tracking-wide opacity-80">Nearest 3⭐</span>
-                    <span className="text-sm">{nextBestDistance} {nextBestDirection}</span>
+                    <span className="text-sm">
+                      {nextBestIsFar ? 'Far Away' : nextBestDistance}
+                      {nextBestDirection ? ` ${nextBestDirection}` : ''}
+                    </span>
                   </div>
                 ) : (
                   <span className="text-sm">3⭐ Not Found</span>
