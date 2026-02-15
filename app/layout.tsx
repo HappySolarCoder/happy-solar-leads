@@ -18,8 +18,8 @@ export const metadata: Metadata = {
   title: "Raydar - Solar Lead Management",
   description: "Professional solar lead management for door-knocking sales teams",
   icons: {
-    icon: '/raydar-icon.png',
-    apple: '/raydar-icon.png',
+    icon: '/icon-192.png',
+    apple: '/apple-touch-icon.png',
   },
   manifest: '/manifest.json',
   viewport: {
