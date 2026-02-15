@@ -136,9 +136,45 @@ export default function KnockingPage() {
   // Get selected lead
   const selectedLead = leads.find(l => l.id === selectedLeadId);
 
-  // Stats
-  const myLeads = goodLeads.filter(l => l.claimedBy === currentUser?.id).length;
-  const available = goodLeads.filter(l => l.status === 'unclaimed').length;
+  // Helper: Calculate compass direction from user to lead
+  function getDirection(userLat: number, userLng: number, leadLat: number, leadLng: number): string {
+    const angle = Math.atan2(leadLng - userLng, leadLat - userLat) * 180 / Math.PI;
+    const normalized = (angle + 360) % 360;
+    
+    if (normalized >= 337.5 || normalized < 22.5) return 'N';
+    if (normalized >= 22.5 && normalized < 67.5) return 'NE';
+    if (normalized >= 67.5 && normalized < 112.5) return 'E';
+    if (normalized >= 112.5 && normalized < 157.5) return 'SE';
+    if (normalized >= 157.5 && normalized < 202.5) return 'S';
+    if (normalized >= 202.5 && normalized < 247.5) return 'SW';
+    if (normalized >= 247.5 && normalized < 292.5) return 'W';
+    return 'NW';
+  }
+
+  // Stats: Next Best Lead (nearest unclaimed with solid+ solar score)
+  const unclaimedQuality = leadsWithDistance.filter(l => 
+    l.status === 'unclaimed' && 
+    l.solarCategory && 
+    ['solid', 'good', 'great'].includes(l.solarCategory)
+  );
+  const nextBest = unclaimedQuality.length > 0 ? unclaimedQuality[0] : null;
+  const nextBestDistance = nextBest?.distance !== undefined 
+    ? nextBest.distance < 0.1 
+      ? `${Math.round(nextBest.distance * 5280)} ft`
+      : `${nextBest.distance.toFixed(1)} mi`
+    : null;
+  const nextBestDirection = nextBest && gpsPosition 
+    ? getDirection(gpsPosition.lat, gpsPosition.lng, nextBest.lat!, nextBest.lng!)
+    : null;
+
+  // Stats: Today's Knocks (leads dispositioned today by current user)
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todaysKnocks = leads.filter(l => 
+    l.dispositionedAt && 
+    l.dispositionedAt >= todayStart &&
+    l.claimedBy === currentUser?.id
+  ).length;
 
   if (isLoading) {
     return (
@@ -164,13 +200,32 @@ export default function KnockingPage() {
           </button>
 
           <div className="flex items-center gap-4">
-            {/* Stats Pills */}
+            {/* Field-Optimized Stats */}
             <div className="flex items-center gap-2 text-xs">
-              <div className="px-3 py-1 bg-[#FF5F5A]/10 text-[#FF5F5A] rounded-full font-semibold">
-                {myLeads} Mine
-              </div>
+              {/* Next Best Lead */}
+              <button
+                onClick={() => {
+                  if (nextBest) {
+                    handleLeadSelect(nextBest);
+                  }
+                }}
+                disabled={!nextBest}
+                className={`px-3 py-1 rounded-full font-semibold transition-all ${
+                  nextBest
+                    ? 'bg-gradient-to-r from-[#FF5F5A] to-[#FF7A6B] text-white shadow-sm active:scale-95'
+                    : 'bg-gray-100 text-gray-400'
+                }`}
+              >
+                {nextBest ? (
+                  <>⭐ {nextBestDistance} {nextBestDirection}</>
+                ) : (
+                  <>⭐ No leads</>
+                )}
+              </button>
+              
+              {/* Today's Knocks */}
               <div className="px-3 py-1 bg-[#F7FAFC] border border-[#E2E8F0] text-[#718096] rounded-full font-semibold">
-                {available} Available
+                🔥 {todaysKnocks} Today
               </div>
             </div>
 
