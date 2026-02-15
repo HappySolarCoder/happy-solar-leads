@@ -102,8 +102,12 @@ export default function KnockingPage() {
     setShowLeadDetail(true);
   };
 
-  // Everyone sees all leads now (role filter removed per user request)
-  const roleFilteredLeads = leads;
+  // Role-based visibility: setters/closers only see their assigned leads
+  const roleFilteredLeads = currentUser
+    ? (currentUser.role === 'setter' || currentUser.role === 'closer')
+      ? leads.filter(l => l.claimedBy === currentUser.id)
+      : leads
+    : [];
 
   // Exclude poor solar leads
   let goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
@@ -155,13 +159,12 @@ export default function KnockingPage() {
     return 'NW';
   }
 
-  // Stats: Next Best Lead (nearest unclaimed with solid+ solar score)
-  const unclaimedQuality = leadsWithDistance.filter(l => 
-    l.status === 'unclaimed' && 
+  // Stats: Next Best Lead (nearest high-quality lead in current view)
+  const prioritizedLeads = leadsWithDistance.filter(l => 
     l.solarCategory && 
     ['solid', 'good', 'great'].includes(l.solarCategory)
   );
-  const nextBest = unclaimedQuality.length > 0 ? unclaimedQuality[0] : null;
+  const nextBest = prioritizedLeads.length > 0 ? prioritizedLeads[0] : null;
   const nextBestDistanceRaw = nextBest?.distance;
   const nextBestDistance = nextBestDistanceRaw !== undefined 
     ? nextBestDistanceRaw < 0.1 

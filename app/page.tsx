@@ -185,8 +185,12 @@ export default function Home() {
     loadUsers();
   }, []);
 
-  // Everyone sees all leads now (role filter removed per user request)
-  const roleFilteredLeads = leads;
+  // Role-based lead visibility
+  const roleFilteredLeads = currentUser
+    ? (currentUser.role === 'setter' || currentUser.role === 'closer')
+      ? leads.filter(l => l.claimedBy === currentUser.id)
+      : leads
+    : [];
 
   // Filter leads for main display (exclude poor solar leads)
   const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
@@ -230,7 +234,7 @@ export default function Home() {
 
   // Stats - based on good leads only
   const stats = {
-    total: leads.length,
+    total: roleFilteredLeads.length,
     tested: goodLeads.length,
     poor: poorLeads.length,
     unclaimed: goodLeads.filter(l => l.status === 'unclaimed').length,
