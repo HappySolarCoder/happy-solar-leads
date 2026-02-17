@@ -3,6 +3,9 @@
 // LeadStatus is now dynamic - can be any disposition ID from Firestore
 export type LeadStatus = string;
 
+// Re-export disposition history types
+export type { DispositionHistoryEntry, DispositionHistoryFilters } from './dispositionHistory';
+
 export type UserRole = 
   | 'setter'
   | 'closer'
