@@ -129,6 +129,7 @@ export async function POST(request: NextRequest) {
 
       if (!assignedSnapshot.empty) {
         const batch2 = adminDb().batch();
+        let hasUpdates = false;
         
         for (const doc of assignedSnapshot.docs) {
           const leadData = doc.data();
@@ -142,10 +143,11 @@ export async function POST(request: NextRequest) {
               lastAssignedTo: userId,
             });
             unclaimedCount++;
+            hasUpdates = true;
           }
         }
         
-        if (batch2._mutations && batch2._mutations.length > 0) {
+        if (hasUpdates) {
           await batch2.commit();
         }
       }
