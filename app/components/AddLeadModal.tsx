@@ -40,20 +40,15 @@ export default function AddLeadModal({
   if (!isOpen) return null;
 
   const handleSave = async () => {
-    if (!name.trim() || !address.trim() || !city.trim() || !state.trim() || !zip.trim()) {
-      alert('Please fill in required fields: Name, Address, City, State, Zip');
-      return;
-    }
-
     setIsSaving(true);
 
     try {
       const leadData: Partial<Lead> = {
-        name: name.trim(),
-        address: address.trim(),
-        city: city.trim(),
-        state: state.trim(),
-        zip: zip.trim(),
+        name: name.trim() || undefined,
+        address: address.trim() || undefined,
+        city: city.trim() || undefined,
+        state: state.trim() || undefined,
+        zip: zip.trim() || undefined,
         phone: phone.trim() || undefined,
         email: email.trim() || undefined,
         estimatedBill: estimatedBill ? parseFloat(estimatedBill) : undefined,
