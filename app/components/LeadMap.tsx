@@ -50,6 +50,7 @@ export default function LeadMap({
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [mapZoom, setMapZoom] = useState(zoom);
   const [zoomTier, setZoomTier] = useState(0); // Tier system to avoid re-rendering on every zoom
+  const [viewportKey, setViewportKey] = useState(0); // Trigger re-render on pan/zoom
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [dropPinLocation, setDropPinLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [dropPinAddress, setDropPinAddress] = useState({ address: '', city: '', state: '', zip: '' });
@@ -95,9 +96,16 @@ export default function LeadMap({
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     }).addTo(map);
 
-    // Create marker cluster group with smart clustering
+    // Create marker cluster group with optimized clustering for performance
     markersLayerRef.current = L.markerClusterGroup({
-      disableClusteringAtZoom: 14, // Show individual pins at zoom 14+ (earlier than before)
+      disableClusteringAtZoom: 15, // Show individual pins at zoom 15+ (slightly later for performance)
+      maxClusterRadius: 60, // Reduced from default 80 (tighter clusters = fewer markers)
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false, // Disable for performance
+      zoomToBoundsOnClick: true,
+      chunkedLoading: true, // Enable chunked loading for large datasets
+      chunkInterval: 50, // Process in 50ms chunks
+      chunkDelay: 50, // 50ms delay between chunks
       maxClusterRadius: 80, // Cluster radius in pixels
       spiderfyOnMaxZoom: true, // Spread out markers when clicking cluster at max zoom
       showCoverageOnHover: false, // Don't show cluster bounds on hover (cleaner UX)
@@ -121,6 +129,12 @@ export default function LeadMap({
       else if (currentZoom >= 12) newTier = 1;
       
       setZoomTier(newTier);
+      setViewportKey(prev => prev + 1); // Trigger viewport update on zoom
+    });
+
+    // Listen for map panning - update viewport to load new markers
+    map.on('moveend', () => {
+      setViewportKey(prev => prev + 1);
     });
 
     // Handle right-click to drop pin (desktop)
@@ -186,6 +200,26 @@ export default function LeadMap({
     // Get current zoom level for scaling
     const currentZoom = map.getZoom();
 
+    // PERFORMANCE OPTIMIZATION: Viewport-based filtering
+    // Only render markers that are within the current map bounds + buffer
+    const bounds = map.getBounds();
+    const padding = 0.5; // Add 50% buffer around visible area
+    const latDiff = bounds.getNorth() - bounds.getSouth();
+    const lngDiff = bounds.getEast() - bounds.getWest();
+    const paddedBounds = L.latLngBounds([
+      [bounds.getSouth() - latDiff * padding, bounds.getWest() - lngDiff * padding],
+      [bounds.getNorth() + latDiff * padding, bounds.getEast() + lngDiff * padding]
+    ]);
+
+    // Filter leads to only those in viewport
+    const visibleLeads = leads.filter(lead => {
+      if (!lead.lat || !lead.lng) return false;
+      return paddedBounds.contains([lead.lat, lead.lng]);
+    });
+
+    console.log(`[LeadMap] Rendering ${visibleLeads.length} of ${leads.length} visible leads (${Math.round(visibleLeads.length / leads.length * 100)}%)`);
+
+
     // Show route mode
     if (routeWaypoints && routeWaypoints.length > 0) {
       const routeCoords = routeWaypoints.map(wp => [wp.lat, wp.lng] as [number, number]);
@@ -212,8 +246,8 @@ export default function LeadMap({
       return;
     }
 
-    // Regular lead display
-    leads.forEach(lead => {
+    // Regular lead display - using visible leads only
+    visibleLeads.forEach(lead => {
       if (!lead.lat || !lead.lng || lead.solarCategory === 'poor') return;
 
       const isSelected = lead.id === selectedLeadId;
@@ -252,8 +286,8 @@ export default function LeadMap({
 
     // Performance: Log completion time
     const duration = Date.now() - startTime;
-    console.log(`[LeadMap] Rendered ${leads.length} markers in ${duration}ms (zoom tier: ${zoomTier})`);
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, mapZoom]);
+    console.log(`[LeadMap] Rendered ${visibleLeads.length} markers in ${duration}ms (zoom tier: ${zoomTier})`);
+  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey]);
   // Note: Using zoomTier instead of direct mapZoom - only re-renders when crossing zoom thresholds
   // This prevents constant re-renders on every zoom event (just 4 tiers: <12, 12-14, 14-16, >16)
 
