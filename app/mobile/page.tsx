@@ -126,23 +126,18 @@ export default function MobilePage() {
             </button>
           )}
 
-          {/* Data - Coming Soon */}
+          {/* My Data - Performance Stats */}
           <button
-            disabled
-            className="w-full bg-[#F7FAFC] border-2 border-[#E2E8F0] text-[#718096] rounded-2xl p-6 relative overflow-hidden"
+            onClick={() => router.push('/mobile/stats')}
+            className="w-full bg-white border-2 border-[#E2E8F0] rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98 hover:border-[#FF5F5A]"
           >
-            <div className="absolute top-2 right-2">
-              <span className="text-xs font-semibold bg-[#E2E8F0] text-[#718096] px-2 py-1 rounded-full">
-                Coming Soon
-              </span>
-            </div>
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-[#E2E8F0] rounded-xl flex items-center justify-center flex-shrink-0">
-                <BarChart3 className="w-6 h-6" />
+              <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <BarChart3 className="w-6 h-6 text-purple-600" />
               </div>
-              <div className="text-left">
+              <div className="flex-1 text-left">
                 <div className="text-lg font-bold text-[#2D3748]">My Data</div>
-                <div className="text-sm text-[#718096]">Performance stats</div>
+                <div className="text-sm text-[#718096]">Performance stats & trends</div>
               </div>
             </div>
           </button>
