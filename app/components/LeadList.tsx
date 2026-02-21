@@ -33,9 +33,9 @@ export default function LeadList({
 
   const filteredLeads = leads.filter(lead => {
     const matchesSearch = 
-      lead.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.city.toLowerCase().includes(searchQuery.toLowerCase());
+      (lead.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (lead.address || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (lead.city || '').toLowerCase().includes(searchQuery.toLowerCase());
     
     const matchesStatus = statusFilter === 'all' || lead.status === statusFilter;
     
