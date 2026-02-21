@@ -93,11 +93,11 @@ export default function LeadManagementPage() {
     setSelectedLeads(new Set());
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkUnclaim = async () => {
     if (selectedLeads.size === 0) return;
     
     const confirmed = confirm(
-      `Are you sure you want to delete ${selectedLeads.size} lead(s)? This action cannot be undone.`
+      `Are you sure you want to unclaim ${selectedLeads.size} lead(s)?`
     );
     
     if (!confirmed) return;
@@ -105,17 +105,29 @@ export default function LeadManagementPage() {
     setIsDeleting(true);
 
     try {
-      const { deleteLeadAsync } = await import('@/app/utils/storage');
-      
-      // Delete all selected leads
+      // Unclaim all selected leads
       await Promise.all(
-        Array.from(selectedLeads).map(leadId => deleteLeadAsync(leadId))
+        Array.from(selectedLeads).map(async (leadId) => {
+          const lead = leads.find(l => l.id === leadId);
+          if (!lead) return;
+          
+          const updatedLead: Lead = {
+            ...lead,
+            claimedBy: undefined,
+            claimedAt: undefined,
+            assignedTo: undefined,
+            assignedAt: undefined,
+            status: 'unclaimed',
+          };
+          
+          await saveLeadAsync(updatedLead);
+        })
       );
 
       await handleUpdate();
     } catch (error) {
-      console.error('Error deleting leads:', error);
-      alert('Failed to delete leads. Please try again.');
+      console.error('Error unclaiming leads:', error);
+      alert('Failed to unclaim leads. Please try again.');
     } finally {
       setIsDeleting(false);
       setSelectionMode(false);
@@ -152,16 +164,16 @@ export default function LeadManagementPage() {
             {selectionMode && (
               <>
                 <button
-                  onClick={handleBulkDelete}
+                  onClick={handleBulkUnclaim}
                   disabled={selectedLeads.size === 0 || isDeleting}
                   className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
                     selectedLeads.size === 0 || isDeleting
                       ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                      : 'bg-red-500 text-white hover:bg-red-600'
+                      : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
                   }`}
                 >
                   <Trash2 className="w-4 h-4" />
-                  Delete ({selectedLeads.size})
+                  Unclaim ({selectedLeads.size})
                 </button>
               </>
             )}
@@ -248,7 +260,7 @@ export default function LeadManagementPage() {
           <div className="absolute top-4 left-4 bg-white rounded-lg shadow-lg p-4 z-10 max-w-xs">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-2">Selection Mode</h3>
             <p className="text-xs text-[#718096] mb-3">
-              Click leads on the map to select them for bulk deletion
+              Click leads on the map to select them for bulk unclaiming
             </p>
             <div className="flex items-center gap-2 text-sm">
               <CheckSquare className="w-4 h-4 text-[#FF5F5A]" />

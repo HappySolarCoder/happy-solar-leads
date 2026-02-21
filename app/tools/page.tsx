@@ -121,7 +121,7 @@ export default function ToolsPage() {
                   <Layers className="w-6 h-6 text-[#FF8C00]" />
                 </div>
                 <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Lead Management</h3>
-                <p className="text-sm text-[#718096]">Bulk manage and delete leads by area</p>
+                <p className="text-sm text-[#718096]">Bulk unclaim leads by user or area</p>
               </button>
 
               {/* Territory Assignment */}
