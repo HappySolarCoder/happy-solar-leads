@@ -97,11 +97,11 @@ export interface Lead {
   goBackScheduledTime?: string;  // Optional time (e.g., "2:00 PM")
   goBackNotes?: string;          // Go back specific notes
   goBackScheduledBy?: string;    // User ID who scheduled it
-  // Disposition history
-  dispositionHistory?: DispositionHistoryEntry[];  // Track all disposition changes
+  // Disposition history (simplified inline tracking)
+  dispositionHistory?: LeadDispositionHistoryEntry[];  // Track all disposition changes
 }
 
-export interface DispositionHistoryEntry {
+export interface LeadDispositionHistoryEntry {
   disposition: string;      // Disposition name at time of change
   timestamp: Date;          // When the disposition was set
   userId: string;           // User who set the disposition

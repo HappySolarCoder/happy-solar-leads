@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Lead, User, ObjectionType, DispositionHistoryEntry } from '@/app/types';
+import { Lead, User, ObjectionType, LeadDispositionHistoryEntry } from '@/app/types';
 import { 
   X, MapPin, Phone, Mail, Clock, User as UserIcon, 
   CheckCircle, Circle, AlertCircle, Calendar, DollarSign,
@@ -198,7 +198,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         const { saveLeadAsync } = await import('@/app/utils/storage');
         
         // Add to disposition history
-        const historyEntry: DispositionHistoryEntry = {
+        const historyEntry: LeadDispositionHistoryEntry = {
           disposition: disposition?.name || newStatus,
           timestamp: new Date(),
           userId: currentUser.id,
@@ -250,7 +250,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       const { saveLeadAsync } = await import('@/app/utils/storage');
       
       // Add to disposition history
-      const historyEntry: DispositionHistoryEntry = {
+      const historyEntry: LeadDispositionHistoryEntry = {
         disposition: 'Not Interested',
         timestamp: new Date(),
         userId: currentUser.id,
@@ -288,7 +288,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       const { saveLeadAsync } = await import('@/app/utils/storage');
       
       // Add to disposition history
-      const historyEntry: DispositionHistoryEntry = {
+      const historyEntry: LeadDispositionHistoryEntry = {
         disposition: 'Go Back',
         timestamp: new Date(),
         userId: currentUser.id,
