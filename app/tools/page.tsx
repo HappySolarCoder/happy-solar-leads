@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Calendar, Map, Users, BarChart3, Settings, ShieldCheck, Layers } from 'lucide-react';
+import { ArrowLeft, Calendar, Map, Users, BarChart3, Settings, ShieldCheck, Layers, Sparkles } from 'lucide-react';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { User } from '@/app/types';
 import { getLeadsAsync } from '@/app/utils/storage';
