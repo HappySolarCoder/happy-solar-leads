@@ -23,7 +23,7 @@ const releaseNotes: ReleaseNote[] = [
     title: 'Mobile Performance Dashboard',
     description: 'Track your personal stats on the go! View your knocks, conversations, appointments, and see how you compare to the team.',
     icon: TrendingUp,
-    screenshot: '/release-notes/mobile-dashboard.png',
+    screenshot: '/release-notes/mobile-dashboard.jpg',
     category: 'new',
     howTo: [
       'Open the mobile app',
@@ -39,7 +39,7 @@ const releaseNotes: ReleaseNote[] = [
     title: 'Team Performance Dashboard',
     description: 'Managers can now see real-time team metrics with leaderboards, conversion funnels, and individual performance tracking.',
     icon: BarChart3,
-    screenshot: '/release-notes/team-dashboard.png',
+    screenshot: '/release-notes/team-dashboard.jpg',
     category: 'new',
     howTo: [
       'Go to Tools → Team Stats',
@@ -72,7 +72,7 @@ const releaseNotes: ReleaseNote[] = [
     title: 'Lead Management Tool',
     description: 'Managers can now bulk unclaim leads by user with an easy-to-use list interface.',
     icon: Users,
-    screenshot: '/release-notes/lead-management.png',
+    screenshot: '/release-notes/lead-management.jpg',
     category: 'new',
     howTo: [
       'Go to Tools → Lead Management (managers only)',
@@ -89,7 +89,7 @@ const releaseNotes: ReleaseNote[] = [
     title: 'Lead Disposition History',
     description: 'See the full history of who dispositioned a lead and when. Names are preserved even if users are deleted.',
     icon: CheckCircle,
-    screenshot: '/release-notes/lead-history.png',
+    screenshot: '/release-notes/lead-history.jpg',
     category: 'new',
     howTo: [
       'Open any lead detail',
@@ -104,7 +104,7 @@ const releaseNotes: ReleaseNote[] = [
     title: 'Go Backs Scheduling',
     description: 'Schedule leads to revisit later with date, time, and notes. View all your scheduled go backs in a calendar or list.',
     icon: Calendar,
-    screenshot: '/release-notes/go-backs.png',
+    screenshot: '/release-notes/go-backs.jpg',
     category: 'new',
     howTo: [
       'Open a lead and select "Go Back" disposition',
@@ -121,7 +121,7 @@ const releaseNotes: ReleaseNote[] = [
     title: 'Tools Hub',
     description: 'All your tools in one place! Role-based access shows only the tools you need.',
     icon: MapPin,
-    screenshot: '/release-notes/tools-page.png',
+    screenshot: '/release-notes/tools-page.jpg',
     category: 'new',
     howTo: [
       'Tap the Tools button (settings icon) in the knocking page header',
