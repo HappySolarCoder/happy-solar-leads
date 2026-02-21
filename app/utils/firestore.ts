@@ -44,6 +44,7 @@ export async function getAllLeads(): Promise<Lead[]> {
         assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
         solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
         objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
+        goBackScheduledDate: data.goBackScheduledDate?.toDate ? data.goBackScheduledDate.toDate() : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
       } as Lead;
     });
   } catch (error) {
@@ -93,6 +94,7 @@ export async function getLeadsInBounds(
         assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
         solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
         objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
+        goBackScheduledDate: data.goBackScheduledDate?.toDate ? data.goBackScheduledDate.toDate() : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
       } as Lead;
     });
     
@@ -137,6 +139,7 @@ export async function getLead(id: string): Promise<Lead | null> {
         assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
         solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
         objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
+        goBackScheduledDate: data.goBackScheduledDate?.toDate ? data.goBackScheduledDate.toDate() : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
       } as Lead;
     }
     return null;

@@ -91,6 +91,18 @@ export const DEFAULT_DISPOSITIONS: Disposition[] = [
     createdAt: new Date(),
     updatedAt: new Date(),
   },
+  {
+    id: 'go-back',
+    name: 'Go Back',
+    color: '#f59e0b', // Amber
+    icon: 'clock',
+    countsAsDoorKnock: true,
+    order: 7,
+    isDefault: true,
+    specialBehavior: 'scheduling-manager',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  },
 ];
 
 // Available Lucide icons for dispositions

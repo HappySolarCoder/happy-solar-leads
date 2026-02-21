@@ -92,6 +92,11 @@ export interface Lead {
   // Easter Eggs
   hasEasterEgg?: boolean;        // HIDDEN - only for hidden pin eggs
   easterEggId?: string;          // Which egg is hidden here
+  // Go Back scheduling
+  goBackScheduledDate?: Date;    // Scheduled go back date
+  goBackScheduledTime?: string;  // Optional time (e.g., "2:00 PM")
+  goBackNotes?: string;          // Go back specific notes
+  goBackScheduledBy?: string;    // User ID who scheduled it
 }
 
 export type ObjectionType = 

@@ -19,6 +19,7 @@ import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
 import { checkEasterEggTrigger } from '@/app/utils/easterEggs';
 import { EasterEgg } from '@/app/types/easterEgg';
 import EasterEggWinModal from './EasterEggWinModal';
+import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
 
 interface LeadDetailProps {
   lead: Lead;
@@ -89,6 +90,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [showAllStatuses, setShowAllStatuses] = useState(false);
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
+  const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
   const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
@@ -122,7 +124,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     // Check for special behavior dispositions
     const disposition = dispositions.find(d => d.id === newStatus);
     
-    // If scheduling manager, show lead editor instead
+    // If go-back disposition, show scheduling modal
+    if (newStatus === 'go-back') {
+      setShowGoBackSchedule(true);
+      return;
+    }
+    
+    // If scheduling manager (other types), show lead editor instead
     if (disposition?.specialBehavior === 'scheduling-manager') {
       setShowLeadEditor(true);
       return;
@@ -246,6 +254,36 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       await saveLeadAsync(updatedLead);
       
       setShowObjectionTracker(false);
+      onUpdate();
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleGoBackSave = async (scheduleData: GoBackScheduleData) => {
+    if (!currentUser) return;
+    
+    setIsUpdating(true);
+    
+    try {
+      // Update lead with go back schedule data using async Firestore
+      const { saveLeadAsync } = await import('@/app/utils/storage');
+      
+      const updatedLead: Lead = {
+        ...lead,
+        status: 'go-back',
+        disposition: 'Go Back',
+        dispositionedAt: new Date(),
+        claimedBy: currentUser.id,
+        goBackScheduledDate: scheduleData.date,
+        goBackScheduledTime: scheduleData.time,
+        goBackNotes: scheduleData.notes,
+        goBackScheduledBy: currentUser.id,
+      };
+      
+      await saveLeadAsync(updatedLead);
+      
+      setShowGoBackSchedule(false);
       onUpdate();
     } finally {
       setIsUpdating(false);
@@ -496,6 +534,16 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             setShowLeadEditor(false);
             onUpdate();
           }}
+        />
+      )}
+
+      {/* Go Back Schedule Modal */}
+      {showGoBackSchedule && (
+        <GoBackScheduleModal
+          isOpen={showGoBackSchedule}
+          onClose={() => setShowGoBackSchedule(false)}
+          onSave={handleGoBackSave}
+          leadAddress={lead.address}
         />
       )}
       
