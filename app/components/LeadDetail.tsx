@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Lead, User, ObjectionType } from '@/app/types';
+import { Lead, User, ObjectionType, DispositionHistoryEntry } from '@/app/types';
 import { 
   X, MapPin, Phone, Mail, Clock, User as UserIcon, 
   CheckCircle, Circle, AlertCircle, Calendar, DollarSign,
@@ -197,11 +197,20 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         // Handle status change with GPS data
         const { saveLeadAsync } = await import('@/app/utils/storage');
         
+        // Add to disposition history
+        const historyEntry: DispositionHistoryEntry = {
+          disposition: disposition?.name || newStatus,
+          timestamp: new Date(),
+          userId: currentUser.id,
+          userName: currentUser.name,
+        };
+        
         const updatedLead: Lead = {
           ...lead,
           status: newStatus,
           dispositionedAt: new Date(),
           claimedBy: currentUser.id,
+          dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
           ...gpsData,
         };
         
@@ -240,6 +249,14 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       // Update lead with objection data using async Firestore
       const { saveLeadAsync } = await import('@/app/utils/storage');
       
+      // Add to disposition history
+      const historyEntry: DispositionHistoryEntry = {
+        disposition: 'Not Interested',
+        timestamp: new Date(),
+        userId: currentUser.id,
+        userName: currentUser.name,
+      };
+      
       const updatedLead: Lead = {
         ...lead,
         status: 'not-interested',
@@ -249,6 +266,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         objectionRecordedBy: currentUser.id,
         claimedBy: currentUser.id,
         dispositionedAt: new Date(),
+        dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
       };
       
       await saveLeadAsync(updatedLead);
@@ -269,6 +287,14 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       // Update lead with go back schedule data using async Firestore
       const { saveLeadAsync } = await import('@/app/utils/storage');
       
+      // Add to disposition history
+      const historyEntry: DispositionHistoryEntry = {
+        disposition: 'Go Back',
+        timestamp: new Date(),
+        userId: currentUser.id,
+        userName: currentUser.name,
+      };
+      
       const updatedLead: Lead = {
         ...lead,
         status: 'go-back',
@@ -279,6 +305,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         goBackScheduledTime: scheduleData.time,
         goBackNotes: scheduleData.notes,
         goBackScheduledBy: currentUser.id,
+        dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
       };
       
       await saveLeadAsync(updatedLead);
@@ -512,6 +539,28 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               </div>
             )}
           </div>
+
+          {/* Disposition History */}
+          {lead.dispositionHistory && lead.dispositionHistory.length > 0 && (
+            <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
+              <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Disposition History</h3>
+              <div className="space-y-2">
+                {lead.dispositionHistory.slice(0, 10).map((entry, index) => (
+                  <div key={index} className="flex items-start gap-2 text-xs">
+                    <div className="flex-shrink-0 w-2 h-2 rounded-full bg-[#CBD5E0] mt-1.5" />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 text-[#2D3748]">
+                        <span className="font-medium">{entry.disposition}</span>
+                        <span className="text-[#718096]">•</span>
+                        <span className="text-[#718096]">{formatTimeAgo(new Date(entry.timestamp))}</span>
+                      </div>
+                      <div className="text-[#718096]">by {entry.userName}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

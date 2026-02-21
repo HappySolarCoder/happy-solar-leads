@@ -45,6 +45,10 @@ export async function getAllLeads(): Promise<Lead[]> {
         solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
         objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
         goBackScheduledDate: data.goBackScheduledDate?.toDate ? data.goBackScheduledDate.toDate() : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
+        dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
+          ...entry,
+          timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
+        })) || undefined,
       } as Lead;
     });
   } catch (error) {
@@ -95,6 +99,10 @@ export async function getLeadsInBounds(
         solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
         objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
         goBackScheduledDate: data.goBackScheduledDate?.toDate ? data.goBackScheduledDate.toDate() : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
+        dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
+          ...entry,
+          timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
+        })) || undefined,
       } as Lead;
     });
     
@@ -140,6 +148,10 @@ export async function getLead(id: string): Promise<Lead | null> {
         solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
         objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
         goBackScheduledDate: data.goBackScheduledDate?.toDate ? data.goBackScheduledDate.toDate() : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
+        dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
+          ...entry,
+          timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
+        })) || undefined,
       } as Lead;
     }
     return null;

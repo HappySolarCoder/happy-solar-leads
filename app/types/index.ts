@@ -97,6 +97,15 @@ export interface Lead {
   goBackScheduledTime?: string;  // Optional time (e.g., "2:00 PM")
   goBackNotes?: string;          // Go back specific notes
   goBackScheduledBy?: string;    // User ID who scheduled it
+  // Disposition history
+  dispositionHistory?: DispositionHistoryEntry[];  // Track all disposition changes
+}
+
+export interface DispositionHistoryEntry {
+  disposition: string;      // Disposition name at time of change
+  timestamp: Date;          // When the disposition was set
+  userId: string;           // User who set the disposition
+  userName: string;         // User's name at time (preserved even if user deleted)
 }
 
 export type ObjectionType = 
