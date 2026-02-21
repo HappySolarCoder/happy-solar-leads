@@ -244,7 +244,7 @@ export default function LeadManagementPage() {
           </select>
 
           {selectionMode && filteredLeads.length > 0 && (
-            <div className="flex items-center justify-between">
+            <>
               <div className="flex items-center gap-2">
                 <button
                   onClick={selectAll}
@@ -268,17 +268,17 @@ export default function LeadManagementPage() {
                 <button
                   onClick={handleBulkUnclaim}
                   disabled={isDeleting}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                  className={`mt-2 w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
                     isDeleting
                       ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                       : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
                   }`}
                 >
                   <Trash2 className="w-4 h-4" />
-                  Unclaim ({selectedLeads.size})
+                  Unclaim {selectedLeads.size} Lead{selectedLeads.size !== 1 ? 's' : ''}
                 </button>
               )}
-            </div>
+            </>
           )}
         </div>
       </header>
