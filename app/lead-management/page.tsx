@@ -30,6 +30,7 @@ export default function LeadManagementPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
 
   useEffect(() => {
     async function loadData() {
@@ -103,49 +104,75 @@ export default function LeadManagementPage() {
     if (!confirmed) return;
 
     setIsDeleting(true);
+    const leadIds = Array.from(selectedLeads);
+    setProgress({ current: 0, total: leadIds.length });
 
     try {
-      const leadIds = Array.from(selectedLeads);
-      const batchSize = 50; // Process 50 leads at a time
+      const batchSize = 30; // Reduced batch size for better reliability
       let processed = 0;
+      let failed = 0;
 
       // Process in batches to avoid rate limits
       for (let i = 0; i < leadIds.length; i += batchSize) {
         const batch = leadIds.slice(i, i + batchSize);
         
-        await Promise.all(
+        // Process batch with individual error handling
+        const results = await Promise.allSettled(
           batch.map(async (leadId) => {
-            const lead = leads.find(l => l.id === leadId);
-            if (!lead) return;
-            
-            const updatedLead: Lead = {
-              ...lead,
-              claimedBy: undefined,
-              claimedAt: undefined,
-              assignedTo: undefined,
-              assignedAt: undefined,
-              status: 'unclaimed',
-            };
-            
-            await saveLeadAsync(updatedLead);
-            processed++;
+            try {
+              const lead = leads.find(l => l.id === leadId);
+              if (!lead) throw new Error('Lead not found');
+              
+              const updatedLead: Lead = {
+                ...lead,
+                claimedBy: undefined,
+                claimedAt: undefined,
+                assignedTo: undefined,
+                assignedAt: undefined,
+                status: 'unclaimed',
+              };
+              
+              await saveLeadAsync(updatedLead);
+              return true;
+            } catch (err) {
+              console.error(`Failed to unclaim lead ${leadId}:`, err);
+              return false;
+            }
           })
         );
 
-        // Small delay between batches to avoid rate limits
+        // Count successes and failures
+        results.forEach(result => {
+          if (result.status === 'fulfilled' && result.value) {
+            processed++;
+          } else {
+            failed++;
+          }
+        });
+
+        // Update progress
+        setProgress({ current: processed + failed, total: leadIds.length });
+
+        // Delay between batches (increased to 200ms for reliability)
         if (i + batchSize < leadIds.length) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise(resolve => setTimeout(resolve, 200));
         }
       }
 
       await handleUpdate();
-      alert(`Successfully unclaimed ${processed} lead(s)`);
+      
+      if (failed > 0) {
+        alert(`Unclaimed ${processed} lead(s). ${failed} failed - please try those again.`);
+      } else {
+        alert(`Successfully unclaimed all ${processed} lead(s)!`);
+      }
     } catch (error) {
       console.error('Error unclaiming leads:', error);
-      alert('Failed to unclaim some leads. Please try again.');
+      alert('Operation failed. Please try again.');
     } finally {
       setIsDeleting(false);
       setSelectionMode(false);
+      setProgress({ current: 0, total: 0 });
     }
   };
 
@@ -165,49 +192,31 @@ export default function LeadManagementPage() {
       {/* Header */}
       <header className="bg-white border-b border-[#E2E8F0] px-4 py-3 flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => router.push('/tools')}
               className="p-2 -ml-2 text-[#718096] hover:text-[#FF5F5A] transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <h1 className="text-xl font-bold text-[#2D3748]">Lead Management</h1>
+            <h1 className="text-lg font-bold text-[#2D3748]">Lead Management</h1>
           </div>
 
-          <div className="flex items-center gap-2">
-            {selectionMode && (
-              <>
-                <button
-                  onClick={handleBulkUnclaim}
-                  disabled={selectedLeads.size === 0 || isDeleting}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
-                    selectedLeads.size === 0 || isDeleting
-                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                      : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
-                  }`}
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Unclaim ({selectedLeads.size})
-                </button>
-              </>
-            )}
-            <button
-              onClick={() => {
-                setSelectionMode(!selectionMode);
-                if (selectionMode) {
-                  deselectAll();
-                }
-              }}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                selectionMode
-                  ? 'bg-[#FF5F5A] text-white'
-                  : 'bg-[#F7FAFC] text-[#2D3748] hover:bg-[#E2E8F0]'
-              }`}
-            >
-              {selectionMode ? 'Cancel' : 'Select Leads'}
-            </button>
-          </div>
+          <button
+            onClick={() => {
+              setSelectionMode(!selectionMode);
+              if (selectionMode) {
+                deselectAll();
+              }
+            }}
+            className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${
+              selectionMode
+                ? 'bg-gray-200 text-[#2D3748]'
+                : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
+            }`}
+          >
+            {selectionMode ? 'Cancel' : 'Select'}
+          </button>
         </div>
 
         {/* User Filter */}
@@ -235,23 +244,39 @@ export default function LeadManagementPage() {
           </select>
 
           {selectionMode && filteredLeads.length > 0 && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={selectAll}
-                className="text-sm text-[#4299E1] hover:text-[#3182CE] font-medium"
-              >
-                Select All ({filteredLeads.length})
-              </button>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={selectAll}
+                  className="text-sm text-[#4299E1] hover:text-[#3182CE] font-medium"
+                >
+                  Select All ({filteredLeads.length})
+                </button>
+                {selectedLeads.size > 0 && (
+                  <>
+                    <span className="text-[#CBD5E0]">•</span>
+                    <button
+                      onClick={deselectAll}
+                      className="text-sm text-[#718096] hover:text-[#2D3748] font-medium"
+                    >
+                      Deselect All
+                    </button>
+                  </>
+                )}
+              </div>
               {selectedLeads.size > 0 && (
-                <>
-                  <span className="text-[#CBD5E0]">•</span>
-                  <button
-                    onClick={deselectAll}
-                    className="text-sm text-[#718096] hover:text-[#2D3748] font-medium"
-                  >
-                    Deselect All
-                  </button>
-                </>
+                <button
+                  onClick={handleBulkUnclaim}
+                  disabled={isDeleting}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                    isDeleting
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
+                  }`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Unclaim ({selectedLeads.size})
+                </button>
               )}
             </div>
           )}
@@ -318,6 +343,26 @@ export default function LeadManagementPage() {
           </div>
         )}
       </div>
+
+      {/* Progress Modal */}
+      {isDeleting && progress.total > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-semibold text-[#2D3748] mb-4">Unclaiming Leads...</h3>
+            <div className="mb-2">
+              <div className="w-full bg-[#E2E8F0] rounded-full h-3 overflow-hidden">
+                <div
+                  className="h-full bg-[#FF5F5A] transition-all duration-300"
+                  style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+            <p className="text-sm text-[#718096] text-center">
+              {progress.current} of {progress.total} leads processed
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
