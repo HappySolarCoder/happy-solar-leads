@@ -77,11 +77,14 @@ export default function LeadManagementPage() {
   }));
 
   const toggleLeadSelection = (leadId: string) => {
+    console.log('Toggling lead:', leadId, 'Current count:', selectedLeads.size);
     const newSelection = new Set(selectedLeads);
     if (newSelection.has(leadId)) {
       newSelection.delete(leadId);
+      console.log('Removed lead, new count:', newSelection.size);
     } else {
       newSelection.add(leadId);
+      console.log('Added lead, new count:', newSelection.size);
     }
     setSelectedLeads(newSelection);
   };
@@ -285,23 +288,58 @@ export default function LeadManagementPage() {
 
       {/* Map View */}
       <div className="flex-1 relative">
-        <LeadMap
-          leads={filteredLeads}
-          currentUser={currentUser}
-          onLeadClick={(lead) => {
-            if (selectionMode) {
-              toggleLeadSelection(lead.id);
-            }
-          }}
-        />
+        {!selectionMode ? (
+          <LeadMap
+            leads={filteredLeads}
+            currentUser={currentUser}
+            onLeadClick={(lead) => {}}
+          />
+        ) : (
+          /* List View for Selection */
+          <div className="h-full overflow-y-auto p-4 bg-[#F7FAFC]">
+            <div className="max-w-4xl mx-auto space-y-2">
+              {filteredLeads.map(lead => {
+                const isSelected = selectedLeads.has(lead.id);
+                return (
+                  <button
+                    key={lead.id}
+                    onClick={() => toggleLeadSelection(lead.id)}
+                    className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
+                      isSelected
+                        ? 'border-[#FF5F5A] bg-[#FFF5F5]'
+                        : 'border-[#E2E8F0] bg-white hover:border-[#CBD5E0]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
+                        isSelected
+                          ? 'border-[#FF5F5A] bg-[#FF5F5A]'
+                          : 'border-[#CBD5E0]'
+                      }`}>
+                        {isSelected && (
+                          <CheckSquare className="w-4 h-4 text-white" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 text-sm font-medium text-[#2D3748]">
+                          <MapPin className="w-4 h-4 text-[#718096]" />
+                          {lead.address}
+                        </div>
+                        <div className="text-xs text-[#718096] mt-1">
+                          Status: {lead.status || 'unclaimed'}
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
-        {/* Selection Overlay */}
-        {selectionMode && filteredLeads.length > 0 && (
-          <div className="absolute top-4 left-4 bg-white rounded-lg shadow-lg p-4 z-10 max-w-xs">
-            <h3 className="text-sm font-semibold text-[#2D3748] mb-2">Selection Mode</h3>
-            <p className="text-xs text-[#718096] mb-3">
-              Click leads on the map to select them for bulk unclaiming
-            </p>
+        {/* Selection Count Overlay - Only show when NOT in selection mode */}
+        {!selectionMode && selectedLeads.size > 0 && (
+          <div className="absolute top-4 left-4 bg-white rounded-lg shadow-lg p-4 z-10">
             <div className="flex items-center gap-2 text-sm">
               <CheckSquare className="w-4 h-4 text-[#FF5F5A]" />
               <span className="font-medium text-[#2D3748]">
@@ -311,37 +349,6 @@ export default function LeadManagementPage() {
           </div>
         )}
 
-        {/* Selected Leads List (Mobile) */}
-        {selectionMode && selectedLeads.size > 0 && (
-          <div className="absolute bottom-4 left-4 right-4 bg-white rounded-lg shadow-lg p-4 z-10 max-h-48 overflow-y-auto">
-            <h3 className="text-sm font-semibold text-[#2D3748] mb-2">
-              Selected Leads ({selectedLeads.size})
-            </h3>
-            <div className="space-y-1">
-              {Array.from(selectedLeads).slice(0, 10).map(leadId => {
-                const lead = leads.find(l => l.id === leadId);
-                if (!lead) return null;
-                return (
-                  <div key={leadId} className="flex items-center gap-2 text-xs">
-                    <button
-                      onClick={() => toggleLeadSelection(leadId)}
-                      className="text-[#FF5F5A] hover:text-[#E54E49]"
-                    >
-                      <Square className="w-3 h-3 fill-current" />
-                    </button>
-                    <MapPin className="w-3 h-3 text-[#718096]" />
-                    <span className="text-[#2D3748] truncate">{lead.address}</span>
-                  </div>
-                );
-              })}
-              {selectedLeads.size > 10 && (
-                <p className="text-xs text-[#718096] mt-2">
-                  + {selectedLeads.size - 10} more...
-                </p>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Progress Modal */}
