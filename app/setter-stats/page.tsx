@@ -78,7 +78,7 @@ export default function DataDashboard() {
 
     // Process leads
     filteredLeads.forEach(lead => {
-      const userId = lead.claimedBy || lead.dispositionedBy;
+      const userId = lead.claimedBy;
       if (!userId) return;
 
       if (!setterMap.has(userId)) {
