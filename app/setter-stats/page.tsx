@@ -187,25 +187,23 @@ export default function DataDashboard() {
             <ArrowLeft className="w-4 h-4" />
             Back to Tools
           </button>
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-[#2D3748] mb-2">Team Performance Dashboard</h1>
-              <p className="text-[#718096]">Real-time setter metrics and analytics</p>
-            </div>
+          <div>
+            <h1 className="text-2xl lg:text-3xl font-bold text-[#2D3748] mb-2">Team Performance Dashboard</h1>
+            <p className="text-sm lg:text-base text-[#718096] mb-4">Real-time setter metrics and analytics</p>
             
             {/* Time Filter */}
-            <div className="flex items-center gap-2 bg-white p-1 rounded-lg shadow-sm">
+            <div className="flex items-center gap-1 bg-white p-1 rounded-lg shadow-sm overflow-x-auto">
               {(['today', 'week', 'month', 'all'] as TimeFilter[]).map((filter) => (
                 <button
                   key={filter}
                   onClick={() => setTimeFilter(filter)}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  className={`px-3 lg:px-4 py-2 rounded-md text-xs lg:text-sm font-medium transition-colors whitespace-nowrap ${
                     timeFilter === filter
                       ? 'bg-[#FF5F5A] text-white'
                       : 'text-[#718096] hover:text-[#2D3748]'
                   }`}
                 >
-                  {filter === 'today' ? 'Today' : filter === 'week' ? 'This Week' : filter === 'month' ? 'This Month' : 'All Time'}
+                  {filter === 'today' ? 'Today' : filter === 'week' ? 'Week' : filter === 'month' ? 'Month' : 'All'}
                 </button>
               ))}
             </div>
@@ -213,7 +211,7 @@ export default function DataDashboard() {
         </div>
 
         {/* Team Overview Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded-lg p-4 shadow-sm">
             <div className="flex items-center gap-2 text-[#718096] mb-1">
               <Target className="w-4 h-4" />
@@ -260,12 +258,12 @@ export default function DataDashboard() {
         </div>
 
         {/* Funnel Visualization */}
-        <div className="bg-white rounded-lg p-6 shadow-sm mb-6">
-          <h2 className="text-lg font-semibold text-[#2D3748] mb-4 flex items-center gap-2">
-            <BarChart3 className="w-5 h-5" />
+        <div className="bg-white rounded-lg p-4 lg:p-6 shadow-sm mb-6">
+          <h2 className="text-base lg:text-lg font-semibold text-[#2D3748] mb-4 flex items-center gap-2">
+            <BarChart3 className="w-4 lg:w-5 h-4 lg:h-5" />
             Conversion Funnel
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="hidden lg:flex items-center gap-2">
             <div className="flex-1">
               <div className="bg-[#4299E1] h-12 rounded flex items-center justify-center text-white font-semibold">
                 {teamTotals.knocks} Knocks
@@ -274,13 +272,13 @@ export default function DataDashboard() {
             <div className="text-[#718096] text-sm">→</div>
             <div className="flex-1" style={{ flex: teamTotals.knocks > 0 ? teamTotals.conversations / teamTotals.knocks : 0 }}>
               <div className="bg-[#805AD5] h-12 rounded flex items-center justify-center text-white font-semibold">
-                {teamTotals.conversations} Conversations
+                {teamTotals.conversations} Convos
               </div>
             </div>
             <div className="text-[#718096] text-sm">→</div>
             <div className="flex-1" style={{ flex: teamTotals.knocks > 0 ? teamTotals.appointments / teamTotals.knocks : 0 }}>
               <div className="bg-[#ED8936] h-12 rounded flex items-center justify-center text-white font-semibold">
-                {teamTotals.appointments} Appointments
+                {teamTotals.appointments} Appts
               </div>
             </div>
             <div className="text-[#718096] text-sm">→</div>
@@ -290,10 +288,28 @@ export default function DataDashboard() {
               </div>
             </div>
           </div>
+          {/* Mobile Funnel (vertical) */}
+          <div className="lg:hidden space-y-2">
+            <div className="bg-[#4299E1] p-3 rounded text-white font-semibold text-center">
+              {teamTotals.knocks} Knocks
+            </div>
+            <div className="text-center text-[#718096]">↓</div>
+            <div className="bg-[#805AD5] p-3 rounded text-white font-semibold text-center">
+              {teamTotals.conversations} Conversations
+            </div>
+            <div className="text-center text-[#718096]">↓</div>
+            <div className="bg-[#ED8936] p-3 rounded text-white font-semibold text-center">
+              {teamTotals.appointments} Appointments
+            </div>
+            <div className="text-center text-[#718096]">↓</div>
+            <div className="bg-[#48BB78] p-3 rounded text-white font-semibold text-center">
+              {teamTotals.sales} Sales
+            </div>
+          </div>
         </div>
 
         {/* Leaderboards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
           <div className="bg-white rounded-lg p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-[#2D3748] mb-4 flex items-center gap-2">
               <Trophy className="w-5 h-5 text-[#F6AD55]" />
@@ -368,18 +384,18 @@ export default function DataDashboard() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div className="overflow-x-auto -mx-4 lg:mx-0">
+            <table className="w-full min-w-[640px]">
               <thead className="bg-[#F7FAFC] text-xs font-semibold text-[#718096] uppercase">
                 <tr>
-                  <th className="px-6 py-3 text-left">Setter</th>
-                  <th className="px-6 py-3 text-center">Knocks</th>
-                  <th className="px-6 py-3 text-center">Conversations</th>
-                  <th className="px-6 py-3 text-center">Conv Rate</th>
-                  <th className="px-6 py-3 text-center">Appointments</th>
-                  <th className="px-6 py-3 text-center">Appt Rate</th>
-                  <th className="px-6 py-3 text-center">Sales</th>
-                  <th className="px-6 py-3 text-center">Close Rate</th>
+                  <th className="px-3 lg:px-6 py-3 text-left">Setter</th>
+                  <th className="px-2 lg:px-6 py-3 text-center">Knocks</th>
+                  <th className="px-2 lg:px-6 py-3 text-center hidden sm:table-cell">Convos</th>
+                  <th className="px-2 lg:px-6 py-3 text-center hidden lg:table-cell">Conv %</th>
+                  <th className="px-2 lg:px-6 py-3 text-center">Appts</th>
+                  <th className="px-2 lg:px-6 py-3 text-center hidden lg:table-cell">Appt %</th>
+                  <th className="px-2 lg:px-6 py-3 text-center">Sales</th>
+                  <th className="px-2 lg:px-6 py-3 text-center hidden lg:table-cell">Close %</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E2E8F0]">
@@ -390,24 +406,24 @@ export default function DataDashboard() {
 
                   return (
                     <tr key={setter.userId} className="hover:bg-[#F7FAFC] transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="font-medium text-[#2D3748]">{setter.userName}</div>
+                      <td className="px-3 lg:px-6 py-4">
+                        <div className="font-medium text-[#2D3748] text-sm">{setter.userName}</div>
                       </td>
-                      <td className="px-6 py-4 text-center font-semibold text-[#2D3748]">{setter.knocks}</td>
-                      <td className="px-6 py-4 text-center font-semibold text-[#4299E1]">{setter.conversations}</td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-2 lg:px-6 py-4 text-center font-semibold text-[#2D3748] text-sm">{setter.knocks}</td>
+                      <td className="px-2 lg:px-6 py-4 text-center font-semibold text-[#4299E1] text-sm hidden sm:table-cell">{setter.conversations}</td>
+                      <td className="px-2 lg:px-6 py-4 text-center hidden lg:table-cell">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${getPerformanceColor(convRate, 'conversation')}`}>
                           {convRate}%
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-center font-semibold text-[#805AD5]">{setter.appointments}</td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-2 lg:px-6 py-4 text-center font-semibold text-[#805AD5] text-sm">{setter.appointments}</td>
+                      <td className="px-2 lg:px-6 py-4 text-center hidden lg:table-cell">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${getPerformanceColor(apptRate, 'appointment')}`}>
                           {apptRate}%
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-center font-semibold text-[#48BB78]">{setter.sales}</td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-2 lg:px-6 py-4 text-center font-semibold text-[#48BB78] text-sm">{setter.sales}</td>
+                      <td className="px-2 lg:px-6 py-4 text-center hidden lg:table-cell">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${getPerformanceColor(closeRate, 'close')}`}>
                           {closeRate}%
                         </span>
