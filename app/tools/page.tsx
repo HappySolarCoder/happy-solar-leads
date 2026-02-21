@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Calendar, Map, Users, BarChart3, Settings, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Calendar, Map, Users, BarChart3, Settings, ShieldCheck, Layers } from 'lucide-react';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { User } from '@/app/types';
 import { getLeadsAsync } from '@/app/utils/storage';
@@ -112,6 +112,18 @@ export default function ToolsPage() {
           <div className="mb-8">
             <h2 className="text-lg font-semibold text-[#2D3748] mb-4">Manager Tools</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Lead Management */}
+              <button
+                onClick={() => router.push('/lead-management')}
+                className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow text-left group"
+              >
+                <div className="p-3 bg-[#FFF5E6] rounded-lg group-hover:bg-[#FFE4C4] transition-colors mb-3">
+                  <Layers className="w-6 h-6 text-[#FF8C00]" />
+                </div>
+                <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Lead Management</h3>
+                <p className="text-sm text-[#718096]">Bulk manage and delete leads by area</p>
+              </button>
+
               {/* Territory Assignment */}
               <button
                 onClick={() => router.push('/territories')}
