@@ -70,6 +70,23 @@ export default function ToolsPage() {
 
       {/* Content */}
       <div className="max-w-4xl mx-auto px-4 py-8">
+        {/* What's New */}
+        <div className="mb-8">
+          <div className="bg-gradient-to-r from-[#FF5F5A] to-[#F27141] rounded-lg shadow-md p-6 text-white cursor-pointer hover:shadow-lg transition-shadow"
+            onClick={() => router.push('/release-notes')}
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                <Sparkles className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-xl font-bold mb-1">What's New in Raydar</h3>
+                <p className="text-white/90 text-sm">7 new features released this week! Check out mobile dashboards, go backs, and more.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Setter Tools (All Roles) */}
         <div className="mb-8">
           <h2 className="text-lg font-semibold text-[#2D3748] mb-4">Field Tools</h2>

@@ -261,13 +261,11 @@ export default function ReleaseNotesPage() {
                     {note.screenshot && (
                       <div className="bg-gradient-to-br from-[#F7FAFC] to-[#EDF2F7] p-8 border-b border-[#E2E8F0]">
                         <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-md p-2 border border-[#CBD5E0]">
-                          <div className="bg-[#F7FAFC] rounded h-64 flex items-center justify-center text-[#CBD5E0]">
-                            {/* Placeholder - replace with actual screenshot */}
-                            <div className="text-center">
-                              <Icon className="w-16 h-16 mx-auto mb-2 opacity-50" />
-                              <p className="text-sm">Screenshot coming soon</p>
-                            </div>
-                          </div>
+                          <img 
+                            src={note.screenshot} 
+                            alt={`${note.title} screenshot`}
+                            className="w-full rounded"
+                          />
                         </div>
                       </div>
                     )}
