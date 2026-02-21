@@ -20,6 +20,7 @@ interface SetterMetrics {
 }
 
 type TimeFilter = 'today' | 'week' | 'month' | 'all';
+type SortBy = 'knocks' | 'conversations' | 'appointments';
 
 export default function DataDashboard() {
   const router = useRouter();
@@ -28,7 +29,7 @@ export default function DataDashboard() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
-  const [sortBy, setSortBy] = useState<'knocks' | 'conversations' | 'appointments' | 'sales'>('knocks');
+  const [sortBy, setSortBy] = useState<SortBy>('knocks');
 
   useEffect(() => {
     async function loadData() {
@@ -211,7 +212,7 @@ export default function DataDashboard() {
         </div>
 
         {/* Team Overview Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-lg p-4 shadow-sm">
             <div className="flex items-center gap-2 text-[#718096] mb-1">
               <Target className="w-4 h-4" />
@@ -244,17 +245,6 @@ export default function DataDashboard() {
               {calculateRate(teamTotals.appointments, teamTotals.conversations)}% from conversations
             </div>
           </div>
-
-          <div className="bg-white rounded-lg p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-[#718096] mb-1">
-              <DollarSign className="w-4 h-4" />
-              <span className="text-sm font-medium">Sales</span>
-            </div>
-            <div className="text-3xl font-bold text-[#48BB78]">{teamTotals.sales}</div>
-            <div className="text-xs text-[#718096] mt-1">
-              {calculateRate(teamTotals.sales, teamTotals.appointments)}% close rate
-            </div>
-          </div>
         </div>
 
         {/* Funnel Visualization */}
@@ -277,14 +267,8 @@ export default function DataDashboard() {
             </div>
             <div className="text-[#718096] text-sm">→</div>
             <div className="flex-1" style={{ flex: teamTotals.knocks > 0 ? teamTotals.appointments / teamTotals.knocks : 0 }}>
-              <div className="bg-[#ED8936] h-12 rounded flex items-center justify-center text-white font-semibold">
-                {teamTotals.appointments} Appts
-              </div>
-            </div>
-            <div className="text-[#718096] text-sm">→</div>
-            <div className="flex-1" style={{ flex: teamTotals.knocks > 0 ? teamTotals.sales / teamTotals.knocks : 0 }}>
               <div className="bg-[#48BB78] h-12 rounded flex items-center justify-center text-white font-semibold">
-                {teamTotals.sales} Sales
+                {teamTotals.appointments} Appts
               </div>
             </div>
           </div>
@@ -298,21 +282,17 @@ export default function DataDashboard() {
               {teamTotals.conversations} Conversations
             </div>
             <div className="text-center text-[#718096]">↓</div>
-            <div className="bg-[#ED8936] p-3 rounded text-white font-semibold text-center">
-              {teamTotals.appointments} Appointments
-            </div>
-            <div className="text-center text-[#718096]">↓</div>
             <div className="bg-[#48BB78] p-3 rounded text-white font-semibold text-center">
-              {teamTotals.sales} Sales
+              {teamTotals.appointments} Appointments
             </div>
           </div>
         </div>
 
         {/* Leaderboards */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          <div className="bg-white rounded-lg p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-[#2D3748] mb-4 flex items-center gap-2">
-              <Trophy className="w-5 h-5 text-[#F6AD55]" />
+          <div className="bg-white rounded-lg p-4 lg:p-6 shadow-sm">
+            <h3 className="text-base lg:text-lg font-semibold text-[#2D3748] mb-4 flex items-center gap-2">
+              <Trophy className="w-4 lg:w-5 h-4 lg:h-5 text-[#F6AD55]" />
               Top Performers - Knocks
             </h3>
             <div className="space-y-2">
@@ -324,31 +304,31 @@ export default function DataDashboard() {
                     {index + 1}
                   </div>
                   <div className="flex-1">
-                    <div className="font-medium text-[#2D3748]">{setter.userName}</div>
+                    <div className="font-medium text-[#2D3748] text-sm lg:text-base">{setter.userName}</div>
                   </div>
-                  <div className="text-lg font-bold text-[#2D3748]">{setter.knocks}</div>
+                  <div className="text-base lg:text-lg font-bold text-[#2D3748]">{setter.knocks}</div>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="bg-white rounded-lg p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-[#2D3748] mb-4 flex items-center gap-2">
-              <Trophy className="w-5 h-5 text-[#48BB78]" />
-              Top Performers - Sales
+          <div className="bg-white rounded-lg p-4 lg:p-6 shadow-sm">
+            <h3 className="text-base lg:text-lg font-semibold text-[#2D3748] mb-4 flex items-center gap-2">
+              <Trophy className="w-4 lg:w-5 h-4 lg:h-5 text-[#805AD5]" />
+              Top Performers - Appointments
             </h3>
             <div className="space-y-2">
-              {[...setterMetrics].sort((a, b) => b.sales - a.sales).slice(0, 5).map((setter, index) => (
+              {[...setterMetrics].sort((a, b) => b.appointments - a.appointments).slice(0, 5).map((setter, index) => (
                 <div key={setter.userId} className="flex items-center gap-3">
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                    index === 0 ? 'bg-[#48BB78] text-white' : 'bg-[#E2E8F0] text-[#718096]'
+                    index === 0 ? 'bg-[#805AD5] text-white' : 'bg-[#E2E8F0] text-[#718096]'
                   }`}>
                     {index + 1}
                   </div>
                   <div className="flex-1">
-                    <div className="font-medium text-[#2D3748]">{setter.userName}</div>
+                    <div className="font-medium text-[#2D3748] text-sm lg:text-base">{setter.userName}</div>
                   </div>
-                  <div className="text-lg font-bold text-[#48BB78]">{setter.sales}</div>
+                  <div className="text-base lg:text-lg font-bold text-[#805AD5]">{setter.appointments}</div>
                 </div>
               ))}
             </div>
@@ -365,20 +345,20 @@ export default function DataDashboard() {
           </div>
           
           {/* Sort Controls */}
-          <div className="px-6 py-3 bg-[#F7FAFC] border-b border-[#E2E8F0]">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-[#718096]">Sort by:</span>
-              {(['knocks', 'conversations', 'appointments', 'sales'] as const).map((sort) => (
+          <div className="px-4 lg:px-6 py-3 bg-[#F7FAFC] border-b border-[#E2E8F0] overflow-x-auto">
+            <div className="flex items-center gap-2 text-xs lg:text-sm min-w-max">
+              <span className="text-[#718096] hidden sm:inline">Sort by:</span>
+              {(['knocks', 'conversations', 'appointments'] as const).map((sort) => (
                 <button
                   key={sort}
                   onClick={() => setSortBy(sort)}
-                  className={`px-3 py-1 rounded ${
+                  className={`px-2 lg:px-3 py-1.5 rounded whitespace-nowrap ${
                     sortBy === sort
                       ? 'bg-[#FF5F5A] text-white'
                       : 'bg-white text-[#718096] hover:text-[#2D3748]'
                   }`}
                 >
-                  {sort.charAt(0).toUpperCase() + sort.slice(1)}
+                  {sort === 'knocks' ? 'Knocks' : sort === 'conversations' ? 'Convos' : 'Appts'}
                 </button>
               ))}
             </div>
@@ -390,12 +370,10 @@ export default function DataDashboard() {
                 <tr>
                   <th className="px-3 lg:px-6 py-3 text-left">Setter</th>
                   <th className="px-2 lg:px-6 py-3 text-center">Knocks</th>
-                  <th className="px-2 lg:px-6 py-3 text-center hidden sm:table-cell">Convos</th>
+                  <th className="px-2 lg:px-6 py-3 text-center">Convos</th>
                   <th className="px-2 lg:px-6 py-3 text-center hidden lg:table-cell">Conv %</th>
                   <th className="px-2 lg:px-6 py-3 text-center">Appts</th>
                   <th className="px-2 lg:px-6 py-3 text-center hidden lg:table-cell">Appt %</th>
-                  <th className="px-2 lg:px-6 py-3 text-center">Sales</th>
-                  <th className="px-2 lg:px-6 py-3 text-center hidden lg:table-cell">Close %</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E2E8F0]">
@@ -406,26 +384,20 @@ export default function DataDashboard() {
 
                   return (
                     <tr key={setter.userId} className="hover:bg-[#F7FAFC] transition-colors">
-                      <td className="px-3 lg:px-6 py-4">
+                      <td className="px-3 lg:px-6 py-3 lg:py-4">
                         <div className="font-medium text-[#2D3748] text-sm">{setter.userName}</div>
                       </td>
-                      <td className="px-2 lg:px-6 py-4 text-center font-semibold text-[#2D3748] text-sm">{setter.knocks}</td>
-                      <td className="px-2 lg:px-6 py-4 text-center font-semibold text-[#4299E1] text-sm hidden sm:table-cell">{setter.conversations}</td>
-                      <td className="px-2 lg:px-6 py-4 text-center hidden lg:table-cell">
+                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center font-semibold text-[#2D3748] text-sm">{setter.knocks}</td>
+                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center font-semibold text-[#4299E1] text-sm">{setter.conversations}</td>
+                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center hidden lg:table-cell">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${getPerformanceColor(convRate, 'conversation')}`}>
                           {convRate}%
                         </span>
                       </td>
-                      <td className="px-2 lg:px-6 py-4 text-center font-semibold text-[#805AD5] text-sm">{setter.appointments}</td>
-                      <td className="px-2 lg:px-6 py-4 text-center hidden lg:table-cell">
+                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center font-semibold text-[#805AD5] text-sm">{setter.appointments}</td>
+                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center hidden lg:table-cell">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${getPerformanceColor(apptRate, 'appointment')}`}>
                           {apptRate}%
-                        </span>
-                      </td>
-                      <td className="px-2 lg:px-6 py-4 text-center font-semibold text-[#48BB78] text-sm">{setter.sales}</td>
-                      <td className="px-2 lg:px-6 py-4 text-center hidden lg:table-cell">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${getPerformanceColor(closeRate, 'close')}`}>
-                          {closeRate}%
                         </span>
                       </td>
                     </tr>
