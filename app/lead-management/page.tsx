@@ -105,29 +105,44 @@ export default function LeadManagementPage() {
     setIsDeleting(true);
 
     try {
-      // Unclaim all selected leads
-      await Promise.all(
-        Array.from(selectedLeads).map(async (leadId) => {
-          const lead = leads.find(l => l.id === leadId);
-          if (!lead) return;
-          
-          const updatedLead: Lead = {
-            ...lead,
-            claimedBy: undefined,
-            claimedAt: undefined,
-            assignedTo: undefined,
-            assignedAt: undefined,
-            status: 'unclaimed',
-          };
-          
-          await saveLeadAsync(updatedLead);
-        })
-      );
+      const leadIds = Array.from(selectedLeads);
+      const batchSize = 50; // Process 50 leads at a time
+      let processed = 0;
+
+      // Process in batches to avoid rate limits
+      for (let i = 0; i < leadIds.length; i += batchSize) {
+        const batch = leadIds.slice(i, i + batchSize);
+        
+        await Promise.all(
+          batch.map(async (leadId) => {
+            const lead = leads.find(l => l.id === leadId);
+            if (!lead) return;
+            
+            const updatedLead: Lead = {
+              ...lead,
+              claimedBy: undefined,
+              claimedAt: undefined,
+              assignedTo: undefined,
+              assignedAt: undefined,
+              status: 'unclaimed',
+            };
+            
+            await saveLeadAsync(updatedLead);
+            processed++;
+          })
+        );
+
+        // Small delay between batches to avoid rate limits
+        if (i + batchSize < leadIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
 
       await handleUpdate();
+      alert(`Successfully unclaimed ${processed} lead(s)`);
     } catch (error) {
       console.error('Error unclaiming leads:', error);
-      alert('Failed to unclaim leads. Please try again.');
+      alert('Failed to unclaim some leads. Please try again.');
     } finally {
       setIsDeleting(false);
       setSelectionMode(false);
