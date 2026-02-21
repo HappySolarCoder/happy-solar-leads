@@ -100,17 +100,12 @@ export default function LeadMap({
     markersLayerRef.current = L.markerClusterGroup({
       disableClusteringAtZoom: 15, // Show individual pins at zoom 15+ (slightly later for performance)
       maxClusterRadius: 60, // Reduced from default 80 (tighter clusters = fewer markers)
-      spiderfyOnMaxZoom: true,
-      showCoverageOnHover: false, // Disable for performance
-      zoomToBoundsOnClick: true,
-      chunkedLoading: true, // Enable chunked loading for large datasets
-      chunkInterval: 50, // Process in 50ms chunks
-      chunkDelay: 50, // 50ms delay between chunks
-      maxClusterRadius: 80, // Cluster radius in pixels
       spiderfyOnMaxZoom: true, // Spread out markers when clicking cluster at max zoom
-      showCoverageOnHover: false, // Don't show cluster bounds on hover (cleaner UX)
+      showCoverageOnHover: false, // Don't show cluster bounds on hover (cleaner UX + performance)
       zoomToBoundsOnClick: true, // Zoom into cluster when clicked
       chunkedLoading: true, // Better performance for large datasets
+      chunkInterval: 50, // Process in 50ms chunks
+      chunkDelay: 50, // 50ms delay between chunks
       removeOutsideVisibleBounds: true, // Remove markers outside view (huge performance boost)
     }).addTo(map);
     
