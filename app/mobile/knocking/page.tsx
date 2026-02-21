@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, List, Navigation, Filter, MapPin } from 'lucide-react';
+import { ArrowLeft, List, Navigation, Filter, MapPin, Settings } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
@@ -254,12 +254,12 @@ export default function KnockingPage() {
               <Filter className="w-5 h-5" />
             </button>
 
-            {/* View Toggle */}
+            {/* Tools Button */}
             <button
-              onClick={() => setViewMode(viewMode === 'map' ? 'list' : 'map')}
+              onClick={() => router.push('/tools')}
               className="p-2 text-[#718096] hover:text-[#FF5F5A] active:scale-95 transition-all"
             >
-              {viewMode === 'map' ? <List className="w-5 h-5" /> : <Navigation className="w-5 h-5" />}
+              <Settings className="w-5 h-5" />
             </button>
           </div>
         </div>
