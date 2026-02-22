@@ -81,7 +81,7 @@ export default function ToolsPage() {
               </div>
               <div className="flex-1">
                 <h3 className="text-xl font-bold mb-1">What's New in Raydar</h3>
-                <p className="text-white/90 text-sm">7 new features released this week! Check out mobile dashboards, go backs, and more.</p>
+                <p className="text-white/90 text-sm">5 new features released this week! Check out mobile dashboards, go backs, and more.</p>
               </div>
             </div>
           </div>

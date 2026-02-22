@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowLeft, Calendar, MapPin, BarChart3, Users, Zap, TrendingUp, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Calendar, BarChart3, Users, Zap, TrendingUp } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 interface ReleaseNote {
@@ -84,21 +84,6 @@ const releaseNotes: ReleaseNote[] = [
     ],
   },
   {
-    id: 'lead-history',
-    date: '2026-02-20',
-    title: 'Lead Disposition History',
-    description: 'See the full history of who dispositioned a lead and when. Names are preserved even if users are deleted.',
-    icon: CheckCircle,
-    screenshot: '/release-notes/lead-history.jpg',
-    category: 'new',
-    howTo: [
-      'Open any lead detail',
-      'Scroll to the bottom',
-      'View "Disposition History" section',
-      'See all past dispositions with timestamps and user names',
-    ],
-  },
-  {
     id: 'go-backs',
     date: '2026-02-20',
     title: 'Go Backs Scheduling',
@@ -113,22 +98,6 @@ const releaseNotes: ReleaseNote[] = [
       'Access your go backs: Tools → Go Backs',
       'View in calendar or list mode',
       'Tap any go back to see lead details',
-    ],
-  },
-  {
-    id: 'tools-page',
-    date: '2026-02-20',
-    title: 'Tools Hub',
-    description: 'All your tools in one place! Role-based access shows only the tools you need.',
-    icon: MapPin,
-    screenshot: '/release-notes/tools-page.jpg',
-    category: 'new',
-    howTo: [
-      'Tap the Tools button (settings icon) in the knocking page header',
-      'View your available tools organized by role',
-      'Field Tools: Go Backs, Team Map (everyone)',
-      'Manager Tools: Lead Management, Territories, Team Stats',
-      'Admin Tools: Admin Dashboard, System Settings',
     ],
   },
 ];
