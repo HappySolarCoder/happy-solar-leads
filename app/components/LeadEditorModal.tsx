@@ -66,7 +66,15 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     setIsSending(true);
 
     try {
-      // 1. Get admin settings from Firestore (synced across devices)
+      // 1. Get current user (fallback if state not loaded yet)
+      const user = currentUser || await getCurrentUserAsync();
+      
+      console.log('=== USER DEBUG ===');
+      console.log('Current user from state:', currentUser);
+      console.log('User for message:', user);
+      console.log('User name:', user?.name);
+
+      // 2. Get admin settings from Firestore (synced across devices)
       const settings = await getAdminSettingsAsync();
 
       console.log('=== SETTINGS DEBUG ===');
@@ -89,9 +97,13 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
 - South-Facing Roof: ${lead.hasSouthFacingRoof !== undefined ? (lead.hasSouthFacingRoof ? 'Yes ✅' : 'No ❌') : 'N/A'}`;
       }
 
+      console.log('=== FORM DATA DEBUG ===');
+      console.log('Form data:', formData);
+      console.log('Lead name:', formData.name);
+
       const leadInfo = `
 📞 **Scheduling Manager Request**
-👤 **Sent by:** ${currentUser?.name || 'Unknown Setter'}
+👤 **Sent by:** ${user?.name || 'Unknown Setter'}
 
 **Lead Details:**
 👤 Name: ${formData.name}
