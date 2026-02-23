@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
-import { Lead } from '@/app/types';
+import { Lead, User } from '@/app/types';
 import { saveLeadAsync, getCurrentUserAsync } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 
@@ -27,6 +27,16 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
   const [isSaving, setIsSaving] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [infoSent, setInfoSent] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  // Load current user when component mounts
+  useEffect(() => {
+    async function loadUser() {
+      const user = await getCurrentUserAsync();
+      setCurrentUser(user);
+    }
+    loadUser();
+  }, []);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -56,10 +66,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     setIsSending(true);
 
     try {
-      // 1. Get current user
-      const currentUser = await getCurrentUserAsync();
-      
-      // 2. Get admin settings from Firestore (synced across devices)
+      // 1. Get admin settings from Firestore (synced across devices)
       const settings = await getAdminSettingsAsync();
 
       console.log('=== SETTINGS DEBUG ===');
