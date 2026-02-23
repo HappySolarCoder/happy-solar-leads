@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, List, Navigation, Filter, MapPin, Settings } from 'lucide-react';
-import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getLeadsAsync, getUsersAsync, saveCurrentUser } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
 import LeadDetail from '@/app/components/LeadDetail';
@@ -76,6 +76,7 @@ export default function KnockingPage() {
         return;
       }
       setCurrentUser(user);
+      saveCurrentUser(user); // Save to localStorage for later retrieval
 
       const loadedLeads = await getLeadsAsync();
       setLeads(loadedLeads);

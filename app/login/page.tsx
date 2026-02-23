@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/app/utils/firebase';
+import { getCurrentAuthUser } from '@/app/utils/auth';
+import { saveCurrentUser } from '@/app/utils/storage';
 import { ArrowRight, Mail, Lock, AlertCircle } from 'lucide-react';
 
 export default function LoginPage() {
@@ -24,6 +26,13 @@ export default function LoginPage() {
       }
 
       await signInWithEmailAndPassword(auth, email, password);
+      
+      // Get user from Firestore and save to localStorage
+      const user = await getCurrentAuthUser();
+      if (user) {
+        saveCurrentUser(user);
+        console.log('User saved to localStorage:', user.name);
+      }
       
       // Redirect to main app
       router.push('/');
