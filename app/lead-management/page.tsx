@@ -31,6 +31,8 @@ export default function LeadManagementPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [mode, setMode] = useState<'assign' | 'unclaim'>('unclaim');
+  const [assignToUser, setAssignToUser] = useState<string>('');
 
   useEffect(() => {
     async function loadData() {
@@ -179,6 +181,84 @@ export default function LeadManagementPage() {
     }
   };
 
+  const handleBulkAssign = async () => {
+    if (selectedLeads.size === 0 || !assignToUser) return;
+    
+    const targetUser = users.find(u => u.id === assignToUser);
+    if (!targetUser) return;
+
+    const confirmed = confirm(
+      `Assign ${selectedLeads.size} lead(s) to ${targetUser.name}?`
+    );
+    
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    const leadIds = Array.from(selectedLeads);
+    setProgress({ current: 0, total: leadIds.length });
+
+    try {
+      const batchSize = 30;
+      let processed = 0;
+      let failed = 0;
+
+      for (let i = 0; i < leadIds.length; i += batchSize) {
+        const batch = leadIds.slice(i, i + batchSize);
+        
+        const results = await Promise.allSettled(
+          batch.map(async (leadId) => {
+            try {
+              const lead = leads.find(l => l.id === leadId);
+              if (!lead) throw new Error('Lead not found');
+              
+              const updatedLead: Lead = {
+                ...lead,
+                assignedTo: assignToUser,
+                assignedAt: new Date(),
+                status: 'assigned',
+              };
+              
+              await saveLeadAsync(updatedLead);
+              return true;
+            } catch (err) {
+              console.error(`Failed to assign lead ${leadId}:`, err);
+              return false;
+            }
+          })
+        );
+
+        results.forEach(result => {
+          if (result.status === 'fulfilled' && result.value) {
+            processed++;
+          } else {
+            failed++;
+          }
+        });
+
+        setProgress({ current: processed + failed, total: leadIds.length });
+
+        if (i + batchSize < leadIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      await handleUpdate();
+      
+      if (failed > 0) {
+        alert(`Assigned ${processed} lead(s). ${failed} failed - please try those again.`);
+      } else {
+        alert(`Successfully assigned all ${processed} lead(s) to ${targetUser.name}!`);
+      }
+    } catch (error) {
+      console.error('Error assigning leads:', error);
+      alert('Operation failed. Please try again.');
+    } finally {
+      setIsDeleting(false);
+      setSelectionMode(false);
+      setProgress({ current: 0, total: 0 });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#F7FAFC] flex items-center justify-center">
@@ -205,21 +285,53 @@ export default function LeadManagementPage() {
             <h1 className="text-lg font-bold text-[#2D3748]">Lead Management</h1>
           </div>
 
-          <button
-            onClick={() => {
-              setSelectionMode(!selectionMode);
-              if (selectionMode) {
-                deselectAll();
-              }
-            }}
-            className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${
-              selectionMode
-                ? 'bg-gray-200 text-[#2D3748]'
-                : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
-            }`}
-          >
-            {selectionMode ? 'Cancel' : 'Select'}
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Mode Toggle */}
+            <div className="flex gap-1 bg-[#F7FAFC] rounded-lg p-1">
+              <button
+                onClick={() => {
+                  setMode('assign');
+                  deselectAll();
+                }}
+                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                  mode === 'assign'
+                    ? 'bg-white text-[#FF5F5A] shadow-sm'
+                    : 'text-[#718096] hover:text-[#2D3748]'
+                }`}
+              >
+                Assign
+              </button>
+              <button
+                onClick={() => {
+                  setMode('unclaim');
+                  deselectAll();
+                }}
+                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                  mode === 'unclaim'
+                    ? 'bg-white text-[#FF5F5A] shadow-sm'
+                    : 'text-[#718096] hover:text-[#2D3748]'
+                }`}
+              >
+                Unclaim
+              </button>
+            </div>
+
+            <button
+              onClick={() => {
+                setSelectionMode(!selectionMode);
+                if (selectionMode) {
+                  deselectAll();
+                }
+              }}
+              className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${
+                selectionMode
+                  ? 'bg-gray-200 text-[#2D3748]'
+                  : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
+              }`}
+            >
+              {selectionMode ? 'Cancel' : 'Select'}
+            </button>
+          </div>
         </div>
 
         {/* User Filter */}
@@ -248,7 +360,28 @@ export default function LeadManagementPage() {
 
           {selectionMode && filteredLeads.length > 0 && (
             <>
-              <div className="flex items-center gap-2">
+              {/* Assign To User (only in assign mode) */}
+              {mode === 'assign' && (
+                <div className="mt-2">
+                  <label className="block text-sm font-medium text-[#2D3748] mb-2">
+                    Assign To
+                  </label>
+                  <select
+                    value={assignToUser}
+                    onChange={(e) => setAssignToUser(e.target.value)}
+                    className="w-full px-4 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A] focus:border-transparent"
+                  >
+                    <option value="">Select User...</option>
+                    {users.map(user => (
+                      <option key={user.id} value={user.id}>
+                        {user.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 mt-2">
                 <button
                   onClick={selectAll}
                   className="text-sm text-[#4299E1] hover:text-[#3182CE] font-medium"
@@ -269,16 +402,25 @@ export default function LeadManagementPage() {
               </div>
               {selectedLeads.size > 0 && (
                 <button
-                  onClick={handleBulkUnclaim}
-                  disabled={isDeleting}
+                  onClick={mode === 'assign' ? handleBulkAssign : handleBulkUnclaim}
+                  disabled={isDeleting || (mode === 'assign' && !assignToUser)}
                   className={`mt-2 w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                    isDeleting
+                    isDeleting || (mode === 'assign' && !assignToUser)
                       ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                       : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
                   }`}
                 >
-                  <Trash2 className="w-4 h-4" />
-                  Unclaim {selectedLeads.size} Lead{selectedLeads.size !== 1 ? 's' : ''}
+                  {mode === 'assign' ? (
+                    <>
+                      <Users className="w-4 h-4" />
+                      Assign {selectedLeads.size} Lead{selectedLeads.size !== 1 ? 's' : ''}
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4" />
+                      Unclaim {selectedLeads.size} Lead{selectedLeads.size !== 1 ? 's' : ''}
+                    </>
+                  )}
                 </button>
               )}
             </>
