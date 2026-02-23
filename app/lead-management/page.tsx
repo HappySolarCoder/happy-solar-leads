@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, Trash2, CheckSquare, Square, Users, MapPin } from 'lucide-react';
+import { ArrowLeft, Trash2, Users } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
@@ -29,10 +29,10 @@ export default function LeadManagementPage() {
   const [userFilter, setUserFilter] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [selectionMode, setSelectionMode] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [mode, setMode] = useState<'assign' | 'unclaim'>('unclaim');
   const [assignToUser, setAssignToUser] = useState<string>('');
+  const [drawingMode, setDrawingMode] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -67,6 +67,12 @@ export default function LeadManagementPage() {
     setSelectedLeads(new Set());
   };
 
+  const handleTerritoryDrawn = (leadIds: string[]) => {
+    console.log('Territory drawn, selected leads:', leadIds.length);
+    setSelectedLeads(new Set(leadIds));
+    setDrawingMode(false);
+  };
+
   // Filter leads by selected user
   const filteredLeads = userFilter === 'all' 
     ? leads 
@@ -77,23 +83,6 @@ export default function LeadManagementPage() {
     user,
     count: leads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
   }));
-
-  const toggleLeadSelection = (leadId: string) => {
-    console.log('Toggling lead:', leadId, 'Current count:', selectedLeads.size);
-    const newSelection = new Set(selectedLeads);
-    if (newSelection.has(leadId)) {
-      newSelection.delete(leadId);
-      console.log('Removed lead, new count:', newSelection.size);
-    } else {
-      newSelection.add(leadId);
-      console.log('Added lead, new count:', newSelection.size);
-    }
-    setSelectedLeads(newSelection);
-  };
-
-  const selectAll = () => {
-    setSelectedLeads(new Set(filteredLeads.map(l => l.id)));
-  };
 
   const deselectAll = () => {
     setSelectedLeads(new Set());
@@ -176,7 +165,7 @@ export default function LeadManagementPage() {
       alert('Operation failed. Please try again.');
     } finally {
       setIsDeleting(false);
-      setSelectionMode(false);
+      setDrawingMode(false);
       setProgress({ current: 0, total: 0 });
     }
   };
@@ -254,7 +243,7 @@ export default function LeadManagementPage() {
       alert('Operation failed. Please try again.');
     } finally {
       setIsDeleting(false);
-      setSelectionMode(false);
+      setDrawingMode(false);
       setProgress({ current: 0, total: 0 });
     }
   };
@@ -292,6 +281,7 @@ export default function LeadManagementPage() {
                 onClick={() => {
                   setMode('assign');
                   deselectAll();
+                  setDrawingMode(false);
                 }}
                 className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
                   mode === 'assign'
@@ -305,6 +295,7 @@ export default function LeadManagementPage() {
                 onClick={() => {
                   setMode('unclaim');
                   deselectAll();
+                  setDrawingMode(false);
                 }}
                 className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
                   mode === 'unclaim'
@@ -318,18 +309,18 @@ export default function LeadManagementPage() {
 
             <button
               onClick={() => {
-                setSelectionMode(!selectionMode);
-                if (selectionMode) {
+                setDrawingMode(!drawingMode);
+                if (drawingMode) {
                   deselectAll();
                 }
               }}
               className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${
-                selectionMode
+                drawingMode
                   ? 'bg-gray-200 text-[#2D3748]'
                   : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
               }`}
             >
-              {selectionMode ? 'Cancel' : 'Select'}
+              {drawingMode ? 'Cancel' : 'Draw'}
             </button>
           </div>
         </div>
@@ -358,139 +349,90 @@ export default function LeadManagementPage() {
               ))}
           </select>
 
-          {selectionMode && filteredLeads.length > 0 && (
-            <>
-              {/* Assign To User (only in assign mode) */}
-              {mode === 'assign' && (
-                <div className="mt-2">
-                  <label className="block text-sm font-medium text-[#2D3748] mb-2">
-                    Assign To
-                  </label>
-                  <select
-                    value={assignToUser}
-                    onChange={(e) => setAssignToUser(e.target.value)}
-                    className="w-full px-4 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A] focus:border-transparent"
-                  >
-                    <option value="">Select User...</option>
-                    {users.map(user => (
-                      <option key={user.id} value={user.id}>
-                        {user.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+          {/* Assign To User (only in assign mode) */}
+          {mode === 'assign' && (
+            <div className="mt-2">
+              <label className="block text-sm font-medium text-[#2D3748] mb-2">
+                Assign To
+              </label>
+              <select
+                value={assignToUser}
+                onChange={(e) => setAssignToUser(e.target.value)}
+                className="w-full px-4 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A] focus:border-transparent"
+              >
+                <option value="">Select User...</option>
+                {users.map(user => (
+                  <option key={user.id} value={user.id}>
+                    {user.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-              <div className="flex items-center gap-2 mt-2">
+          {/* Drawing Instructions */}
+          {drawingMode && (
+            <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-800 font-medium">
+                🖊️ Draw a polygon on the map to select leads
+              </p>
+              <p className="text-xs text-blue-600 mt-1">
+                Click to add points, double-click to finish
+              </p>
+            </div>
+          )}
+
+          {/* Selected Leads Count & Action Button */}
+          {selectedLeads.size > 0 && (
+            <div className="mt-2 space-y-2">
+              <div className="flex items-center justify-between p-2 bg-[#F7FAFC] rounded-lg">
+                <span className="text-sm font-medium text-[#2D3748]">
+                  {selectedLeads.size} lead{selectedLeads.size !== 1 ? 's' : ''} selected
+                </span>
                 <button
-                  onClick={selectAll}
-                  className="text-sm text-[#4299E1] hover:text-[#3182CE] font-medium"
+                  onClick={deselectAll}
+                  className="text-sm text-[#718096] hover:text-[#2D3748] font-medium"
                 >
-                  Select All ({filteredLeads.length})
+                  Clear
                 </button>
-                {selectedLeads.size > 0 && (
+              </div>
+
+              <button
+                onClick={mode === 'assign' ? handleBulkAssign : handleBulkUnclaim}
+                disabled={isDeleting || (mode === 'assign' && !assignToUser)}
+                className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                  isDeleting || (mode === 'assign' && !assignToUser)
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
+                }`}
+              >
+                {mode === 'assign' ? (
                   <>
-                    <span className="text-[#CBD5E0]">•</span>
-                    <button
-                      onClick={deselectAll}
-                      className="text-sm text-[#718096] hover:text-[#2D3748] font-medium"
-                    >
-                      Deselect All
-                    </button>
+                    <Users className="w-4 h-4" />
+                    Assign {selectedLeads.size} Lead{selectedLeads.size !== 1 ? 's' : ''}
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Unclaim {selectedLeads.size} Lead{selectedLeads.size !== 1 ? 's' : ''}
                   </>
                 )}
-              </div>
-              {selectedLeads.size > 0 && (
-                <button
-                  onClick={mode === 'assign' ? handleBulkAssign : handleBulkUnclaim}
-                  disabled={isDeleting || (mode === 'assign' && !assignToUser)}
-                  className={`mt-2 w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                    isDeleting || (mode === 'assign' && !assignToUser)
-                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                      : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
-                  }`}
-                >
-                  {mode === 'assign' ? (
-                    <>
-                      <Users className="w-4 h-4" />
-                      Assign {selectedLeads.size} Lead{selectedLeads.size !== 1 ? 's' : ''}
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4" />
-                      Unclaim {selectedLeads.size} Lead{selectedLeads.size !== 1 ? 's' : ''}
-                    </>
-                  )}
-                </button>
-              )}
-            </>
+              </button>
+            </div>
           )}
         </div>
       </header>
 
       {/* Map View */}
       <div className="flex-1 relative">
-        {!selectionMode ? (
-          <LeadMap
-            leads={filteredLeads}
-            currentUser={currentUser}
-            onLeadClick={(lead) => {}}
-          />
-        ) : (
-          /* List View for Selection */
-          <div className="h-full overflow-y-auto p-4 bg-[#F7FAFC]">
-            <div className="max-w-4xl mx-auto space-y-2">
-              {filteredLeads.map(lead => {
-                const isSelected = selectedLeads.has(lead.id);
-                return (
-                  <button
-                    key={lead.id}
-                    onClick={() => toggleLeadSelection(lead.id)}
-                    className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
-                      isSelected
-                        ? 'border-[#FF5F5A] bg-[#FFF5F5]'
-                        : 'border-[#E2E8F0] bg-white hover:border-[#CBD5E0]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
-                        isSelected
-                          ? 'border-[#FF5F5A] bg-[#FF5F5A]'
-                          : 'border-[#CBD5E0]'
-                      }`}>
-                        {isSelected && (
-                          <CheckSquare className="w-4 h-4 text-white" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 text-sm font-medium text-[#2D3748]">
-                          <MapPin className="w-4 h-4 text-[#718096]" />
-                          {lead.address}
-                        </div>
-                        <div className="text-xs text-[#718096] mt-1">
-                          Status: {lead.status || 'unclaimed'}
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Selection Count Overlay - Only show when NOT in selection mode */}
-        {!selectionMode && selectedLeads.size > 0 && (
-          <div className="absolute top-4 left-4 bg-white rounded-lg shadow-lg p-4 z-10">
-            <div className="flex items-center gap-2 text-sm">
-              <CheckSquare className="w-4 h-4 text-[#FF5F5A]" />
-              <span className="font-medium text-[#2D3748]">
-                {selectedLeads.size} selected
-              </span>
-            </div>
-          </div>
-        )}
-
+        <LeadMap
+          leads={filteredLeads}
+          currentUser={currentUser}
+          onLeadClick={(lead) => {}}
+          assignmentMode={drawingMode ? 'territory' : 'none'}
+          selectedLeadIdsForAssignment={Array.from(selectedLeads)}
+          onTerritoryDrawn={handleTerritoryDrawn}
+        />
       </div>
 
       {/* Progress Modal */}
