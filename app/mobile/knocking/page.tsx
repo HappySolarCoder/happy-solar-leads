@@ -51,21 +51,12 @@ export default function KnockingPage() {
   useEffect(() => {
     if (!currentUser || hasInitializedMap) return;
     
-    // Admins: center on Rochester for full oversight
+    // Admins: center on Rochester for full market oversight
     if (currentUser.role === 'admin') {
       setMapCenter([43.1566, -77.6088]); // Rochester, NY
       setHasInitializedMap(true);
     }
-    // Managers: center on their home location if set, otherwise Rochester
-    else if (currentUser.role === 'manager') {
-      if (currentUser.homeLat && currentUser.homeLng) {
-        setMapCenter([currentUser.homeLat, currentUser.homeLng]);
-      } else {
-        setMapCenter([43.1566, -77.6088]); // Rochester, NY (fallback)
-      }
-      setHasInitializedMap(true);
-    }
-    // Setters/Closers: center on GPS for field work
+    // Everyone else (managers, setters, closers): center on GPS location
     else if (gpsPosition) {
       setMapCenter([gpsPosition.lat, gpsPosition.lng]);
       setHasInitializedMap(true);

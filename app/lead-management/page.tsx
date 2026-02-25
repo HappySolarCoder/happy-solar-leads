@@ -84,12 +84,9 @@ export default function LeadManagementPage() {
     count: leads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
   }));
 
-  // Calculate map center based on user role
-  const mapCenter: [number, number] = currentUser 
-    ? currentUser.role === 'manager' && currentUser.homeLat && currentUser.homeLng
-      ? [currentUser.homeLat, currentUser.homeLng]
-      : [43.1566, -77.6088] // Rochester, NY (default/admin)
-    : [43.1566, -77.6088];
+  // Map center defaults to Rochester (for admin oversight or when GPS unavailable)
+  // GPS location can be used via browser geolocation if needed in future
+  const mapCenter: [number, number] = [43.1566, -77.6088]; // Rochester, NY
 
   const deselectAll = () => {
     setSelectedLeads(new Set());
