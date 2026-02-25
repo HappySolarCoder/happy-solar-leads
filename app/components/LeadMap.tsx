@@ -26,6 +26,7 @@ interface LeadMapProps {
   userPosition?: [number, number]; // GPS position for blue dot
   viewMode?: 'map' | 'assignments'; // Show territories in assignments view
   territories?: any[]; // Territory polygons to display
+  onTerritoryDelete?: (territoryId: string) => void; // Callback when territory deleted
 }
 
 export default function LeadMap({ 
@@ -43,6 +44,7 @@ export default function LeadMap({
   userPosition,
   viewMode = 'map',
   territories = [],
+  onTerritoryDelete,
 }: LeadMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -682,13 +684,47 @@ export default function LeadMap({
         }),
       });
 
-      polygon.bindPopup(`
-        <div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
+      const popupContent = `
+        <div style="padding:12px;font-family:system-ui,-apple-system,sans-serif;">
           <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:${territory.userColor};">${territory.userName}</h3>
           <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${territory.leadIds.length} leads assigned</p>
-          <p style="margin:0;font-size:12px;color:#6b7280;">Created: ${new Date(territory.createdAt).toLocaleDateString()}</p>
+          <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">Created: ${new Date(territory.createdAt).toLocaleDateString()}</p>
+          <button 
+            id="delete-territory-${territory.id}"
+            style="
+              width:100%;
+              padding:8px 16px;
+              background:#EF4444;
+              color:white;
+              border:none;
+              border-radius:6px;
+              font-size:14px;
+              font-weight:600;
+              cursor:pointer;
+              transition:background 0.2s;
+            "
+            onmouseover="this.style.background='#DC2626'"
+            onmouseout="this.style.background='#EF4444'"
+          >
+            Delete Territory
+          </button>
         </div>
-      `);
+      `;
+
+      polygon.bindPopup(popupContent);
+      
+      // Add delete button handler when popup opens
+      polygon.on('popupopen', () => {
+        const deleteBtn = document.getElementById(`delete-territory-${territory.id}`);
+        if (deleteBtn && onTerritoryDelete) {
+          deleteBtn.addEventListener('click', () => {
+            if (confirm(`Delete territory for ${territory.userName}?\n\nThis will unassign all ${territory.leadIds.length} leads but preserve their history.`)) {
+              onTerritoryDelete(territory.id);
+              map.closePopup();
+            }
+          });
+        }
+      });
 
       polygon.addTo(territoriesLayerRef.current!);
       label.addTo(territoriesLayerRef.current!);

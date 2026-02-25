@@ -8,7 +8,7 @@ import { getLeadsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
-import { getTerritoriesAsync, saveTerritory } from '@/app/utils/territories';
+import { getTerritoriesAsync, saveTerritory, deleteTerritoryAsync } from '@/app/utils/territories';
 import { Territory } from '@/app/types/territory';
 import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
 
@@ -176,6 +176,71 @@ export default function LeadManagementPage() {
 
   const deselectAll = () => {
     setSelectedLeads(new Set());
+  };
+
+  const handleTerritoryDelete = async (territoryId: string) => {
+    const territory = territories.find(t => t.id === territoryId);
+    if (!territory) return;
+
+    setIsDeleting(true);
+    setProgress({ current: 0, total: territory.leadIds.length });
+
+    try {
+      // 1. Unassign all leads in this territory (but preserve disposition history)
+      let processed = 0;
+      const batchSize = 30;
+
+      for (let i = 0; i < territory.leadIds.length; i += batchSize) {
+        const batch = territory.leadIds.slice(i, i + batchSize);
+        
+        await Promise.all(
+          batch.map(async (leadId) => {
+            try {
+              const lead = leads.find(l => l.id === leadId);
+              if (!lead) return;
+              
+              // Unassign but keep disposition, dispositionHistory, and all other data
+              const updatedLead: Lead = {
+                ...lead,
+                assignedTo: undefined,
+                assignedAt: undefined,
+                status: lead.disposition ? 'dispositioned' : 'available',
+                // Explicitly preserve disposition data
+                disposition: lead.disposition,
+                dispositionedAt: lead.dispositionedAt,
+                dispositionedBy: lead.dispositionedBy,
+                dispositionHistory: lead.dispositionHistory,
+              };
+              
+              await saveLeadAsync(updatedLead);
+              processed++;
+            } catch (err) {
+              console.error(`Failed to unassign lead ${leadId}:`, err);
+            }
+          })
+        );
+
+        setProgress({ current: processed, total: territory.leadIds.length });
+
+        if (i + batchSize < territory.leadIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      // 2. Delete the territory
+      await deleteTerritoryAsync(territoryId);
+
+      // 3. Reload data
+      await handleUpdate();
+
+      alert(`Territory deleted. Unassigned ${processed} leads.\n\nLead history and dispositions have been preserved.`);
+    } catch (error) {
+      console.error('Failed to delete territory:', error);
+      alert('Failed to delete territory. Please try again.');
+    } finally {
+      setIsDeleting(false);
+      setProgress({ current: 0, total: 0 });
+    }
   };
 
   const handleBulkUnclaim = async () => {
@@ -558,6 +623,7 @@ export default function LeadManagementPage() {
           onTerritoryDrawn={handleTerritoryDrawn}
           viewMode={viewMode}
           territories={territories}
+          onTerritoryDelete={handleTerritoryDelete}
         />
       </div>
 

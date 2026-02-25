@@ -121,6 +121,24 @@ export async function POST(request: NextRequest) {
 
       await batch.commit();
 
+      // Step 1.5: Delete all territories owned by this user
+      const territoriesSnapshot = await adminDb()
+        .collection('territories')
+        .where('userId', '==', userId)
+        .get();
+
+      let deletedTerritoriesCount = 0;
+      if (!territoriesSnapshot.empty) {
+        const territoryBatch = adminDb().batch();
+        
+        for (const doc of territoriesSnapshot.docs) {
+          territoryBatch.delete(doc.ref);
+          deletedTerritoriesCount++;
+        }
+        
+        await territoryBatch.commit();
+      }
+
       // Step 2: Also unclaim leads where user is assignedTo but not claimedBy
       const assignedSnapshot = await adminDb()
         .collection('leads')
@@ -164,7 +182,8 @@ export async function POST(request: NextRequest) {
 
       result.message = `User "${userName}" permanently deleted`;
       result.unclaimedLeadsCount = unclaimedCount;
-      result.note = 'Disposition history preserved for auditing';
+      result.deletedTerritoriesCount = deletedTerritoriesCount;
+      result.note = 'Disposition history preserved for auditing. Territories deleted.';
     }
 
     return NextResponse.json(result);

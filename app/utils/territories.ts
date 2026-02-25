@@ -33,9 +33,20 @@ export async function getTerritoriesAsync(): Promise<Territory[]> {
   }
 }
 
-export async function deleteTerritory(id: string): Promise<void> {
+export async function deleteTerritoryAsync(id: string): Promise<void> {
   if (!db) throw new Error('Firestore not initialized');
   
   const territoryRef = doc(db, 'territories', id);
   await deleteDoc(territoryRef);
+}
+
+export async function deleteTerritoriesByUserAsync(userId: string): Promise<void> {
+  if (!db) return;
+  
+  const territories = await getTerritoriesAsync();
+  const userTerritories = territories.filter(t => t.userId === userId);
+  
+  for (const territory of userTerritories) {
+    await deleteTerritoryAsync(territory.id);
+  }
 }
