@@ -44,10 +44,16 @@ export function getDefaultUserColor(index: number): string {
 
 /**
  * Ensure all users have colors assigned
+ * Auto-fixes colors not in the bright palette
  */
 export function ensureUserColors(users: any[]): any[] {
-  return users.map((user, index) => ({
-    ...user,
-    color: user.color || getDefaultUserColor(index),
-  }));
+  return users.map((user, index) => {
+    // If user has no color OR color not in bright palette, reassign
+    const hasValidColor = user.color && TERRITORY_COLORS.includes(user.color.toUpperCase());
+    
+    return {
+      ...user,
+      color: hasValidColor ? user.color : getDefaultUserColor(index),
+    };
+  });
 }
