@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { TrendingUp, Target, DollarSign, Award, ArrowLeft, Users, Calendar, Trophy, BarChart3 } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User } from '@/app/types';
+import { Disposition } from '@/app/types/disposition';
 import { startOfToday, startOfWeek, startOfMonth, isAfter, format } from 'date-fns';
 
 interface SetterMetrics {
@@ -17,16 +19,19 @@ interface SetterMetrics {
   sales: number; // sale disposition
   notHome: number;
   notInterested: number;
+  goBacksScheduled: number; // Go-backs scheduled by this setter
+  goBacksConverted: number; // Go-backs that converted to appointments
 }
 
-type TimeFilter = 'today' | 'week' | 'month' | 'all';
-type SortBy = 'knocks' | 'conversations' | 'appointments';
+type TimeFilter = 'today' | 'yesterday' | 'last7days' | 'thisweek' | 'lastweek' | 'thismonth' | 'lastmonth' | 'all';
+type SortBy = 'knocks' | 'conversations' | 'appointments' | 'goBacks';
 
 export default function DataDashboard() {
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [sortBy, setSortBy] = useState<SortBy>('knocks');
@@ -42,9 +47,11 @@ export default function DataDashboard() {
 
       const loadedLeads = await getLeadsAsync();
       const loadedUsers = await getUsersAsync();
+      const loadedDispositions = await getDispositionsAsync();
 
       setLeads(loadedLeads);
       setUsers(loadedUsers);
+      setDispositions(loadedDispositions);
       setIsLoading(false);
     }
 
@@ -61,15 +68,32 @@ export default function DataDashboard() {
       case 'today':
         cutoffDate = startOfToday();
         break;
-      case 'week':
+      case 'yesterday':
+        cutoffDate = new Date(startOfToday().getTime() - 86400000);
+        break;
+      case 'last7days':
+        cutoffDate = new Date(Date.now() - 7 * 86400000);
+        break;
+      case 'thisweek':
         cutoffDate = startOfWeek(new Date());
         break;
-      case 'month':
+      case 'lastweek':
+        cutoffDate = new Date(startOfWeek(new Date()).getTime() - 7 * 86400000);
+        break;
+      case 'thismonth':
         cutoffDate = startOfMonth(new Date());
+        break;
+      case 'lastmonth':
+        cutoffDate = new Date(startOfMonth(new Date()).getTime() - 30 * 86400000);
         break;
       default:
         cutoffDate = new Date(0); // All time
     }
+
+    // Get door knock statuses from dispositions
+    const doorKnockStatusIds = dispositions
+      .filter(d => d.countsAsDoorKnock)
+      .map(d => d.id.toLowerCase());
 
     // Filter leads by time
     const filteredLeads = leads.filter(lead => {
@@ -93,13 +117,16 @@ export default function DataDashboard() {
           sales: 0,
           notHome: 0,
           notInterested: 0,
+          goBacksScheduled: 0,
+          goBacksConverted: 0,
         });
       }
 
       const metrics = setterMap.get(userId)!;
+      const leadStatus = lead.status?.toLowerCase() || '';
 
-      // Count knocks (any disposition that counts as a door knock)
-      if (lead.status && ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(lead.status)) {
+      // Count knocks (disposition where countsAsDoorKnock === true)
+      if (doorKnockStatusIds.includes(leadStatus)) {
         metrics.knocks++;
       }
 
@@ -124,11 +151,26 @@ export default function DataDashboard() {
           metrics.conversations++;
           break;
       }
+
+      // Track go-backs: leads that were scheduled for go-back by this setter
+      if (lead.goBackScheduledBy === userId) {
+        metrics.goBacksScheduled++;
+        // If this go-back converted to appointment or sale, count it
+        if (lead.status === 'appointment' || lead.status === 'sale') {
+          metrics.goBacksConverted++;
+        }
+      }
     });
 
     // Convert to array and sort
     const metricsArray = Array.from(setterMap.values());
-    metricsArray.sort((a, b) => b[sortBy] - a[sortBy]);
+    
+    // Sort by selected metric
+    if (sortBy === 'goBacks') {
+      metricsArray.sort((a, b) => b.goBacksScheduled - a.goBacksScheduled);
+    } else {
+      metricsArray.sort((a, b) => b[sortBy] - a[sortBy]);
+    }
 
     return metricsArray;
   };
@@ -144,8 +186,10 @@ export default function DataDashboard() {
       sales: acc.sales + setter.sales,
       notHome: acc.notHome + setter.notHome,
       notInterested: acc.notInterested + setter.notInterested,
+      goBacksScheduled: acc.goBacksScheduled + setter.goBacksScheduled,
+      goBacksConverted: acc.goBacksConverted + setter.goBacksConverted,
     }),
-    { knocks: 0, conversations: 0, appointments: 0, sales: 0, notHome: 0, notInterested: 0 }
+    { knocks: 0, conversations: 0, appointments: 0, sales: 0, notHome: 0, notInterested: 0, goBacksScheduled: 0, goBacksConverted: 0 }
   );
 
   const calculateRate = (num: number, denom: number) => {
@@ -177,34 +221,54 @@ export default function DataDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F7FAFC] p-4">
+    <div className="min-h-screen bg-[#F7FAFC] p-2 sm:p-4">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6">
-          <button
-            onClick={() => router.push('/tools')}
-            className="inline-flex items-center gap-2 text-[#4299E1] hover:text-[#3182CE] mb-4"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Tools
-          </button>
-          <div>
-            <h1 className="text-2xl lg:text-3xl font-bold text-[#2D3748] mb-2">Team Performance Dashboard</h1>
-            <p className="text-sm lg:text-base text-[#718096] mb-4">Real-time setter metrics and analytics</p>
+        <div className="mb-4 sm:mb-6">
+          {/* Logo & Back - Top Row */}
+          <div className="flex items-center justify-between mb-3 sm:mb-4">
+            <button
+              onClick={() => router.push('/tools')}
+              className="inline-flex items-center gap-2 text-[#4299E1] hover:text-[#3182CE] text-sm"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Back</span>
+            </button>
+            <img 
+              src="/raydar-icon.png" 
+              alt="Raydar" 
+              className="h-8 w-8 sm:h-10 sm:w-10 object-contain"
+            />
+            <div className="w-16 sm:w-20"></div>
+          </div>
+          
+          {/* Centered Title & Filters */}
+          <div className="text-center">
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-[#2D3748] mb-1 sm:mb-2">Team Performance</h1>
+            <p className="text-xs sm:text-sm text-[#718096] mb-3 sm:mb-4">Real-time setter metrics</p>
             
             {/* Time Filter */}
-            <div className="flex items-center gap-1 bg-white p-1 rounded-lg shadow-sm overflow-x-auto">
-              {(['today', 'week', 'month', 'all'] as TimeFilter[]).map((filter) => (
+            <div className="flex flex-wrap justify-center gap-1 sm:gap-2 bg-white p-2 rounded-lg shadow-sm">
+              {([
+                { key: 'today', label: 'Today' },
+                { key: 'yesterday', label: 'Yesterday' },
+                { key: 'last7days', label: '7 Days' },
+                { key: 'thisweek', label: 'This Wk' },
+                { key: 'lastweek', label: 'Last Wk' },
+                { key: 'thismonth', label: 'This Mo' },
+                { key: 'lastmonth', label: 'Last Mo' },
+                { key: 'all', label: 'All' },
+              ] as { key: TimeFilter; label: string }[]).map((f) => (
                 <button
-                  key={filter}
-                  onClick={() => setTimeFilter(filter)}
-                  className={`px-3 lg:px-4 py-2 rounded-md text-xs lg:text-sm font-medium transition-colors whitespace-nowrap ${
-                    timeFilter === filter
+                  key={f.key}
+                  onClick={() => setTimeFilter(f.key)}
+                  className={`px-2 sm:px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+                    timeFilter === f.key
                       ? 'bg-[#FF5F5A] text-white'
-                      : 'text-[#718096] hover:text-[#2D3748]'
+                      : 'text-[#718096] hover:text-[#2D3748] bg-gray-100'
                   }`}
                 >
-                  {filter === 'today' ? 'Today' : filter === 'week' ? 'Week' : filter === 'month' ? 'Month' : 'All'}
+                  {f.label}
                 </button>
               ))}
             </div>
@@ -212,37 +276,59 @@ export default function DataDashboard() {
         </div>
 
         {/* Team Overview Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
           <div className="bg-white rounded-lg p-4 shadow-sm">
             <div className="flex items-center gap-2 text-[#718096] mb-1">
               <Target className="w-4 h-4" />
               <span className="text-sm font-medium">Total Knocks</span>
             </div>
             <div className="text-3xl font-bold text-[#2D3748]">{teamTotals.knocks}</div>
-            <div className="text-xs text-[#718096] mt-1">
-              {teamTotals.notHome} not home, {teamTotals.notInterested} not interested
+            <div className="text-xs text-[#718096] mt-1 truncate">
+              {teamTotals.notHome} NH, {teamTotals.notInterested} NI
             </div>
           </div>
 
           <div className="bg-white rounded-lg p-4 shadow-sm">
             <div className="flex items-center gap-2 text-[#718096] mb-1">
               <TrendingUp className="w-4 h-4" />
-              <span className="text-sm font-medium">Conversations</span>
+              <span className="text-sm font-medium">Convos</span>
             </div>
             <div className="text-3xl font-bold text-[#4299E1]">{teamTotals.conversations}</div>
             <div className="text-xs text-[#718096] mt-1">
-              {calculateRate(teamTotals.conversations, teamTotals.knocks)}% conversion rate
+              {calculateRate(teamTotals.conversations, teamTotals.knocks)}% Rate
             </div>
           </div>
 
           <div className="bg-white rounded-lg p-4 shadow-sm">
             <div className="flex items-center gap-2 text-[#718096] mb-1">
               <Award className="w-4 h-4" />
-              <span className="text-sm font-medium">Appointments</span>
+              <span className="text-sm font-medium">Appts</span>
             </div>
             <div className="text-3xl font-bold text-[#805AD5]">{teamTotals.appointments}</div>
             <div className="text-xs text-[#718096] mt-1">
-              {calculateRate(teamTotals.appointments, teamTotals.conversations)}% from conversations
+              {calculateRate(teamTotals.appointments, teamTotals.conversations)}% of Convos
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-[#718096] mb-1">
+              <BarChart3 className="w-4 h-4" />
+              <span className="text-sm font-medium">Appt % Knocks</span>
+            </div>
+            <div className="text-3xl font-bold text-[#DD6B20]">{calculateRate(teamTotals.appointments, teamTotals.knocks)}%</div>
+            <div className="text-xs text-[#718096] mt-1">
+              {calculateRate(teamTotals.appointments, teamTotals.knocks)}% of Knocks
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg p-4 shadow-sm border-2 border-[#F6E05E]">
+            <div className="flex items-center gap-2 text-[#718096] mb-1">
+              <Calendar className="w-4 h-4 text-[#D69E2E]" />
+              <span className="text-sm font-medium">Go-Backs</span>
+            </div>
+            <div className="text-3xl font-bold text-[#D69E2E]">{teamTotals.goBacksScheduled}</div>
+            <div className="text-xs text-[#718096] mt-1">
+              {teamTotals.goBacksConverted} converted ({calculateRate(teamTotals.goBacksConverted, teamTotals.goBacksScheduled)}%)
             </div>
           </div>
         </div>
@@ -348,7 +434,7 @@ export default function DataDashboard() {
           <div className="px-4 lg:px-6 py-3 bg-[#F7FAFC] border-b border-[#E2E8F0] overflow-x-auto">
             <div className="flex items-center gap-2 text-xs lg:text-sm min-w-max">
               <span className="text-[#718096] hidden sm:inline">Sort by:</span>
-              {(['knocks', 'conversations', 'appointments'] as const).map((sort) => (
+              {(['knocks', 'conversations', 'appointments', 'goBacks'] as const).map((sort) => (
                 <button
                   key={sort}
                   onClick={() => setSortBy(sort)}
@@ -358,46 +444,54 @@ export default function DataDashboard() {
                       : 'bg-white text-[#718096] hover:text-[#2D3748]'
                   }`}
                 >
-                  {sort === 'knocks' ? 'Knocks' : sort === 'conversations' ? 'Convos' : 'Appts'}
+                  {sort === 'knocks' ? 'Knocks' : sort === 'conversations' ? 'Convos' : sort === 'appointments' ? 'Appts' : 'Go-Backs'}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="overflow-x-auto -mx-4 lg:mx-0">
-            <table className="w-full min-w-[640px]">
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <table className="w-full min-w-[500px] sm:min-w-[640px]">
               <thead className="bg-[#F7FAFC] text-xs font-semibold text-[#718096] uppercase">
                 <tr>
-                  <th className="px-3 lg:px-6 py-3 text-left">Setter</th>
-                  <th className="px-2 lg:px-6 py-3 text-center">Knocks</th>
-                  <th className="px-2 lg:px-6 py-3 text-center">Convos</th>
-                  <th className="px-2 lg:px-6 py-3 text-center hidden lg:table-cell">Conv %</th>
-                  <th className="px-2 lg:px-6 py-3 text-center">Appts</th>
-                  <th className="px-2 lg:px-6 py-3 text-center hidden lg:table-cell">Appt %</th>
+                  <th className="px-2 py-3 text-left">Setter</th>
+                  <th className="px-1 py-3 text-center">Knocks</th>
+                  <th className="px-1 py-3 text-center">Convos</th>
+                  <th className="px-1 py-3 text-center hidden md:table-cell">Conv%</th>
+                  <th className="px-1 py-3 text-center">Appts</th>
+                  <th className="px-1 py-3 text-center hidden md:table-cell">Appt%</th>
+                  <th className="px-1 py-3 text-center hidden lg:table-cell">GB</th>
+                  <th className="px-1 py-3 text-center hidden lg:table-cell">GB%</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E2E8F0]">
                 {setterMetrics.map((setter) => {
                   const convRate = parseFloat(calculateRate(setter.conversations, setter.knocks));
-                  const apptRate = parseFloat(calculateRate(setter.appointments, setter.conversations));
-                  const closeRate = parseFloat(calculateRate(setter.sales, setter.appointments));
+                  const apptRateConvos = parseFloat(calculateRate(setter.appointments, setter.conversations));
+                  const gbConvRate = parseFloat(calculateRate(setter.goBacksConverted, setter.goBacksScheduled));
 
                   return (
                     <tr key={setter.userId} className="hover:bg-[#F7FAFC] transition-colors">
-                      <td className="px-3 lg:px-6 py-3 lg:py-4">
-                        <div className="font-medium text-[#2D3748] text-sm">{setter.userName}</div>
+                      <td className="px-2 py-3">
+                        <div className="font-medium text-[#2D3748] text-sm truncate max-w-[100px] sm:max-w-[150px]">{setter.userName}</div>
                       </td>
-                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center font-semibold text-[#2D3748] text-sm">{setter.knocks}</td>
-                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center font-semibold text-[#4299E1] text-sm">{setter.conversations}</td>
-                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center hidden lg:table-cell">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${getPerformanceColor(convRate, 'conversation')}`}>
+                      <td className="px-1 py-3 text-center font-semibold text-[#2D3748] text-sm">{setter.knocks}</td>
+                      <td className="px-1 py-3 text-center font-semibold text-[#4299E1] text-sm">{setter.conversations}</td>
+                      <td className="px-1 py-3 text-center hidden md:table-cell">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${getPerformanceColor(convRate, 'conversation')}`}>
                           {convRate}%
                         </span>
                       </td>
-                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center font-semibold text-[#805AD5] text-sm">{setter.appointments}</td>
-                      <td className="px-2 lg:px-6 py-3 lg:py-4 text-center hidden lg:table-cell">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${getPerformanceColor(apptRate, 'appointment')}`}>
-                          {apptRate}%
+                      <td className="px-1 py-3 text-center font-semibold text-[#805AD5] text-sm">{setter.appointments}</td>
+                      <td className="px-1 py-3 text-center hidden md:table-cell">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${getPerformanceColor(apptRateConvos, 'appointment')}`}>
+                          {apptRateConvos}%
+                        </span>
+                      </td>
+                      <td className="px-1 py-3 text-center hidden lg:table-cell font-semibold text-[#D69E2E] text-sm">{setter.goBacksScheduled}</td>
+                      <td className="px-1 py-3 text-center hidden lg:table-cell">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${getPerformanceColor(gbConvRate, 'appointment')}`}>
+                          {gbConvRate}%
                         </span>
                       </td>
                     </tr>

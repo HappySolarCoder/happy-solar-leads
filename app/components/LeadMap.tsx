@@ -10,6 +10,8 @@ import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
 import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
 import AddLeadModal from './AddLeadModal';
+import { getTerritoriesAsync } from '@/app/utils/territories';
+import { findLeadTerritory } from '@/app/utils/territoryAssignment';
 import { formatTimeEST } from '@/app/utils/timezone';
 
 interface UserRoute {
@@ -29,6 +31,8 @@ interface LeadMapProps {
   userRoutes?: UserRoute[]; // Multiple routes (one per user) for activity tracking
   center?: [number, number];
   zoom?: number;
+  onMapMove?: (center: [number, number], zoom: number) => void; // Callback when map moves
+  onMapTypeChange?: (mapType: 'street' | 'satellite') => void; // Callback when map type changes
   assignmentMode?: 'none' | 'manual' | 'territory';
   selectedLeadIdsForAssignment?: string[];
   onTerritoryDrawn?: (leadIds: string[], polygon: [number, number][]) => void;
@@ -49,6 +53,8 @@ export default function LeadMap({
   userRoutes = [],
   center = [43.1566, -77.6088], // Rochester, NY - default for admin oversight
   zoom = 11,
+  onMapMove,
+  onMapTypeChange,
   assignmentMode = 'none',
   selectedLeadIdsForAssignment = [],
   onTerritoryDrawn,
@@ -153,7 +159,7 @@ export default function LeadMap({
       center,
       zoom,
       zoomControl: true,
-      attributionControl: true,
+      attributionControl: false,
     });
 
     // Initialize with satellite view
@@ -187,6 +193,7 @@ export default function LeadMap({
     // Listen for zoom changes - update tier only when crossing thresholds
     map.on('zoomend', () => {
       const currentZoom = map.getZoom();
+      const newCenter: [number, number] = [map.getCenter().lat, map.getCenter().lng];
       setMapZoom(currentZoom);
       
       // Calculate zoom tier (only re-render markers when tier changes, not on every zoom)
@@ -198,11 +205,23 @@ export default function LeadMap({
       
       setZoomTier(newTier);
       setViewportKey(prev => prev + 1); // Trigger viewport update on zoom
+      
+      // Notify parent of map move
+      if (onMapMove) {
+        onMapMove(newCenter, currentZoom);
+      }
     });
 
     // Listen for map panning - update viewport to load new markers
     map.on('moveend', () => {
+      const newCenter: [number, number] = [map.getCenter().lat, map.getCenter().lng];
+      const currentZoom = map.getZoom();
       setViewportKey(prev => prev + 1);
+      
+      // Notify parent of map move
+      if (onMapMove) {
+        onMapMove(newCenter, currentZoom);
+      }
     });
 
     // Handle right-click to drop pin (desktop)
@@ -922,6 +941,28 @@ export default function LeadMap({
       const { saveLeadAsync } = await import('@/app/utils/storage');
       await saveLeadAsync(newLead);
 
+      // Auto-assign to territory user if within a territory
+      if (newLead.lat && newLead.lng) {
+        try {
+          const territories = await getTerritoriesAsync();
+          if (territories.length > 0) {
+            const territory = findLeadTerritory(newLead, territories);
+            if (territory?.userId) {
+              const updatedLead: Lead = {
+                ...newLead,
+                assignedTo: territory.userId,
+                assignedAt: new Date(),
+                status: 'assigned',
+              };
+              await saveLeadAsync(updatedLead);
+              console.log('[LeadMap] Auto-assigned lead to territory user:', territory.userId);
+            }
+          }
+        } catch (err) {
+          console.warn('[LeadMap] Territory auto-assignment failed:', err);
+        }
+      }
+
       // Run Solar API in background
       if (newLead.lat && newLead.lng) {
         fetch('/api/solar', {
@@ -988,7 +1029,11 @@ export default function LeadMap({
       
       {/* Map Type Toggle Button */}
       <button
-        onClick={() => setMapType(mapType === 'satellite' ? 'street' : 'satellite')}
+        onClick={() => {
+          const newType = mapType === 'satellite' ? 'street' : 'satellite';
+          setMapType(newType);
+          if (onMapTypeChange) onMapTypeChange(newType);
+        }}
         className="absolute top-6 right-6 px-4 py-2 bg-white hover:bg-[#FF5F5A] border-2 border-[#E2E8F0] rounded-lg shadow-lg flex items-center gap-2 text-[#2D3748] hover:text-white transition-all duration-200 hover:scale-105 active:scale-95 z-20 font-medium text-sm"
         title={`Switch to ${mapType === 'satellite' ? 'street' : 'satellite'} view`}
         style={{ boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }}

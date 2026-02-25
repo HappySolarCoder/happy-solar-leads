@@ -322,8 +322,11 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       logToFile('INFO', 'UploadModal', 'Checking territory auto-assignment');
       try {
         const territories = await getTerritoriesAsync();
+        console.log('[UploadModal] Territories loaded:', territories.length, territories.map(t => ({ id: t.id, userId: t.userId, userName: t.userName })));
+        
         if (territories.length > 0) {
           const assignments = autoAssignLeadsByTerritories(newLeads, territories);
+          console.log('[UploadModal] Territory assignments found:', assignments.length, assignments.map(a => ({ leadId: a.lead.id, territoryUserId: a.territory.userId })));
           
           if (assignments.length > 0) {
             logToFile('INFO', 'UploadModal', 'Auto-assigning leads by territory', { count: assignments.length });
@@ -340,7 +343,11 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             }
             
             logToFile('INFO', 'UploadModal', 'Territory auto-assignment complete', { assigned: assignments.length });
+          } else {
+            console.log('[UploadModal] No territory matches - leads may be outside all territory boundaries');
           }
+        } else {
+          console.log('[UploadModal] No territories found in database');
         }
       } catch (err) {
         logToFile('WARN', 'UploadModal', 'Territory auto-assignment failed', { error: err });

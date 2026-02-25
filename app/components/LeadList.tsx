@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { Lead, LeadStatus, STATUS_LABELS, STATUS_COLORS } from '@/app/types';
-import { Search, Filter, MapPin, User, Clock } from 'lucide-react';
+import { Search, Filter, MapPin, User, Clock, TrendingUp } from 'lucide-react';
+import { calculateKnockabilityScore, getKnockabilityColor, getKnockabilityLabel } from '@/app/utils/knockability';
 
 interface LeadListProps {
   leads: Lead[];
@@ -270,6 +271,21 @@ function LeadCard({ lead, isSelected, onClick, currentUserId, compact }: LeadCar
           >
             {STATUS_LABELS[lead.status]}
           </span>
+
+          {/* Knockability Score */}
+          {(() => {
+            const score = calculateKnockabilityScore(lead);
+            const color = getKnockabilityColor(score.total);
+            const label = getKnockabilityLabel(score.total);
+            return (
+              <div className="flex items-center gap-1" title={score.reasons.join(', ')}>
+                <TrendingUp className="w-3 h-3" style={{ color }} />
+                <span className="text-xs font-semibold" style={{ color }}>
+                  {score.total}
+                </span>
+              </div>
+            );
+          })()}
           
           {lead.claimedBy && (
             <div className="flex items-center gap-1 text-xs text-gray-400">

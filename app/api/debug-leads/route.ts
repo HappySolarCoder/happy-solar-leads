@@ -1,0 +1,61 @@
+import { NextResponse } from 'next/server';
+import { getFirestore, collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { initializeApp, getApps } from 'firebase/app';
+
+const firebaseConfig = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+};
+
+function getDb() {
+  const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+  return getFirestore(app);
+}
+
+export async function GET() {
+  try {
+    const db = getDb();
+    
+    // Get territories
+    const territoriesSnapshot = await getDocs(query(collection(db, 'territories'), orderBy('createdAt', 'desc')));
+    const territories = territoriesSnapshot.docs.map(doc => {
+      const data = doc.data() as any;
+      return {
+        id: doc.id,
+        ...data,
+      };
+    });
+    
+    // Get a sample of leads to test
+    const leadsSnapshot = await getDocs(query(collection(db, 'leads'), orderBy('createdAt', 'desc')));
+    const leads = leadsSnapshot.docs.slice(0, 20).map(doc => {
+      const data = doc.data() as any;
+      return {
+        id: doc.id,
+        ...data,
+      };
+    });
+    
+    return NextResponse.json({ 
+      territories: territories.map(t => ({
+        id: t.id,
+        userName: t.userName,
+        userId: t.userId,
+        polygonPoints: t.polygon?.length || 0,
+      })),
+      sampleLeads: leads.map(l => ({
+        id: l.id,
+        lat: l.lat,
+        lng: l.lng,
+        address: l.address,
+        assignedTo: l.assignedTo,
+      }))
+    });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}

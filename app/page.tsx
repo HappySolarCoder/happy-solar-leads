@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Plus, Upload, Users, Menu, X, Map as MapIcon, List, Navigation, Wand2, UserPlus, Shield } from 'lucide-react';
+import { Plus, Upload, Users, Menu, X, Map as MapIcon, List, Navigation, Wand2, UserPlus, Shield, TrendingUp } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { sortByKnockability } from '@/app/utils/knockability';
 import LeadList from '@/app/components/LeadList';
 import UploadModal from '@/app/components/UploadModal';
 import UserOnboarding from '@/app/components/UserOnboarding';
@@ -15,6 +16,7 @@ import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
+import { loadUserSession, saveUserSession, getDefaultSession } from '@/app/utils/userSession';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -45,6 +47,12 @@ export default function Home() {
   const [setterFilter, setSetterFilter] = useState<string>('all');
   const [solarFilter, setSolarFilter] = useState<'all' | 'solid' | 'good' | 'great'>('all');
   const [dispositionFilter, setDispositionFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'default' | 'knockability' | 'newest' | 'oldest'>('default');
+  
+  // Map state - persisted to user session
+  const [mapCenter, setMapCenter] = useState<[number, number]>([43.1566, -77.6088]);
+  const [mapZoom, setMapZoom] = useState(11);
+  const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite');
   
   // Mobile detection - redirect to mobile view (but allow admin pages)
   useEffect(() => {
@@ -78,6 +86,20 @@ export default function Home() {
       
       setCurrentUser(user);
       
+      // Load user session (map position, filters, etc.)
+      const session = await loadUserSession(user.id);
+      if (session) {
+        console.log('[Page] Restoring user session');
+        if (session.viewMode) setViewMode(session.viewMode);
+        if (session.sidebarOpen !== undefined) setSidebarOpen(session.sidebarOpen);
+        if (session.setterFilter) setSetterFilter(session.setterFilter);
+        if (session.solarFilter) setSolarFilter(session.solarFilter as any);
+        if (session.dispositionFilter) setDispositionFilter(session.dispositionFilter);
+        if (session.mapCenter) setMapCenter([session.mapCenter.lat, session.mapCenter.lng]);
+        if (session.mapZoom) setMapZoom(session.mapZoom);
+        if (session.mapType) setMapType(session.mapType);
+      }
+      
       // Show map immediately with empty leads, then load in background
       // This prevents white screen while loading 18K+ leads
       setLeads([]);
@@ -98,6 +120,26 @@ export default function Home() {
     const loadedLeads = await getLeadsAsync();
     setLeads(loadedLeads);
   }, []);
+
+  // Save session state when it changes (debounced)
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    
+    const timeout = setTimeout(() => {
+      saveUserSession(currentUser.id, {
+        viewMode,
+        sidebarOpen,
+        setterFilter,
+        solarFilter,
+        dispositionFilter,
+        mapCenter: { lat: mapCenter[0], lng: mapCenter[1] },
+        mapZoom,
+        mapType,
+      });
+    }, 500); // Debounce to avoid too many writes
+    
+    return () => clearTimeout(timeout);
+  }, [viewMode, sidebarOpen, setterFilter, solarFilter, dispositionFilter, mapCenter, mapZoom, mapType, currentUser?.id]);
 
   // Handle user completion
   const handleUserComplete = (user: User) => {
@@ -196,6 +238,15 @@ export default function Home() {
   // Filter by disposition if selected
   if (dispositionFilter !== 'all') {
     filteredLeads = filteredLeads.filter(l => l.disposition === dispositionFilter);
+  }
+
+  // Sort leads if selected
+  if (sortBy === 'knockability') {
+    filteredLeads = sortByKnockability(filteredLeads);
+  } else if (sortBy === 'newest') {
+    filteredLeads = [...filteredLeads].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } else if (sortBy === 'oldest') {
+    filteredLeads = [...filteredLeads].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   }
 
   // Delete a poor lead
@@ -327,6 +378,24 @@ export default function Home() {
 
             {/* Action Buttons */}
             <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+              {/* Sort Dropdown - Always visible */}
+              <div className="flex items-center">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-all duration-150 cursor-pointer ${
+                    sortBy !== 'default'
+                      ? 'bg-[#EBF8FF] border-[#4299E1] text-[#2B6CB0]'
+                      : 'bg-[#F7FAFC] border-[#E2E8F0] text-[#718096] hover:text-[#2D3748]'
+                  }`}
+                >
+                  <option value="default">Sort</option>
+                  <option value="knockability">🔥 Best Bets</option>
+                  <option value="newest">Newest</option>
+                  <option value="oldest">Oldest</option>
+                </select>
+              </div>
+
               {/* View Mode Toggle - Flat Design */}
               <div className="hidden sm:flex items-center bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg p-1">
                 <button
@@ -420,6 +489,13 @@ export default function Home() {
               selectedLeadIdsForAssignment={selectedLeadIdsForAssignment}
               onTerritoryDrawn={handleTerritoryDrawn}
               onLeadAdded={refreshLeads}
+              center={mapCenter}
+              zoom={mapZoom}
+              onMapMove={(center, zoom) => {
+                setMapCenter(center);
+                setMapZoom(zoom);
+              }}
+              onMapTypeChange={setMapType}
             />
 
             {/* Mobile Floating Action Button */}

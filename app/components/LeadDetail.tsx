@@ -556,6 +556,19 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             )}
           </div>
 
+          {/* Book Appointment Manually */}
+          <div className="mt-4 pt-4 border-t border-[#E2E8F0]">
+            <a
+              href="https://api.leadconnectorhq.com/widget/groups/happy-solar-booking-hub"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-[#38A169] hover:bg-[#2F855A] text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              <Calendar className="w-4 h-4" />
+              Book Appointment Manually
+            </a>
+          </div>
+
           {/* Disposition History */}
           {lead.dispositionHistory && lead.dispositionHistory.length > 0 && (
             <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
@@ -609,6 +622,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           onClose={() => setShowGoBackSchedule(false)}
           onSave={handleGoBackSave}
           leadAddress={lead.address}
+          currentDisposition={lead.status}
         />
       )}
       

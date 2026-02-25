@@ -9,7 +9,16 @@ interface GoBackScheduleModalProps {
   onClose: () => void;
   onSave: (data: GoBackScheduleData) => void;
   leadAddress: string;
+  currentDisposition?: string; // The disposition that triggered this go-back
 }
+
+// Recommended go-back timing based on disposition
+const RECOMMENDED_TIMING: Record<string, { days: number; reason: string }> = {
+  'not-home': { days: 1, reason: 'Catch them at home' },
+  'interested': { days: 2, reason: 'Strike while iron is hot' },
+  'not-interested': { days: 7, reason: 'Let them cool off' },
+  'default': { days: 2, reason: 'Follow up soon' },
+};
 
 export interface GoBackScheduleData {
   date: Date;
@@ -22,6 +31,7 @@ export default function GoBackScheduleModal({
   onClose,
   onSave,
   leadAddress,
+  currentDisposition,
 }: GoBackScheduleModalProps) {
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedTime, setSelectedTime] = useState<string>('');
@@ -79,6 +89,21 @@ export default function GoBackScheduleModal({
             <p className="text-sm text-[#718096] mb-1">Lead Address</p>
             <p className="font-medium text-[#2D3748]">{leadAddress}</p>
           </div>
+
+          {/* Smart Recommendation */}
+          {currentDisposition && RECOMMENDED_TIMING[currentDisposition] && (
+            <div className="bg-gradient-to-r from-[#EBF8FF] to-[#FED7E2] border border-[#90CDF4] rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 w-10 h-10 bg-[#4299E1] rounded-full flex items-center justify-center">
+                  <Calendar className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <p className="font-semibold text-[#2D3748]">Recommended: {RECOMMENDED_TIMING[currentDisposition].days} day{RECOMMENDED_TIMING[currentDisposition].days > 1 ? 's' : ''}</p>
+                  <p className="text-sm text-[#4A5568]">{RECOMMENDED_TIMING[currentDisposition].reason}</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Date Picker */}
           <div>

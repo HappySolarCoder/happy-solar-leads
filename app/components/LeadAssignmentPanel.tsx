@@ -111,9 +111,18 @@ export default function LeadAssignmentPanel({
         }}
       />
 
+      {/* Floating Draw Territory Button - Mobile */}
+      <button
+        onClick={() => handleModeChange('territory')}
+        className="fixed bottom-6 right-6 z-50 sm:hidden bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-full p-4 shadow-lg flex items-center gap-2"
+      >
+        <Pencil className="w-6 h-6" />
+        <span className="font-semibold">Draw</span>
+      </button>
+
       {/* Panel */}
       <div 
-        className="fixed right-0 top-0 bottom-0 w-96 bg-white shadow-2xl z-40 flex flex-col"
+        className="fixed right-0 top-0 bottom-0 w-full sm:w-96 bg-white shadow-2xl z-40 flex flex-col"
         style={{ pointerEvents: 'auto' }} // Always receive clicks on panel itself
         onClick={(e) => e.stopPropagation()}
       >
