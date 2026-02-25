@@ -5,6 +5,8 @@ import dynamic from 'next/dynamic';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/app/utils/firebase';
 import { getCurrentAuthUser } from '@/app/utils/auth';
+import { getLeadsAsync } from '@/app/utils/storage';
+import { startOfToday, isAfter } from 'date-fns';
 import Image from 'next/image';
 
 const LeafletMap = dynamic(() => import('@/app/components/TeamMapView'), {
@@ -39,10 +41,32 @@ export default function TeamMapPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
   const [showBottomSheet, setShowBottomSheet] = useState(true);
+  const [leads, setLeads] = useState<any[]>([]);
 
   useEffect(() => {
     getCurrentAuthUser().then(setCurrentUser);
   }, []);
+
+  // Load leads for stats calculation
+  useEffect(() => {
+    async function loadLeads() {
+      const loadedLeads = await getLeadsAsync();
+      setLeads(loadedLeads);
+    }
+    loadLeads();
+  }, []);
+
+  // Calculate today's stats for each user from leads
+  const getTodayStats = (userId: string) => {
+    const today = startOfToday();
+    const userLeads = leads.filter(l => l.claimedBy === userId && l.dispositionedAt);
+    
+    const todayLeads = userLeads.filter(l => isAfter(new Date(l.dispositionedAt), today));
+    const doorsKnocked = todayLeads.filter(l => ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(l.status)).length;
+    const appointments = todayLeads.filter(l => l.status === 'appointment' || l.status === 'sale').length;
+    
+    return { doorsToday: doorsKnocked, appointmentsToday: appointments };
+  };
 
   useEffect(() => {
     if (!currentUser || !db) return;
@@ -72,8 +96,8 @@ export default function TeamMapPage() {
               lng: data.currentLocation.lng,
               lastUpdate: lastUpdate,
               status: data.status || 'In Field',
-              doorsToday: data.doorsKnockedToday || 0,
-              appointmentsToday: data.appointmentsToday || 0
+              doorsToday: 0, // Will be calculated from leads
+              appointmentsToday: 0 // Will be calculated from leads
             });
           }
         }
@@ -186,11 +210,11 @@ export default function TeamMapPage() {
                 {/* Stats cards */}
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div className="bg-gradient-to-br from-[#FF5F5A] to-[#F27141] rounded-2xl p-4 text-white">
-                    <div className="text-3xl font-bold">{selectedMember.doorsToday}</div>
+                    <div className="text-3xl font-bold">{getTodayStats(selectedMember.id).doorsToday}</div>
                     <div className="text-white/80 text-sm mt-1">Doors Today</div>
                   </div>
                   <div className="bg-gradient-to-br from-[#48BB78] to-[#38A169] rounded-2xl p-4 text-white">
-                    <div className="text-3xl font-bold">{selectedMember.appointmentsToday}</div>
+                    <div className="text-3xl font-bold">{getTodayStats(selectedMember.id).appointmentsToday}</div>
                     <div className="text-white/80 text-sm mt-1">Appointments</div>
                   </div>
                 </div>
@@ -229,7 +253,7 @@ export default function TeamMapPage() {
                         </div>
                         <div className="flex-1 text-left min-w-0">
                           <div className="font-semibold text-[#2D3748] text-base">{member.name}</div>
-                          <div className="text-sm text-[#718096] mt-0.5">{member.doorsToday} doors • {member.appointmentsToday} appts</div>
+                          <div className="text-sm text-[#718096] mt-0.5">{getTodayStats(member.id).doorsToday} doors • {getTodayStats(member.id).appointmentsToday} appts</div>
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="w-2.5 h-2.5 bg-[#48BB78] rounded-full animate-pulse"></div>
