@@ -3,8 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
-  Menu, X, Shield, Map, UserPlus, Filter, Users, Settings,
-  Wand2, LogOut, ChevronRight, BarChart3, Brain
+  Menu, X, Shield, Map, Users, Filter, LogOut, ChevronRight, BarChart3, Calendar, Layers
 } from 'lucide-react';
 import { User, canManageUsers, canAssignLeads, canSeeAllLeads } from '@/app/types';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
@@ -48,71 +47,60 @@ export default function AppMenu({
   if (!currentUser) return null;
 
   const menuItems = [
-    // Everyone - Dashboard
+    // Everyone - Go Backs
     {
-      icon: BarChart3,
-      label: 'Daily Dashboard',
-      description: 'View today\'s stats',
+      icon: Calendar,
+      label: 'Go Backs',
+      description: 'Scheduled revisits',
       onClick: () => {
-        router.push('/dashboard');
-        setIsOpen(false);
-      },
-      color: 'from-teal-500 to-teal-600',
-      iconColor: 'text-teal-600',
-      bgColor: 'bg-teal-50',
-    },
-    
-    // Manager/Admin features
-    ...(canAssignLeads(currentUser.role) ? [{
-      icon: UserPlus,
-      label: 'Assign Leads',
-      description: 'Manual & territory assignment',
-      onClick: () => {
-        onAssignClick();
-        setIsOpen(false);
-      },
-      color: 'from-purple-500 to-purple-600',
-      iconColor: 'text-purple-600',
-      bgColor: 'bg-purple-50',
-    }] : []),
-    
-    ...(canAssignLeads(currentUser.role) ? [{
-      icon: Wand2,
-      label: 'Auto-Assign',
-      description: 'AI-powered distribution',
-      onClick: () => {
-        router.push('/?autoassign=true');
-        setIsOpen(false);
-      },
-      color: 'from-indigo-500 to-indigo-600',
-      iconColor: 'text-indigo-600',
-      bgColor: 'bg-indigo-50',
-    }] : []),
-    
-    ...(canSeeAllLeads(currentUser.role) ? [{
-      icon: Brain,
-      label: 'Virtual Manager AI',
-      description: 'Performance & coaching',
-      onClick: () => {
-        router.push('/ai-manager');
-        setIsOpen(false);
-      },
-      color: 'from-purple-500 to-purple-600',
-      iconColor: 'text-purple-600',
-      bgColor: 'bg-purple-50',
-    }] : []),
-    
-    ...(canAssignLeads(currentUser.role) ? [{
-      icon: Map,
-      label: 'Territories',
-      description: 'Manage team regions',
-      onClick: () => {
-        router.push('/territories');
+        router.push('/go-backs');
         setIsOpen(false);
       },
       color: 'from-blue-500 to-blue-600',
       iconColor: 'text-blue-600',
       bgColor: 'bg-blue-50',
+    },
+    
+    // Everyone - Team Map
+    {
+      icon: Map,
+      label: 'Team Map',
+      description: 'See where everyone is',
+      onClick: () => {
+        router.push('/mobile/team-map');
+        setIsOpen(false);
+      },
+      color: 'from-green-500 to-green-600',
+      iconColor: 'text-green-600',
+      bgColor: 'bg-green-50',
+    },
+    
+    // Manager/Admin - Lead Management
+    ...(canAssignLeads(currentUser.role) ? [{
+      icon: Layers,
+      label: 'Lead Management',
+      description: 'Assign & manage territories',
+      onClick: () => {
+        router.push('/lead-management');
+        setIsOpen(false);
+      },
+      color: 'from-purple-500 to-purple-600',
+      iconColor: 'text-purple-600',
+      bgColor: 'bg-purple-50',
+    }] : []),
+    
+    // Manager/Admin - Team Stats
+    ...(canSeeAllLeads(currentUser.role) ? [{
+      icon: BarChart3,
+      label: 'Team Stats',
+      description: 'Performance & leaderboards',
+      onClick: () => {
+        router.push('/setter-stats');
+        setIsOpen(false);
+      },
+      color: 'from-orange-500 to-orange-600',
+      iconColor: 'text-orange-600',
+      bgColor: 'bg-orange-50',
     }] : []),
     
     // Admin features
@@ -128,19 +116,6 @@ export default function AppMenu({
       iconColor: 'text-red-600',
       bgColor: 'bg-red-50',
     }] : []),
-    
-    // Everyone
-    {
-      icon: Users,
-      label: 'My Profile',
-      description: 'View your stats',
-      onClick: () => {
-        setIsOpen(false);
-      },
-      color: 'from-gray-500 to-gray-600',
-      iconColor: 'text-gray-600',
-      bgColor: 'bg-gray-50',
-    },
   ];
 
   return (
