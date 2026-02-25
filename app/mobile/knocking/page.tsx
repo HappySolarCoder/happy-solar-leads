@@ -11,6 +11,7 @@ import LeadDetail from '@/app/components/LeadDetail';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { ensureUserColors } from '@/app/utils/userColors';
+import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -201,7 +202,8 @@ export default function KnockingPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-white overflow-hidden">
+    <LocationPermissionGuard requireLocation={true}>
+      <div className="h-screen flex flex-col bg-white overflow-hidden">
       {/* Mobile Header - Compact */}
       <header className="bg-white border-b border-[#E2E8F0] px-4 py-3 flex-shrink-0">
         <div className="flex items-center justify-between">
@@ -432,6 +434,7 @@ export default function KnockingPage() {
           onUpdate={refreshLeads}
         />
       )}
-    </div>
+      </div>
+    </LocationPermissionGuard>
   );
 }
