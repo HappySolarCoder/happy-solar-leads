@@ -8,7 +8,6 @@ import LeadList from '@/app/components/LeadList';
 import UploadModal from '@/app/components/UploadModal';
 import UserOnboarding from '@/app/components/UserOnboarding';
 import LeadDetail from '@/app/components/LeadDetail';
-import AutoAssignPanel from '@/app/components/AutoAssignPanel';
 import UserSwitcher from '@/app/components/UserSwitcher';
 import LeadAssignmentPanel from '@/app/components/LeadAssignmentPanel';
 import AppMenu from '@/app/components/AppMenu';
@@ -39,7 +38,6 @@ export default function Home() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showUserOnboarding, setShowUserOnboarding] = useState(false);
   const [showAssignmentPanel, setShowAssignmentPanel] = useState(false);
-  const [showAutoAssignPanel, setShowAutoAssignPanel] = useState(false);
   const [assignmentMode, setAssignmentMode] = useState<'none' | 'manual' | 'territory'>('none');
   const [selectedLeadIdsForAssignment, setSelectedLeadIdsForAssignment] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'split' | 'map' | 'list'>('split');
@@ -94,18 +92,6 @@ export default function Home() {
     }
     loadData();
   }, [router]);
-
-  // Check for autoassign query parameter
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('autoassign') === 'true') {
-        setShowAutoAssignPanel(true);
-        // Clean URL
-        window.history.replaceState({}, '', window.location.pathname);
-      }
-    }
-  }, []);
 
   // Refresh leads when they change
   const refreshLeads = useCallback(async () => {
@@ -294,16 +280,6 @@ export default function Home() {
               return [...prev, leadId];
             }
           });
-        }}
-      />
-
-      {/* Auto-Assign Panel */}
-      <AutoAssignPanel
-        isOpen={showAutoAssignPanel}
-        onClose={() => setShowAutoAssignPanel(false)}
-        onComplete={() => {
-          setShowAutoAssignPanel(false);
-          refreshLeads();
         }}
       />
 

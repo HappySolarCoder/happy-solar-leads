@@ -98,19 +98,6 @@ export default function AssignmentsPage() {
                 </div>
                 <div className="text-xs text-[#718096]">Draw areas on map to assign all leads in territory</div>
               </div>
-              
-              <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 text-left">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="font-semibold text-[#2D3748]">AI Auto-Assign</div>
-                  <button 
-                    onClick={() => router.push('/?autoassign=true')}
-                    className="text-xs text-[#FF5F5A] hover:underline"
-                  >
-                    Open →
-                  </button>
-                </div>
-                <div className="text-xs text-[#718096]">AI distributes leads based on distance from user's home address</div>
-              </div>
             </div>
           </div>
         </div>
