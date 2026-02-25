@@ -90,8 +90,11 @@ export default function UsersManagementPage() {
         return;
       }
 
+      // Remove legacy fields that are no longer in the User type
+      const { homeAddress, homeLat, homeLng, ...cleanUser } = user as any;
+      
       const updatedUser: User = {
-        ...user,
+        ...cleanUser,
         ...editForm,
         name: editForm.name || user.name,
         email: editForm.email || user.email,
@@ -165,8 +168,11 @@ export default function UsersManagementPage() {
     const user = users.find(u => u.id === userId);
     if (!user) return;
 
+    // Remove legacy fields that are no longer in the User type
+    const { homeAddress, homeLat, homeLng, ...cleanUser } = user as any;
+
     const updatedUser: User = {
-      ...user,
+      ...cleanUser,
       isActive: !user.isActive,
     };
 
@@ -181,8 +187,11 @@ export default function UsersManagementPage() {
     const user = users.find(u => u.id === userId);
     if (!user) return;
 
+    // Remove legacy fields that are no longer in the User type
+    const { homeAddress, homeLat, homeLng, ...cleanUser } = user as any;
+
     const updatedUser: User = {
-      ...user,
+      ...cleanUser,
       role: user.requestedRole || user.role,
       approved: true,
       approvalStatus: 'approved',
