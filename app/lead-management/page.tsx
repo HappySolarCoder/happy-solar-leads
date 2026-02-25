@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, Trash2, Users, MapPin } from 'lucide-react';
+import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
@@ -450,6 +450,19 @@ export default function LeadManagementPage() {
             </button>
             <h1 className="text-lg font-bold text-[#2D3748]">Lead Management</h1>
           </div>
+
+          {/* Floating Draw Button - Mobile */}
+          {viewMode === 'assignments' && (
+            <button
+              onClick={() => {
+                setDrawingMode(!drawingMode);
+                if (drawingMode) deselectAll();
+              }}
+              className="fixed bottom-6 right-6 z-50 sm:hidden bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-full p-4 shadow-lg"
+            >
+              <Pencil className="w-6 h-6" />
+            </button>
+          )}
 
           <div className="flex items-center gap-2">
             {/* View Mode Toggle */}
