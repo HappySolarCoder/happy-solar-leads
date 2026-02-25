@@ -439,99 +439,81 @@ export default function LeadManagementPage() {
   return (
     <div className="h-screen flex flex-col bg-white overflow-hidden">
       {/* Header */}
-      <header className="bg-white border-b border-[#E2E8F0] px-4 py-3 flex-shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
+      <header className="bg-white border-b border-[#E2E8F0] px-2 py-3 flex-shrink-0">
+        <div className="flex flex-col items-center gap-2">
+          {/* Top Row: Back + Title */}
+          <div className="flex items-center justify-between w-full">
             <button
               onClick={() => router.push('/tools')}
-              className="p-2 -ml-2 text-[#718096] hover:text-[#FF5F5A] transition-colors"
+              className="p-2 text-[#718096] hover:text-[#FF5F5A] transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
             <h1 className="text-lg font-bold text-[#2D3748]">Lead Management</h1>
+            <div className="w-9"></div>
           </div>
 
-          {/* Floating Draw Button - Mobile */}
-          {viewMode === 'assignments' && (
+          {/* View Mode Toggle */}
+          <div className="flex gap-1 bg-[#F7FAFC] rounded-lg p-1">
             <button
-              onClick={() => {
-                setDrawingMode(!drawingMode);
-                if (drawingMode) deselectAll();
-              }}
-              className="fixed bottom-6 right-6 z-50 sm:hidden bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-full p-4 shadow-lg"
+              onClick={() => setViewMode('map')}
+              className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1 ${
+                viewMode === 'map'
+                  ? 'bg-white text-[#FF5F5A] shadow-sm'
+                  : 'text-[#718096] hover:text-[#2D3748]'
+              }`}
             >
-              <Pencil className="w-6 h-6" />
+              <MapPin className="w-4 h-4" />
+              <span className="hidden xs:inline">Map</span>
             </button>
-          )}
+            <button
+              onClick={() => setViewMode('assignments')}
+              className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1 ${
+                viewMode === 'assignments'
+                  ? 'bg-white text-[#FF5F5A] shadow-sm'
+                  : 'text-[#718096] hover:text-[#2D3748]'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span className="hidden xs:inline">Assignments</span>
+            </button>
+          </div>
 
-          <div className="flex items-center gap-2">
-            {/* View Mode Toggle */}
+          {/* Mode Toggle (only show in assignments view) */}
+          {viewMode === 'assignments' && (
             <div className="flex gap-1 bg-[#F7FAFC] rounded-lg p-1">
               <button
-                onClick={() => setViewMode('map')}
-                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1 ${
-                  viewMode === 'map'
+                onClick={() => {
+                  setMode('assign');
+                  deselectAll();
+                  setDrawingMode(false);
+                }}
+                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                  mode === 'assign'
                     ? 'bg-white text-[#FF5F5A] shadow-sm'
                     : 'text-[#718096] hover:text-[#2D3748]'
                 }`}
               >
-                <MapPin className="w-4 h-4" />
-                Map
+                Assign
               </button>
               <button
-                onClick={() => setViewMode('assignments')}
-                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1 ${
-                  viewMode === 'assignments'
+                onClick={() => {
+                  setMode('unclaim');
+                  deselectAll();
+                  setDrawingMode(false);
+                }}
+                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                  mode === 'unclaim'
                     ? 'bg-white text-[#FF5F5A] shadow-sm'
                     : 'text-[#718096] hover:text-[#2D3748]'
                 }`}
               >
-                <Users className="w-4 h-4" />
-                Assignments
+                Unclaim
               </button>
-            </div>
-
-            {/* Mode Toggle (only show in assignments view) */}
-            {viewMode === 'assignments' && (
-              <div className="flex gap-1 bg-[#F7FAFC] rounded-lg p-1">
-                <button
-                  onClick={() => {
-                    setMode('assign');
-                    deselectAll();
-                    setDrawingMode(false);
-                  }}
-                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
-                    mode === 'assign'
-                      ? 'bg-white text-[#FF5F5A] shadow-sm'
-                      : 'text-[#718096] hover:text-[#2D3748]'
-                  }`}
-                >
-                  Assign
-                </button>
-                <button
-                  onClick={() => {
-                    setMode('unclaim');
-                    deselectAll();
-                    setDrawingMode(false);
-                  }}
-                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
-                    mode === 'unclaim'
-                      ? 'bg-white text-[#FF5F5A] shadow-sm'
-                      : 'text-[#718096] hover:text-[#2D3748]'
-                  }`}
-                >
-                  Unclaim
-                </button>
-              </div>
-            )}
-
-            {viewMode === 'assignments' && (
               <button
                 onClick={() => {
                   setDrawingMode(!drawingMode);
-                  if (drawingMode) {
-                    deselectAll();
-                  }
+                  if (drawingMode) deselectAll();
                 }}
                 className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${
                   drawingMode
@@ -541,9 +523,22 @@ export default function LeadManagementPage() {
               >
                 {drawingMode ? 'Cancel' : 'Draw'}
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
+
+        {/* Floating Draw Button - Mobile */}
+        {viewMode === 'assignments' && (
+          <button
+            onClick={() => {
+              setDrawingMode(!drawingMode);
+              if (drawingMode) deselectAll();
+            }}
+            className="fixed bottom-6 right-6 z-50 sm:hidden bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-full p-4 shadow-lg"
+          >
+            <Pencil className="w-6 h-6" />
+          </button>
+        )}
 
         {/* User Filter (only show in assignments view when drawing/managing) */}
         {viewMode === 'assignments' && (
