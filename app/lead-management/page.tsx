@@ -60,6 +60,13 @@ export default function LeadManagementPage() {
       const loadedUsers = await getUsersAsync();
       const loadedTerritories = await getTerritoriesAsync();
 
+      console.log('[Lead Management] Loaded data:', {
+        leads: loadedLeads.length,
+        users: loadedUsers.length,
+        territories: loadedTerritories.length,
+      });
+      console.log('[Lead Management] Territories:', loadedTerritories);
+
       setLeads(loadedLeads);
       setUsers(loadedUsers);
       setTerritories(loadedTerritories);
@@ -611,6 +618,7 @@ export default function LeadManagementPage() {
 
       {/* Map View */}
       <div className="flex-1 relative">
+        {console.log('[Lead Management Render] viewMode:', viewMode, 'territories:', territories.length)}
         <LeadMap
           leads={filteredLeads}
           currentUser={currentUser}

@@ -645,7 +645,16 @@ export default function LeadMap({
     }
 
     // Only render territories in assignments view
-    if (viewMode !== 'assignments' || territories.length === 0) return;
+    console.log('[LeadMap] Territory rendering check:', { viewMode, territoriesCount: territories.length });
+    if (viewMode !== 'assignments') {
+      console.log('[LeadMap] Not in assignments view, skipping territories');
+      return;
+    }
+    if (territories.length === 0) {
+      console.log('[LeadMap] No territories to render');
+      return;
+    }
+    console.log('[LeadMap] Rendering territories:', territories);
 
     territories.forEach(territory => {
       if (!territory.polygon || territory.polygon.length < 3) return;
