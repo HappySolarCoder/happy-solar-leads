@@ -11,6 +11,13 @@ import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
 import AddLeadModal from './AddLeadModal';
 
+interface UserRoute {
+  userId: string;
+  userName: string;
+  userColor: string;
+  waypoints: RouteWaypoint[];
+}
+
 interface LeadMapProps {
   leads: Lead[];
   currentUser: User | null;
@@ -18,6 +25,7 @@ interface LeadMapProps {
   onLeadClick: (lead: Lead) => void;
   selectedLeadId?: string;
   routeWaypoints?: RouteWaypoint[];
+  userRoutes?: UserRoute[]; // Multiple routes (one per user) for activity tracking
   center?: [number, number];
   zoom?: number;
   assignmentMode?: 'none' | 'manual' | 'territory';
@@ -37,6 +45,7 @@ export default function LeadMap({
   onLeadClick, 
   selectedLeadId,
   routeWaypoints,
+  userRoutes = [],
   center = [43.1566, -77.6088], // Rochester, NY - default for admin oversight
   zoom = 11,
   assignmentMode = 'none',
@@ -272,7 +281,40 @@ export default function LeadMap({
     console.log(`[LeadMap] Rendering ${visibleLeads.length} of ${leads.length} visible leads (${Math.round(visibleLeads.length / leads.length * 100)}%)`);
 
 
-    // Show route mode
+    // Show multiple user routes (activity map mode)
+    if (userRoutes && userRoutes.length > 0) {
+      const allCoords: [number, number][] = [];
+      
+      userRoutes.forEach(userRoute => {
+        const routeCoords = userRoute.waypoints.map(wp => [wp.lat, wp.lng] as [number, number]);
+        allCoords.push(...routeCoords);
+        
+        // Draw route line in user's color (solid line)
+        L.polyline(routeCoords, {
+          color: userRoute.userColor,
+          weight: 3,
+          opacity: 0.7,
+        }).addTo(map);
+
+        // Add numbered markers for each waypoint
+        userRoute.waypoints.forEach((wp, index) => {
+          const icon = createActivityMarkerIcon(index + 1, userRoute.userColor);
+          const marker = L.marker([wp.lat, wp.lng], { icon });
+          marker.bindPopup(createActivityPopupContent(wp, userRoute.userName), { maxWidth: 300 });
+          marker.on('click', () => onLeadClick(wp.lead));
+          marker.addTo(layer);
+        });
+      });
+
+      // Fit bounds to show all routes
+      if (allCoords.length > 0) {
+        const bounds = L.latLngBounds(allCoords);
+        map.fitBounds(bounds, { padding: [50, 50] });
+      }
+      return;
+    }
+
+    // Show single route mode (route builder)
     if (routeWaypoints && routeWaypoints.length > 0) {
       const routeCoords = routeWaypoints.map(wp => [wp.lat, wp.lng] as [number, number]);
       
@@ -1247,6 +1289,33 @@ function createRoutePopupContent(wp: RouteWaypoint): string {
       <p style="margin:0 0 8px 0;font-size:12px;color:#6b7280;">${wp.lead.city}, ${wp.lead.state} ${wp.lead.zip}</p>
       ${wp.lead.estimatedBill ? `<p style="margin:0 0 8px 0;font-size:14px;color:#3b82f6;font-weight:500;">$${wp.lead.estimatedBill}/mo</p>` : ''}
       ${wp.lead.solarScore ? `<div style="display:inline-block;padding:4px 10px;background:#3b82f620;color:#3b82f6;border-radius:9999px;font-size:12px;font-weight:500;">☀️ Solar Score: ${wp.lead.solarScore}</div>` : ''}
+    </div>
+  `;
+}
+
+function createActivityMarkerIcon(order: number, color: string): L.DivIcon {
+  const size = 32;
+  const html = `
+    <div style="width:${size}px;height:${size}px;background:${color};border:3px solid white;border-radius:50%;box-shadow:0 3px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;">
+      <span style="color:white;font-size:14px;font-weight:bold;">${order}</span>
+    </div>
+  `;
+  return L.divIcon({ html, className: 'activity-marker', iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
+}
+
+function createActivityPopupContent(wp: RouteWaypoint, userName: string): string {
+  const timeStr = wp.lead.dispositionedAt 
+    ? new Date(wp.lead.dispositionedAt).toLocaleTimeString() 
+    : '';
+  
+  return `
+    <div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
+      <div style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:#1f2937;">${userName} - Stop #${wp.order}</div>
+      ${timeStr ? `<div style="margin:0 0 8px 0;font-size:14px;color:#6b7280;">🕐 ${timeStr}</div>` : ''}
+      <h3 style="margin:0 0 4px 0;font-size:15px;font-weight:600;color:#1f2937;">${wp.lead.name}</h3>
+      <p style="margin:0 0 4px 0;font-size:13px;color:#4b5563;">${wp.lead.address}</p>
+      <p style="margin:0 0 8px 0;font-size:12px;color:#6b7280;">${wp.lead.city}, ${wp.lead.state} ${wp.lead.zip}</p>
+      ${wp.lead.disposition ? `<div style="display:inline-block;padding:4px 10px;background:#10b98120;color:#10b981;border-radius:9999px;font-size:12px;font-weight:500;">${wp.lead.disposition}</div>` : ''}
     </div>
   `;
 }

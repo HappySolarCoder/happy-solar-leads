@@ -163,15 +163,18 @@ export default function ActivityMapPage() {
   // Get all knocks for map display
   const allKnocks = filteredActivities.flatMap(a => a.knocks);
 
-  // Build route waypoints for map
-  const routeWaypoints = filteredActivities.flatMap(activity => 
-    activity.knocks.map((knock, index) => ({
+  // Build user routes for map (separate route per user)
+  const userRoutes = filteredActivities.map(activity => ({
+    userId: activity.user.id,
+    userName: activity.user.name,
+    userColor: activity.user.color,
+    waypoints: activity.knocks.map((knock, index) => ({
       lead: knock,
       order: index + 1,
       lat: knock.lat!,
       lng: knock.lng!,
-    }))
-  );
+    })),
+  }));
 
   if (isLoading) {
     return (
@@ -304,7 +307,7 @@ export default function ActivityMapPage() {
             currentUser={currentUser}
             users={users}
             onLeadClick={() => {}}
-            routeWaypoints={routeWaypoints}
+            userRoutes={userRoutes}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
