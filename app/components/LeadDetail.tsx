@@ -174,6 +174,22 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             distanceFromAddress = R * c;
           }
           
+          // Distance verification for setter, manager, sales (not admin)
+          const MAX_DISTANCE_METERS = 30; // 30 meters (~100 feet) - close enough to verify, not too strict
+          const requiresProximity = ['setter', 'manager', 'sales'].includes(currentUser.role);
+          
+          if (requiresProximity && distanceFromAddress && distanceFromAddress > MAX_DISTANCE_METERS) {
+            setIsUpdating(false);
+            const distanceFeet = Math.round(distanceFromAddress * 3.281); // Convert to feet
+            alert(
+              `You are not close enough to this address to disposition it.\n\n` +
+              `Distance: ${distanceFeet} feet away\n` +
+              `Required: Within 100 feet\n\n` +
+              `Please move closer to the address and try again.`
+            );
+            return;
+          }
+          
           gpsData = {
             knockGpsLat: position.coords.latitude,
             knockGpsLng: position.coords.longitude,
@@ -183,7 +199,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           };
         } catch (err) {
           console.warn('GPS capture failed:', err);
-          // Continue without GPS if it fails
+          // Continue without GPS if it fails (allows indoor knocking where GPS might not work)
         }
       }
       

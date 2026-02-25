@@ -38,6 +38,7 @@ export default function ActivityMapPage() {
   const [allLeads, setAllLeads] = useState<Lead[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedUserId, setSelectedUserId] = useState<string>('all');
+  const [focusedUserId, setFocusedUserId] = useState<string | null>(null); // For zoom focus
   const [userActivities, setUserActivities] = useState<UserActivity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -179,7 +180,12 @@ export default function ActivityMapPage() {
   const allKnocks = filteredActivities.flatMap(a => a.knocks);
 
   // Build user routes for map (separate route per user)
-  const userRoutes = filteredActivities.map(activity => ({
+  // If a user is focused, show only their route
+  const activitiesToShow = focusedUserId 
+    ? filteredActivities.filter(a => a.user.id === focusedUserId)
+    : filteredActivities;
+  
+  const userRoutes = activitiesToShow.map(activity => ({
     userId: activity.user.id,
     userName: activity.user.name,
     userColor: activity.user.color,
@@ -190,6 +196,11 @@ export default function ActivityMapPage() {
       lng: knock.lng!,
     })),
   }));
+
+  // Get the focused activity for timeline display
+  const focusedActivity = focusedUserId 
+    ? filteredActivities.find(a => a.user.id === focusedUserId)
+    : null;
 
   if (isLoading) {
     return (
@@ -273,9 +284,14 @@ export default function ActivityMapPage() {
           <div className="max-w-7xl mx-auto">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {filteredActivities.map(activity => (
-                <div
+                <button
                   key={activity.user.id}
-                  className="bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg p-4"
+                  onClick={() => setFocusedUserId(activity.user.id)}
+                  className={`bg-[#F7FAFC] border rounded-lg p-4 text-left transition-all hover:shadow-md w-full ${
+                    focusedUserId === activity.user.id 
+                      ? 'border-[#FF5F5A] shadow-lg ring-2 ring-[#FF5F5A]/20' 
+                      : 'border-[#E2E8F0]'
+                  }`}
                 >
                   <div className="flex items-center gap-3 mb-3">
                     <div
@@ -308,33 +324,103 @@ export default function ActivityMapPage() {
                       <span className="text-xs text-[#A0AEC0]">EST</span>
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
         </div>
       )}
 
-      {/* Map */}
-      <div className="flex-1 relative">
-        {allKnocks.length > 0 ? (
-          <LeadMap
-            leads={allKnocks}
-            currentUser={currentUser}
-            users={users}
-            onLeadClick={() => {}}
-            userRoutes={userRoutes}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <div className="text-center">
-              <MapPin className="w-16 h-16 text-[#CBD5E0] mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-[#2D3748] mb-2">
-                No Activity Found
-              </h3>
-              <p className="text-sm text-[#718096]">
-                No doors were knocked on {formatDateEST(selectedDate)}
-              </p>
+      {/* Map and Timeline Container */}
+      <div className="flex-1 flex flex-col lg:flex-row gap-4 p-4 overflow-hidden">
+        {/* Map */}
+        <div className={`${focusedActivity ? 'lg:w-2/3' : 'w-full'} relative rounded-xl overflow-hidden shadow-lg`}>
+          {allKnocks.length > 0 ? (
+            <LeadMap
+              leads={allKnocks}
+              currentUser={currentUser}
+              users={users}
+              onLeadClick={() => {}}
+              userRoutes={userRoutes}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-white">
+              <div className="text-center">
+                <MapPin className="w-16 h-16 text-[#CBD5E0] mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-[#2D3748] mb-2">
+                  No Activity Found
+                </h3>
+                <p className="text-sm text-[#718096]">
+                  No doors were knocked on {formatDateEST(selectedDate)}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Timeline (shown when user is focused) */}
+        {focusedActivity && (
+          <div className="lg:w-1/3 bg-white rounded-xl shadow-lg overflow-hidden flex flex-col">
+            <div className="bg-gradient-to-r from-[#FF5F5A] to-[#FF8A87] text-white px-6 py-4">
+              <div className="flex items-center gap-3 mb-2">
+                <div
+                  className="w-10 h-10 rounded-full flex items-center justify-center font-semibold bg-white/20"
+                >
+                  {focusedActivity.user.name.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg">{focusedActivity.user.name}</h3>
+                  <p className="text-sm opacity-90">{focusedActivity.totalKnocks} doors knocked</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setFocusedUserId(null)}
+                className="text-sm underline opacity-90 hover:opacity-100"
+              >
+                ← Back to all users
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="space-y-3">
+                {focusedActivity.knocks.map((knock, index) => (
+                  <div
+                    key={knock.id}
+                    className="border border-[#E2E8F0] rounded-lg p-3 hover:shadow-md transition-shadow"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+                        style={{ backgroundColor: focusedActivity.user.color }}
+                      >
+                        {index + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Clock className="w-4 h-4 text-[#718096]" />
+                          <span className="text-sm font-semibold text-[#2D3748]">
+                            {knock.dispositionedAt ? formatTimeEST(knock.dispositionedAt) : 'No time'}
+                          </span>
+                          <span className="text-xs text-[#A0AEC0]">EST</span>
+                        </div>
+                        <p className="text-sm text-[#2D3748] font-medium truncate">
+                          {knock.name}
+                        </p>
+                        <p className="text-xs text-[#718096] truncate">
+                          {knock.address}, {knock.city}
+                        </p>
+                        {knock.disposition && (
+                          <div className="mt-2">
+                            <span className="inline-block px-2 py-1 bg-[#10B981]/10 text-[#10B981] rounded text-xs font-medium">
+                              {knock.disposition}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
