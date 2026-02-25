@@ -55,6 +55,9 @@ export default function LeadMap({
   const [dropPinLocation, setDropPinLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [dropPinAddress, setDropPinAddress] = useState({ address: '', city: '', state: '', zip: '' });
   const tempPinRef = useRef<L.Marker | null>(null);
+  const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite'); // Default to satellite
+  const baseTileLayerRef = useRef<L.TileLayer | null>(null);
+  const labelsTileLayerRef = useRef<L.TileLayer | null>(null);
 
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
@@ -81,6 +84,41 @@ export default function LeadMap({
     setIsClient(true);
   }, []);
 
+  // Handle map type switching
+  useEffect(() => {
+    if (!mapInstanceRef.current || !baseTileLayerRef.current || !labelsTileLayerRef.current) return;
+
+    const map = mapInstanceRef.current;
+
+    // Remove old layers
+    baseTileLayerRef.current.remove();
+    labelsTileLayerRef.current.remove();
+
+    if (mapType === 'satellite') {
+      // Satellite imagery
+      baseTileLayerRef.current = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri',
+        maxZoom: 19,
+      }).addTo(map);
+
+      // Labels overlay
+      labelsTileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}.png', {
+        attribution: '&copy; CARTO',
+        maxZoom: 19,
+        pane: 'shadowPane',
+      }).addTo(map);
+    } else {
+      // Street map
+      baseTileLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+      }).addTo(map);
+
+      // No labels needed for street view (already has them)
+      labelsTileLayerRef.current = L.tileLayer('', { maxZoom: 0 }); // Dummy layer
+    }
+  }, [mapType]);
+
   // Initialize map
   useEffect(() => {
     if (!isClient || !mapRef.current || mapInstanceRef.current) return;
@@ -92,8 +130,17 @@ export default function LeadMap({
       attributionControl: true,
     });
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    // Initialize with satellite view
+    baseTileLayerRef.current = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles &copy; Esri',
+      maxZoom: 19,
+    }).addTo(map);
+
+    // Add labels overlay for satellite view
+    labelsTileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}.png', {
+      attribution: '&copy; CARTO',
+      maxZoom: 19,
+      pane: 'shadowPane', // Put labels above satellite but below markers
     }).addTo(map);
 
     // Create marker cluster group with optimized clustering for performance
@@ -719,6 +766,35 @@ export default function LeadMap({
     <div className="relative w-full h-full">
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       
+      {/* Map Type Toggle Button */}
+      <button
+        onClick={() => setMapType(mapType === 'satellite' ? 'street' : 'satellite')}
+        className="absolute top-6 right-6 px-4 py-2 bg-white hover:bg-[#FF5F5A] border-2 border-[#E2E8F0] rounded-lg shadow-lg flex items-center gap-2 text-[#2D3748] hover:text-white transition-all duration-200 hover:scale-105 active:scale-95 z-20 font-medium text-sm"
+        title={`Switch to ${mapType === 'satellite' ? 'street' : 'satellite'} view`}
+        style={{ boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }}
+      >
+        {mapType === 'satellite' ? (
+          <>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 3v18h18" />
+              <path d="M7 17h10" />
+              <path d="M7 12h10" />
+              <path d="M7 7h10" />
+            </svg>
+            Street
+          </>
+        ) : (
+          <>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+              <path d="M2 12h20" />
+            </svg>
+            Satellite
+          </>
+        )}
+      </button>
+
       {/* GPS Locate Button */}
       {userPosition && (
         <button
