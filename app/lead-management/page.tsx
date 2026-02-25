@@ -84,6 +84,13 @@ export default function LeadManagementPage() {
     count: leads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
   }));
 
+  // Calculate map center based on user role
+  const mapCenter: [number, number] = currentUser 
+    ? currentUser.role === 'manager' && currentUser.homeLat && currentUser.homeLng
+      ? [currentUser.homeLat, currentUser.homeLng]
+      : [43.1566, -77.6088] // Rochester, NY (default/admin)
+    : [43.1566, -77.6088];
+
   const deselectAll = () => {
     setSelectedLeads(new Set());
   };
@@ -429,6 +436,7 @@ export default function LeadManagementPage() {
           leads={filteredLeads}
           currentUser={currentUser}
           onLeadClick={(lead) => {}}
+          center={mapCenter}
           assignmentMode={drawingMode ? 'territory' : 'none'}
           selectedLeadIdsForAssignment={Array.from(selectedLeads)}
           onTerritoryDrawn={handleTerritoryDrawn}
