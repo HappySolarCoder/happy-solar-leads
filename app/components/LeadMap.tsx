@@ -659,7 +659,10 @@ export default function LeadMap({
     territories.forEach(territory => {
       if (!territory.polygon || territory.polygon.length < 3) return;
 
-      const polygon = L.polygon(territory.polygon, {
+      // Convert TerritoryPoint objects to Leaflet format [lat, lng]
+      const leafletCoords: [number, number][] = territory.polygon.map((p: any) => [p.lat, p.lng]);
+
+      const polygon = L.polygon(leafletCoords, {
         color: territory.userColor,
         fillColor: territory.userColor,
         fillOpacity: 0.2, // More visible fill

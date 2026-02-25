@@ -1,15 +1,20 @@
 import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc } from 'firebase/firestore';
 import { db } from './firebase';
-import { Territory } from '@/app/types/territory';
+import { Territory, TerritoryPoint } from '@/app/types/territory';
 
 export async function saveTerritory(territory: Omit<Territory, 'id'>): Promise<string> {
   if (!db) throw new Error('Firestore not initialized');
   
   const territoriesRef = collection(db, 'territories');
-  const docRef = await addDoc(territoriesRef, {
+  
+  // Convert polygon to Firestore-compatible format (already objects)
+  const firestoreData = {
     ...territory,
+    polygon: territory.polygon.map(p => ({ lat: p.lat, lng: p.lng })),
     createdAt: territory.createdAt.toISOString(),
-  });
+  };
+  
+  const docRef = await addDoc(territoriesRef, firestoreData);
   
   return docRef.id;
 }

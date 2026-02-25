@@ -107,12 +107,15 @@ export default function LeadManagementPage() {
         setIsDeleting(true);
         
         try {
+          // Convert polygon to Firestore-compatible format
+          const polygonObjects = polygon.map(([lat, lng]) => ({ lat, lng }));
+          
           // 1. Save the territory first
           await saveTerritory({
             userId: user.id,
             userName: user.name,
             userColor: user.color || '#6b7280',
-            polygon,
+            polygon: polygonObjects,
             leadIds,
             createdAt: new Date(),
             createdBy: currentUser?.id || 'unknown',

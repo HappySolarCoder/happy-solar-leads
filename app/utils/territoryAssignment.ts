@@ -1,14 +1,14 @@
-import { Territory } from '@/app/types/territory';
+import { Territory, TerritoryPoint } from '@/app/types/territory';
 import { Lead } from '@/app/types';
 
 /**
  * Check if a point is inside a polygon
  */
-function isPointInPolygon(lat: number, lng: number, polygon: [number, number][]): boolean {
+function isPointInPolygon(lat: number, lng: number, polygon: TerritoryPoint[]): boolean {
   let inside = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i][1], yi = polygon[i][0];
-    const xj = polygon[j][1], yj = polygon[j][0];
+    const xi = polygon[i].lng, yi = polygon[i].lat;
+    const xj = polygon[j].lng, yj = polygon[j].lat;
     
     const intersect = ((yi > lat) !== (yj > lat))
         && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
