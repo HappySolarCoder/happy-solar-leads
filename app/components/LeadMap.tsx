@@ -10,6 +10,7 @@ import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
 import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
 import AddLeadModal from './AddLeadModal';
+import { formatTimeEST } from '@/app/utils/timezone';
 
 interface UserRoute {
   userId: string;
@@ -64,6 +65,7 @@ export default function LeadMap({
   const drawControlRef = useRef<any>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
+  const hasFitBoundsRef = useRef<boolean>(false); // Track if we've already fit bounds for activity routes
   const [isClient, setIsClient] = useState(false);
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
@@ -90,6 +92,11 @@ export default function LeadMap({
     }
     loadDispositions();
   }, []);
+
+  // Reset fitBounds when userRoutes changes (new date/user filter selected)
+  useEffect(() => {
+    hasFitBoundsRef.current = false;
+  }, [userRoutes]);
 
   // Fix Leaflet icons
   useEffect(() => {
@@ -306,10 +313,11 @@ export default function LeadMap({
         });
       });
 
-      // Fit bounds to show all routes
-      if (allCoords.length > 0) {
+      // Fit bounds to show all routes (only on first load, not on user zoom)
+      if (allCoords.length > 0 && !hasFitBoundsRef.current) {
         const bounds = L.latLngBounds(allCoords);
         map.fitBounds(bounds, { padding: [50, 50] });
+        hasFitBoundsRef.current = true;
       }
       return;
     }
@@ -1305,13 +1313,13 @@ function createActivityMarkerIcon(order: number, color: string): L.DivIcon {
 
 function createActivityPopupContent(wp: RouteWaypoint, userName: string): string {
   const timeStr = wp.lead.dispositionedAt 
-    ? new Date(wp.lead.dispositionedAt).toLocaleTimeString() 
+    ? formatTimeEST(wp.lead.dispositionedAt)
     : '';
   
   return `
     <div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
       <div style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:#1f2937;">${userName} - Stop #${wp.order}</div>
-      ${timeStr ? `<div style="margin:0 0 8px 0;font-size:14px;color:#6b7280;">🕐 ${timeStr}</div>` : ''}
+      ${timeStr ? `<div style="margin:0 0 8px 0;font-size:14px;color:#6b7280;">🕐 ${timeStr} EST</div>` : ''}
       <h3 style="margin:0 0 4px 0;font-size:15px;font-weight:600;color:#1f2937;">${wp.lead.name}</h3>
       <p style="margin:0 0 4px 0;font-size:13px;color:#4b5563;">${wp.lead.address}</p>
       <p style="margin:0 0 8px 0;font-size:12px;color:#6b7280;">${wp.lead.city}, ${wp.lead.state} ${wp.lead.zip}</p>

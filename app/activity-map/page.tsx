@@ -8,6 +8,7 @@ import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
+import { formatTimeEST, formatDateEST } from '@/app/utils/timezone';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -287,9 +288,10 @@ export default function ActivityMapPage() {
                     </div>
                     <div className="flex items-center gap-2 text-[#718096]">
                       <Clock className="w-4 h-4" />
-                      <span>{activity.startTime.toLocaleTimeString()}</span>
+                      <span>{formatTimeEST(activity.startTime)}</span>
                       <span>→</span>
-                      <span>{activity.endTime.toLocaleTimeString()}</span>
+                      <span>{formatTimeEST(activity.endTime)}</span>
+                      <span className="text-xs text-[#A0AEC0]">EST</span>
                     </div>
                   </div>
                 </div>
@@ -317,7 +319,7 @@ export default function ActivityMapPage() {
                 No Activity Found
               </h3>
               <p className="text-sm text-[#718096]">
-                No doors were knocked on {new Date(selectedDate).toLocaleDateString()}
+                No doors were knocked on {formatDateEST(selectedDate)}
               </p>
             </div>
           </div>
