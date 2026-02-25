@@ -15,6 +15,7 @@ import AppMenu from '@/app/components/AppMenu';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
+import { ensureUserColors } from '@/app/utils/userColors';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -436,6 +437,7 @@ export default function Home() {
             <LeadMap
               leads={filteredLeads}
               currentUser={currentUser}
+              users={ensureUserColors(users)}
               onLeadClick={handleLeadSelect}
               selectedLeadId={selectedLeadId}
               assignmentMode={assignmentMode}

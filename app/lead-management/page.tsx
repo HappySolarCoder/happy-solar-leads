@@ -7,6 +7,7 @@ import { ArrowLeft, Trash2, Users } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
+import { ensureUserColors } from '@/app/utils/userColors';
 
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   ssr: false,
@@ -432,6 +433,7 @@ export default function LeadManagementPage() {
         <LeadMap
           leads={filteredLeads}
           currentUser={currentUser}
+          users={ensureUserColors(users)}
           onLeadClick={(lead) => {}}
           center={mapCenter}
           assignmentMode={drawingMode ? 'territory' : 'none'}

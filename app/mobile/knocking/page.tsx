@@ -10,6 +10,7 @@ import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
 import LeadDetail from '@/app/components/LeadDetail';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { ensureUserColors } from '@/app/utils/userColors';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -349,6 +350,7 @@ export default function KnockingPage() {
           <LeadMap
             leads={leadsWithDistance}
             currentUser={currentUser}
+            users={ensureUserColors(users)}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
             assignmentMode="none"

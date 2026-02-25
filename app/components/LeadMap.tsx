@@ -14,6 +14,7 @@ import AddLeadModal from './AddLeadModal';
 interface LeadMapProps {
   leads: Lead[];
   currentUser: User | null;
+  users?: User[]; // All users for territory color mapping
   onLeadClick: (lead: Lead) => void;
   selectedLeadId?: string;
   routeWaypoints?: RouteWaypoint[];
@@ -27,7 +28,8 @@ interface LeadMapProps {
 
 export default function LeadMap({ 
   leads: leadsProp, 
-  currentUser, 
+  currentUser,
+  users = [],
   onLeadClick, 
   selectedLeadId,
   routeWaypoints,
@@ -301,6 +303,8 @@ export default function LeadMap({
       const disposition = dispositions.find(d => d.id === lead.status);
 
       const icon = createCustomIcon(
+        lead,
+        users,
         lead.solarCategory,
         lead.status,
         Boolean(isSelected || isSelectedForAssignment),
@@ -933,6 +937,8 @@ const ICON_TO_UNICODE: Record<string, string> = {
 };
 
 function createCustomIcon(
+  lead: Lead,
+  users: User[],
   solarCategory: string | undefined,
   status: string,
   isSelected: boolean,
@@ -1005,8 +1011,14 @@ function createCustomIcon(
       border = '2px solid #9ca3af'; // Light gray border if no solar data
     }
   } else {
+    // Territory color priority: assigned user's color > solar > disposition > status
+    const assignedUser = lead.assignedTo ? users.find(u => u.id === lead.assignedTo) : null;
+    const claimedUser = lead.claimedBy ? users.find(u => u.id === lead.claimedBy) : null;
+    const territoryColor = assignedUser?.color || claimedUser?.color;
+    
     // Solar data leads (or no tags): colorful pins as before
-    color = (solarCategory ? solarColors[solarCategory] : undefined)
+    color = territoryColor
+      || (solarCategory ? solarColors[solarCategory] : undefined)
       || disposition?.color 
       || (STATUS_COLORS as Record<string, string>)[status] 
       || '#6b7280';
