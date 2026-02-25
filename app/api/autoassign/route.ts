@@ -96,14 +96,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<AutoAssig
     const parsedUsers = users.map(user => ({
       ...user,
       createdAt: new Date(user.createdAt),
-      homeLat: user.homeLat ? parseFloat(user.homeLat.toString()) : undefined,
-      homeLng: user.homeLng ? parseFloat(user.homeLng.toString()) : undefined,
     }));
 
     console.log('[AutoAssign API] Leads received:', leads.length);
     console.log('[AutoAssign API] Leads with coordinates:', leads.filter(l => l.lat && l.lng).length);
-    console.log('[AutoAssign API] Users with homeLat:', users.filter(u => u.homeLat).length);
-    console.log('[AutoAssign API] Users with homeLng:', users.filter(u => u.homeLng).length);
 
     // Check for stale leads
     const staleLeadsList = getStaleLeads(parsedLeads, staleDays);

@@ -63,8 +63,7 @@ export default function UserSwitcher({ onUserChange }: UserSwitcherProps) {
     
     console.log('[UserSwitcher] Final user object:', {
       name: newUser.name,
-      homeLat: newUser.homeLat,
-      homeLng: newUser.homeLng
+      role: newUser.role
     });
     
     // Save new user to Firestore
@@ -187,11 +186,6 @@ export default function UserSwitcher({ onUserChange }: UserSwitcherProps) {
                     <p className="font-medium text-gray-900">{user.name}</p>
                     <div className="flex items-center gap-2 text-xs text-gray-500">
                       <span className="capitalize">{user.role}</span>
-                      {user.homeLat && user.homeLng && (
-                        <span className="flex items-center gap-1">
-                          <MapPin className="w-3 h-3" /> Home set
-                        </span>
-                      )}
                     </div>
                   </div>
                   {user.id === currentUser.id && (
@@ -205,7 +199,7 @@ export default function UserSwitcher({ onUserChange }: UserSwitcherProps) {
             <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs text-gray-500">
-                  {allUsers.length} users • {allUsers.filter(u => u.homeLat && u.homeLng).length} with home address
+                  {allUsers.length} users
                 </p>
               </div>
               <button

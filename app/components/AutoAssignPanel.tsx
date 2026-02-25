@@ -78,7 +78,7 @@ export default function AutoAssignPanel({ isOpen, onClose, onComplete }: AutoAss
     }
   };
 
-  const eligibleUsers = users.filter(u => u.homeLat && u.homeLng && u.isActive !== false);
+  const eligibleUsers = users.filter(u => u.isActive !== false);
 
   if (!isOpen) return null;
 

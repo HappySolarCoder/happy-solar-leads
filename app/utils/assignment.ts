@@ -136,6 +136,27 @@ export function autoAssignLeads(
   users: User[],
   options: AutoAssignOptions = {}
 ): AutoAssignResult {
+  // NOTE: Distance-based auto-assignment disabled - using territory-based assignment instead
+  log('INFO', 'Assignment', 'Auto-assignment disabled (use territory-based assignment)');
+  return {
+    leads,
+    users,
+    summary: {
+      totalAssigned: 0,
+      totalSkipped: leads.length,
+      byUser: {},
+      errors: ['Distance-based assignment disabled - use territories instead']
+    }
+  };
+}
+
+// Old distance-based implementation commented out (replaced by territory assignment)
+/*
+function autoAssignLeadsOLD(
+  leads: Lead[],
+  users: User[],
+  options: AutoAssignOptions = {}
+): AutoAssignResult {
   const startTime = Date.now();
   
   log('INFO', 'Assignment', 'Starting auto-assignment', {
@@ -173,11 +194,9 @@ export function autoAssignLeads(
 
   log('INFO', 'Assignment', `${assignableLeads.length} leads eligible for assignment`);
 
-  // Filter to active setters with home locations
+  // Filter to active setters (home locations no longer used - using territories instead)
   const activeSetters = users.filter(user => 
-    user.isActive !== false && 
-    user.homeLat && 
-    user.homeLng
+    user.isActive !== false
   );
 
   log('INFO', 'Assignment', `${activeSetters.length} active setters with locations`);
@@ -216,12 +235,14 @@ export function autoAssignLeads(
     let bestDistance = 0;
 
     for (const setter of activeSetters) {
-      if (!setter.homeLat || !setter.homeLng) continue;
+      // NOTE: Distance calculation disabled (no home locations)
+      // if (!setter.homeLat || !setter.homeLng) continue;
 
-      const distance = calculateDistance(
-        lead.lat, lead.lng,
-        setter.homeLat, setter.homeLng
-      );
+      const distance = 0; // calculateDistance disabled
+      // const distance = calculateDistance(
+      //   lead.lat, lead.lng,
+      //   setter.homeLat, setter.homeLng
+      // );
 
       if (distance > maxDistance) continue;
 
@@ -309,6 +330,7 @@ export function autoAssignLeads(
     summary,
   };
 }
+*/
 
 // ============================================
 // STALE LEAD REASSIGNMENT
@@ -330,6 +352,27 @@ export interface ReassignResult {
  * Reassign leads that haven't been worked
  */
 export function reassignStaleLeads(
+  leads: Lead[],
+  users: User[],
+  options: ReassignOptions = {}
+): ReassignResult {
+  // NOTE: Distance-based reassignment disabled - using territory-based assignment instead
+  log('INFO', 'Assignment', 'Stale lead reassignment disabled (use territory-based assignment)');
+  return {
+    leads,
+    users,
+    summary: {
+      totalAssigned: 0,
+      totalSkipped: leads.length,
+      byUser: {},
+      errors: ['Distance-based reassignment disabled - use territories instead']
+    }
+  };
+}
+
+// Old distance-based implementation commented out (replaced by territory assignment)
+/*
+function reassignStaleLeadsOLD(
   leads: Lead[],
   users: User[],
   options: ReassignOptions = {}
@@ -379,12 +422,14 @@ export function reassignStaleLeads(
 
     for (const setter of activeSetters) {
       if (setter.id === originalSetter) continue;
-      if (!setter.homeLat || !setter.homeLng) continue;
+      // NOTE: Distance calculation disabled (no home locations)
+      // if (!setter.homeLat || !setter.homeLng) continue;
 
-      const distance = calculateDistance(
-        lead.lat!, lead.lng!,
-        setter.homeLat, setter.homeLng
-      );
+      const distance = 0; // calculateDistance disabled
+      // const distance = calculateDistance(
+      //   lead.lat!, lead.lng!,
+      //   setter.homeLat, setter.homeLng
+      // );
 
       if (distance > maxDistance) continue;
 
@@ -465,6 +510,7 @@ export function reassignStaleLeads(
     summary,
   };
 }
+*/
 
 // ============================================
 // PREVIEW MODE
