@@ -489,7 +489,7 @@ export default function LeadMap({
         // Update existing marker position (more performant than remove/recreate)
         userMarkerRef.current.setLatLng([lat, lng]);
       } else {
-        // Create person icon
+        // Create person icon (red for high visibility)
         const personIcon = L.divIcon({
           className: 'user-location-marker',
           html: `
@@ -505,7 +505,7 @@ export default function LeadMap({
                 position: absolute;
                 width: 40px;
                 height: 40px;
-                background: rgba(59, 130, 246, 0.2);
+                background: rgba(239, 68, 68, 0.2);
                 border-radius: 50%;
                 animation: pulse 2s infinite;
               "></div>
@@ -513,7 +513,7 @@ export default function LeadMap({
                 position: relative;
                 width: 32px;
                 height: 32px;
-                background: #3b82f6;
+                background: #EF4444;
                 border: 3px solid #ffffff;
                 border-radius: 50%;
                 display: flex;
