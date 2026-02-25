@@ -110,16 +110,16 @@ export default function ToolsPage() {
               <p className="text-sm text-[#718096]">View and manage scheduled go backs</p>
             </button>
 
-            {/* Team Map */}
+            {/* Team Activity */}
             <button
-              onClick={() => router.push('/team-map')}
+              onClick={() => router.push('/activity-map')}
               className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow text-left group"
             >
               <div className="p-3 bg-[#EDF2F7] rounded-lg group-hover:bg-[#E2E8F0] transition-colors mb-3">
                 <Map className="w-6 h-6 text-[#4299E1]" />
               </div>
-              <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Team Map</h3>
-              <p className="text-sm text-[#718096]">See all leads and team activity</p>
+              <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Team Activity</h3>
+              <p className="text-sm text-[#718096]">Live team locations & activity</p>
             </button>
           </div>
         </div>

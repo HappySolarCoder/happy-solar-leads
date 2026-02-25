@@ -116,7 +116,7 @@ const releaseNotes: ReleaseNote[] = [
     category: 'new',
     permissions: 'managers',
     howTo: [
-      'Go to Tools → Team Map',
+      'Go to Tools → Team Activity',
       'View team member routes',
       'See timeline of activity',
     ],

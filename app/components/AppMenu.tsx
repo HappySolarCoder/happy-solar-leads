@@ -61,11 +61,11 @@ export default function AppMenu({
       bgColor: 'bg-blue-50',
     },
     
-    // Everyone - Team Map (Activity Map for today)
+    // Everyone - Team Activity
     {
       icon: Map,
-      label: 'Team Map',
-      description: 'See where everyone is',
+      label: 'Team Activity',
+      description: 'Live team locations & activity',
       onClick: () => {
         router.push('/activity-map');
         setIsOpen(false);
