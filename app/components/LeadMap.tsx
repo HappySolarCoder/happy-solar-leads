@@ -289,11 +289,11 @@ export default function LeadMap({
         const routeCoords = userRoute.waypoints.map(wp => [wp.lat, wp.lng] as [number, number]);
         allCoords.push(...routeCoords);
         
-        // Draw route line in user's color (solid line)
+        // Draw route line in user's color (solid line, thicker for visibility)
         L.polyline(routeCoords, {
           color: userRoute.userColor,
-          weight: 3,
-          opacity: 0.7,
+          weight: 5,
+          opacity: 0.85,
         }).addTo(map);
 
         // Add numbered markers for each waypoint
