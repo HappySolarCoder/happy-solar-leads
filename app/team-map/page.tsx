@@ -6,7 +6,6 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/app/utils/firebase';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync } from '@/app/utils/storage';
-import { startOfToday, isAfter } from 'date-fns';
 import Image from 'next/image';
 
 const LeafletMap = dynamic(() => import('@/app/components/TeamMapView'), {
@@ -58,12 +57,27 @@ export default function TeamMapPage() {
 
   // Calculate today's stats for each user from leads
   const getTodayStats = (userId: string) => {
-    const today = startOfToday();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Get leads claimed by this user with disposition
     const userLeads = leads.filter(l => l.claimedBy === userId && l.dispositionedAt);
     
-    const todayLeads = userLeads.filter(l => isAfter(new Date(l.dispositionedAt), today));
-    const doorsKnocked = todayLeads.filter(l => ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(l.status)).length;
-    const appointments = todayLeads.filter(l => l.status === 'appointment' || l.status === 'sale').length;
+    // Filter to today's dispositions
+    const todayLeads = userLeads.filter(l => {
+      const leadDate = new Date(l.dispositionedAt);
+      return leadDate >= today;
+    });
+    
+    // Count doors (any disposition that counts as knock)
+    const doorsKnocked = todayLeads.filter(l => 
+      ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(l.status)
+    ).length;
+    
+    // Count appointments
+    const appointments = todayLeads.filter(l => 
+      l.status === 'appointment' || l.status === 'sale'
+    ).length;
     
     return { doorsToday: doorsKnocked, appointmentsToday: appointments };
   };
