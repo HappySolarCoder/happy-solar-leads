@@ -408,12 +408,20 @@ export async function saveUser(user: User): Promise<void> {
   }
   try {
     const userRef = doc(db, USERS_COLLECTION, user.id);
-    const data = {
+    const data: any = {
       ...user,
       createdAt: user.createdAt instanceof Date ? Timestamp.fromDate(user.createdAt) : Timestamp.now(),
       lastLogin: user.lastLogin ? Timestamp.fromDate(user.lastLogin) : null,
       approvalRequestedAt: user.approvalRequestedAt ? Timestamp.fromDate(user.approvalRequestedAt) : null,
     };
+    
+    // Remove undefined fields (Firestore doesn't allow them)
+    Object.keys(data).forEach(key => {
+      if (data[key] === undefined) {
+        delete data[key];
+      }
+    });
+    
     await setDoc(userRef, data, { merge: true });
   } catch (error) {
     console.error('Error saving user:', error);
@@ -432,6 +440,13 @@ export async function updateUser(id: string, updates: Partial<User>): Promise<vo
     
     if (data.lastLogin) data.lastLogin = Timestamp.fromDate(data.lastLogin);
     if (data.approvalRequestedAt) data.approvalRequestedAt = Timestamp.fromDate(data.approvalRequestedAt);
+    
+    // Remove undefined fields (Firestore doesn't allow them)
+    Object.keys(data).forEach(key => {
+      if (data[key] === undefined) {
+        delete data[key];
+      }
+    });
     
     await updateDoc(userRef, data);
   } catch (error) {
