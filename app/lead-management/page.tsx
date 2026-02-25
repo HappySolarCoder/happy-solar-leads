@@ -3,11 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Trash2, Users, MapPin } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
+import { getTerritoriesAsync, saveTerritory } from '@/app/utils/territories';
+import { Territory } from '@/app/types/territory';
 
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   ssr: false,
@@ -34,6 +36,8 @@ export default function LeadManagementPage() {
   const [mode, setMode] = useState<'assign' | 'unclaim'>('unclaim');
   const [assignToUser, setAssignToUser] = useState<string>('');
   const [drawingMode, setDrawingMode] = useState(false);
+  const [viewMode, setViewMode] = useState<'map' | 'assignments'>('map');
+  const [territories, setTerritories] = useState<Territory[]>([]);
 
   useEffect(() => {
     async function loadData() {
@@ -53,9 +57,11 @@ export default function LeadManagementPage() {
 
       const loadedLeads = await getLeadsAsync();
       const loadedUsers = await getUsersAsync();
+      const loadedTerritories = await getTerritoriesAsync();
 
       setLeads(loadedLeads);
       setUsers(loadedUsers);
+      setTerritories(loadedTerritories);
       setIsLoading(false);
     }
 
@@ -66,12 +72,42 @@ export default function LeadManagementPage() {
     const loadedLeads = await getLeadsAsync();
     setLeads(loadedLeads);
     setSelectedLeads(new Set());
+    
+    // Load territories
+    const loadedTerritories = await getTerritoriesAsync();
+    setTerritories(loadedTerritories);
   };
 
-  const handleTerritoryDrawn = (leadIds: string[]) => {
+  const handleTerritoryDrawn = async (leadIds: string[], polygon: [number, number][]) => {
     console.log('Territory drawn, selected leads:', leadIds.length);
     setSelectedLeads(new Set(leadIds));
     setDrawingMode(false);
+
+    // In assign mode, save the territory polygon
+    if (mode === 'assign' && assignToUser && polygon.length >= 3) {
+      const user = users.find(u => u.id === assignToUser);
+      if (user) {
+        try {
+          await saveTerritory({
+            userId: user.id,
+            userName: user.name,
+            userColor: user.color || '#6b7280',
+            polygon,
+            leadIds,
+            createdAt: new Date(),
+            createdBy: currentUser?.id || 'unknown',
+          });
+          
+          // Reload territories
+          const loadedTerritories = await getTerritoriesAsync();
+          setTerritories(loadedTerritories);
+          
+          console.log('Territory saved to Firestore');
+        } catch (error) {
+          console.error('Failed to save territory:', error);
+        }
+      }
+    }
   };
 
   // Filter leads by selected user
@@ -280,58 +316,89 @@ export default function LeadManagementPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Mode Toggle */}
+            {/* View Mode Toggle */}
             <div className="flex gap-1 bg-[#F7FAFC] rounded-lg p-1">
               <button
-                onClick={() => {
-                  setMode('assign');
-                  deselectAll();
-                  setDrawingMode(false);
-                }}
-                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
-                  mode === 'assign'
+                onClick={() => setViewMode('map')}
+                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1 ${
+                  viewMode === 'map'
                     ? 'bg-white text-[#FF5F5A] shadow-sm'
                     : 'text-[#718096] hover:text-[#2D3748]'
                 }`}
               >
-                Assign
+                <MapPin className="w-4 h-4" />
+                Map
               </button>
               <button
-                onClick={() => {
-                  setMode('unclaim');
-                  deselectAll();
-                  setDrawingMode(false);
-                }}
-                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
-                  mode === 'unclaim'
+                onClick={() => setViewMode('assignments')}
+                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1 ${
+                  viewMode === 'assignments'
                     ? 'bg-white text-[#FF5F5A] shadow-sm'
                     : 'text-[#718096] hover:text-[#2D3748]'
                 }`}
               >
-                Unclaim
+                <Users className="w-4 h-4" />
+                Assignments
               </button>
             </div>
 
-            <button
-              onClick={() => {
-                setDrawingMode(!drawingMode);
-                if (drawingMode) {
-                  deselectAll();
-                }
-              }}
-              className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${
-                drawingMode
-                  ? 'bg-gray-200 text-[#2D3748]'
-                  : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
-              }`}
-            >
-              {drawingMode ? 'Cancel' : 'Draw'}
-            </button>
+            {/* Mode Toggle (only show in assignments view) */}
+            {viewMode === 'assignments' && (
+              <div className="flex gap-1 bg-[#F7FAFC] rounded-lg p-1">
+                <button
+                  onClick={() => {
+                    setMode('assign');
+                    deselectAll();
+                    setDrawingMode(false);
+                  }}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                    mode === 'assign'
+                      ? 'bg-white text-[#FF5F5A] shadow-sm'
+                      : 'text-[#718096] hover:text-[#2D3748]'
+                  }`}
+                >
+                  Assign
+                </button>
+                <button
+                  onClick={() => {
+                    setMode('unclaim');
+                    deselectAll();
+                    setDrawingMode(false);
+                  }}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                    mode === 'unclaim'
+                      ? 'bg-white text-[#FF5F5A] shadow-sm'
+                      : 'text-[#718096] hover:text-[#2D3748]'
+                  }`}
+                >
+                  Unclaim
+                </button>
+              </div>
+            )}
+
+            {viewMode === 'assignments' && (
+              <button
+                onClick={() => {
+                  setDrawingMode(!drawingMode);
+                  if (drawingMode) {
+                    deselectAll();
+                  }
+                }}
+                className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${
+                  drawingMode
+                    ? 'bg-gray-200 text-[#2D3748]'
+                    : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
+                }`}
+              >
+                {drawingMode ? 'Cancel' : 'Draw'}
+              </button>
+            )}
           </div>
         </div>
 
-        {/* User Filter */}
-        <div className="space-y-2">
+        {/* User Filter (only show in assignments view when drawing/managing) */}
+        {viewMode === 'assignments' && (
+          <div className="space-y-2">
           <div className="flex items-center gap-2 mb-2">
             <Users className="w-4 h-4 text-[#718096]" />
             <label className="text-sm font-medium text-[#2D3748]">Filter by User</label>
@@ -425,7 +492,8 @@ export default function LeadManagementPage() {
               </button>
             </div>
           )}
-        </div>
+          </div>
+        )}
       </header>
 
       {/* Map View */}
@@ -439,6 +507,8 @@ export default function LeadManagementPage() {
           assignmentMode={drawingMode ? 'territory' : 'none'}
           selectedLeadIdsForAssignment={Array.from(selectedLeads)}
           onTerritoryDrawn={handleTerritoryDrawn}
+          viewMode={viewMode}
+          territories={territories}
         />
       </div>
 

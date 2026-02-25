@@ -22,8 +22,10 @@ interface LeadMapProps {
   zoom?: number;
   assignmentMode?: 'none' | 'manual' | 'territory';
   selectedLeadIdsForAssignment?: string[];
-  onTerritoryDrawn?: (leadIds: string[]) => void;
+  onTerritoryDrawn?: (leadIds: string[], polygon: [number, number][]) => void;
   userPosition?: [number, number]; // GPS position for blue dot
+  viewMode?: 'map' | 'assignments'; // Show territories in assignments view
+  territories?: any[]; // Territory polygons to display
 }
 
 export default function LeadMap({ 
@@ -39,6 +41,8 @@ export default function LeadMap({
   selectedLeadIdsForAssignment = [],
   onTerritoryDrawn,
   userPosition,
+  viewMode = 'map',
+  territories = [],
 }: LeadMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -305,6 +309,7 @@ export default function LeadMap({
       const icon = createCustomIcon(
         lead,
         users,
+        viewMode, // Only show territory colors in assignments view
         lead.solarCategory,
         lead.status,
         Boolean(isSelected || isSelectedForAssignment),
@@ -465,9 +470,10 @@ export default function LeadMap({
 
         console.log('[LeadMap] Leads found in territory:', leadsInside.length);
 
-        // Call callback with lead IDs
+        // Call callback with lead IDs and polygon coordinates
         if (onTerritoryDrawn) {
-          onTerritoryDrawn(leadsInside.map(l => l.id));
+          const polygonCoords: [number, number][] = drawingPoints.map(p => [p.lat, p.lng]);
+          onTerritoryDrawn(leadsInside.map(l => l.id), polygonCoords);
         }
 
         // Clean up after delay so user can see the result
@@ -621,6 +627,52 @@ export default function LeadMap({
       prevCenterRef.current = center;
     }
   }, [center]);
+
+  // Render territory polygons (assignments view only)
+  const territoriesLayerRef = useRef<L.LayerGroup | null>(null);
+  useEffect(() => {
+    if (!mapInstanceRef.current || !isClient) return;
+
+    const map = mapInstanceRef.current;
+
+    // Clear existing territories
+    if (territoriesLayerRef.current) {
+      territoriesLayerRef.current.clearLayers();
+    } else {
+      territoriesLayerRef.current = L.layerGroup().addTo(map);
+    }
+
+    // Only render territories in assignments view
+    if (viewMode !== 'assignments' || territories.length === 0) return;
+
+    territories.forEach(territory => {
+      if (!territory.polygon || territory.polygon.length < 3) return;
+
+      const polygon = L.polygon(territory.polygon, {
+        color: territory.userColor,
+        fillColor: territory.userColor,
+        fillOpacity: 0.15,
+        weight: 2,
+        opacity: 0.7,
+      });
+
+      polygon.bindPopup(`
+        <div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
+          <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:${territory.userColor};">${territory.userName}</h3>
+          <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${territory.leadIds.length} leads assigned</p>
+          <p style="margin:0;font-size:12px;color:#6b7280;">Created: ${new Date(territory.createdAt).toLocaleDateString()}</p>
+        </div>
+      `);
+
+      polygon.addTo(territoriesLayerRef.current!);
+    });
+
+    return () => {
+      if (territoriesLayerRef.current) {
+        territoriesLayerRef.current.clearLayers();
+      }
+    };
+  }, [territories, viewMode, isClient]);
 
   // Handle dropping a pin
   const handleDropPin = async (latlng: L.LatLng) => {
@@ -939,6 +991,7 @@ const ICON_TO_UNICODE: Record<string, string> = {
 function createCustomIcon(
   lead: Lead,
   users: User[],
+  viewMode: 'map' | 'assignments',
   solarCategory: string | undefined,
   status: string,
   isSelected: boolean,
@@ -1011,10 +1064,15 @@ function createCustomIcon(
       border = '2px solid #9ca3af'; // Light gray border if no solar data
     }
   } else {
-    // Territory color priority: assigned user's color > solar > disposition > status
-    const assignedUser = lead.assignedTo ? users.find(u => u.id === lead.assignedTo) : null;
-    const claimedUser = lead.claimedBy ? users.find(u => u.id === lead.claimedBy) : null;
-    const territoryColor = assignedUser?.color || claimedUser?.color;
+    // In assignments view: show territory colors
+    // In map view: show solar/disposition/status colors
+    let territoryColor: string | undefined;
+    
+    if (viewMode === 'assignments') {
+      const assignedUser = lead.assignedTo ? users.find(u => u.id === lead.assignedTo) : null;
+      const claimedUser = lead.claimedBy ? users.find(u => u.id === lead.claimedBy) : null;
+      territoryColor = assignedUser?.color || claimedUser?.color;
+    }
     
     // Solar data leads (or no tags): colorful pins as before
     color = territoryColor
