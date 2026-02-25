@@ -40,6 +40,15 @@ export default function LeadManagementPage() {
   const [viewMode, setViewMode] = useState<'map' | 'assignments'>('map');
   const [territories, setTerritories] = useState<Territory[]>([]);
 
+  // Debug logging
+  useEffect(() => {
+    console.log('[Lead Management] State updated:', {
+      viewMode,
+      territoriesCount: territories.length,
+      territories,
+    });
+  }, [viewMode, territories]);
+
   useEffect(() => {
     async function loadData() {
       const user = await getCurrentAuthUser();
@@ -618,7 +627,6 @@ export default function LeadManagementPage() {
 
       {/* Map View */}
       <div className="flex-1 relative">
-        {console.log('[Lead Management Render] viewMode:', viewMode, 'territories:', territories.length)}
         <LeadMap
           leads={filteredLeads}
           currentUser={currentUser}
