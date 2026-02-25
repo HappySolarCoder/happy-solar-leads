@@ -44,7 +44,7 @@ export default function LeadMap({
   const routeLineRef = useRef<L.Polyline | null>(null);
   const drawControlRef = useRef<any>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
-  const userMarkerRef = useRef<L.CircleMarker | null>(null);
+  const userMarkerRef = useRef<L.Marker | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
@@ -476,7 +476,7 @@ export default function LeadMap({
     // This is handled in the main markers effect above
   }, [selectedLeadIdsForAssignment, assignmentMode]);
 
-  // Update user position marker (blue dot)
+  // Update user position marker (person icon)
   useEffect(() => {
     if (!mapInstanceRef.current || !isClient) return;
 
@@ -489,22 +489,53 @@ export default function LeadMap({
         // Update existing marker position (more performant than remove/recreate)
         userMarkerRef.current.setLatLng([lat, lng]);
       } else {
-        // Create blue dot first time
-        userMarkerRef.current = L.circleMarker([lat, lng], {
-          radius: 8,
-          fillColor: '#3b82f6',
-          color: '#ffffff',
-          weight: 3,
-          opacity: 1,
-          fillOpacity: 0.9,
-        }).addTo(map);
+        // Create person icon
+        const personIcon = L.divIcon({
+          className: 'user-location-marker',
+          html: `
+            <div style="
+              position: relative;
+              width: 40px;
+              height: 40px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+            ">
+              <div style="
+                position: absolute;
+                width: 40px;
+                height: 40px;
+                background: rgba(59, 130, 246, 0.2);
+                border-radius: 50%;
+                animation: pulse 2s infinite;
+              "></div>
+              <div style="
+                position: relative;
+                width: 32px;
+                height: 32px;
+                background: #3b82f6;
+                border: 3px solid #ffffff;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                z-index: 1;
+              ">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                  <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                </svg>
+              </div>
+            </div>
+          `,
+          iconSize: [40, 40],
+          iconAnchor: [20, 20],
+        });
 
-        // Add pulsing effect with CSS
-        const element = userMarkerRef.current.getElement() as HTMLElement;
-        if (element) {
-          element.style.animation = 'pulse 2s infinite';
-          element.style.zIndex = '1000';
-        }
+        userMarkerRef.current = L.marker([lat, lng], {
+          icon: personIcon,
+          zIndexOffset: 1000,
+        }).addTo(map);
       }
     } else {
       // Remove marker if no position
