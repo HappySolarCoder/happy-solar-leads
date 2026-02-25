@@ -10,6 +10,7 @@ import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
 import { getTerritoriesAsync, saveTerritory } from '@/app/utils/territories';
 import { Territory } from '@/app/types/territory';
+import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
 
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   ssr: false,
@@ -79,15 +80,18 @@ export default function LeadManagementPage() {
   };
 
   const handleTerritoryDrawn = async (leadIds: string[], polygon: [number, number][]) => {
-    console.log('Territory drawn, selected leads:', leadIds.length);
+    console.log('Territory drawn, leads inside:', leadIds.length);
     setSelectedLeads(new Set(leadIds));
     setDrawingMode(false);
 
-    // In assign mode, save the territory polygon
+    // In assign mode, save the territory polygon and auto-assign leads
     if (mode === 'assign' && assignToUser && polygon.length >= 3) {
       const user = users.find(u => u.id === assignToUser);
       if (user) {
+        setIsDeleting(true);
+        
         try {
+          // 1. Save the territory first
           await saveTerritory({
             userId: user.id,
             userName: user.name,
@@ -98,13 +102,58 @@ export default function LeadManagementPage() {
             createdBy: currentUser?.id || 'unknown',
           });
           
-          // Reload territories
+          console.log('Territory saved to Firestore');
+
+          // 2. Auto-assign all leads inside the territory
+          const leadsToAssign = leadIds.length;
+          setProgress({ current: 0, total: leadsToAssign });
+
+          let processed = 0;
+          const batchSize = 30;
+
+          for (let i = 0; i < leadIds.length; i += batchSize) {
+            const batch = leadIds.slice(i, i + batchSize);
+            
+            await Promise.all(
+              batch.map(async (leadId) => {
+                try {
+                  const lead = leads.find(l => l.id === leadId);
+                  if (!lead) return;
+                  
+                  const updatedLead: Lead = {
+                    ...lead,
+                    assignedTo: user.id,
+                    assignedAt: new Date(),
+                    status: 'assigned',
+                  };
+                  
+                  await saveLeadAsync(updatedLead);
+                  processed++;
+                } catch (err) {
+                  console.error(`Failed to assign lead ${leadId}:`, err);
+                }
+              })
+            );
+
+            setProgress({ current: processed, total: leadsToAssign });
+
+            if (i + batchSize < leadIds.length) {
+              await new Promise(resolve => setTimeout(resolve, 200));
+            }
+          }
+
+          // 3. Reload territories and leads
           const loadedTerritories = await getTerritoriesAsync();
           setTerritories(loadedTerritories);
+          await handleUpdate();
           
-          console.log('Territory saved to Firestore');
+          alert(`Territory created! Assigned ${processed} leads to ${user.name}.`);
         } catch (error) {
           console.error('Failed to save territory:', error);
+          alert('Failed to create territory. Please try again.');
+        } finally {
+          setIsDeleting(false);
+          setProgress({ current: 0, total: 0 });
         }
       }
     }

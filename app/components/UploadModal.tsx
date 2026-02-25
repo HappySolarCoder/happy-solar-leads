@@ -8,6 +8,8 @@ import { geocodeBatch } from '@/app/utils/geocode';
 import { saveLeadAsync, batchSaveLeadsAsync, getLeadsAsync, generateId } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { canManageUsers } from '@/app/types';
+import { getTerritoriesAsync } from '@/app/utils/territories';
+import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
 
 // Client-side logger that sends to server
 function logToFile(level: string, component: string, message: string, data: any = {}) {
@@ -315,6 +317,35 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
         });
         console.log(`[UploadModal] Saved ${saved}/${total} leads (${percentageSaved}%)`);
       });
+
+      // Auto-assign leads based on territories
+      logToFile('INFO', 'UploadModal', 'Checking territory auto-assignment');
+      try {
+        const territories = await getTerritoriesAsync();
+        if (territories.length > 0) {
+          const assignments = autoAssignLeadsByTerritories(newLeads, territories);
+          
+          if (assignments.length > 0) {
+            logToFile('INFO', 'UploadModal', 'Auto-assigning leads by territory', { count: assignments.length });
+            
+            // Save the auto-assigned leads
+            for (const { lead, territory } of assignments) {
+              const updatedLead: Lead = {
+                ...lead,
+                assignedTo: territory.userId,
+                assignedAt: new Date(),
+                status: 'assigned',
+              };
+              await saveLeadAsync(updatedLead);
+            }
+            
+            logToFile('INFO', 'UploadModal', 'Territory auto-assignment complete', { assigned: assignments.length });
+          }
+        }
+      } catch (err) {
+        logToFile('WARN', 'UploadModal', 'Territory auto-assignment failed', { error: err });
+        // Don't fail the whole upload if auto-assignment fails
+      }
 
       // Show failed info
       const failedAddresses = [

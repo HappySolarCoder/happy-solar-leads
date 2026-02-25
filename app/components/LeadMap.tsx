@@ -651,9 +651,35 @@ export default function LeadMap({
       const polygon = L.polygon(territory.polygon, {
         color: territory.userColor,
         fillColor: territory.userColor,
-        fillOpacity: 0.15,
-        weight: 2,
-        opacity: 0.7,
+        fillOpacity: 0.2, // More visible fill
+        weight: 4, // Thicker border
+        opacity: 1, // Full opacity on border
+      });
+
+      // Add permanent label in center of territory
+      const bounds = polygon.getBounds();
+      const center = bounds.getCenter();
+      
+      const label = L.marker(center, {
+        icon: L.divIcon({
+          className: 'territory-label',
+          html: `
+            <div style="
+              background: ${territory.userColor};
+              color: white;
+              padding: 8px 16px;
+              border-radius: 20px;
+              font-weight: bold;
+              font-size: 14px;
+              white-space: nowrap;
+              box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+              border: 2px solid white;
+            ">
+              ${territory.userName}
+            </div>
+          `,
+          iconSize: [0, 0],
+        }),
       });
 
       polygon.bindPopup(`
@@ -665,6 +691,7 @@ export default function LeadMap({
       `);
 
       polygon.addTo(territoriesLayerRef.current!);
+      label.addTo(territoriesLayerRef.current!);
     });
 
     return () => {
