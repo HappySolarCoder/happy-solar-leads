@@ -74,6 +74,20 @@ export default function ActivityMapPage() {
     loadData();
   }, [router]);
 
+  // Real-time updates - refresh leads every 30 seconds
+  useEffect(() => {
+    const refreshInterval = setInterval(async () => {
+      try {
+        const loadedLeads = await getLeadsAsync();
+        setAllLeads(loadedLeads);
+      } catch (error) {
+        console.error('Error refreshing activity data:', error);
+      }
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(refreshInterval);
+  }, []);
+
   // Process activity data when date or user filter changes
   useEffect(() => {
     if (!selectedDate) return;

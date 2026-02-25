@@ -61,13 +61,13 @@ export default function AppMenu({
       bgColor: 'bg-blue-50',
     },
     
-    // Everyone - Team Map
+    // Everyone - Team Map (Activity Map for today)
     {
       icon: Map,
       label: 'Team Map',
       description: 'See where everyone is',
       onClick: () => {
-        router.push('/mobile/team-map');
+        router.push('/activity-map');
         setIsOpen(false);
       },
       color: 'from-green-500 to-green-600',
