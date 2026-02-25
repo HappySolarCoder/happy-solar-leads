@@ -85,7 +85,11 @@ export default function UsersManagementPage() {
     
     try {
       const user = users.find(u => u.id === userId);
-      if (!user) return;
+      if (!user) {
+        console.error('User not found:', userId);
+        alert('User not found');
+        return;
+      }
 
       const updatedUser: User = {
         ...user,
@@ -98,6 +102,7 @@ export default function UsersManagementPage() {
         approvalStatus: 'approved',
       };
 
+      console.log('Saving user:', updatedUser);
       await saveUserAsync(updatedUser);
       
       // Refresh users list
@@ -106,6 +111,10 @@ export default function UsersManagementPage() {
       
       setEditingUserId(null);
       setEditForm({});
+      console.log('User saved successfully');
+    } catch (error: any) {
+      console.error('Failed to save user:', error);
+      alert(`Failed to save user: ${error?.message || 'Unknown error'}`);
     } finally {
       setIsSaving(false);
     }
