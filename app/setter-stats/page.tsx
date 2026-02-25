@@ -24,6 +24,8 @@ interface SetterMetrics {
 }
 
 type TimeFilter = 'today' | 'yesterday' | 'last7days' | 'thisweek' | 'lastweek' | 'thismonth' | 'lastmonth' | 'all';
+
+interface SetterMetrics {
 type SortBy = 'knocks' | 'conversations' | 'appointments' | 'goBacks';
 
 export default function DataDashboard() {
@@ -64,12 +66,17 @@ export default function DataDashboard() {
 
     // Get time filter cutoff
     let cutoffDate: Date;
+    let endDate: Date | undefined;
+
     switch (timeFilter) {
       case 'today':
         cutoffDate = startOfToday();
+        endDate = undefined;
         break;
       case 'yesterday':
-        cutoffDate = new Date(startOfToday().getTime() - 86400000);
+        // Yesterday: from start of yesterday to start of today
+        cutoffDate = new Date(startOfToday().getTime() - 86400000); // Start of yesterday
+        endDate = startOfToday(); // Start of today (exclusive)
         break;
       case 'last7days':
         cutoffDate = new Date(Date.now() - 7 * 86400000);
@@ -88,6 +95,7 @@ export default function DataDashboard() {
         break;
       default:
         cutoffDate = new Date(0); // All time
+        endDate = undefined;
     }
 
     // Get door knock statuses from dispositions
@@ -98,7 +106,12 @@ export default function DataDashboard() {
     // Filter leads by time
     const filteredLeads = leads.filter(lead => {
       if (!lead.dispositionedAt) return false;
-      return isAfter(new Date(lead.dispositionedAt), cutoffDate);
+      const leadDate = new Date(lead.dispositionedAt);
+      // Must be after cutoff date
+      if (!isAfter(leadDate, cutoffDate)) return false;
+      // If endDate is set, must be before end date (for yesterday filter)
+      if (endDate && !isAfter(endDate, leadDate)) return false;
+      return true;
     });
 
     // Process leads
