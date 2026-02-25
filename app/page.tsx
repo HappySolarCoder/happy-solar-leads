@@ -419,6 +419,7 @@ export default function Home() {
               assignmentMode={assignmentMode}
               selectedLeadIdsForAssignment={selectedLeadIdsForAssignment}
               onTerritoryDrawn={handleTerritoryDrawn}
+              onLeadAdded={refreshLeads}
             />
 
             {/* Mobile Floating Action Button */}

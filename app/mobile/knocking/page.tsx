@@ -358,6 +358,7 @@ export default function KnockingPage() {
             userPosition={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
             center={mapCenter} // Set ONCE on GPS load, then only on manual recenter
             zoom={15} // Closer zoom for mobile
+            onLeadAdded={refreshLeads}
           />
           {/* GPS Locate button is now built into LeadMap component */}
         </main>

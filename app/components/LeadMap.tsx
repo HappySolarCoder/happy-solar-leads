@@ -27,6 +27,7 @@ interface LeadMapProps {
   viewMode?: 'map' | 'assignments'; // Show territories in assignments view
   territories?: any[]; // Territory polygons to display
   onTerritoryDelete?: (territoryId: string) => void; // Callback when territory deleted
+  onLeadAdded?: () => void; // Callback when a new lead is added via map pin drop
 }
 
 export default function LeadMap({ 
@@ -45,6 +46,7 @@ export default function LeadMap({
   viewMode = 'map',
   territories = [],
   onTerritoryDelete,
+  onLeadAdded,
 }: LeadMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -829,6 +831,7 @@ export default function LeadMap({
         status: 'unclaimed',
         createdAt: new Date(),
         setterId: currentUser?.id,
+        source: 'manually-added', // Mark as manually added via map pin drop
       } as Lead;
 
       // Save to Firestore
@@ -873,8 +876,10 @@ export default function LeadMap({
       setShowAddLeadModal(false);
       setDropPinLocation(null);
 
-      // Refresh page to show new lead
-      window.location.reload();
+      // Call parent callback to refresh leads (keeps map position)
+      if (onLeadAdded) {
+        onLeadAdded();
+      }
     } catch (error) {
       console.error('Error saving dropped lead:', error);
       throw error;
@@ -1078,6 +1083,9 @@ function createCustomIcon(
   zoom: number = 12,
   tags?: string[]
 ): L.DivIcon {
+  // Check if this is a manually-added lead (red pins)
+  const isManuallyAdded = lead.source === 'manually-added';
+  
   // Check if this is a homeowner/home-data lead (subtle gray pins)
   const isHomeownerLead = tags && (tags.includes('homeowner') || tags.includes('home-data'));
   
@@ -1116,11 +1124,25 @@ function createCustomIcon(
     solid: '#f59e0b',
   };
   
+  // Manually-added leads: red pin (stands out from all other leads)
   // Homeowner leads: gray pin with solar rating as border color
   let color: string;
   let border: string;
   
-  if (isHomeownerLead) {
+  if (isManuallyAdded) {
+    // Red pin for manually-added leads (via map pin drop)
+    color = '#FF5F5A'; // Bright red
+    
+    if (isSelectedForAssignment) {
+      border = '3px solid #8b5cf6'; // Purple for assignment
+    } else if (isSelected) {
+      border = '3px solid white';
+    } else if (isSimpleDot) {
+      border = 'none';
+    } else {
+      border = '3px solid white'; // Thicker white border to stand out
+    }
+  } else if (isHomeownerLead) {
     // Gray pin body for homeowner/home-data leads
     color = '#6b7280';
     

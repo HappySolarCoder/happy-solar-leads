@@ -646,6 +646,7 @@ export default function LeadManagementPage() {
           viewMode={viewMode}
           territories={territories}
           onTerritoryDelete={handleTerritoryDelete}
+          onLeadAdded={handleUpdate}
         />
       </div>
 
