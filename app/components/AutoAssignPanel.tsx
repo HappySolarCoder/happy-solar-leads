@@ -127,7 +127,7 @@ export default function AutoAssignPanel({ isOpen, onClose, onComplete }: AutoAss
                 {eligibleUsers.slice(0, 3).map(user => (
                   <div key={user.id} className="text-sm text-green-600 flex items-center gap-2">
                     <MapPin className="w-3 h-3" />
-                    {user.name} - {user.homeAddress?.split(',')[0] || 'Address set'}
+                    {user.name}{user.territory ? ` - ${user.territory}` : ''}
                   </div>
                 ))}
                 {eligibleUsers.length > 3 && (

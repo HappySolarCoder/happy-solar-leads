@@ -61,36 +61,6 @@ export default function UserSwitcher({ onUserChange }: UserSwitcherProps) {
       isActive: true,
     };
     
-    // Geocode home address if provided
-    if (newUserHome.trim()) {
-      try {
-        console.log('[UserSwitcher] Geocoding home address:', newUserHome);
-        const geoResp = await fetch('/api/geocode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ address: newUserHome }),
-        });
-        
-        if (!geoResp.ok) {
-          console.error('[UserSwitcher] Geocode failed:', geoResp.status);
-        }
-        
-        const geoData = await geoResp.json();
-        console.log('[UserSwitcher] Geocode result:', geoData);
-        
-        if (geoData.lat && geoData.lng) {
-          newUser.homeAddress = newUserHome;
-          newUser.homeLat = parseFloat(geoData.lat);
-          newUser.homeLng = parseFloat(geoData.lng);
-          console.log('[UserSwitcher] Home coordinates set:', newUser.homeLat, newUser.homeLng);
-        } else {
-          console.warn('[UserSwitcher] Geocoding returned no coordinates');
-        }
-      } catch (e) {
-        console.error('[UserSwitcher] Geocode error:', e);
-      }
-    }
-    
     console.log('[UserSwitcher] Final user object:', {
       name: newUser.name,
       homeLat: newUser.homeLat,

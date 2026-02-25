@@ -26,9 +26,6 @@ export interface User {
   approvalRequestedAt?: Date;
   createdAt: Date;
   // Auto-assignment fields
-  homeAddress?: string;
-  homeLat?: number;
-  homeLng?: number;
   assignedLeadCount?: number;
   isActive?: boolean; // Can receive auto-assigned leads
   // Optional user metadata

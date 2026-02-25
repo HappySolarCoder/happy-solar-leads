@@ -69,7 +69,6 @@ export default function UsersManagementPage() {
       name: user.name,
       email: user.email,
       role: user.role,
-      homeAddress: user.homeAddress,
       isActive: user.isActive,
       territory: user.territory,
     });
