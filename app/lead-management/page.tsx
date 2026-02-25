@@ -141,11 +141,13 @@ export default function LeadManagementPage() {
                   const lead = leads.find(l => l.id === leadId);
                   if (!lead) return;
                   
+                  // Preserve existing status, only assign if not already claimed
                   const updatedLead: Lead = {
                     ...lead,
                     assignedTo: user.id,
                     assignedAt: new Date(),
-                    status: 'assigned',
+                    // Only set status to 'assigned' if lead is unclaimed
+                    ...(lead.status === 'unclaimed' ? { status: 'assigned' } : {}),
                   };
                   
                   await saveLeadAsync(updatedLead);
