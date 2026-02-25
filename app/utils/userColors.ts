@@ -1,22 +1,38 @@
 // User color utilities for territory visualization
 
-// Vibrant, distinct colors for territory visualization
+// 30 bright, highly visible colors optimized for satellite imagery
+// Avoids dark colors that blend with terrain
 const TERRITORY_COLORS = [
-  '#EF4444', // Red
-  '#3B82F6', // Blue
-  '#10B981', // Green
-  '#F59E0B', // Amber
-  '#8B5CF6', // Purple
-  '#EC4899', // Pink
-  '#14B8A6', // Teal
-  '#F97316', // Orange
-  '#6366F1', // Indigo
-  '#84CC16', // Lime
-  '#06B6D4', // Cyan
-  '#D946EF', // Fuchsia
-  '#EAB308', // Yellow
-  '#A855F7', // Violet
-  '#22C55E', // Emerald
+  '#FF0000', // Bright Red
+  '#00FFFF', // Cyan
+  '#FF00FF', // Magenta
+  '#FFFF00', // Yellow
+  '#00FF00', // Lime
+  '#FF6600', // Orange
+  '#FF0099', // Hot Pink
+  '#0099FF', // Sky Blue
+  '#FF3366', // Rose
+  '#00FF99', // Spring Green
+  '#9966FF', // Purple
+  '#FF9900', // Tangerine
+  '#FF33CC', // Pink
+  '#33CCFF', // Light Blue
+  '#CCFF00', // Yellow-Green
+  '#FF3333', // Scarlet
+  '#33FF33', // Green
+  '#3399FF', // Azure
+  '#FF6699', // Pink Rose
+  '#66FF33', // Chartreuse
+  '#FF9933', // Orange Yellow
+  '#9933FF', // Violet
+  '#33FFCC', // Turquoise
+  '#FFCC00', // Gold
+  '#FF0066', // Deep Pink
+  '#66CCFF', // Cornflower
+  '#CCFF33', // Lime Yellow
+  '#FF3399', // Raspberry
+  '#33FF99', // Sea Green
+  '#FF6633', // Coral
 ];
 
 /**
