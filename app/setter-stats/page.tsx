@@ -26,6 +26,18 @@ interface SetterMetrics {
 type TimeFilter = 'today' | 'yesterday' | 'last7days' | 'thisweek' | 'lastweek' | 'thismonth' | 'lastmonth' | 'all';
 
 interface SetterMetrics {
+  userId: string;
+  userName: string;
+  knocks: number; // dispositioned leads (countsAsDoorKnock)
+  conversations: number; // interested + appointment + sale
+  appointments: number; // appointment disposition
+  sales: number; // sale disposition
+  notHome: number;
+  notInterested: number;
+  goBacksScheduled: number; // Go-backs scheduled by this setter
+  goBacksConverted: number; // Go-backs that converted to appointments
+}
+
 type SortBy = 'knocks' | 'conversations' | 'appointments' | 'goBacks';
 
 export default function DataDashboard() {
