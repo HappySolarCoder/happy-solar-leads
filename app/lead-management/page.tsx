@@ -39,6 +39,7 @@ export default function LeadManagementPage() {
   const [drawingMode, setDrawingMode] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'assignments'>('map');
   const [territories, setTerritories] = useState<Territory[]>([]);
+  const [operationType, setOperationType] = useState<'assigning' | 'unclaiming' | 'deleting'>('unclaiming');
 
   // Debug logging
   useEffect(() => {
@@ -104,6 +105,7 @@ export default function LeadManagementPage() {
     if (mode === 'assign' && assignToUser && polygon.length >= 3) {
       const user = users.find(u => u.id === assignToUser);
       if (user) {
+        setOperationType('assigning');
         setIsDeleting(true);
         
         try {
@@ -201,6 +203,7 @@ export default function LeadManagementPage() {
     const territory = territories.find(t => t.id === territoryId);
     if (!territory) return;
 
+    setOperationType('deleting');
     setIsDeleting(true);
     setProgress({ current: 0, total: territory.leadIds.length });
 
@@ -270,6 +273,7 @@ export default function LeadManagementPage() {
     
     if (!confirmed) return;
 
+    setOperationType('unclaiming');
     setIsDeleting(true);
     const leadIds = Array.from(selectedLeads);
     setProgress({ current: 0, total: leadIds.length });
@@ -649,7 +653,11 @@ export default function LeadManagementPage() {
       {isDeleting && progress.total > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
-            <h3 className="text-lg font-semibold text-[#2D3748] mb-4">Unclaiming Leads...</h3>
+            <h3 className="text-lg font-semibold text-[#2D3748] mb-4">
+              {operationType === 'assigning' && 'Assigning Leads...'}
+              {operationType === 'unclaiming' && 'Unclaiming Leads...'}
+              {operationType === 'deleting' && 'Deleting Territory...'}
+            </h3>
             <div className="mb-2">
               <div className="w-full bg-[#E2E8F0] rounded-full h-3 overflow-hidden">
                 <div
