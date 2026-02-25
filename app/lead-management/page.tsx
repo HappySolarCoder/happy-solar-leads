@@ -441,7 +441,7 @@ export default function LeadManagementPage() {
       {/* Header */}
       <header className="bg-white border-b border-[#E2E8F0] px-2 py-3 flex-shrink-0">
         <div className="flex flex-col items-center gap-2">
-          {/* Top Row: Back + Title */}
+          {/* Top Row: Back + Title + Logo */}
           <div className="flex items-center justify-between w-full">
             <button
               onClick={() => router.push('/tools')}
@@ -450,7 +450,11 @@ export default function LeadManagementPage() {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <h1 className="text-lg font-bold text-[#2D3748]">Lead Management</h1>
-            <div className="w-9"></div>
+            <img 
+              src="/raydar-icon.png" 
+              alt="Raydar" 
+              className="h-8 w-8 object-contain"
+            />
           </div>
 
           {/* View Mode Toggle */}
@@ -488,13 +492,13 @@ export default function LeadManagementPage() {
                   deselectAll();
                   setDrawingMode(false);
                 }}
-                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                className={`px-2 py-1.5 text-xs sm:text-sm rounded-md font-medium transition-colors whitespace-nowrap ${
                   mode === 'assign'
                     ? 'bg-white text-[#FF5F5A] shadow-sm'
                     : 'text-[#718096] hover:text-[#2D3748]'
                 }`}
               >
-                Assign
+                Assign Territory
               </button>
               <button
                 onClick={() => {
@@ -502,20 +506,20 @@ export default function LeadManagementPage() {
                   deselectAll();
                   setDrawingMode(false);
                 }}
-                className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
+                className={`px-2 py-1.5 text-xs sm:text-sm rounded-md font-medium transition-colors whitespace-nowrap ${
                   mode === 'unclaim'
                     ? 'bg-white text-[#FF5F5A] shadow-sm'
                     : 'text-[#718096] hover:text-[#2D3748]'
                 }`}
               >
-                Unclaim
+                Remove Territory
               </button>
               <button
                 onClick={() => {
                   setDrawingMode(!drawingMode);
                   if (drawingMode) deselectAll();
                 }}
-                className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${
+                className={`px-2 py-1.5 text-xs sm:text-sm rounded-lg font-medium transition-colors whitespace-nowrap ${
                   drawingMode
                     ? 'bg-gray-200 text-[#2D3748]'
                     : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
