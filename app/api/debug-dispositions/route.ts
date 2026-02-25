@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getFirestore, collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { initializeApp, getApps } from 'firebase/app';
 
 const firebaseConfig = {
@@ -20,28 +20,35 @@ export async function GET() {
   try {
     const db = getDb();
     
-    // Get dispositions
-    const dispSnapshot = await getDocs(query(collection(db, 'dispositions'), orderBy('order', 'asc')));
-    const dispositions = dispSnapshot.docs.map(doc => {
+    // Get disposition history
+    const historySnapshot = await getDocs(query(collection(db, 'disposition_history'), orderBy('timestamp', 'desc'), limit(20)));
+    const history = historySnapshot.docs.map(doc => {
       const data = doc.data() as any;
       return {
         id: doc.id,
-        name: data.name,
-        countsAsDoorKnock: data.countsAsDoorKnock,
+        leadId: data.leadId,
+        status: data.status,
+        userId: data.userId,
+        timestamp: data.timestamp?.toDate?.() || data.timestamp,
       };
     });
     
-    // Get unique lead statuses
-    const leadsSnapshot = await getDocs(query(collection(db, 'leads')));
-    const statuses = new Set<string>();
-    leadsSnapshot.docs.forEach(doc => {
+    // Get leads with dispositions
+    const leadsSnapshot = await getDocs(query(collection(db, 'leads'), orderBy('dispositionedAt', 'desc'), limit(30)));
+    const leads = leadsSnapshot.docs.map(doc => {
       const data = doc.data() as any;
-      if (data.status) statuses.add(data.status);
-    });
+      return {
+        id: doc.id,
+        status: data.status,
+        dispositionedAt: data.dispositionedAt?.toDate?.() || data.dispositionedAt,
+        claimedBy: data.claimedBy,
+        address: data.address,
+      };
+    }).filter(l => l.status && ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(l.status));
     
     return NextResponse.json({ 
-      dispositions,
-      leadStatuses: Array.from(statuses),
+      dispositionHistory: history,
+      leadsWithDispositions: leads,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

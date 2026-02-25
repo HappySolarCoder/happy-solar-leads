@@ -402,8 +402,13 @@ export default function LeadMap({
     }
 
     // Regular lead display - using visible leads only
+    // Always show leads with dispositions (they've been knocked)
+    const KNOCK_STATUSES = ['not-home', 'interested', 'not-interested', 'appointment', 'sale', 'dq-credit', 'shade-dq', 'follow-up-later', 'renter'];
     visibleLeads.forEach(lead => {
-      if (!lead.lat || !lead.lng || lead.solarCategory === 'poor') return;
+      const hasDisposition = lead.status && KNOCK_STATUSES.includes(lead.status);
+      if (!lead.lat || !lead.lng) return;
+      // Skip poor solar leads UNLESS they have a disposition (already knocked)
+      if (lead.solarCategory === 'poor' && !hasDisposition) return;
 
       const isSelected = lead.id === selectedLeadId;
       const isClaimedByMe = currentUser != null && lead.claimedBy != null && lead.claimedBy === currentUser.id;

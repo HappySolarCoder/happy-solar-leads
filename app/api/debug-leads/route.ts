@@ -32,11 +32,11 @@ export async function GET() {
     
     // Get a sample of leads to test
     const leadsSnapshot = await getDocs(query(collection(db, 'leads'), orderBy('createdAt', 'desc')));
-    const leads = leadsSnapshot.docs.slice(0, 20).map(doc => {
+    const leads = leadsSnapshot.docs.slice(0, 100).map(doc => {  // Changed to 100
       const data = doc.data() as any;
       return {
         id: doc.id,
-        ...data,
+        ...data,  // Return ALL fields
       };
     });
     
@@ -52,7 +52,10 @@ export async function GET() {
         lat: l.lat,
         lng: l.lng,
         address: l.address,
+        status: l.status,
         assignedTo: l.assignedTo,
+        claimedBy: l.claimedBy,
+        dispositionedAt: l.dispositionedAt,
       }))
     });
   } catch (error: any) {

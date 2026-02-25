@@ -221,9 +221,11 @@ export default function Home() {
       : leads
     : [];
 
-  // Filter leads for main display (exclude poor solar leads)
-  const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
-  const poorLeads = roleFilteredLeads.filter(l => l.solarCategory === 'poor');
+  // Filter leads for main display
+  // Always include leads with dispositions (already knocked doors)
+  const KNOCK_STATUSES = ['not-home', 'interested', 'not-interested', 'appointment', 'sale', 'dq-credit', 'shade-dq', 'follow-up-later', 'renter'];
+  const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor' || (l.status && KNOCK_STATUSES.includes(l.status)));
+  const poorLeads = roleFilteredLeads.filter(l => l.solarCategory === 'poor' && (!l.status || !KNOCK_STATUSES.includes(l.status)));
 
   // Filter by setter if selected
   let filteredLeads = setterFilter === 'all'
