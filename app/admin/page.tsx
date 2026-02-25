@@ -198,7 +198,7 @@ export default function AdminPage() {
             <MapPin className="w-6 h-6 text-[#FF5F5A]" />
             Territory Customization
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <button
               onClick={() => router.push('/territories')}
               className="bg-white border border-[#E2E8F0] rounded-lg p-6 hover:border-[#FF5F5A] hover:shadow-md transition-all text-left group"
@@ -228,6 +228,22 @@ export default function AdminPage() {
               <h3 className="font-semibold text-[#2D3748] mb-1">Lead Assignments</h3>
               <p className="text-sm text-[#718096]">
                 View and manage lead distribution across territories
+              </p>
+            </button>
+
+            <button
+              onClick={() => router.push('/activity-map')}
+              className="bg-white border border-[#E2E8F0] rounded-lg p-6 hover:border-[#FF5F5A] hover:shadow-md transition-all text-left group"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-3 bg-[#8B5CF6]/10 rounded-lg">
+                  <TrendingUp className="w-6 h-6 text-[#8B5CF6]" />
+                </div>
+                <ArrowRight className="w-5 h-5 text-[#718096] group-hover:text-[#FF5F5A] group-hover:translate-x-1 transition-all" />
+              </div>
+              <h3 className="font-semibold text-[#2D3748] mb-1">Activity Map</h3>
+              <p className="text-sm text-[#718096]">
+                Track daily door knocking routes and timestamps
               </p>
             </button>
           </div>
