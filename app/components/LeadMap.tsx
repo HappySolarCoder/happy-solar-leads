@@ -310,6 +310,40 @@ export default function LeadMap({
           marker.bindPopup(createActivityPopupContent(wp, userRoute.userName), { maxWidth: 300 });
           marker.on('click', () => onLeadClick(wp.lead));
           marker.addTo(layer);
+          
+          // Add person icon showing where knocker was standing when dispositioning
+          if (wp.lead.knockGpsLat && wp.lead.knockGpsLng) {
+            const personIcon = createPersonMarkerIcon(userRoute.userColor);
+            const personMarker = L.marker([wp.lead.knockGpsLat, wp.lead.knockGpsLng], { icon: personIcon });
+            
+            // Add popup showing GPS accuracy
+            const distance = wp.lead.knockDistanceFromAddress 
+              ? Math.round(wp.lead.knockDistanceFromAddress * 3.281) // Convert meters to feet
+              : null;
+            personMarker.bindPopup(
+              `<div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
+                <div style="margin:0 0 4px 0;font-size:14px;font-weight:600;color:#1f2937;">Knocker Position</div>
+                <div style="font-size:12px;color:#6b7280;">When dispositioning ${wp.lead.name}</div>
+                ${distance !== null ? `<div style="margin-top:8px;font-size:12px;color:#10b981;">Distance: ${distance} feet from door</div>` : ''}
+                ${wp.lead.knockGpsAccuracy ? `<div style="font-size:11px;color:#9ca3af;">GPS accuracy: ±${Math.round(wp.lead.knockGpsAccuracy)} meters</div>` : ''}
+              </div>`,
+              { maxWidth: 250 }
+            );
+            personMarker.addTo(layer);
+            
+            // Draw line from person position to door (if different)
+            if (distance && distance > 10) { // Only draw line if >10 feet apart
+              L.polyline(
+                [[wp.lead.knockGpsLat, wp.lead.knockGpsLng], [wp.lat, wp.lng]],
+                {
+                  color: userRoute.userColor,
+                  weight: 2,
+                  opacity: 0.5,
+                  dashArray: '5, 5',
+                }
+              ).addTo(map);
+            }
+          }
         });
       });
 
@@ -1309,6 +1343,18 @@ function createActivityMarkerIcon(order: number, color: string): L.DivIcon {
     </div>
   `;
   return L.divIcon({ html, className: 'activity-marker', iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
+}
+
+function createPersonMarkerIcon(color: string): L.DivIcon {
+  const size = 24;
+  const html = `
+    <div style="width:${size}px;height:${size}px;background:${color};border:2px solid white;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
+        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+      </svg>
+    </div>
+  `;
+  return L.divIcon({ html, className: 'person-marker', iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
 }
 
 function createActivityPopupContent(wp: RouteWaypoint, userName: string): string {
