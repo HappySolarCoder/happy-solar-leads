@@ -208,7 +208,6 @@ export default function LeadManagementPage() {
                 // Explicitly preserve disposition data
                 disposition: lead.disposition,
                 dispositionedAt: lead.dispositionedAt,
-                dispositionedBy: lead.dispositionedBy,
                 dispositionHistory: lead.dispositionHistory,
               };
               
