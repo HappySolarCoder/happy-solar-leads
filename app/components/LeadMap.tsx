@@ -37,10 +37,11 @@ interface LeadMapProps {
   selectedLeadIdsForAssignment?: string[];
   onTerritoryDrawn?: (leadIds: string[], polygon: [number, number][]) => void;
   userPosition?: [number, number]; // GPS position for blue dot
-  viewMode?: 'map' | 'assignments'; // Show territories in assignments view
+  viewMode?: 'map' | 'assignments' | 'territory'; // Show territories in assignments/territory view
   territories?: any[]; // Territory polygons to display
   onTerritoryDelete?: (territoryId: string) => void; // Callback when territory deleted
   onLeadAdded?: () => void; // Callback when a new lead is added via map pin drop
+  searchLocation?: { lat: number; lng: number } | null; // For address search marker
 }
 
 export default function LeadMap({ 
@@ -63,6 +64,7 @@ export default function LeadMap({
   territories = [],
   onTerritoryDelete,
   onLeadAdded,
+  searchLocation,
 }: LeadMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -82,9 +84,12 @@ export default function LeadMap({
   const [dropPinLocation, setDropPinLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [dropPinAddress, setDropPinAddress] = useState({ address: '', city: '', state: '', zip: '' });
   const tempPinRef = useRef<L.Marker | null>(null);
+  const searchMarkerRef = useRef<L.Marker | null>(null);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite'); // Default to satellite
   const baseTileLayerRef = useRef<L.TileLayer | null>(null);
   const labelsTileLayerRef = useRef<L.TileLayer | null>(null);
+  const hasFitLeadsBoundsRef = useRef(false); // Prevent constant re-fitting of bounds
+  const hasFitTerritoryBoundsRef = useRef(false); // Track territory bounds fitting
 
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
@@ -103,6 +108,12 @@ export default function LeadMap({
   useEffect(() => {
     hasFitBoundsRef.current = false;
   }, [userRoutes]);
+
+  // Reset lead bounds fitting when leads change significantly
+  useEffect(() => {
+    hasFitLeadsBoundsRef.current = false;
+    hasFitTerritoryBoundsRef.current = false;
+  }, [leadsProp]);
 
   // Fix Leaflet icons
   useEffect(() => {
@@ -237,17 +248,25 @@ export default function LeadMap({
       longPressStartPos = e.latlng;
       longPressTimer = setTimeout(() => {
         if (longPressStartPos) {
+          console.log('[LeadMap] Long press detected, dropping pin');
           handleDropPin(longPressStartPos);
         }
       }, 800); // 800ms for long-press
     });
     
-    map.on('touchstart', (e: L.LeafletEvent) => {
-      const mouseEvent = e as any;
-      if (mouseEvent.latlng) {
-        longPressStartPos = mouseEvent.latlng;
+    map.on('touchstart', (e: any) => {
+      // Handle touch events - extract latlng from the event
+      const latlng = (e as any).latlng || e.latlng;
+      if (latlng) {
+        longPressStartPos = latlng;
         longPressTimer = setTimeout(() => {
           if (longPressStartPos) {
+            console.log('[LeadMap] Touch long press detected, dropping pin');
+            fetch('/api/debug-log', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ level: 'info', message: 'Touch long press triggered', data: { lat: longPressStartPos.lat, lng: longPressStartPos.lng } })
+            }).catch(() => {});
             handleDropPin(longPressStartPos);
           }
         }, 800);
@@ -265,6 +284,109 @@ export default function LeadMap({
       mapInstanceRef.current = null;
     };
   }, [isClient]);
+
+  // Handle center and zoom changes from parent (e.g., address search)
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    
+    const map = mapInstanceRef.current;
+    
+    // Get current center and zoom
+    const currentCenter = map.getCenter();
+    const currentZoom = map.getZoom();
+    
+    // Calculate target values
+    const targetLat = center?.[0] ?? 43.1566;
+    const targetLng = center?.[1] ?? -77.6088;
+    const targetZoom = zoom ?? 11;
+    
+    // Only fly if there's a significant difference
+    const latDiff = Math.abs(currentCenter.lat - targetLat);
+    const lngDiff = Math.abs(currentCenter.lng - targetLng);
+    const zoomDiff = Math.abs(currentZoom - targetZoom);
+    
+    // Fly to new center and zoom if needed (threshold: >0.001 lat/lng or >0.5 zoom)
+    if (latDiff > 0.001 || lngDiff > 0.001 || zoomDiff > 0.5) {
+      console.log('[LeadMap] Flying to:', [targetLat, targetLng], 'zoom:', targetZoom);
+      map.flyTo([targetLat, targetLng], targetZoom, { 
+        duration: 1.0,
+        animate: true,
+      });
+    }
+  }, [center?.[0], center?.[1], zoom]);
+
+  // Handle search marker placement
+  useEffect(() => {
+    if (!mapInstanceRef.current || !isClient) return;
+    
+    const map = mapInstanceRef.current;
+    
+    // Remove existing search marker
+    if (searchMarkerRef.current) {
+      searchMarkerRef.current.remove();
+      searchMarkerRef.current = null;
+    }
+    
+    // If we have a search location, add the marker
+    if (searchLocation) {
+      // Create a distinct search marker - large pulsing blue circle
+      const searchIcon = L.divIcon({
+        html: `
+          <div style="
+            width: 40px;
+            height: 40px;
+            background: #3B82F6;
+            border: 4px solid white;
+            border-radius: 50%;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: pulse 1.5s infinite;
+          ">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+            </svg>
+          </div>
+          <style>
+            @keyframes pulse {
+              0% { transform: scale(1); }
+              50% { transform: scale(1.1); }
+              100% { transform: scale(1); }
+            }
+          </style>
+        `,
+        className: 'search-marker',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+      });
+      
+      searchMarkerRef.current = L.marker([searchLocation.lat, searchLocation.lng], {
+        icon: searchIcon,
+      }).addTo(map);
+      
+      // Add popup with navigate button
+      const popupContent = `
+        <div style="text-align: center; padding: 8px;">
+          <p style="margin: 0 0 8px 0; font-weight: 600;">Searched Address</p>
+          <a href="https://www.google.com/maps/dir/?api=1&destination=${searchLocation.lat},${searchLocation.lng}" 
+             target="_blank"
+             style="
+               display: inline-block;
+               background: #3B82F6;
+               color: white;
+               padding: 8px 16px;
+               border-radius: 6px;
+               text-decoration: none;
+               font-weight: 600;
+             ">
+            🚀 Navigate
+          </a>
+        </div>
+      `;
+      searchMarkerRef.current.bindPopup(popupContent).openPopup();
+    }
+  }, [searchLocation, isClient]);
 
   // Update markers and route (optimized for large datasets - only render when needed)
   useEffect(() => {
@@ -441,10 +563,20 @@ export default function LeadMap({
       marker.addTo(layer);
     });
 
-    const goodLeads = leads.filter(l => l.lat && l.lng && l.solarCategory && l.solarCategory !== 'poor');
-    if (goodLeads.length > 0 && goodLeads.length <= 50) {
+    // Include leads with dispositions when calculating map bounds (they may not have solar data)
+    // KNOCK_STATUSES is defined above
+    const hasDisposition = (l: any) => l.status && KNOCK_STATUSES.includes(l.status);
+    
+    // Include: good solar leads OR leads with dispositions
+    const goodLeads = leads.filter(l => 
+      l.lat && l.lng && 
+      ((l.solarCategory && l.solarCategory !== 'poor') || hasDisposition(l))
+    );
+    // Only fit bounds once when leads first load, not on every render/pan/zoom
+    if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current) {
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
       map.fitBounds(bounds, { padding: [50, 50] });
+      hasFitLeadsBoundsRef.current = true;
     }
 
     // Performance: Log completion time
@@ -754,19 +886,27 @@ export default function LeadMap({
       territoriesLayerRef.current = L.layerGroup().addTo(map);
     }
 
-    // Only render territories in assignments view
-    console.log('[LeadMap] Territory rendering check:', { viewMode, territoriesCount: territories.length });
-    if (viewMode !== 'assignments') {
-      console.log('[LeadMap] Not in assignments view, skipping territories');
+    // Only render territories in assignments view or territory view
+    console.log('[LeadMap] Territory rendering check:', { viewMode, territoriesCount: territories.length, currentUserRole: currentUser?.role });
+    if (viewMode !== 'assignments' && viewMode !== 'territory') {
+      console.log('[LeadMap] Not in assignments/territory view, skipping territories');
       return;
     }
-    if (territories.length === 0) {
+
+    // Filter territories: in territory view, show only current user's territory (unless admin/manager)
+    let territoriesToRender = territories;
+    if (viewMode === 'territory' && currentUser && currentUser.role !== 'admin' && currentUser.role !== 'manager') {
+      territoriesToRender = territories.filter(t => t.userId === currentUser.id);
+      console.log('[LeadMap] Filtering to user territory:', territoriesToRender.length);
+    }
+
+    if (territoriesToRender.length === 0) {
       console.log('[LeadMap] No territories to render');
       return;
     }
-    console.log('[LeadMap] Rendering territories:', territories);
+    console.log('[LeadMap] Rendering territories:', territoriesToRender);
 
-    territories.forEach(territory => {
+    territoriesToRender.forEach(territory => {
       if (!territory.polygon || territory.polygon.length < 3) return;
 
       // Convert TerritoryPoint objects to Leaflet format [lat, lng]
@@ -852,6 +992,23 @@ export default function LeadMap({
       label.addTo(territoriesLayerRef.current!);
     });
 
+    // Auto-fit bounds to show territory in territory view mode (only once)
+    if (viewMode === 'territory' && territories.length > 0 && !hasFitTerritoryBoundsRef.current) {
+      const allTerritoryCoords: [number, number][] = [];
+      territories.forEach(t => {
+        if (t.polygon) {
+          t.polygon.forEach((p: any) => {
+            allTerritoryCoords.push([p.lat, p.lng]);
+          });
+        }
+      });
+      if (allTerritoryCoords.length > 0) {
+        const territoryBounds = L.latLngBounds(allTerritoryCoords);
+        map.fitBounds(territoryBounds, { padding: [50, 50] });
+        hasFitTerritoryBoundsRef.current = true;
+      }
+    }
+
     return () => {
       if (territoriesLayerRef.current) {
         territoriesLayerRef.current.clearLayers();
@@ -861,8 +1018,14 @@ export default function LeadMap({
 
   // Handle dropping a pin
   const handleDropPin = async (latlng: L.LatLng) => {
-    if (!mapInstanceRef.current || assignmentMode !== 'none') return;
+    try {
+      if (!mapInstanceRef.current || assignmentMode !== 'none') {
+        console.log('[LeadMap] handleDropPin blocked:', { hasMap: !!mapInstanceRef.current, assignmentMode });
+        return;
+      }
 
+      console.log('[LeadMap] handleDropPin called with latlng:', latlng);
+    
     const map = mapInstanceRef.current;
 
     // Remove existing temp pin if any
@@ -881,6 +1044,14 @@ export default function LeadMap({
     }).addTo(map);
 
     tempPinRef.current = tempPin;
+    console.log('[LeadMap] Temp pin created at', latlng.lat, latlng.lng);
+
+    // Send debug log - temp pin created
+    fetch('/api/debug-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: 'info', message: 'Temp pin created, starting geocode', data: { lat: latlng.lat, lng: latlng.lng } })
+    }).catch(() => {});
 
     // Reverse geocode to get address
     try {
@@ -888,6 +1059,7 @@ export default function LeadMap({
         `/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`
       );
       const data = await response.json();
+      console.log('[LeadMap] Geocode result:', data);
 
       if (data.results && data.results[0]) {
         const result = data.results[0];
@@ -925,6 +1097,22 @@ export default function LeadMap({
 
     setDropPinLocation({ lat: latlng.lat, lng: latlng.lng });
     setShowAddLeadModal(true);
+    console.log('[LeadMap] Modal should show now');
+    
+    // Send debug log - modal state set
+    fetch('/api/debug-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: 'info', message: 'Modal state set to true', data: { lat: latlng.lat, lng: latlng.lng } })
+    }).catch(() => {});
+    } catch (error) {
+      console.error('[LeadMap] handleDropPin error:', error);
+      fetch('/api/debug-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level: 'error', message: 'handleDropPin failed', data: { error: String(error) } })
+      }).catch(() => {});
+    }
   };
 
   // Handle saving new lead from dropped pin
@@ -1205,7 +1393,7 @@ const ICON_TO_UNICODE: Record<string, string> = {
 function createCustomIcon(
   lead: Lead,
   users: User[],
-  viewMode: 'map' | 'assignments',
+  viewMode: 'map' | 'assignments' | 'territory',
   solarCategory: string | undefined,
   status: string,
   isSelected: boolean,

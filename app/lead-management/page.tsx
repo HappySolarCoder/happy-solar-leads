@@ -224,11 +224,12 @@ export default function LeadManagementPage() {
               if (!lead) return;
               
               // Unassign but keep disposition, dispositionHistory, and all other data
+              // Preserve the actual disposition status (not generic 'dispositioned')
               const updatedLead: Lead = {
                 ...lead,
                 assignedTo: undefined,
                 assignedAt: undefined,
-                status: lead.disposition ? 'dispositioned' : 'available',
+                status: lead.disposition || lead.status, // Keep actual disposition or current status
                 // Explicitly preserve disposition data
                 disposition: lead.disposition,
                 dispositionedAt: lead.dispositionedAt,
@@ -296,13 +297,18 @@ export default function LeadManagementPage() {
               const lead = leads.find(l => l.id === leadId);
               if (!lead) throw new Error('Lead not found');
               
+              // Preserve the last disposition status if lead was knocked
+              // Only change to 'unclaimed' if it was never knocked (status was 'assigned' or 'unclaimed')
+              const wasNeverKnocked = lead.status === 'assigned' || lead.status === 'unclaimed';
+              const newStatus = wasNeverKnocked ? 'unclaimed' : lead.status;
+              
               const updatedLead: Lead = {
                 ...lead,
                 claimedBy: undefined,
                 claimedAt: undefined,
                 assignedTo: undefined,
                 assignedAt: undefined,
-                status: 'unclaimed',
+                status: newStatus,
               };
               
               await saveLeadAsync(updatedLead);

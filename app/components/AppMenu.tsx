@@ -15,8 +15,8 @@ interface AppMenuProps {
   onAssignClick: () => void;
   setterFilter: string;
   onFilterChange: (value: string) => void;
-  solarFilter: 'all' | 'solid' | 'good' | 'great';
-  onSolarFilterChange: (value: 'all' | 'solid' | 'good' | 'great') => void;
+  solarFilter: string[];
+  onSolarFilterChange: (value: string[]) => void;
   dispositionFilter: string;
   onDispositionFilterChange: (value: string) => void;
   users: any[];
@@ -206,7 +206,7 @@ export default function AppMenu({
               </div>
             )}
             
-            {/* Solar Score Filter - Everyone */}
+            {/* Solar Score Filter - Everyone - Multi-select */}
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-base">☀️</span>
@@ -214,18 +214,66 @@ export default function AppMenu({
                   Filter by Solar Score
                 </label>
               </div>
-              <select
-                value={solarFilter}
-                onChange={(e) => {
-                  onSolarFilterChange(e.target.value as 'all' | 'solid' | 'good' | 'great');
-                }}
-                className="w-full px-4 py-3 bg-white border border-[#E2E8F0] rounded-lg font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-3 focus:ring-[#FF5F5A]/10 transition-all"
-              >
-                <option value="all">All Solar Scores</option>
-                <option value="solid">⭐ Solid (60-74)</option>
-                <option value="good">⭐⭐ Good (75-84)</option>
-                <option value="great">⭐⭐⭐ Great (85+)</option>
-              </select>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={solarFilter.length === 0}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        onSolarFilterChange([]); // Empty = all
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-gray-300 text-[#FF5F5A] focus:ring-[#FF5F5A]"
+                  />
+                  <span className="text-sm text-[#2D3748]">All Solar Scores</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={solarFilter.includes('solid')}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        onSolarFilterChange([...solarFilter, 'solid']);
+                      } else {
+                        onSolarFilterChange(solarFilter.filter(f => f !== 'solid'));
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-gray-300 text-[#FF5F5A] focus:ring-[#FF5F5A]"
+                  />
+                  <span className="text-sm text-[#2D3748]">⭐ Solid (60-74)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={solarFilter.includes('good')}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        onSolarFilterChange([...solarFilter, 'good']);
+                      } else {
+                        onSolarFilterChange(solarFilter.filter(f => f !== 'good'));
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-gray-300 text-[#FF5F5A] focus:ring-[#FF5F5A]"
+                  />
+                  <span className="text-sm text-[#2D3748]">⭐⭐ Good (75-84)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={solarFilter.includes('great')}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        onSolarFilterChange([...solarFilter, 'great']);
+                      } else {
+                        onSolarFilterChange(solarFilter.filter(f => f !== 'great'));
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-gray-300 text-[#FF5F5A] focus:ring-[#FF5F5A]"
+                  />
+                  <span className="text-sm text-[#2D3748]">⭐⭐⭐ Great (85+)</span>
+                </label>
+              </div>
             </div>
             
             {/* Disposition Filter - Everyone */}

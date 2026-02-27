@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
-  Users, Edit2, Trash2, Check, X, ArrowLeft, AlertTriangle, UserPlus 
+  Users, Edit2, Trash2, Check, X, ArrowLeft, AlertTriangle, UserPlus, Shield, MapPin
 } from 'lucide-react';
 import { 
   User, UserRole, ROLE_LABELS, canManageUsers 
@@ -14,6 +14,7 @@ import {
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { auth, createSecondaryAuth } from '@/app/utils/firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { getTeams, addTeam, updateTeam, deleteTeam, Team } from '@/app/utils/teams';
 
 export default function UsersManagementPage() {
   const router = useRouter();
@@ -30,6 +31,13 @@ export default function UsersManagementPage() {
   const [createError, setCreateError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  
+  // Team management state
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [showTeamModal, setShowTeamModal] = useState(false);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+  const [editTeamName, setEditTeamName] = useState('');
 
   // Load current user and check permissions
   useEffect(() => {
@@ -52,6 +60,11 @@ export default function UsersManagementPage() {
         setCurrentUser(user);
         const allUsers = await getUsersAsync();
         setUsers(allUsers);
+        
+        // Load teams
+        const allTeams = getTeams();
+        setTeams(allTeams);
+        
         setIsLoading(false);
       } catch (error) {
         console.error('User management page load error:', error);
@@ -71,6 +84,7 @@ export default function UsersManagementPage() {
       role: user.role,
       isActive: user.isActive,
       territory: user.territory,
+      team: user.team,
     });
   };
 
@@ -181,6 +195,37 @@ export default function UsersManagementPage() {
     // Refresh users list
     const allUsers = await getUsersAsync();
     setUsers(allUsers);
+  };
+
+  // Team management functions
+  const handleCreateTeam = () => {
+    if (!newTeamName.trim()) return;
+    const team = addTeam(newTeamName.trim());
+    setTeams([...teams, team]);
+    setNewTeamName('');
+    setShowTeamModal(false);
+  };
+
+  const handleUpdateTeam = (teamId: string) => {
+    if (!editTeamName.trim()) return;
+    const updated = updateTeam(teamId, editTeamName.trim());
+    if (updated) {
+      setTeams(teams.map(t => t.id === teamId ? updated : t));
+    }
+    setEditingTeamId(null);
+    setEditTeamName('');
+  };
+
+  const handleDeleteTeam = (teamId: string) => {
+    if (!confirm('Delete this team? Users will need to be reassigned.')) return;
+    if (deleteTeam(teamId)) {
+      setTeams(teams.filter(t => t.id !== teamId));
+    }
+  };
+
+  const startEditTeam = (team: Team) => {
+    setEditingTeamId(team.id);
+    setEditTeamName(team.name);
   };
 
   const handleApprovePending = async (userId: string) => {
@@ -387,6 +432,9 @@ export default function UsersManagementPage() {
                     Territory
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                    Team
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
@@ -437,6 +485,18 @@ export default function UsersManagementPage() {
                             className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
                             placeholder="Territory name"
                           />
+                        </td>
+                        <td className="px-6 py-4">
+                          <select
+                            value={editForm.team || ''}
+                            onChange={(e) => setEditForm({ ...editForm, team: e.target.value })}
+                            className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                          >
+                            <option value="">No Team</option>
+                            {teams.map(team => (
+                              <option key={team.id} value={team.name}>{team.name}</option>
+                            ))}
+                          </select>
                         </td>
                         <td className="px-6 py-4">
                           <label className="flex items-center gap-2 cursor-pointer">
@@ -503,6 +563,15 @@ export default function UsersManagementPage() {
                           </span>
                         </td>
                         <td className="px-6 py-4">
+                          {user.team ? (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              {user.team}
+                            </span>
+                          ) : (
+                            <span className="text-sm text-[#A0AEC0]">—</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4">
                           <button
                             onClick={() => handleToggleActive(user.id)}
                             className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
@@ -562,6 +631,160 @@ export default function UsersManagementPage() {
           </div>
         </div>
       </main>
+
+      {/* Team Management Section */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-[#2D3748] flex items-center gap-2">
+                <Shield className="w-6 h-6 text-blue-500" />
+                Team Management
+              </h2>
+              <p className="text-sm text-[#718096] mt-1">
+                Organize users into teams (e.g., Rochester, Buffalo) for future features. 
+                <span className="text-amber-600 font-medium ml-1">Note: This is separate from Territory (lead assignment).</span>
+              </p>
+            </div>
+            <button
+              onClick={() => setShowTeamModal(true)}
+              className="px-4 py-2 bg-blue-500 text-white rounded-lg font-semibold flex items-center gap-2 hover:bg-blue-600 transition-colors"
+            >
+              <Users className="w-4 h-4" />
+              Add Team
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] overflow-hidden">
+          <table className="min-w-full divide-y divide-[#E2E8F0]">
+            <thead className="bg-[#F7FAFC]">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                  Team Name
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                  Members
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-[#E2E8F0]">
+              {teams.map((team) => {
+                const memberCount = users.filter(u => u.team === team.name).length;
+                return (
+                  <tr key={team.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4">
+                      {editingTeamId === team.id ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={editTeamName}
+                            onChange={(e) => setEditTeamName(e.target.value)}
+                            className="px-3 py-1 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-blue-500"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => handleUpdateTeam(team.id)}
+                            className="p-1 text-green-600 hover:bg-green-50 rounded"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setEditingTeamId(null)}
+                            className="p-1 text-gray-400 hover:bg-gray-100 rounded"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-sm font-medium text-[#2D3748]">{team.name}</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm text-[#718096]">{memberCount} member{memberCount !== 1 ? 's' : ''}</span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => startEditTeam(team)}
+                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Edit team"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTeam(team.id)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Delete team"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          
+          {teams.length === 0 && (
+            <div className="p-8 text-center text-[#718096]">
+              No teams created yet. Click "Add Team" to create your first team.
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* Create Team Modal */}
+      {showTeamModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-[#E2E8F0]">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-semibold text-[#2D3748]">Create Team</h3>
+                <p className="text-sm text-[#718096]">Add a new team for user organization</p>
+              </div>
+              <button onClick={() => setShowTeamModal(false)} className="p-2 text-[#718096] hover:text-[#FF5F5A]">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-semibold text-[#2D3748] mb-1 block">Team Name</label>
+                <input
+                  type="text"
+                  value={newTeamName}
+                  onChange={(e) => setNewTeamName(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10"
+                  placeholder="e.g., Rochester, Buffalo, Syracuse"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                onClick={() => { setShowTeamModal(false); setNewTeamName(''); }}
+                className="px-4 py-2 rounded-lg border border-[#E2E8F0] text-[#2D3748] font-semibold hover:bg-[#F7FAFC]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateTeam}
+                disabled={!newTeamName.trim()}
+                className="px-4 py-2 rounded-lg bg-blue-500 text-white font-semibold flex items-center gap-2 disabled:opacity-50"
+              >
+                Create Team
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-[#E2E8F0]">

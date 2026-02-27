@@ -23,11 +23,11 @@ export interface UserSession {
   
   // Filter state
   setterFilter?: string;
-  solarFilter?: 'all' | 'solid' | 'good' | 'great';
+  solarFilter?: string[]; // Multi-select
   dispositionFilter?: string;
   
   // View state
-  viewMode?: 'split' | 'map' | 'list';
+  viewMode?: 'split' | 'map' | 'list' | 'territory';
   sidebarOpen?: boolean;
   
   // Last activity
@@ -83,7 +83,7 @@ export function getDefaultSession(): UserSession {
     mapZoom: 11,
     mapType: 'satellite',
     setterFilter: 'all',
-    solarFilter: 'all',
+    solarFilter: [],
     dispositionFilter: 'all',
     viewMode: 'split',
     sidebarOpen: true,

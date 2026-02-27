@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, List, Navigation, Filter, MapPin, Settings } from 'lucide-react';
+import { ArrowLeft, List, Navigation, Filter, MapPin, Settings, Search, X, Route, Clock, Footprints, Car } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync, saveCurrentUser } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
@@ -36,12 +36,28 @@ export default function KnockingPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
-  const [solarFilter, setSolarFilter] = useState<'all' | 'solid' | 'good' | 'great'>('all');
+  const [mapZoom, setMapZoom] = useState(15);
+  const [solarFilter, setSolarFilter] = useState<string[]>([]);
   const [dispositionFilter, setDispositionFilter] = useState<string>('all');
   const [setterFilter, setSetterFilter] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [dispositions, setDispositions] = useState<any[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [addressSearch, setAddressSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchLocation, setSearchLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Route optimization state
+  const [showRoute, setShowRoute] = useState(false);
+  const [routeLeads, setRouteLeads] = useState<Lead[]>([]);
+  const [routeStartPoint, setRouteStartPoint] = useState<[number, number] | null>(null);
+  
+  // Weather state
+  const [weather, setWeather] = useState<{ temperature: number; condition: string; icon: string; recommendation: string; hourly?: any[] } | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [showWeatherPopup, setShowWeatherPopup] = useState(false);
 
   // GPS tracking - continuous updates
   const { position: gpsPosition, error: gpsError, isLoading: gpsLoading } = useGeolocation({
@@ -64,6 +80,40 @@ export default function KnockingPage() {
       setHasInitializedMap(true);
     }
   }, [gpsPosition, currentUser, hasInitializedMap]);
+
+  // Fetch weather when GPS position is available
+  useEffect(() => {
+    if (!gpsPosition) return;
+    const lat = gpsPosition.lat;
+    const lng = gpsPosition.lng;
+    if (!lat || !lng) return;
+    
+    async function fetchWeather() {
+      setWeatherLoading(true);
+      try {
+        const response = await fetch(`/api/weather?lat=${lat}&lng=${lng}`);
+        const data = await response.json();
+        if (data.temperature) {
+          setWeather({
+            temperature: data.temperature,
+            condition: data.condition,
+            icon: data.icon,
+            recommendation: data.recommendation,
+            hourly: data.hourly || [],
+          });
+        }
+      } catch (error) {
+        console.error('Weather fetch error:', error);
+      } finally {
+        setWeatherLoading(false);
+      }
+    }
+    
+    fetchWeather();
+    // Refresh weather every 30 minutes
+    const interval = setInterval(fetchWeather, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [gpsPosition]);
 
   // Load data
   useEffect(() => {
@@ -105,12 +155,134 @@ export default function KnockingPage() {
     setShowLeadDetail(true);
   };
 
+  // Handle address search
+  const handleAddressSearch = async (query: string) => {
+    setAddressSearch(query);
+    
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    if (query.length < 3) {
+      setSearchResults([]);
+      return;
+    }
+    
+    setIsSearching(true);
+    
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/geocode?address=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        
+        if (data.results && data.results.length > 0) {
+          setSearchResults(data.results.slice(0, 5));
+        } else {
+          setSearchResults([]);
+        }
+      } catch (error) {
+        console.error('Address search error:', error);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+  };
+
+  // Handle selecting an address result
+  const handleSelectAddress = (result: any) => {
+    const location = result.geometry?.location;
+    if (location) {
+      const lat = location.lat || location.latitude;
+      const lng = location.lng || location.longitude;
+      setMapCenter([lat, lng]);
+      setMapZoom(16); // Moderate zoom - user can zoom in more themselves
+      setSearchLocation({ lat, lng }); // Place search marker
+    }
+    setAddressSearch('');
+    setSearchResults([]);
+  };
+
+  // Calculate optimized route using nearest neighbor algorithm
+  const calculateOptimizedRoute = useCallback((leadsToRoute: Lead[], startPoint?: [number, number]) => {
+    if (leadsToRoute.length === 0) return [];
+    
+    // Filter leads that have valid coordinates
+    const validLeads = leadsToRoute.filter(lead => lead.lat !== undefined && lead.lng !== undefined);
+    if (validLeads.length === 0) return [];
+    
+    const unvisited = [...validLeads];
+    const route: Lead[] = [];
+    const firstLead = validLeads[0];
+    let currentPoint = startPoint || (gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : (firstLead.lat !== undefined && firstLead.lng !== undefined ? [firstLead.lat, firstLead.lng] : [43.1566, -77.6088]));
+    
+    while (unvisited.length > 0) {
+      let nearestIndex = 0;
+      let nearestDistance = Infinity;
+      
+      unvisited.forEach((lead, index) => {
+        const lat = lead.lat!;
+        const lng = lead.lng!;
+        const distance = calculateDistance(currentPoint[0], currentPoint[1], lat, lng);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestIndex = index;
+        }
+      });
+      
+      const nearest = unvisited.splice(nearestIndex, 1)[0];
+      route.push(nearest);
+      if (nearest.lat && nearest.lng) {
+        currentPoint = [nearest.lat, nearest.lng];
+      }
+    }
+    
+    return route;
+  }, [gpsPosition]);
+
+  // Calculate total route distance
+  const routeDistance = useMemo(() => {
+    if (routeLeads.length === 0) return 0;
+    let total = 0;
+    let prevPoint = routeStartPoint || (routeLeads[0].lat !== undefined && routeLeads[0].lng !== undefined ? [routeLeads[0].lat, routeLeads[0].lng] : [0, 0]);
+    
+    routeLeads.forEach(lead => {
+      if (lead.lat !== undefined && lead.lng !== undefined) {
+        total += calculateDistance(prevPoint[0], prevPoint[1], lead.lat, lead.lng);
+        prevPoint = [lead.lat, lead.lng];
+      }
+    });
+    return total;
+  }, [routeLeads, routeStartPoint]);
+
+  // Estimate walking time (average 3 mph = 0.05 miles per minute)
+  const walkingTimeMinutes = Math.round(routeDistance / 0.05);
+  // Estimate driving time (average 25 mph in city = 0.42 miles per minute)
+  const drivingTimeMinutes = Math.round(routeDistance / 0.42);
+
   // Role-based visibility: setters/closers only see their assigned leads
   const roleFilteredLeads = currentUser
     ? (currentUser.role === 'setter' || currentUser.role === 'closer')
       ? leads.filter(l => l.claimedBy === currentUser.id)
       : leads
     : [];
+
+  // Generate route when button is clicked
+  const handleGenerateRoute = useCallback(() => {
+    // Get unknocked leads for the current user
+    const unknockedLeads = roleFilteredLeads.filter(lead => 
+      !lead.disposition || lead.status === 'assigned'
+    );
+    
+    // Set start point to GPS or first lead
+    const startPoint: [number, number] | undefined = gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined;
+    setRouteStartPoint(startPoint || null);
+    
+    // Calculate optimized route
+    const optimized = calculateOptimizedRoute(unknockedLeads, startPoint);
+    setRouteLeads(optimized);
+    setShowRoute(true);
+  }, [roleFilteredLeads, gpsPosition, calculateOptimizedRoute]);
 
   // Exclude poor solar leads
   let goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
@@ -121,8 +293,8 @@ export default function KnockingPage() {
   }
   
   // Filter by solar category if selected
-  if (solarFilter !== 'all') {
-    goodLeads = goodLeads.filter(l => l.solarCategory === solarFilter);
+  if (solarFilter.length > 0) {
+    goodLeads = goodLeads.filter(l => solarFilter.includes(l.solarCategory || ''));
   }
   
   // Filter by disposition if selected
@@ -248,6 +420,17 @@ export default function KnockingPage() {
               <div className="px-3 py-1 bg-[#F7FAFC] border border-[#E2E8F0] text-[#718096] rounded-full font-semibold">
                 🚪 {todaysKnocks} Today
               </div>
+              
+              {/* Weather Widget - Click to show hourly */}
+              {weather && (
+                <button 
+                  onClick={() => setShowWeatherPopup(true)}
+                  className="px-3 py-1 bg-blue-50 border border-blue-200 text-blue-800 rounded-full font-semibold text-xs flex items-center gap-1 hover:bg-blue-100"
+                >
+                  <span>{weather.icon}</span>
+                  <span>{Math.round(weather.temperature)}°F</span>
+                </button>
+              )}
             </div>
 
             {/* Filter Toggle */}
@@ -256,6 +439,15 @@ export default function KnockingPage() {
               className={`p-2 transition-all ${showFilters ? 'text-[#FF5F5A]' : 'text-[#718096] hover:text-[#FF5F5A]'} active:scale-95`}
             >
               <Filter className="w-5 h-5" />
+            </button>
+
+            {/* Today's Route Button */}
+            <button
+              onClick={handleGenerateRoute}
+              className={`p-2 transition-all ${showRoute ? 'text-[#FF5F5A]' : 'text-[#718096] hover:text-[#FF5F5A]'} active:scale-95`}
+              title="Generate optimized route"
+            >
+              <Route className="w-5 h-5" />
             </button>
 
             {/* Tools Button */}
@@ -295,23 +487,73 @@ export default function KnockingPage() {
               </div>
             )}
             
-            {/* Solar Score Filter */}
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-base">☀️</span>
-              <label className="text-xs font-semibold text-[#2D3748]">
-                Solar Score Filter
-              </label>
+            {/* Solar Score Filter - Multi-select */}
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-base">☀️</span>
+                <label className="text-xs font-semibold text-[#2D3748]">
+                  Solar Score Filter
+                </label>
+              </div>
+              <div className="space-y-1">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={solarFilter.length === 0}
+                    onChange={(e) => {
+                      if (e.target.checked) setSolarFilter([]);
+                    }}
+                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                  />
+                  <span className="text-xs text-[#2D3748]">All</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={solarFilter.includes('solid')}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSolarFilter([...solarFilter, 'solid']);
+                      } else {
+                        setSolarFilter(solarFilter.filter(f => f !== 'solid'));
+                      }
+                    }}
+                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                  />
+                  <span className="text-xs text-[#2D3748]">⭐ Solid (60-74)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={solarFilter.includes('good')}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSolarFilter([...solarFilter, 'good']);
+                      } else {
+                        setSolarFilter(solarFilter.filter(f => f !== 'good'));
+                      }
+                    }}
+                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                  />
+                  <span className="text-xs text-[#2D3748]">⭐⭐ Good (75-84)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={solarFilter.includes('great')}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSolarFilter([...solarFilter, 'great']);
+                      } else {
+                        setSolarFilter(solarFilter.filter(f => f !== 'great'));
+                      }
+                    }}
+                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                  />
+                  <span className="text-xs text-[#2D3748]">⭐⭐⭐ Great (85+)</span>
+                </label>
+              </div>
             </div>
-            <select
-              value={solarFilter}
-              onChange={(e) => setSolarFilter(e.target.value as 'all' | 'solid' | 'good' | 'great')}
-              className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
-            >
-              <option value="all">All Solar Scores</option>
-              <option value="solid">⭐ Solid (60-74)</option>
-              <option value="good">⭐⭐ Good (75-84)</option>
-              <option value="great">⭐⭐⭐ Great (85+)</option>
-            </select>
             
             {/* Disposition Filter */}
             <div className="mt-3">
@@ -346,6 +588,168 @@ export default function KnockingPage() {
         )}
       </header>
 
+      {/* Weather Popup */}
+      {showWeatherPopup && weather && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowWeatherPopup(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-bold">Hourly Weather</h2>
+              <button onClick={() => setShowWeatherPopup(false)} className="p-1 hover:bg-gray-100 rounded">
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-4">
+              {/* Current conditions */}
+              <div className="flex items-center justify-center gap-3 mb-4 pb-4 border-b border-gray-200">
+                <span className="text-4xl">{weather.icon}</span>
+                <div>
+                  <p className="text-3xl font-bold">{Math.round(weather.temperature)}°F</p>
+                  <p className="text-gray-600">{weather.condition}</p>
+                </div>
+              </div>
+              {/* Hourly forecast */}
+              <div className="space-y-2">
+                {weather.hourly && weather.hourly.length > 0 ? (
+                  weather.hourly.map((hour: any, index: number) => (
+                    <div key={index} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                      <span className="text-gray-600">{hour.time}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{hour.icon}</span>
+                        <span className="font-semibold">{Math.round(hour.temperature)}°F</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-gray-500 text-center">No hourly data available</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Route Panel */}
+      {showRoute && routeLeads.length > 0 && (
+        <div className="px-3 py-3 bg-gradient-to-r from-[#FF5F5A] to-[#F27141] text-white">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Route className="w-5 h-5" />
+              <span className="font-semibold">Today's Route</span>
+              <span className="text-white/80">({routeLeads.length} stops)</span>
+            </div>
+            <button
+              onClick={() => setShowRoute(false)}
+              className="p-1 hover:bg-white/20 rounded"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          
+          {/* Route Stats */}
+          <div className="flex items-center gap-4 mb-3 text-sm">
+            <div className="flex items-center gap-1">
+              <Footprints className="w-4 h-4" />
+              <span>{(routeDistance * 5280 / 5280).toFixed(1)} mi</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Clock className="w-4 h-4" />
+              <span>~{walkingTimeMinutes} min walk</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Car className="w-4 h-4" />
+              <span>~{drivingTimeMinutes} min drive</span>
+            </div>
+          </div>
+          
+          {/* Route List */}
+          <div className="space-y-2 max-h-40 overflow-y-auto">
+            {routeLeads.map((lead, index) => (
+              <div
+                key={lead.id}
+                className="flex items-center gap-2 p-2 bg-white/20 rounded-lg"
+              >
+                <div className="w-6 h-6 bg-white text-[#FF5F5A] rounded-full flex items-center justify-center text-sm font-bold">
+                  {index + 1}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{lead.address || 'No address'}</p>
+                  {lead.name && <p className="text-xs text-white/70 truncate">{lead.name}</p>}
+                </div>
+                <a
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${lead.lat},${lead.lng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-2 bg-white/30 rounded-lg hover:bg-white/40"
+                >
+                  <Navigation className="w-4 h-4" />
+                </a>
+              </div>
+            ))}
+          </div>
+          
+          {/* Start Navigation Button */}
+          {gpsPosition && (
+            <a
+              href={`https://www.google.com/maps/dir/${gpsPosition.lat},${gpsPosition.lng}/${routeLeads[0]?.lat},${routeLeads[0]?.lng}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 w-full py-2 bg-white text-[#FF5F5A] rounded-lg font-semibold text-center flex items-center justify-center gap-2"
+            >
+              <Navigation className="w-5 h-5" />
+              Start Navigation
+            </a>
+          )}
+        </div>
+      )}
+
+      {/* Address Search Bar */}
+      {viewMode === 'map' && (
+        <div className="px-3 py-2 bg-white border-b border-gray-200">
+          <div className="relative">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search address..."
+                value={addressSearch}
+                onChange={(e) => handleAddressSearch(e.target.value)}
+                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A]"
+              />
+              {addressSearch && (
+                <button
+                  onClick={() => { setAddressSearch(''); setSearchResults([]); }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2"
+                >
+                  <X className="w-4 h-4 text-gray-400" />
+                </button>
+              )}
+            </div>
+            {/* Search Results Dropdown */}
+            {searchResults.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+                {searchResults.map((result, index) => (
+                  <button
+                    key={index}
+                    onClick={() => handleSelectAddress(result)}
+                    className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                  >
+                    <p className="text-sm font-medium text-gray-900">{result.formatted_address || result.name}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+            {isSearching && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-3">
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <div className="w-4 h-4 border-2 border-[#FF5F5A] border-t-transparent rounded-full animate-spin" />
+                  Searching...
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Map View - Full Screen */}
       {viewMode === 'map' && (
         <main className="flex-1 relative overflow-hidden">
@@ -359,8 +763,9 @@ export default function KnockingPage() {
             selectedLeadIdsForAssignment={[]}
             userPosition={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
             center={mapCenter} // Set ONCE on GPS load, then only on manual recenter
-            zoom={15} // Closer zoom for mobile
+            zoom={mapZoom} // Closer zoom for mobile
             onLeadAdded={refreshLeads}
+            searchLocation={searchLocation}
           />
           {/* GPS Locate button is now built into LeadMap component */}
         </main>

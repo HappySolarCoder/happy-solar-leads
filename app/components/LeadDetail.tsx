@@ -12,7 +12,7 @@ import {
   Coffee, Gift, Shield, Lock, Unlock, Key, Trash, Archive,
   Ban, Slash, MinusCircle, PlusCircle, Info, ArrowRight, ArrowLeft
 } from 'lucide-react';
-import { updateLeadStatus, claimLead, unclaimLead } from '@/app/utils/storage';
+import { updateLeadStatus, claimLead, unclaimLead, getUsersAsync } from '@/app/utils/storage';
 import ObjectionTracker from './ObjectionTracker';
 import LeadEditorModal from './LeadEditorModal';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
@@ -87,13 +87,17 @@ const ICON_MAP: Record<string, any> = {
 export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: LeadDetailProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
+  const [notesSaving, setNotesSaving] = useState(false);
   const [showAllStatuses, setShowAllStatuses] = useState(false);
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [adminAssignUser, setAdminAssignUser] = useState<string>('');
   const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
   const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
+  const [photos, setPhotos] = useState(lead.photos || []);
 
   const isClaimedByMe = currentUser && lead.claimedBy === currentUser.id;
   const canClaim = !lead.claimedBy || isClaimedByMe;
@@ -101,12 +105,14 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
   // Load dispositions on mount
   useEffect(() => {
-    async function loadDispositions() {
+    async function loadData() {
       const dispos = await getDispositionsAsync();
       setDispositions(dispos);
+      const userList = await getUsersAsync();
+      setUsers(userList.filter(u => u.role !== 'admin')); // Exclude admins from assignment list
       setIsLoadingDispositions(false);
     }
-    loadDispositions();
+    loadData();
   }, []);
 
   // Get current disposition
@@ -175,7 +181,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           }
           
           // Distance verification for setter, manager, sales (not admin)
-          const MAX_DISTANCE_METERS = 30; // 30 meters (~100 feet) - close enough to verify, not too strict
+          const MAX_DISTANCE_METERS = 50; // 50 meters (~164 feet) - close enough to verify, not too strict
           const requiresProximity = ['setter', 'manager', 'sales'].includes(currentUser.role);
           
           if (requiresProximity && distanceFromAddress && distanceFromAddress > MAX_DISTANCE_METERS) {
@@ -225,7 +231,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           ...lead,
           status: newStatus,
           dispositionedAt: new Date(),
-          claimedBy: currentUser.id,
+          claimedBy: adminAssignUser || currentUser.id,
+          assignedTo: adminAssignUser || lead.assignedTo,
           dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
           ...gpsData,
         };
@@ -256,6 +263,51 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     }
   };
 
+  // Handle saving notes
+  const handleSaveNotes = async () => {
+    if (!currentUser) return;
+    
+    setNotesSaving(true);
+    try {
+      const { saveLeadAsync } = await import('@/app/utils/storage');
+      const updatedLead: Lead = {
+        ...lead,
+        notes,
+      };
+      await saveLeadAsync(updatedLead);
+      if (onUpdate) onUpdate();
+    } catch (error) {
+      console.error('Error saving notes:', error);
+    } finally {
+      setNotesSaving(false);
+    }
+  };
+
+  // Handle adding a photo
+  const handleAddPhoto = async (photoUrl: string, caption: string, type: 'roof' | 'meter' | 'electrical' | 'roofing' | 'other') => {
+    if (!currentUser) return;
+    
+    const newPhoto = {
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      url: photoUrl,
+      caption,
+      type,
+      uploadedBy: currentUser.id,
+      uploadedAt: new Date(),
+    };
+    
+    const updatedPhotos = [...(lead.photos || []), newPhoto];
+    setPhotos(updatedPhotos);
+    
+    const { saveLeadAsync } = await import('@/app/utils/storage');
+    const updatedLead: Lead = {
+      ...lead,
+      photos: updatedPhotos,
+    };
+    await saveLeadAsync(updatedLead);
+    if (onUpdate) onUpdate();
+  };
+
   const handleObjectionSave = async (objectionType: ObjectionType, objectionNotes: string) => {
     if (!currentUser) return;
     
@@ -280,7 +332,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         objectionNotes,
         objectionRecordedAt: new Date(),
         objectionRecordedBy: currentUser.id,
-        claimedBy: currentUser.id,
+        claimedBy: adminAssignUser || currentUser.id,
+        assignedTo: adminAssignUser || lead.assignedTo,
         dispositionedAt: new Date(),
         dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
       };
@@ -316,7 +369,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         status: 'go-back',
         disposition: 'Go Back',
         dispositionedAt: new Date(),
-        claimedBy: currentUser.id,
+        claimedBy: adminAssignUser || currentUser.id,
+        assignedTo: adminAssignUser || lead.assignedTo,
         goBackScheduledDate: scheduleData.date,
         goBackScheduledTime: scheduleData.time,
         goBackNotes: scheduleData.notes,
@@ -462,6 +516,26 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           {/* Quick Actions */}
           <div className="mb-6">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Quick Actions</h3>
+            
+            {/* Admin: Assign to user dropdown */}
+            {currentUser?.role === 'admin' && (
+              <div className="mb-3">
+                <label className="text-xs text-gray-500 mb-1 block">Assign to setter (admin):</label>
+                <select
+                  value={adminAssignUser}
+                  onChange={(e) => setAdminAssignUser(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value="">-- Select setter (optional) --</option>
+                  {users.map(user => (
+                    <option key={user.id} value={user.id}>
+                      {user.name} ({user.role})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            
             <div className="grid grid-cols-2 gap-2">
               {!isClaimed && (
                 <button
@@ -567,6 +641,71 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               <Calendar className="w-4 h-4" />
               Book Appointment Manually
             </a>
+          </div>
+
+          {/* Notes Section */}
+          <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
+            <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Notes</h3>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Add notes about this lead..."
+              className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+              rows={3}
+            />
+            <button
+              onClick={handleSaveNotes}
+              disabled={notesSaving}
+              className="mt-2 px-4 py-2 bg-[#FF5F5A] text-white rounded-lg text-sm font-semibold hover:bg-[#F27141] disabled:opacity-50"
+            >
+              {notesSaving ? 'Saving...' : 'Save Notes'}
+            </button>
+          </div>
+
+          {/* Photos Section */}
+          <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
+            <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Photos</h3>
+            {photos && photos.length > 0 && (
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {photos.map((photo) => (
+                  <div key={photo.id} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
+                    <img src={photo.url} alt={photo.caption || photo.type} className="w-full h-full object-cover" />
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs p-1">
+                      {photo.caption || photo.type}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Simple photo URL input - in production would use file upload */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                id="photoUrl"
+                placeholder="Photo URL..."
+                className="flex-1 px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A]"
+              />
+              <select id="photoType" className="px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm">
+                <option value="roof">Roof</option>
+                <option value="meter">Meter</option>
+                <option value="electrical">Electrical</option>
+                <option value="roofing">Roofing</option>
+                <option value="other">Other</option>
+              </select>
+              <button
+                onClick={() => {
+                  const urlInput = document.getElementById('photoUrl') as HTMLInputElement;
+                  const typeInput = document.getElementById('photoType') as HTMLSelectElement;
+                  if (urlInput.value) {
+                    handleAddPhoto(urlInput.value, '', typeInput.value as any);
+                    urlInput.value = '';
+                  }
+                }}
+                className="px-4 py-2 bg-[#FF5F5A] text-white rounded-lg text-sm font-semibold hover:bg-[#F27141]"
+              >
+                Add
+              </button>
+            </div>
           </div>
 
           {/* Disposition History */}

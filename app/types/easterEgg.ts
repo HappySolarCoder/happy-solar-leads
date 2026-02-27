@@ -22,6 +22,7 @@ export interface EasterEgg {
   leadId?: string;            // Specific lead ID that has the egg
   placement?: 'random' | 'manual';
   territoryFilter?: string;   // Where to randomly place it
+  zipCode?: string;           // Zip code for proximity-based placement
   
   // COMMON FIELDS
   active: boolean;

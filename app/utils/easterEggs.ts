@@ -8,6 +8,7 @@ import {
   setDoc, 
   updateDoc, 
   deleteDoc,
+  deleteField,
   query,
   where,
   Timestamp,
@@ -16,6 +17,23 @@ import {
 import { db } from './firebase';
 import { EasterEgg, EasterEggWinner } from '@/app/types/easterEgg';
 import { getLeadsAsync, updateLeadAsync } from './storage';
+
+// Haversine formula to calculate distance between two points in miles
+function getDistanceFromLatLonInMiles(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 3958.8; // Radius of Earth in miles
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function deg2rad(deg: number): number {
+  return deg * (Math.PI / 180);
+}
 
 // Get all easter eggs
 export async function getEasterEggsAsync(): Promise<EasterEgg[]> {
@@ -64,7 +82,12 @@ export async function createEasterEggAsync(egg: Omit<EasterEgg, 'id' | 'createdA
   
   // If hidden pin with random placement, assign to random lead
   if (egg.type === 'hidden' && egg.placement === 'random') {
-    await assignHiddenEggToRandomLead(newEggRef.id, egg.territoryFilter);
+    try {
+      await assignHiddenEggToRandomLead(newEggRef.id, egg.territoryFilter, egg.zipCode);
+    } catch (error) {
+      console.warn('Could not assign hidden egg to random lead:', error);
+      // Egg is still created, just without a random lead assignment
+    }
   }
   
   return newEggRef.id;
@@ -82,14 +105,15 @@ export async function updateEasterEggAsync(id: string, updates: Partial<EasterEg
 export async function deleteEasterEggAsync(id: string): Promise<void> {
   if (!db) throw new Error('Firebase not initialized');
   
-  // Remove from any leads
+  // Remove from any leads using direct Firestore call
   const leads = await getLeadsAsync();
   const affectedLeads = leads.filter(l => l.easterEggId === id);
   
   for (const lead of affectedLeads) {
-    await updateLeadAsync(lead.id, {
+    const leadRef = doc(db, 'leads', lead.id);
+    await updateDoc(leadRef, {
       hasEasterEgg: false,
-      easterEggId: undefined
+      easterEggId: deleteField()
     });
   }
   
@@ -99,20 +123,62 @@ export async function deleteEasterEggAsync(id: string): Promise<void> {
 }
 
 // Assign hidden egg to random lead
-async function assignHiddenEggToRandomLead(eggId: string, territoryFilter?: string): Promise<void> {
-  const leads = await getLeadsAsync();
+async function assignHiddenEggToRandomLead(eggId: string, territoryFilter?: string, zipCode?: string): Promise<void> {
+  let leads = await getLeadsAsync();
   
-  // Filter to unclaimed leads
+  // Filter to unclaimed leads with location
   let eligibleLeads = leads.filter(l => 
     l.status === 'unclaimed' && 
     !l.hasEasterEgg &&
     l.lat && l.lng
   );
   
+  // If zip code provided, geocode it and find leads within 15 miles (24 km)
+  let zipCodeUsed = false;
+  if (zipCode) {
+    try {
+      const apiKey = process.env.GOOGLE_API_KEY;
+      if (apiKey) {
+        // Geocode the zip code
+        const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(zipCode)}&key=${apiKey}`;
+        const geoResponse = await fetch(geoUrl);
+        const geoData = await geoResponse.json();
+        
+        if (geoData.results && geoData.results[0]?.geometry?.location) {
+          const zipLat = geoData.results[0].geometry.location.lat;
+          const zipLng = geoData.results[0].geometry.location.lng;
+          
+          console.log('[EasterEgg] Zip code geocoded:', { zipCode, zipLat, zipLng });
+          
+          // Filter leads within 15 miles using Haversine formula
+          const leadsWithinRadius = eligibleLeads.filter(l => {
+            if (!l.lat || !l.lng) return false;
+            const distance = getDistanceFromLatLonInMiles(zipLat, zipLng, l.lat, l.lng);
+            return distance <= 15;
+          });
+          
+          console.log('[EasterEgg] Leads within 15 miles of zip:', leadsWithinRadius.length);
+          
+          if (leadsWithinRadius.length > 0) {
+            eligibleLeads = leadsWithinRadius;
+            zipCodeUsed = true;
+          } else {
+            // No leads within 15 miles - throw error instead of falling back
+            throw new Error(`No eligible leads found within 15 miles of zip code ${zipCode}`);
+          }
+        }
+      }
+    } catch (error) {
+      // If zip code was specified, don't fall back - throw error
+      console.warn('[EasterEgg] Could not geocode zip code or no leads found:', error);
+      throw new Error(`No eligible leads found within 15 miles of zip code ${zipCode}. Please try a different zip code.`);
+    }
+  }
+  
   // Apply territory filter if specified
   if (territoryFilter) {
     eligibleLeads = eligibleLeads.filter(l => {
-      // Simple contains check - can be enhanced
+      // Simple contains check
       const address = `${l.address} ${l.city}`.toLowerCase();
       return address.includes(territoryFilter.toLowerCase());
     });
@@ -149,6 +215,32 @@ export async function assignHiddenEggToLeadAsync(eggId: string, leadId: string):
   await updateEasterEggAsync(eggId, {
     leadId: leadId
   });
+}
+
+// Rehide an existing hidden egg to a new random location
+export async function rehideEasterEggAsync(eggId: string): Promise<void> {
+  if (!db) throw new Error('Firebase not initialized');
+  
+  const eggDoc = await getDoc(doc(db, 'easterEggs', eggId));
+  
+  if (!eggDoc.exists()) {
+    throw new Error('Easter egg not found');
+  }
+  
+  const egg = eggDoc.data() as EasterEgg;
+  
+  // Remove egg from current lead if any
+  if (egg.leadId) {
+    // Use direct Firestore call to properly remove the field
+    const leadRef = doc(db!, 'leads', egg.leadId);
+    await updateDoc(leadRef, {
+      hasEasterEgg: false,
+      easterEggId: deleteField()
+    });
+  }
+  
+  // Assign to new random lead
+  await assignHiddenEggToRandomLead(eggId, egg.territoryFilter, egg.zipCode);
 }
 
 // Check if disposition triggers an easter egg

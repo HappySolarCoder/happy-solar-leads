@@ -25,22 +25,29 @@ export default function LocationPermissionGuard({
     setIsIOS(ios);
     setIsAndroid(android);
 
+    // Check permission once on mount - don't repeatedly call geolocation
+    // as this causes permission popup loops on iOS
     checkLocationPermission();
 
-    // Re-check periodically (every 5 seconds) to detect if user enables it
-    const interval = setInterval(checkLocationPermission, 5000);
-
-    return () => clearInterval(interval);
+    // NO LONGER re-check periodically - this was causing permission popup loops
+    // User can manually reload or click the button if they enable location
   }, []);
 
   const checkLocationPermission = async () => {
+    // Don't re-check if we've already determined a final status
+    // This prevents permission popup loops on iOS
+    if (permissionStatus === 'granted' || permissionStatus === 'denied') {
+      return;
+    }
+
     if (!navigator.geolocation) {
       setPermissionStatus('denied');
       return;
     }
 
     try {
-      // Try to get current position to check permission
+      // Use maximumAge to avoid triggering permission prompts repeatedly
+      // On iOS, calling getCurrentPosition without maximumAge can trigger the permission dialog
       navigator.geolocation.getCurrentPosition(
         () => {
           setPermissionStatus('granted');
@@ -49,13 +56,15 @@ export default function LocationPermissionGuard({
           if (error.code === error.PERMISSION_DENIED) {
             setPermissionStatus('denied');
           } else {
-            setPermissionStatus('prompt');
+            // Don't set to 'prompt' - this triggers the modal
+            // Instead, just stay in current state to avoid loops
+            // The user can manually click to request permission
           }
         },
         {
           enableHighAccuracy: false,
           timeout: 5000,
-          maximumAge: 0,
+          maximumAge: 60000, // Cache for 1 minute to prevent repeated prompts
         }
       );
     } catch (error) {

@@ -26,6 +26,7 @@ export default function CreateEasterEggModal({ onClose, onCreated, currentUserId
   // Hidden pin fields
   const [placement, setPlacement] = useState<'random' | 'manual'>('random');
   const [territoryFilter, setTerritoryFilter] = useState('');
+  const [zipCode, setZipCode] = useState('');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -38,19 +39,22 @@ export default function CreateEasterEggModal({ onClose, onCreated, currentUserId
         type,
         prizeName,
         prizeValue,
-        prizeDescription: prizeDescription || undefined,
         active: true,
         createdBy: currentUserId
       };
 
+      // Only add optional fields if they have values
+      if (prizeDescription) eggData.prizeDescription = prizeDescription;
+
       if (type === 'odds') {
         eggData.odds = parseInt(odds);
-        eggData.timeStart = timeStart || undefined;
-        eggData.timeEnd = timeEnd || undefined;
-        eggData.maxWinners = maxWinners ? parseInt(maxWinners) : undefined;
+        if (timeStart) eggData.timeStart = timeStart;
+        if (timeEnd) eggData.timeEnd = timeEnd;
+        if (maxWinners) eggData.maxWinners = parseInt(maxWinners);
       } else {
         eggData.placement = placement;
-        eggData.territoryFilter = territoryFilter || undefined;
+        if (territoryFilter) eggData.territoryFilter = territoryFilter;
+        if (zipCode) eggData.zipCode = zipCode;
       }
 
       await createEasterEggAsync(eggData);
@@ -240,20 +244,38 @@ export default function CreateEasterEggModal({ onClose, onCreated, currentUserId
               </div>
 
               {placement === 'random' && (
-                <div>
-                  <label className="block text-sm font-semibold text-[#2D3748] mb-2">
-                    Territory Filter (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={territoryFilter}
-                    onChange={(e) => setTerritoryFilter(e.target.value)}
-                    placeholder="e.g., Phoenix, Scottsdale"
-                    className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
-                  />
-                  <p className="text-xs text-[#718096] mt-1">
-                    Leave blank to hide anywhere
-                  </p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-[#2D3748] mb-2">
+                      Zip Code (optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={zipCode}
+                      onChange={(e) => setZipCode(e.target.value)}
+                      placeholder="e.g., 85001"
+                      className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                    />
+                    <p className="text-xs text-[#718096] mt-1">
+                      Egg will be placed on a lead within 15 miles of this zip code
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-[#2D3748] mb-2">
+                      Territory Filter (optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={territoryFilter}
+                      onChange={(e) => setTerritoryFilter(e.target.value)}
+                      placeholder="e.g., Phoenix, Scottsdale"
+                      className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                    />
+                    <p className="text-xs text-[#718096] mt-1">
+                      Additional filter - leave blank to use zip code only
+                    </p>
+                  </div>
                 </div>
               )}
             </div>

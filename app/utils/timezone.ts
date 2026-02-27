@@ -7,7 +7,15 @@ const EST_TIMEZONE = 'America/New_York';
  */
 export function formatTimeEST(date: Date | string | undefined): string {
   if (!date) return '';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  
+  let d: Date;
+  if (typeof date === 'string') {
+    // If string doesn't have timezone info, assume it's UTC
+    d = date.includes('Z') ? new Date(date) : new Date(date + 'Z');
+  } else {
+    d = date;
+  }
+  
   return d.toLocaleTimeString('en-US', { 
     timeZone: EST_TIMEZONE,
     hour: 'numeric',
@@ -21,7 +29,14 @@ export function formatTimeEST(date: Date | string | undefined): string {
  */
 export function formatDateEST(date: Date | string | undefined): string {
   if (!date) return '';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  
+  let d: Date;
+  if (typeof date === 'string') {
+    d = date.includes('Z') ? new Date(date) : new Date(date + 'Z');
+  } else {
+    d = date;
+  }
+  
   return d.toLocaleDateString('en-US', { 
     timeZone: EST_TIMEZONE,
     month: 'long',
@@ -35,7 +50,14 @@ export function formatDateEST(date: Date | string | undefined): string {
  */
 export function formatDateTimeEST(date: Date | string | undefined): string {
   if (!date) return '';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  
+  let d: Date;
+  if (typeof date === 'string') {
+    d = date.includes('Z') ? new Date(date) : new Date(date + 'Z');
+  } else {
+    d = date;
+  }
+  
   return d.toLocaleString('en-US', { 
     timeZone: EST_TIMEZONE,
     month: 'short',

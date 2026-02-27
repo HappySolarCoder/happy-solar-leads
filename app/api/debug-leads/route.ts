@@ -30,24 +30,37 @@ export async function GET() {
       };
     });
     
-    // Get a sample of leads to test
-    const leadsSnapshot = await getDocs(query(collection(db, 'leads'), orderBy('createdAt', 'desc')));
-    const leads = leadsSnapshot.docs.slice(0, 100).map(doc => {  // Changed to 100
+    // Get a sample of leads to test - get older ones too
+    const allLeadsSnapshot = await getDocs(query(collection(db, 'leads'), orderBy('createdAt', 'desc')));
+    const allLeads = allLeadsSnapshot.docs.map(doc => {
       const data = doc.data() as any;
       return {
         id: doc.id,
-        ...data,  // Return ALL fields
+        ...data,
       };
     });
     
+    // Get first 100 and also some with dispositions
+    const leads = allLeads.slice(0, 100);
+    const withDisposition = allLeads.filter(l => l.dispositionedAt).slice(0, 50);
+    const combined = [...leads];
+    for (const l of withDisposition) {
+      if (!combined.find(c => c.id === l.id)) {
+        combined.push(l);
+        if (combined.length >= 150) break;
+      }
+    }
+    
     return NextResponse.json({ 
+      totalLeads: allLeads.length,
+      withDisposition: allLeads.filter(l => l.dispositionedAt).length,
       territories: territories.map(t => ({
         id: t.id,
         userName: t.userName,
         userId: t.userId,
         polygonPoints: t.polygon?.length || 0,
       })),
-      sampleLeads: leads.map(l => ({
+      sampleLeads: combined.map(l => ({
         id: l.id,
         lat: l.lat,
         lng: l.lng,

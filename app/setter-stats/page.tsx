@@ -162,6 +162,7 @@ export default function DataDashboard() {
           break;
         case 'not-interested':
           metrics.notInterested++;
+          metrics.conversations++; // Had a conversation, just said no
           break;
         case 'interested':
           metrics.conversations++;

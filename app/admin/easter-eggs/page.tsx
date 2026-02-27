@@ -6,7 +6,8 @@ import { ArrowLeft, Plus, Trash2, ToggleLeft, ToggleRight, Trophy, Zap } from 'l
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { canManageUsers } from '@/app/types';
 import { EasterEgg } from '@/app/types/easterEgg';
-import { getEasterEggsAsync, deleteEasterEggAsync, updateEasterEggAsync } from '@/app/utils/easterEggs';
+import { getEasterEggsAsync, deleteEasterEggAsync, updateEasterEggAsync, rehideEasterEggAsync } from '@/app/utils/easterEggs';
+import { getLeadsAsync } from '@/app/utils/storage';
 import CreateEasterEggModal from '@/app/components/CreateEasterEggModal';
 
 export default function EasterEggsAdminPage() {
@@ -15,6 +16,7 @@ export default function EasterEggsAdminPage() {
   const [eggs, setEggs] = useState<EasterEgg[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [leads, setLeads] = useState<any[]>([]);
 
   useEffect(() => {
     async function loadData() {
@@ -27,6 +29,11 @@ export default function EasterEggsAdminPage() {
 
       const loadedEggs = await getEasterEggsAsync();
       setEggs(loadedEggs);
+      
+      // Load leads for address lookup
+      const loadedLeads = await getLeadsAsync();
+      setLeads(loadedLeads);
+      
       setIsLoading(false);
     }
     loadData();
@@ -43,6 +50,19 @@ export default function EasterEggsAdminPage() {
       await deleteEasterEggAsync(eggId);
       const updated = await getEasterEggsAsync();
       setEggs(updated);
+    }
+  };
+
+  const handleRehide = async (eggId: string) => {
+    if (confirm('Rehide this egg at a new random location?')) {
+      try {
+        await rehideEasterEggAsync(eggId);
+        const updated = await getEasterEggsAsync();
+        setEggs(updated);
+        alert('Egg rehided to new location!');
+      } catch (error) {
+        alert('Failed to rehide egg: ' + (error as Error).message);
+      }
     }
   };
 
@@ -189,6 +209,14 @@ export default function EasterEggsAdminPage() {
                               egg.wonBy && egg.wonBy.length > 0 ? '🏆 Found!' : '🔍 Hidden'
                             }
                           </p>
+                          {egg.leadId && (() => {
+                            const lead = leads.find(l => l.id === egg.leadId);
+                            return (
+                              <p className="text-[#718096]">
+                                <span className="font-semibold text-[#2D3748]">Hidden at:</span> {lead ? `${lead.address}, ${lead.city}` : egg.leadId}
+                              </p>
+                            );
+                          })()}
                           {egg.wonBy && egg.wonBy.length > 0 && (
                             <p className="text-[#718096]">
                               <span className="font-semibold text-[#2D3748]">Winner:</span> {egg.wonBy[0].userName}
@@ -242,6 +270,15 @@ export default function EasterEggsAdminPage() {
                         <ToggleLeft className="w-6 h-6 text-[#CBD5E0]" />
                       )}
                     </button>
+                    {egg.type === 'hidden' && egg.active && (
+                      <button
+                        onClick={() => handleRehide(egg.id)}
+                        className="p-2 hover:bg-[#BEE3F8] rounded-lg transition-colors"
+                        title="Rehide at new location"
+                      >
+                        <span className="text-lg">🎲</span>
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(egg.id)}
                       className="p-2 hover:bg-[#FED7D7] rounded-lg transition-colors"

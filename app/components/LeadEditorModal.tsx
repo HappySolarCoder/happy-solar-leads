@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
-import { saveLeadAsync, getCurrentUserAsync } from '@/app/utils/storage';
+import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 
 interface LeadEditorModalProps {
@@ -56,6 +56,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       };
 
       await saveLeadAsync(updatedLead);
+      invalidateLeadsCache(); // Ensure fresh data after update
       onSave();
     } finally {
       setIsSaving(false);

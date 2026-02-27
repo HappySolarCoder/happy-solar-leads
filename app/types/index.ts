@@ -31,8 +31,10 @@ export interface User {
   // Optional user metadata
   status?: string;
   lastLogin?: Date;
-  // Territory (for team organization)
+  // Territory (for lead assignment - DO NOT confuse with Team)
   territory?: string;
+  // Team (for user organization - e.g., Rochester, Buffalo)
+  team?: string;
 }
 
 export type LeadTag = 'solar-data' | 'homeowner' | 'home-data';
@@ -96,6 +98,17 @@ export interface Lead {
   goBackScheduledBy?: string;    // User ID who scheduled it
   // Disposition history (simplified inline tracking)
   dispositionHistory?: LeadDispositionHistoryEntry[];  // Track all disposition changes
+  // Photos & Attachments
+  photos?: LeadPhoto[];  // Photos attached to this lead
+}
+
+export interface LeadPhoto {
+  id: string;
+  url: string;
+  caption?: string;
+  type: 'roof' | 'meter' | 'electrical' | 'roofing' | 'other';
+  uploadedBy: string;
+  uploadedAt: Date;
 }
 
 export interface LeadDispositionHistoryEntry {

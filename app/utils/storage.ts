@@ -127,6 +127,11 @@ export async function saveLeadAsync(lead: Lead): Promise<void> {
   }
 }
 
+export function invalidateLeadsCache(): void {
+  leadsCache = null;
+  cacheTimestamp = 0;
+}
+
 /**
  * Batch save leads (for large uploads)
  * Uses Firestore WriteBatch for efficiency
