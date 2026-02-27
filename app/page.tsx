@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { Plus, Upload, Users, Menu, X, Map as MapIcon, List, Navigation, Wand2, UserPlus, Shield, TrendingUp } from 'lucide-react';
+import { Plus, Upload, Users, Menu, X, Map as MapIcon, List, Navigation, Wand2, UserPlus, Shield, TrendingUp, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { sortByKnockability } from '@/app/utils/knockability';
 import LeadList from '@/app/components/LeadList';
@@ -12,7 +12,9 @@ import LeadDetail from '@/app/components/LeadDetail';
 import UserSwitcher from '@/app/components/UserSwitcher';
 import LeadAssignmentPanel from '@/app/components/LeadAssignmentPanel';
 import AppMenu from '@/app/components/AppMenu';
+import EasterEggInfoModal from '@/app/components/EasterEggInfoModal';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getTerritoriesAsync } from '@/app/utils/territories';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
@@ -34,6 +36,7 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
 export default function Home() {
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [territories, setTerritories] = useState<any[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
@@ -42,10 +45,11 @@ export default function Home() {
   const [showAssignmentPanel, setShowAssignmentPanel] = useState(false);
   const [assignmentMode, setAssignmentMode] = useState<'none' | 'manual' | 'territory'>('none');
   const [selectedLeadIdsForAssignment, setSelectedLeadIdsForAssignment] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<'split' | 'map' | 'list'>('split');
+  const [viewMode, setViewMode] = useState<'split' | 'map' | 'list' | 'territory'>('split');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showEasterEggInfoModal, setShowEasterEggInfoModal] = useState(false);
   const [setterFilter, setSetterFilter] = useState<string>('all');
-  const [solarFilter, setSolarFilter] = useState<'all' | 'solid' | 'good' | 'great'>('all');
+  const [solarFilter, setSolarFilter] = useState<string[]>([]);
   const [dispositionFilter, setDispositionFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'default' | 'knockability' | 'newest' | 'oldest'>('default');
   
@@ -53,6 +57,13 @@ export default function Home() {
   const [mapCenter, setMapCenter] = useState<[number, number]>([43.1566, -77.6088]);
   const [mapZoom, setMapZoom] = useState(11);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite');
+  
+  // Address search state
+  const [addressSearch, setAddressSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchLocation, setSearchLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Mobile detection - redirect to mobile view (but allow admin pages)
   useEffect(() => {
@@ -67,6 +78,31 @@ export default function Home() {
       }
     }
   }, [router]);
+  
+  // Check if we should show Easter egg info modal (once per day after 6am EST)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    // Check if current time is after 6am EST
+    const now = new Date();
+    const estOffset = -5; // EST is UTC-5
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const estDate = new Date(utc + (3600000 * estOffset));
+    const estHour = estDate.getHours();
+    
+    // Only show after 6am EST
+    if (estHour < 6) return;
+    
+    // Check if user has already seen today's modal
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const lastShown = localStorage.getItem('easterEggInfoLastShown');
+    
+    if (lastShown !== today) {
+      // Show modal and save to localStorage
+      setShowEasterEggInfoModal(true);
+      localStorage.setItem('easterEggInfoLastShown', today);
+    }
+  }, []);
   
   // Load data on mount - optimized for large datasets
   useEffect(() => {
@@ -178,6 +214,54 @@ export default function Home() {
     setSelectedLeadIdsForAssignment(leadIds);
   };
 
+  // Handle address search
+  const handleAddressSearch = async (query: string) => {
+    setAddressSearch(query);
+    
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    if (query.length < 3) {
+      setSearchResults([]);
+      return;
+    }
+    
+    setIsSearching(true);
+    
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/geocode?address=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        
+        if (data.results && data.results.length > 0) {
+          setSearchResults(data.results.slice(0, 5));
+        } else {
+          setSearchResults([]);
+        }
+      } catch (error) {
+        console.error('Address search error:', error);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+  };
+
+  // Handle selecting an address result
+  const handleSelectAddress = (result: any) => {
+    const location = result.geometry?.location;
+    if (location) {
+      const lat = location.lat || location.latitude;
+      const lng = location.lng || location.longitude;
+      setMapCenter([lat, lng]);
+      setMapZoom(16); // Moderate zoom - user can zoom in more themselves
+      setSearchLocation({ lat, lng }); // Place search marker
+    }
+    setAddressSearch('');
+    setSearchResults([]);
+  };
+
   // Handle assignment complete
   const handleAssignmentComplete = () => {
     setShowAssignmentPanel(false);
@@ -214,10 +298,20 @@ export default function Home() {
     loadUsers();
   }, []);
 
+  // Load territories
+  useEffect(() => {
+    async function loadTerritories() {
+      const loadedTerritories = await getTerritoriesAsync();
+      setTerritories(loadedTerritories);
+    }
+    loadTerritories();
+  }, []);
+
   // Role-based lead visibility
+  // For setters/closers: show leads they claimed OR leads assigned to them (via territory)
   const roleFilteredLeads = currentUser
     ? (currentUser.role === 'setter' || currentUser.role === 'closer')
-      ? leads.filter(l => l.claimedBy === currentUser.id)
+      ? leads.filter(l => l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
       : leads
     : [];
 
@@ -226,30 +320,36 @@ export default function Home() {
   const KNOCK_STATUSES = ['not-home', 'interested', 'not-interested', 'appointment', 'sale', 'dq-credit', 'shade-dq', 'follow-up-later', 'renter'];
   const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor' || (l.status && KNOCK_STATUSES.includes(l.status)));
   const poorLeads = roleFilteredLeads.filter(l => l.solarCategory === 'poor' && (!l.status || !KNOCK_STATUSES.includes(l.status)));
-
-  // Filter by setter if selected
-  let filteredLeads = setterFilter === 'all'
-    ? goodLeads
-    : goodLeads.filter(l => l.claimedBy === setterFilter);
   
-  // Filter by solar category if selected
-  if (solarFilter !== 'all') {
-    filteredLeads = filteredLeads.filter(l => l.solarCategory === solarFilter);
-  }
-  
-  // Filter by disposition if selected
-  if (dispositionFilter !== 'all') {
-    filteredLeads = filteredLeads.filter(l => l.disposition === dispositionFilter);
-  }
+  const filteredLeads = useMemo(() => {
+    // Filter by setter if selected
+    // For setter filter, check both claimedBy and assignedTo
+    let result = setterFilter === 'all'
+      ? goodLeads
+      : goodLeads.filter(l => l.claimedBy === setterFilter || l.assignedTo === setterFilter);
+    
+    // Filter by solar category if selected (supports multiple)
+    // Empty array = all (no filter)
+    if (solarFilter.length > 0) {
+      result = result.filter(l => solarFilter.includes(l.solarCategory || ''));
+    }
+    
+    // Filter by disposition if selected
+    if (dispositionFilter !== 'all') {
+      result = result.filter(l => l.disposition === dispositionFilter);
+    }
 
-  // Sort leads if selected
-  if (sortBy === 'knockability') {
-    filteredLeads = sortByKnockability(filteredLeads);
-  } else if (sortBy === 'newest') {
-    filteredLeads = [...filteredLeads].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  } else if (sortBy === 'oldest') {
-    filteredLeads = [...filteredLeads].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }
+    // Sort leads if selected
+    if (sortBy === 'knockability') {
+      result = sortByKnockability(result);
+    } else if (sortBy === 'newest') {
+      result = [...result].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } else if (sortBy === 'oldest') {
+      result = [...result].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }
+    
+    return result;
+  }, [goodLeads, setterFilter, solarFilter, dispositionFilter, sortBy]);
 
   // Delete a poor lead
   const handleDeletePoorLead = async (leadId: string) => {
@@ -298,6 +398,13 @@ export default function Home() {
         onClose={() => setShowUploadModal(false)}
         onComplete={handleUploadComplete}
       />
+
+      {/* Easter Egg Info Modal - shown once per day after 6am EST */}
+      {showEasterEggInfoModal && (
+        <EasterEggInfoModal
+          onClose={() => setShowEasterEggInfoModal(false)}
+        />
+      )}
 
       {/* Lead Detail Panel */}
       {selectedLead && showLeadDetail && (
@@ -430,6 +537,16 @@ export default function Home() {
                 >
                   List
                 </button>
+                <button
+                  onClick={() => setViewMode('territory')}
+                  className={`px-4 py-2 rounded-md text-sm font-semibold transition-all duration-150 ${
+                    viewMode === 'territory' 
+                      ? 'bg-[#FF5F5A] text-white' 
+                      : 'text-[#718096] hover:text-[#2D3748] hover:bg-white'
+                  }`}
+                >
+                  Territory
+                </button>
               </div>
 
               {/* Upload Button - Flat Primary Button */}
@@ -478,11 +595,60 @@ export default function Home() {
           </aside>
         )}
 
+        {/* Address Search Bar */}
+        {(viewMode === 'split' || viewMode === 'map' || viewMode === 'territory') && (
+          <div className="px-4 py-2 bg-white border-b border-gray-200">
+            <div className="relative max-w-md">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search address..."
+                  value={addressSearch}
+                  onChange={(e) => handleAddressSearch(e.target.value)}
+                  className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A]"
+                />
+                {addressSearch && (
+                  <button
+                    onClick={() => { setAddressSearch(''); setSearchResults([]); }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2"
+                  >
+                    <X className="w-4 h-4 text-gray-400" />
+                  </button>
+                )}
+              </div>
+              {/* Search Results Dropdown */}
+              {searchResults.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+                  {searchResults.map((result, index) => (
+                    <button
+                      key={index}
+                      onClick={() => handleSelectAddress(result)}
+                      className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                    >
+                      <p className="text-sm font-medium text-gray-900">{result.formatted_address || result.name}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {isSearching && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-3">
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <div className="w-4 h-4 border-2 border-[#FF5F5A] border-t-transparent rounded-full animate-spin" />
+                    Searching...
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Map Area */}
-        {(viewMode === 'split' || viewMode === 'map') && (
-          <main className={`flex-1 relative ${viewMode === 'map' ? 'w-full' : ''}`}>
+        {(viewMode === 'split' || viewMode === 'map' || viewMode === 'territory') && (
+          <main className={`flex-1 relative ${viewMode === 'map' || viewMode === 'territory' ? 'w-full' : ''}`}>
             <LeadMap
-              leads={filteredLeads}
+              leads={viewMode === 'territory' ? [] : (leads?.length > 0 ? leads : [])}
+              territories={territories}
               currentUser={currentUser}
               users={ensureUserColors(users)}
               onLeadClick={handleLeadSelect}
@@ -498,10 +664,12 @@ export default function Home() {
                 setMapZoom(zoom);
               }}
               onMapTypeChange={setMapType}
+              viewMode={(viewMode === 'territory' ? 'territory' : 'map') as 'map' | 'assignments' | 'territory'}
+              searchLocation={searchLocation}
             />
 
             {/* Mobile Floating Action Button */}
-            {viewMode === 'map' && (
+            {(viewMode === 'map' || viewMode === 'territory') && (
               <button
                 onClick={() => setViewMode('list')}
                 className="absolute bottom-6 right-6 sm:hidden w-14 h-14 bg-blue-500 hover:bg-blue-600 text-white rounded-full shadow-lg flex items-center justify-center transition-transform hover:scale-105"
