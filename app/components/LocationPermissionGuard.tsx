@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { MapPin, AlertTriangle, Settings } from 'lucide-react';
 
 interface LocationPermissionGuardProps {
@@ -15,6 +15,9 @@ export default function LocationPermissionGuard({
   const [permissionStatus, setPermissionStatus] = useState<'checking' | 'granted' | 'denied' | 'prompt'>('checking');
   const [isIOS, setIsIOS] = useState(false);
   const [isAndroid, setIsAndroid] = useState(false);
+  
+  // Use ref to track if we've already checked to prevent repeated calls
+  const hasCheckedRef = useRef(false);
 
   useEffect(() => {
     // Detect platform
@@ -25,29 +28,21 @@ export default function LocationPermissionGuard({
     setIsIOS(ios);
     setIsAndroid(android);
 
-    // Check permission once on mount - don't repeatedly call geolocation
-    // as this causes permission popup loops on iOS
-    checkLocationPermission();
-
-    // NO LONGER re-check periodically - this was causing permission popup loops
-    // User can manually reload or click the button if they enable location
+    // Only check once on mount to prevent iOS permission popup loops
+    if (!hasCheckedRef.current) {
+      hasCheckedRef.current = true;
+      checkLocationPermission();
+    }
   }, []);
 
   const checkLocationPermission = async () => {
-    // Don't re-check if we've already determined a final status
-    // This prevents permission popup loops on iOS
-    if (permissionStatus === 'granted' || permissionStatus === 'denied') {
-      return;
-    }
-
     if (!navigator.geolocation) {
       setPermissionStatus('denied');
       return;
     }
 
     try {
-      // Use maximumAge to avoid triggering permission prompts repeatedly
-      // On iOS, calling getCurrentPosition without maximumAge can trigger the permission dialog
+      // Use maximumAge to prevent triggering permission prompts
       navigator.geolocation.getCurrentPosition(
         () => {
           setPermissionStatus('granted');
@@ -57,18 +52,19 @@ export default function LocationPermissionGuard({
             setPermissionStatus('denied');
           } else {
             // Don't set to 'prompt' - this triggers the modal
-            // Instead, just stay in current state to avoid loops
-            // The user can manually click to request permission
+            // Instead, allow access if location might work
+            setPermissionStatus('granted');
           }
         },
         {
           enableHighAccuracy: false,
           timeout: 5000,
-          maximumAge: 60000, // Cache for 1 minute to prevent repeated prompts
+          maximumAge: 300000, // Cache for 5 minutes
         }
       );
     } catch (error) {
-      setPermissionStatus('denied');
+      // On error, allow access rather than blocking
+      setPermissionStatus('granted');
     }
   };
 
