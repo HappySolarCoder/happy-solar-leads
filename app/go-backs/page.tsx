@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Calendar, List, MapPin, Clock, FileText, User as UserIcon, ArrowLeft } from 'lucide-react';
+import { Calendar, List, MapPin, Clock, FileText, User as UserIcon, ArrowLeft, Settings, X, Route, Map, Filter, Users, BarChart3, Layers } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
@@ -19,6 +19,7 @@ export default function GoBacksPage() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [showTools, setShowTools] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -123,30 +124,39 @@ export default function GoBacksPage() {
               </span>
             </div>
 
-            {/* View Toggle */}
-            <div className="flex items-center gap-2 bg-[#F7FAFC] p-1 rounded-lg">
+            {/* View Toggle & Tools */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowTools(true)}
+                className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
+                title="Tools"
+              >
+                <Settings className="w-5 h-5 text-[#718096]" />
+              </button>
+              <div className="flex items-center gap-1 sm:gap-2 bg-[#F7FAFC] p-1 rounded-lg">
               <button
                 onClick={() => setViewMode('calendar')}
-                className={`px-4 py-2 rounded-md transition-colors flex items-center gap-2 ${
+                className={`px-2 sm:px-4 py-2 rounded-md transition-colors flex items-center gap-1 sm:gap-2 ${
                   viewMode === 'calendar'
                     ? 'bg-white text-[#FF5F5A] shadow-sm'
                     : 'text-[#718096] hover:text-[#2D3748]'
                 }`}
               >
                 <Calendar className="w-4 h-4" />
-                Calendar
+                <span className="hidden sm:inline">Calendar</span>
               </button>
               <button
                 onClick={() => setViewMode('list')}
-                className={`px-4 py-2 rounded-md transition-colors flex items-center gap-2 ${
+                className={`px-2 sm:px-4 py-2 rounded-md transition-colors flex items-center gap-1 sm:gap-2 ${
                   viewMode === 'list'
                     ? 'bg-white text-[#FF5F5A] shadow-sm'
                     : 'text-[#718096] hover:text-[#2D3748]'
                 }`}
               >
                 <List className="w-4 h-4" />
-                List
+                <span className="hidden sm:inline">List</span>
               </button>
+            </div>
             </div>
           </div>
         </div>
@@ -324,6 +334,92 @@ export default function GoBacksPage() {
           }}
           onUpdate={handleUpdate}
         />
+      )}
+
+      {/* Tools Slide-out Panel */}
+      {showTools && (
+        <div>
+          <div 
+            className="fixed inset-0 bg-black/30 z-40"
+            onClick={() => setShowTools(false)}
+          />
+          <div className="fixed right-0 top-0 bottom-0 w-full sm:w-80 bg-white shadow-2xl z-50 flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-[#E2E8F0]">
+              <h2 className="text-lg font-semibold text-[#2D3748] flex items-center gap-2">
+                <Settings className="w-5 h-5" />
+                Tools
+              </h2>
+              <button
+                onClick={() => setShowTools(false)}
+                className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-[#718096]" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <button
+                onClick={() => { setShowTools(false); router.push('/tools?tab=route'); }}
+                className="w-full flex items-center gap-3 p-3 bg-[#F7FAFC] hover:bg-[#EDF2F7] rounded-lg transition-colors text-left"
+              >
+                <Route className="w-5 h-5 text-[#FF5F5A]" />
+                <div>
+                  <div className="text-sm font-medium text-[#2D3748]">Route All</div>
+                  <div className="text-xs text-[#718096]">Optimize route for all go-backs</div>
+                </div>
+              </button>
+              <button
+                onClick={() => { setShowTools(false); router.push('/tools?tab=optimize'); }}
+                className="w-full flex items-center gap-3 p-3 bg-[#F7FAFC] hover:bg-[#EDF2F7] rounded-lg transition-colors text-left"
+              >
+                <Map className="w-5 h-5 text-[#48BB78]" />
+                <div>
+                  <div className="text-sm font-medium text-[#2D3748]">Generate Optimized Route</div>
+                  <div className="text-xs text-[#718096]">AI-powered route optimization</div>
+                </div>
+              </button>
+              <button
+                onClick={() => { setShowTools(false); router.push('/territories'); }}
+                className="w-full flex items-center gap-3 p-3 bg-[#F7FAFC] hover:bg-[#EDF2F7] rounded-lg transition-colors text-left"
+              >
+                <Filter className="w-5 h-5 text-[#4299E1]" />
+                <div>
+                  <div className="text-sm font-medium text-[#2D3748]">Filter by Territory</div>
+                  <div className="text-xs text-[#718096]">View go-backs by territory</div>
+                </div>
+              </button>
+              <button
+                onClick={() => { setShowTools(false); router.push('/team-map'); }}
+                className="w-full flex items-center gap-3 p-3 bg-[#F7FAFC] hover:bg-[#EDF2F7] rounded-lg transition-colors text-left"
+              >
+                <Users className="w-5 h-5 text-[#9F7AEA]" />
+                <div>
+                  <div className="text-sm font-medium text-[#2D3748]">Team Activity</div>
+                  <div className="text-xs text-[#718096]">View team performance</div>
+                </div>
+              </button>
+              <button
+                onClick={() => { setShowTools(false); router.push('/setter-stats'); }}
+                className="w-full flex items-center gap-3 p-3 bg-[#F7FAFC] hover:bg-[#EDF2F7] rounded-lg transition-colors text-left"
+              >
+                <BarChart3 className="w-5 h-5 text-[#ED8936]" />
+                <div>
+                  <div className="text-sm font-medium text-[#2D3748]">Setter Stats</div>
+                  <div className="text-xs text-[#718096]">Setter performance metrics</div>
+                </div>
+              </button>
+              <button
+                onClick={() => { setShowTools(false); router.push('/lead-management'); }}
+                className="w-full flex items-center gap-3 p-3 bg-[#F7FAFC] hover:bg-[#EDF2F7] rounded-lg transition-colors text-left"
+              >
+                <Layers className="w-5 h-5 text-[#38B2AC]" />
+                <div>
+                  <div className="text-sm font-medium text-[#2D3748]">Lead Management</div>
+                  <div className="text-xs text-[#718096]">Manage all leads</div>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
