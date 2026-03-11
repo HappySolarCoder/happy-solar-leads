@@ -19,6 +19,7 @@
     "autoprefixer": "^10.4.24",
     "clsx": "^2.1.1",
     "firebase": "^12.9.0",
+    "firebase-admin": "^12.7.0",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "lucide-react": "^0.563.0",
