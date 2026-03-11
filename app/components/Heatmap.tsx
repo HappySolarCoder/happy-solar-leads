@@ -110,7 +110,7 @@ export default function HeatmapView({
         <div>
           <div className="text-sm font-semibold text-[#2D3748]">{title}</div>
           <div className="text-xs text-[#718096]">
-            {mode === 'rate' ? 'Appointment rate (% of knocks)' : `Max: ${max}`}
+            {mode === 'rate' ? 'Appointment rate (% of knocks)' : `Peak cell: ${max}`}
             {subtitle ? ` • ${subtitle}` : ''}
           </div>
         </div>
