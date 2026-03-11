@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import HeatmapView from '@/app/components/Heatmap';
 import type { Heatmap, HeatmapMode, RepHeatmaps } from '@/app/data/knockers';
+import { getLeadsAsync } from '@/app/utils/storage';
+import type { Lead } from '@/app/types';
 
 type HeatmapResp = {
   ok: boolean;
@@ -35,6 +37,18 @@ type CoachingResp = {
   };
 };
 
+type TrendPoint = {
+  day: string; // YYYY-MM-DD in America/New_York
+  attempts: number;
+  appointments: number;
+  appointmentRatePct: number;
+  moderate: number;
+  moderateSuccessRatePct: number;
+  notInterested: number;
+  notInterestedRatePct: number;
+  primeSharePct: number;
+};
+
 export default function DataAnalysisPage() {
   const [repId, setRepId] = useState<string>('team');
   const [mode, setMode] = useState<HeatmapMode>('rate');
@@ -42,6 +56,10 @@ export default function DataAnalysisPage() {
   const [coaching, setCoaching] = useState<CoachingResp | null>(null);
   const [coachText, setCoachText] = useState<any | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
+
+  const [trends, setTrends] = useState<TrendPoint[] | null>(null);
+  const [trendsDays, setTrendsDays] = useState<14 | 30>(14);
+  const [trendsError, setTrendsError] = useState<string | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [coachError, setCoachError] = useState<string | null>(null);
@@ -131,6 +149,143 @@ export default function DataAnalysisPage() {
       clearTimeout(t);
     };
   }, [repId, applied.start, applied.end]);
+
+  // V2 Trends: compute client-side using same Firestore browser SDK pathway as /setter-stats.
+  useEffect(() => {
+    let cancelled = false;
+
+    const tz = 'America/New_York';
+    const PRIME_START = 16;
+    const PRIME_END = 19;
+
+    const toYmd = (utcMs: number) => {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(new Date(utcMs));
+      const get = (t: string) => parts.find((p) => p.type === t)?.value;
+      return `${get('year')}-${get('month')}-${get('day')}`;
+    };
+
+    const hourInTz = (utcMs: number) =>
+      Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hour12: false }).format(new Date(utcMs)));
+
+    const parseEntryDate = (v: any): Date | null => {
+      if (!v) return null;
+      if (typeof v === 'string' || typeof v === 'number') {
+        const d = new Date(v);
+        return Number.isNaN(d.getTime()) ? null : d;
+      }
+      if ((v as any)?.toDate) return (v as any).toDate();
+      if (v instanceof Date) return v;
+      return null;
+    };
+
+    const ATTEMPT_LABELS = new Set([
+      'not home',
+      'interested',
+      'not interested',
+      'appointment set',
+      'go back',
+      'sale',
+      'sale!',
+      'dq credit',
+      'shade dq',
+      'callback scheduled',
+      'follow up later',
+      'renter',
+    ]);
+
+    const isAttempt = (label: string) => ATTEMPT_LABELS.has(label);
+
+    const isAppointment = (label: string) => label === 'appointment set' || label === 'appointment';
+    const isModerate = (label: string) => label === 'go back' || label === 'interested';
+    const isNotInterested = (label: string) => label === 'not interested';
+
+    const run = async () => {
+      try {
+        setTrendsError(null);
+        setTrends(null);
+
+        const leads: Lead[] = await getLeadsAsync();
+
+        // compute window based on trendsDays ending at applied.end
+        const endMs = Date.now();
+        const startMs = endMs - trendsDays * 24 * 60 * 60_000;
+
+        const byDay: Record<string, {
+          attempts: number;
+          appointments: number;
+          moderate: number;
+          notInterested: number;
+          primeAttempts: number;
+        }> = {};
+
+        const ensure = (day: string) =>
+          (byDay[day] ||= { attempts: 0, appointments: 0, moderate: 0, notInterested: 0, primeAttempts: 0 });
+
+        for (const lead of leads) {
+          const hist = Array.isArray((lead as any).dispositionHistory) ? (lead as any).dispositionHistory : [];
+          for (const e of hist) {
+            const dt = parseEntryDate(e?.timestamp);
+            if (!dt) continue;
+            const ts = dt.getTime();
+            if (ts < startMs || ts > endMs) continue;
+
+            const uid = String(e?.userId ?? '');
+            if (repId !== 'team' && uid !== repId) continue;
+
+            const label = String(e?.disposition ?? '').trim().toLowerCase();
+            if (!isAttempt(label)) continue;
+
+            const day = toYmd(ts);
+            const agg = ensure(day);
+            agg.attempts += 1;
+            if (isAppointment(label)) agg.appointments += 1;
+            if (isModerate(label)) agg.moderate += 1;
+            if (isNotInterested(label)) agg.notInterested += 1;
+
+            const hr = hourInTz(ts);
+            if (hr >= PRIME_START && hr <= PRIME_END) agg.primeAttempts += 1;
+          }
+        }
+
+        const daysSorted = Object.keys(byDay).sort();
+        const series: TrendPoint[] = daysSorted.map((day) => {
+          const d = byDay[day];
+          const appointmentRatePct = d.attempts ? +((d.appointments / d.attempts) * 100).toFixed(2) : 0;
+          const moderateSuccessRatePct = d.attempts ? +((d.moderate / d.attempts) * 100).toFixed(2) : 0;
+          const notInterestedRatePct = d.attempts ? +((d.notInterested / d.attempts) * 100).toFixed(2) : 0;
+          const primeSharePct = d.attempts ? +((d.primeAttempts / d.attempts) * 100).toFixed(2) : 0;
+          return {
+            day,
+            attempts: d.attempts,
+            appointments: d.appointments,
+            appointmentRatePct,
+            moderate: d.moderate,
+            moderateSuccessRatePct,
+            notInterested: d.notInterested,
+            notInterestedRatePct,
+            primeSharePct,
+          };
+        });
+
+        if (cancelled) return;
+        setTrends(series);
+      } catch (e: any) {
+        if (cancelled) return;
+        setTrendsError(e?.message || 'Failed to compute trends');
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [repId, trendsDays]);
 
   const selected = useMemo(() => {
     const team = data?.team;
@@ -261,6 +416,67 @@ export default function DataAnalysisPage() {
                 </div>
               ) : (
                 <div className="text-sm text-[#718096]">Loading KPIs…</div>
+              )}
+            </div>
+
+            {/* Trends (V2) */}
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-[#2D3748]">Trends</div>
+                  <div className="text-xs text-[#718096]">Daily buckets (EST) • computed client-side like /setter-stats</div>
+                </div>
+                <div className="inline-flex rounded-lg border border-[#E2E8F0] overflow-hidden">
+                  <button
+                    onClick={() => setTrendsDays(14)}
+                    className={`px-3 py-2 text-sm font-medium ${trendsDays === 14 ? 'bg-[#2D3748] text-white' : 'bg-white text-[#2D3748]'}`}
+                  >
+                    14d
+                  </button>
+                  <button
+                    onClick={() => setTrendsDays(30)}
+                    className={`px-3 py-2 text-sm font-medium ${trendsDays === 30 ? 'bg-[#2D3748] text-white' : 'bg-white text-[#2D3748]'}`}
+                  >
+                    30d
+                  </button>
+                </div>
+              </div>
+
+              {trendsError ? (
+                <div className="mt-3 text-sm text-red-700">{trendsError}</div>
+              ) : !trends ? (
+                <div className="mt-3 text-sm text-[#718096]">Loading trends…</div>
+              ) : trends.length === 0 ? (
+                <div className="mt-3 text-sm text-[#718096]">No trend data in this window.</div>
+              ) : (
+                <div className="mt-3 overflow-x-auto">
+                  <table className="min-w-[900px] w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-[#718096]">
+                        <th className="text-left font-semibold py-2">Day</th>
+                        <th className="text-right font-semibold py-2">Attempts</th>
+                        <th className="text-right font-semibold py-2">Appts</th>
+                        <th className="text-right font-semibold py-2">Appt %</th>
+                        <th className="text-right font-semibold py-2">Moderate %</th>
+                        <th className="text-right font-semibold py-2">NI %</th>
+                        <th className="text-right font-semibold py-2">Prime %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trends.slice(-30).map((d) => (
+                        <tr key={d.day} className="border-t border-[#EDF2F7]">
+                          <td className="py-2 text-[#2D3748] font-medium">{d.day}</td>
+                          <td className="py-2 text-right tabular-nums">{d.attempts}</td>
+                          <td className="py-2 text-right tabular-nums">{d.appointments}</td>
+                          <td className="py-2 text-right tabular-nums">{d.appointmentRatePct}%</td>
+                          <td className="py-2 text-right tabular-nums">{d.moderateSuccessRatePct}%</td>
+                          <td className="py-2 text-right tabular-nums">{d.notInterestedRatePct}%</td>
+                          <td className="py-2 text-right tabular-nums">{d.primeSharePct}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
 
