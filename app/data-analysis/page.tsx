@@ -12,12 +12,39 @@ type HeatmapResp = {
   reps: Array<RepHeatmaps & { totals: { appointments: number; knocks: number } }>;
 };
 
+type CoachingResp = {
+  ok: boolean;
+  rep: { repId: string; repName: string };
+  timezone: string;
+  totals: {
+    attempts: number;
+    successAppointments: number;
+    moderateSuccess: number;
+    appointmentRatePct: number;
+    moderateSuccessRatePct: number;
+    primeAttempts: number;
+    primeSharePct: number;
+  };
+  breakdown: {
+    byStatus: Record<string, number>;
+    notInterestedReasons: Record<string, { count: number; label: string }>;
+  };
+  samples: {
+    objections: Array<{ ts: string; type: string; label: string; notes: string }>;
+    notes: Array<{ ts: string; notes: string }>;
+  };
+};
+
 export default function DataAnalysisPage() {
   const [repId, setRepId] = useState<string>('team');
   const [mode, setMode] = useState<HeatmapMode>('rate');
   const [data, setData] = useState<HeatmapResp | null>(null);
+  const [coaching, setCoaching] = useState<CoachingResp | null>(null);
+  const [coachText, setCoachText] = useState<any | null>(null);
+  const [coachLoading, setCoachLoading] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
+  const [coachError, setCoachError] = useState<string | null>(null);
 
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -65,6 +92,45 @@ export default function DataAnalysisPage() {
       clearTimeout(t);
     };
   }, [applied.start, applied.end]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ctrl = new AbortController();
+
+    const t = setTimeout(() => ctrl.abort(), 12000);
+
+    const qs = new URLSearchParams({
+      repId,
+      start: applied.start,
+      end: applied.end,
+      tz: 'America/New_York',
+    });
+
+    fetch(`/api/analytics/coaching?${qs.toString()}`, { cache: 'no-store', signal: ctrl.signal })
+      .then((r) => r.json())
+      .then((j) => {
+        if (cancelled) return;
+        if (j?.ok === false) {
+          setCoachError(j?.error || 'Failed to load coaching metrics');
+          setCoaching(null);
+          return;
+        }
+        setCoachError(null);
+        setCoaching(j);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setCoachError(e?.name === 'AbortError' ? 'Coaching request timed out' : (e?.message || 'Failed to load coaching metrics'));
+        setCoaching(null);
+      })
+      .finally(() => clearTimeout(t));
+
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+      clearTimeout(t);
+    };
+  }, [repId, applied.start, applied.end]);
 
   const selected = useMemo(() => {
     const team = data?.team;
@@ -166,7 +232,102 @@ export default function DataAnalysisPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">
-            {/* Appointments: Rate uses appointments as numerator and activity as denominator */}
+            {/* KPIs */}
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4">
+              <div className="text-sm font-semibold text-[#2D3748] mb-2">KPIs ({repId === 'team' ? 'Team' : selected.repName})</div>
+              {coachError ? (
+                <div className="text-sm text-red-700">{coachError}</div>
+              ) : coaching ? (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="bg-[#F7FAFC] rounded-xl p-3">
+                    <div className="text-xs text-[#718096]">Attempts</div>
+                    <div className="text-xl font-bold text-[#2D3748] tabular-nums">{coaching.totals.attempts}</div>
+                  </div>
+                  <div className="bg-[#F7FAFC] rounded-xl p-3">
+                    <div className="text-xs text-[#718096]">Appointments</div>
+                    <div className="text-xl font-bold text-[#2D3748] tabular-nums">{coaching.totals.successAppointments}</div>
+                    <div className="text-xs text-[#718096] tabular-nums">{coaching.totals.appointmentRatePct}% rate</div>
+                  </div>
+                  <div className="bg-[#F7FAFC] rounded-xl p-3">
+                    <div className="text-xs text-[#718096]">Moderate Success</div>
+                    <div className="text-xl font-bold text-[#2D3748] tabular-nums">{coaching.totals.moderateSuccess}</div>
+                    <div className="text-xs text-[#718096] tabular-nums">{coaching.totals.moderateSuccessRatePct}%</div>
+                  </div>
+                  <div className="bg-[#F7FAFC] rounded-xl p-3">
+                    <div className="text-xs text-[#718096]">Prime Time (4–7pm)</div>
+                    <div className="text-xl font-bold text-[#2D3748] tabular-nums">{coaching.totals.primeSharePct}%</div>
+                    <div className="text-xs text-[#718096] tabular-nums">{coaching.totals.primeAttempts} attempts</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-[#718096]">Loading KPIs…</div>
+              )}
+            </div>
+
+            {/* Not Interested reasons */}
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-[#2D3748]">Not Interested reasons</div>
+                  <div className="text-xs text-[#718096]">From objectionType</div>
+                </div>
+              </div>
+              {coaching ? (
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {Object.entries(coaching.breakdown.notInterestedReasons || {}).slice(0, 10).map(([id, v]) => (
+                    <div key={id} className="flex items-center justify-between bg-[#F7FAFC] rounded-xl px-3 py-2">
+                      <div className="text-sm text-[#2D3748]">{v.label}</div>
+                      <div className="text-sm font-semibold text-[#2D3748] tabular-nums">{v.count}</div>
+                    </div>
+                  ))}
+                  {Object.keys(coaching.breakdown.notInterestedReasons || {}).length === 0 ? (
+                    <div className="text-sm text-[#718096]">No objection reasons found in this range.</div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="text-sm text-[#718096] mt-2">Loading…</div>
+              )}
+            </div>
+
+            {/* AI Coach */}
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-[#2D3748]">AI Coach</div>
+                  <div className="text-xs text-[#718096]">Expert solar D2D coaching based on timing + dispositions</div>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!coaching) return;
+                    setCoachLoading(true);
+                    setCoachText(null);
+                    try {
+                      const r = await fetch('/api/ai/coaching', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ metrics: coaching }),
+                      });
+                      const j = await r.json();
+                      setCoachText(j);
+                    } finally {
+                      setCoachLoading(false);
+                    }
+                  }}
+                  disabled={!coaching || coachLoading}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#FF5F5A] text-white hover:bg-[#e45550] disabled:opacity-60"
+                >
+                  {coachLoading ? 'Generating…' : 'Generate coaching report'}
+                </button>
+              </div>
+
+              {coachText ? (
+                <pre className="mt-3 text-xs bg-[#0B1020] text-white rounded-xl p-3 overflow-auto">{JSON.stringify(coachText, null, 2)}</pre>
+              ) : (
+                <div className="mt-3 text-sm text-[#718096]">Click generate to get a structured coaching report.</div>
+              )}
+            </div>
+
+            {/* Heatmaps */}
             <HeatmapView
               title={`${selected.repName}: Appointment ${mode === 'rate' ? 'Rate' : 'Count'}`}
               mode={mode}
