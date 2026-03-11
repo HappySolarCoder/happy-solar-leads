@@ -49,6 +49,30 @@ type TrendPoint = {
   primeSharePct: number;
 };
 
+type SavedCoachingReport = {
+  id: string;
+  createdAtMs: number;
+  repId: string;
+  repName: string;
+  dateRange: { start: string; end: string };
+  timezone: string;
+  kpis: {
+    attempts: number;
+    appointments: number;
+    appointmentRatePct: number;
+    moderateSuccess: number;
+    moderateSuccessRatePct: number;
+    primeSharePct: number;
+  };
+  topNotInterestedReasons: Array<{ id: string; label: string; count: number }>;
+  signature?: { primary: string; secondary?: string; reasons?: string[] };
+  flags?: string[];
+  coach: any; // structured coach JSON (no raw lead notes)
+};
+
+const SAVED_COACHING_KEY = 'raydar_saved_coaching_reports_v1';
+const MAX_SAVED_REPORTS = 25;
+
 export default function DataAnalysisPage() {
   const [repId, setRepId] = useState<string>('team');
   const [mode, setMode] = useState<HeatmapMode>('rate');
@@ -84,7 +108,63 @@ export default function DataAnalysisPage() {
   const [error, setError] = useState<string | null>(null);
   const [coachError, setCoachError] = useState<string | null>(null);
 
+  const [savedReports, setSavedReports] = useState<SavedCoachingReport[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveOk, setSaveOk] = useState<string | null>(null);
+
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  const topReasonsFromCoaching = (c: CoachingResp | null) => {
+    const entries = Object.entries(c?.breakdown?.notInterestedReasons || {})
+      .map(([id, v]) => ({ id, label: v.label, count: v.count }))
+      .sort((a, b) => b.count - a.count);
+    return entries.slice(0, 5);
+  };
+
+  const toMarkdown = (r: SavedCoachingReport) => {
+    const lines: string[] = [];
+    lines.push(`# Coaching Report — ${r.repName}`);
+    lines.push('');
+    lines.push(`- **Date range:** ${r.dateRange.start} → ${r.dateRange.end}`);
+    lines.push(`- **Timezone:** ${r.timezone}`);
+    lines.push(`- **Generated:** ${new Date(r.createdAtMs).toLocaleString()}`);
+    lines.push('');
+
+    lines.push('## KPIs');
+    lines.push(`- Attempts: ${r.kpis.attempts}`);
+    lines.push(`- Appointments: ${r.kpis.appointments} (${r.kpis.appointmentRatePct}%)`);
+    lines.push(`- Moderate success: ${r.kpis.moderateSuccess} (${r.kpis.moderateSuccessRatePct}%)`);
+    lines.push(`- Prime-time share (4–7pm): ${r.kpis.primeSharePct}%`);
+    lines.push('');
+
+    if (r.signature?.primary) {
+      lines.push('## Diagnosis');
+      lines.push(`- **Primary:** ${r.signature.primary}`);
+      if (r.signature.secondary) lines.push(`- **Secondary:** ${r.signature.secondary}`);
+      if (r.flags?.length) lines.push(`- **Flags:** ${r.flags.join(', ')}`);
+      if (r.signature.reasons?.length) {
+        lines.push('');
+        lines.push('### Reasons');
+        for (const reason of r.signature.reasons) lines.push(`- ${reason}`);
+      }
+      lines.push('');
+    }
+
+    lines.push('## Top Not Interested reasons');
+    if (r.topNotInterestedReasons.length) {
+      for (const x of r.topNotInterestedReasons) lines.push(`- ${x.label} — ${x.count}`);
+    } else {
+      lines.push('- (none in this range)');
+    }
+    lines.push('');
+
+    lines.push('## AI Coach Output');
+    lines.push('```json');
+    lines.push(JSON.stringify(r.coach, null, 2));
+    lines.push('```');
+
+    return lines.join('\n');
+  };
 
   const defaultEnd = ymd(new Date());
   const defaultStart = (() => {
@@ -97,9 +177,31 @@ export default function DataAnalysisPage() {
   const [end, setEnd] = useState<string>(defaultEnd);
   const [applied, setApplied] = useState<{ start: string; end: string }>({ start: defaultStart, end: defaultEnd });
 
+  // Load saved coaching reports (localStorage only) + keep in sync.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_COACHING_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) setSavedReports(parsed);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SAVED_COACHING_KEY, JSON.stringify(savedReports.slice(0, MAX_SAVED_REPORTS)));
+    } catch {
+      // ignore
+    }
+  }, [savedReports]);
+
   // Clear stale AI output when changing rep or date range.
   useEffect(() => {
     setCoachText(null);
+    setSaveOk(null);
+    setSaveError(null);
   }, [repId, applied.start, applied.end]);
 
   useEffect(() => {
@@ -452,6 +554,68 @@ export default function DataAnalysisPage() {
     if (repId === 'team') return team;
     return reps.find((r) => r.repId === repId) ?? team;
   }, [repId, data]);
+
+  const currentSaveable: SavedCoachingReport | null = useMemo(() => {
+    const coach = coachText?.coach;
+    if (!coach || !coaching) return null;
+
+    const repName = repId === 'team' ? 'Team' : (selected?.repName || coaching.rep?.repName || repId);
+
+    return {
+      id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      createdAtMs: Date.now(),
+      repId,
+      repName,
+      dateRange: { start: applied.start, end: applied.end },
+      timezone: coaching.timezone || 'America/New_York',
+      kpis: {
+        attempts: coaching.totals.attempts,
+        appointments: coaching.totals.successAppointments,
+        appointmentRatePct: coaching.totals.appointmentRatePct,
+        moderateSuccess: coaching.totals.moderateSuccess,
+        moderateSuccessRatePct: coaching.totals.moderateSuccessRatePct,
+        primeSharePct: coaching.totals.primeSharePct,
+      },
+      topNotInterestedReasons: topReasonsFromCoaching(coaching),
+      signature: repId !== 'team' ? bench?.rep?.signature : undefined,
+      flags: repId !== 'team' ? bench?.rep?.flags : undefined,
+      coach,
+    };
+  }, [coachText, coaching, repId, selected?.repName, applied.start, applied.end, bench]);
+
+  const copyMarkdown = async (report: SavedCoachingReport) => {
+    try {
+      await navigator.clipboard.writeText(toMarkdown(report));
+      setSaveOk('Copied coaching report to clipboard.');
+      setSaveError(null);
+      setTimeout(() => setSaveOk(null), 2500);
+    } catch (e: any) {
+      setSaveError(e?.message || 'Failed to copy');
+      setSaveOk(null);
+    }
+  };
+
+  const saveReport = () => {
+    if (!currentSaveable) return;
+    try {
+      // newest first
+      setSavedReports((prev) => [currentSaveable, ...prev].slice(0, MAX_SAVED_REPORTS));
+      setSaveOk('Saved report.');
+      setSaveError(null);
+      setTimeout(() => setSaveOk(null), 2500);
+    } catch (e: any) {
+      setSaveError(e?.message || 'Failed to save');
+      setSaveOk(null);
+    }
+  };
+
+  const deleteSaved = (id: string) => {
+    setSavedReports((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const clearAllSaved = () => {
+    setSavedReports([]);
+  };
 
   return (
     <div className="min-h-screen bg-[#F7FAFC]">
@@ -809,10 +973,85 @@ export default function DataAnalysisPage() {
                 </button>
               </div>
 
+              {saveError ? <div className="mt-3 text-sm text-red-700">{saveError}</div> : null}
+              {saveOk ? <div className="mt-3 text-sm text-emerald-700">{saveOk}</div> : null}
+
               {coachText ? (
                 <pre className="mt-3 text-xs bg-[#0B1020] text-white rounded-xl p-3 overflow-auto">{JSON.stringify(coachText, null, 2)}</pre>
               ) : (
                 <div className="mt-3 text-sm text-[#718096]">Click generate to get a structured coaching report.</div>
+              )}
+
+              <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                <button
+                  onClick={() => currentSaveable && copyMarkdown(currentSaveable)}
+                  disabled={!currentSaveable}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold bg-white border border-[#E2E8F0] text-[#2D3748] hover:bg-[#F7FAFC] disabled:opacity-60"
+                >
+                  Copy as Markdown
+                </button>
+                <button
+                  onClick={saveReport}
+                  disabled={!currentSaveable}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#2D3748] text-white hover:bg-[#1A202C] disabled:opacity-60"
+                >
+                  Save report
+                </button>
+              </div>
+            </div>
+
+            {/* Saved Coaching (localStorage) */}
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-[#2D3748]">Saved Coaching</div>
+                  <div className="text-xs text-[#718096]">Stored in this browser (localStorage). No PII.</div>
+                </div>
+                <button
+                  onClick={clearAllSaved}
+                  disabled={savedReports.length === 0}
+                  className="px-3 py-2 rounded-lg text-sm font-semibold bg-white border border-[#E2E8F0] text-[#C53030] hover:bg-red-50 disabled:opacity-60"
+                >
+                  Clear all
+                </button>
+              </div>
+
+              {savedReports.length === 0 ? (
+                <div className="mt-3 text-sm text-[#718096]">No saved reports yet.</div>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  {savedReports.map((r) => (
+                    <div key={r.id} className="border border-[#EDF2F7] rounded-xl p-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-semibold text-[#2D3748]">{r.repName}</div>
+                          <div className="text-xs text-[#718096]">{r.dateRange.start} → {r.dateRange.end} • {new Date(r.createdAtMs).toLocaleString()}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => copyMarkdown(r)}
+                            className="px-3 py-2 rounded-lg text-sm font-semibold bg-white border border-[#E2E8F0] text-[#2D3748] hover:bg-[#F7FAFC]"
+                          >
+                            Copy
+                          </button>
+                          <button
+                            onClick={() => deleteSaved(r.id)}
+                            className="px-3 py-2 rounded-lg text-sm font-semibold bg-white border border-[#E2E8F0] text-[#C53030] hover:bg-red-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 grid grid-cols-2 lg:grid-cols-4 gap-2 text-xs text-[#4A5568]">
+                        <div className="bg-[#F7FAFC] rounded-lg px-2 py-1">Attempts: <span className="font-semibold">{r.kpis.attempts}</span></div>
+                        <div className="bg-[#F7FAFC] rounded-lg px-2 py-1">Appt %: <span className="font-semibold">{r.kpis.appointmentRatePct}%</span></div>
+                        <div className="bg-[#F7FAFC] rounded-lg px-2 py-1">NI %: <span className="font-semibold">{(r.kpis.attempts ? ((r.topNotInterestedReasons.reduce((a, x) => a + x.count, 0) / r.kpis.attempts) * 100).toFixed(1) : '0.0')}%</span></div>
+                        <div className="bg-[#F7FAFC] rounded-lg px-2 py-1">Prime %: <span className="font-semibold">{r.kpis.primeSharePct}%</span></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
 
