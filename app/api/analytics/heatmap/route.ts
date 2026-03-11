@@ -7,7 +7,7 @@ const CACHE_TTL_MS = 5 * 60_000;
 const cache: Record<string, { ts: number; data: any }> =
   (globalThis as any).__raydarHeatmapCache || ((globalThis as any).__raydarHeatmapCache = {});
 
-const HOURS = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 const TZ = 'America/New_York';
 
@@ -22,8 +22,8 @@ type RepAgg = {
   totalKnocks: number;
 };
 
-function makeMatrix() {
-  return DAYS.map(() => HOURS.map(() => 0));
+function makeMatrix(hours: number[]) {
+  return DAYS.map(() => hours.map(() => 0));
 }
 
 function getDayHour(tsMs: number): { day: DayKey; hour: number } {
@@ -37,8 +37,8 @@ function idxDay(day: DayKey) {
   return DAYS.indexOf(day);
 }
 
-function idxHour(hour: number) {
-  return HOURS.indexOf(hour);
+function idxHour(hour: number, hours: number[]) {
+  return hours.indexOf(hour);
 }
 
 function parseDate(value: any): Date | null {
@@ -58,13 +58,13 @@ function isAppointmentSet(raw: any) {
   return v === 'appointment' || v === 'appointment set';
 }
 
-function ensureRep(reps: Record<string, RepAgg>, repId: string, repName: string): RepAgg {
+function ensureRep(reps: Record<string, RepAgg>, repId: string, repName: string, hours: number[]): RepAgg {
   if (!reps[repId]) {
     reps[repId] = {
       repId,
       repName,
-      appointments: makeMatrix(),
-      activity: makeMatrix(),
+      appointments: makeMatrix(hours),
+      activity: makeMatrix(hours),
       totalAppointments: 0,
       totalKnocks: 0,
     };
@@ -72,10 +72,10 @@ function ensureRep(reps: Record<string, RepAgg>, repId: string, repName: string)
   return reps[repId];
 }
 
-function addEvent(rep: RepAgg, team: RepAgg, tsMs: number, disposition: string) {
+function addEvent(rep: RepAgg, team: RepAgg, tsMs: number, disposition: string, hours: number[]) {
   const { day, hour } = getDayHour(tsMs);
   const di = idxDay(day);
-  const hi = idxHour(hour);
+  const hi = idxHour(hour, hours);
   if (di < 0 || hi < 0) return;
 
   rep.activity[di][hi] += 1;
@@ -129,7 +129,8 @@ export async function GET(req: Request) {
   const end = url.searchParams.get('end'); // YYYY-MM-DD
   const days = Math.max(1, Math.min(90, Number(url.searchParams.get('days') || 14)));
 
-  const cacheKey = start && end ? `start=${start}&end=${end}` : `days=${days}`;
+  const hoursParam = url.searchParams.get('hours') || '24'; // '24' | 'business'
+  const cacheKey = start && end ? `start=${start}&end=${end}&hours=${hoursParam}` : `days=${days}&hours=${hoursParam}`;
   const cached = cache[cacheKey];
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
     return NextResponse.json(cached.data, {
@@ -141,6 +142,12 @@ export async function GET(req: Request) {
   }
 
   try {
+    // Optional hour bucketing modes:
+    // - hours=24 (default): include 0-23
+    // - hours=business: include 9-19
+    const HOURS_MODE = hoursParam === 'business' ? 'business' : '24';
+    const hours = HOURS_MODE === 'business' ? [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] : HOURS;
+
     const now = Date.now();
 
     let windowStartMs = now - days * 24 * 60 * 60_000;
@@ -190,8 +197,8 @@ export async function GET(req: Request) {
     const team: RepAgg = {
       repId: 'team',
       repName: 'Team',
-      appointments: makeMatrix(),
-      activity: makeMatrix(),
+      appointments: makeMatrix(hours),
+      activity: makeMatrix(hours),
       totalAppointments: 0,
       totalKnocks: 0,
     };
@@ -214,9 +221,9 @@ export async function GET(req: Request) {
 
           const repId = String(entry?.userId ?? lead?.claimedBy ?? lead?.setterId ?? 'unknown');
           const repName = String(entry?.userName ?? userNameById.get(repId) ?? repId);
-          const rep = ensureRep(reps, repId, repName);
+          const rep = ensureRep(reps, repId, repName, hours);
 
-          addEvent(rep, team, tsMs, entryDisposition);
+          addEvent(rep, team, tsMs, entryDisposition, hours);
         }
         continue;
       }
@@ -230,8 +237,8 @@ export async function GET(req: Request) {
 
       const repId = String(lead?.claimedBy ?? lead?.setterId ?? 'unknown');
       const repName = String(userNameById.get(repId) ?? repId);
-      const rep = ensureRep(reps, repId, repName);
-      addEvent(rep, team, tsMs, leadStatus);
+      const rep = ensureRep(reps, repId, repName, hours);
+      addEvent(rep, team, tsMs, leadStatus, hours);
     }
 
     const repList = Object.values(reps)
@@ -239,8 +246,8 @@ export async function GET(req: Request) {
       .map((r) => ({
         repId: r.repId,
         repName: r.repName,
-        appointments: { hours: HOURS, days: DAYS, values: r.appointments },
-        activity: { hours: HOURS, days: DAYS, values: r.activity },
+        appointments: { hours, days: DAYS, values: r.appointments },
+        activity: { hours, days: DAYS, values: r.activity },
         totals: { appointments: r.totalAppointments, knocks: r.totalKnocks },
       }));
 
@@ -256,8 +263,8 @@ export async function GET(req: Request) {
       team: {
         repId: team.repId,
         repName: team.repName,
-        appointments: { hours: HOURS, days: DAYS, values: team.appointments },
-        activity: { hours: HOURS, days: DAYS, values: team.activity },
+        appointments: { hours, days: DAYS, values: team.appointments },
+        activity: { hours, days: DAYS, values: team.activity },
         totals: { appointments: team.totalAppointments, knocks: team.totalKnocks },
       },
       reps: repList,
