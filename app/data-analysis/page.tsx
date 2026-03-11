@@ -643,6 +643,24 @@ export default function DataAnalysisPage() {
     return reps.find((r) => r.repId === repId) ?? team;
   }, [repId, data]);
 
+  const repNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of data?.reps ?? []) {
+      if (r?.repId && r?.repName) map.set(r.repId, r.repName);
+    }
+    // team label
+    map.set('team', 'Team');
+    return map;
+  }, [data?.reps]);
+
+  const weekdayLabel = (ymd: string) => {
+    // ymd is already in America/New_York day-bucket; format label in same TZ.
+    const [yy, mm, dd] = ymd.split('-').map(Number);
+    if (!yy || !mm || !dd) return '';
+    const utc = Date.UTC(yy, mm - 1, dd, 12, 0, 0);
+    return new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/New_York' }).format(new Date(utc));
+  };
+
   const currentSaveable: SavedCoachingReport | null = useMemo(() => {
     const coach = coachText?.coach;
     if (!coach || !coaching) return null;
@@ -845,15 +863,15 @@ export default function DataAnalysisPage() {
                       <div className="mt-3 text-xs text-[#4A5568] space-y-2">
                         <div>
                           <div className="font-semibold text-[#2D3748]">Lowest appointment rate</div>
-                          <div>{bench.outliers.lowestApptRate.map((r) => `${r.rid}: ${r.apptRate.toFixed(2)}%`).join(' • ')}</div>
+                          <div>{bench.outliers.lowestApptRate.map((r) => `${repNameById.get(r.rid) || r.rid}: ${r.apptRate.toFixed(2)}%`).join(' • ')}</div>
                         </div>
                         <div>
                           <div className="font-semibold text-[#2D3748]">Highest Not Interested rate</div>
-                          <div>{bench.outliers.highestNiRate.map((r) => `${r.rid}: ${r.niRate.toFixed(2)}%`).join(' • ')}</div>
+                          <div>{bench.outliers.highestNiRate.map((r) => `${repNameById.get(r.rid) || r.rid}: ${r.niRate.toFixed(2)}%`).join(' • ')}</div>
                         </div>
                         <div>
                           <div className="font-semibold text-[#2D3748]">Lowest prime-time share</div>
-                          <div>{bench.outliers.lowestPrimeShare.map((r) => `${r.rid}: ${r.primeShare.toFixed(2)}%`).join(' • ')}</div>
+                          <div>{bench.outliers.lowestPrimeShare.map((r) => `${repNameById.get(r.rid) || r.rid}: ${r.primeShare.toFixed(2)}%`).join(' • ')}</div>
                         </div>
                       </div>
                     ) : null}
@@ -990,7 +1008,7 @@ export default function DataAnalysisPage() {
                     <tbody>
                       {trends.slice(-30).map((d) => (
                         <tr key={d.day} className="border-t border-[#EDF2F7]">
-                          <td className="py-2 text-[#2D3748] font-medium">{d.day}</td>
+                          <td className="py-2 text-[#2D3748] font-medium">{weekdayLabel(d.day)} {d.day}</td>
                           <td className="py-2 text-right tabular-nums">{d.attempts}</td>
                           <td className="py-2 text-right tabular-nums">{d.appointments}</td>
                           <td className="py-2 text-right tabular-nums">{d.appointmentRatePct}%</td>
