@@ -168,9 +168,22 @@ export async function GET(req: Request) {
 
     const db = adminDb();
 
+    // Map userId -> user.name so rep dropdown always shows human names when available.
+    const usersSnap = (await Promise.race([
+      db.collection('users').get(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Heatmap users query timeout')), 5000)),
+    ])) as any;
+    const userNameById = new Map<string, string>();
+    for (const u of usersSnap?.docs ?? []) {
+      const ud: any = u.data();
+      const id = String(u.id);
+      const name = String(ud?.name ?? '').trim();
+      if (name) userNameById.set(id, name);
+    }
+
     const leadSnap = (await Promise.race([
       db.collection('leads').limit(10000).get(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Heatmap query timeout')), 8000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Heatmap leads query timeout')), 8000)),
     ])) as any;
 
     const reps: Record<string, RepAgg> = {};
@@ -200,7 +213,7 @@ export async function GET(req: Request) {
           if (isInternalStatus(entryDisposition)) continue;
 
           const repId = String(entry?.userId ?? lead?.claimedBy ?? lead?.setterId ?? 'unknown');
-          const repName = String(entry?.userName ?? repId);
+          const repName = String(entry?.userName ?? userNameById.get(repId) ?? repId);
           const rep = ensureRep(reps, repId, repName);
 
           addEvent(rep, team, tsMs, entryDisposition);
@@ -216,7 +229,7 @@ export async function GET(req: Request) {
       if (isInternalStatus(leadStatus)) continue;
 
       const repId = String(lead?.claimedBy ?? lead?.setterId ?? 'unknown');
-      const repName = String(repId);
+      const repName = String(userNameById.get(repId) ?? repId);
       const rep = ensureRep(reps, repId, repName);
       addEvent(rep, team, tsMs, leadStatus);
     }
