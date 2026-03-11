@@ -87,11 +87,17 @@ export async function POST(req: Request) {
 
     const data: any = await response.json();
 
-    // When responseMimeType is honored, Google returns JSON in parts[0].text.
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    // When responseMimeType is honored, Google may return JSON in parts[0].text,
+    // but it can also return it in other fields depending on API behavior.
+    const text =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data ||
+      data?.text ||
+      '';
+
     const parsed = safeJsonParse(text);
     if (!parsed) {
-      return NextResponse.json({ ok: true, parsed: false, raw: text, debug: { hasKey: true } });
+      return NextResponse.json({ ok: true, parsed: false, raw: text, provider: data }, { status: 200 });
     }
 
     return NextResponse.json({ ok: true, parsed: true, coach: parsed });
