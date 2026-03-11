@@ -5,10 +5,29 @@ export const dynamic = 'force-dynamic';
 // Server-side AI coach: returns structured JSON.
 // Uses server-side Gemini API key via GEMINI_API_KEY (preferred). Falls back to NEXT_PUBLIC_GEMINI_API_KEY only if present.
 
-function safeJsonParse(text: string) {
+function extractJson(text: string) {
+  if (!text) return null;
+  const trimmed = text.trim();
+
+  // Strip ```json fences
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const candidate = fenceMatch ? fenceMatch[1].trim() : trimmed;
+
+  // Try direct parse
   try {
-    return JSON.parse(text);
+    return JSON.parse(candidate);
   } catch {
+    // Try to locate first JSON object
+    const start = candidate.indexOf('{');
+    const end = candidate.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      const slice = candidate.slice(start, end + 1);
+      try {
+        return JSON.parse(slice);
+      } catch {
+        return null;
+      }
+    }
     return null;
   }
 }
@@ -79,8 +98,6 @@ export async function POST(req: Request) {
             },
           ],
           generationConfig: { temperature: 0.3, maxOutputTokens: 900 },
-          // Enforce JSON output if the API supports it.
-          responseMimeType: 'application/json',
         }),
       }
     );
@@ -95,7 +112,7 @@ export async function POST(req: Request) {
       data?.text ||
       '';
 
-    const parsed = safeJsonParse(text);
+    const parsed = extractJson(text);
     if (!parsed) {
       return NextResponse.json({ ok: true, parsed: false, raw: text, provider: data }, { status: 200 });
     }
