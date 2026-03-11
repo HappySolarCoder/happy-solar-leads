@@ -67,6 +67,11 @@ export default function DataAnalysisPage() {
       median: Record<string, number>;
       p75: Record<string, number>;
     };
+    outliers?: {
+      lowestApptRate: Array<{ rid: string; apptRate: number }>;
+      highestNiRate: Array<{ rid: string; niRate: number }>;
+      lowestPrimeShare: Array<{ rid: string; primeShare: number }>;
+    };
     rep?: {
       repId: string;
       repName: string;
@@ -91,6 +96,11 @@ export default function DataAnalysisPage() {
   const [start, setStart] = useState<string>(defaultStart);
   const [end, setEnd] = useState<string>(defaultEnd);
   const [applied, setApplied] = useState<{ start: string; end: string }>({ start: defaultStart, end: defaultEnd });
+
+  // Clear stale AI output when changing rep or date range.
+  useEffect(() => {
+    setCoachText(null);
+  }, [repId, applied.start, applied.end]);
 
   useEffect(() => {
     let cancelled = false;
@@ -414,7 +424,14 @@ export default function DataAnalysisPage() {
 
         if (cancelled) return;
         setTrends(series);
-        setBench({ windowDays: trendsDays, team: { median: teamMedian, p75: teamP75 }, rep: repBench });
+        // Team-level outliers (simple rankings)
+        const outliers = {
+          lowestApptRate: [...repRows].sort((a, b) => a.apptRate - b.apptRate).slice(0, 3),
+          highestNiRate: [...repRows].sort((a, b) => b.niRate - a.niRate).slice(0, 3),
+          lowestPrimeShare: [...repRows].sort((a, b) => a.primeShare - b.primeShare).slice(0, 3),
+        };
+
+        setBench({ windowDays: trendsDays, team: { median: teamMedian, p75: teamP75 }, rep: repBench, outliers });
       } catch (e: any) {
         if (cancelled) return;
         setTrendsError(e?.message || 'Failed to compute trends');
@@ -568,7 +585,55 @@ export default function DataAnalysisPage() {
               {!bench ? (
                 <div className="mt-3 text-sm text-[#718096]">Computing benchmarks…</div>
               ) : repId === 'team' ? (
-                <div className="mt-3 text-sm text-[#718096]">Select a rep to see diagnosis vs Team benchmarks.</div>
+                <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-[#F7FAFC] rounded-xl p-3">
+                    <div className="text-sm font-semibold text-[#2D3748]">Team Benchmarks</div>
+                    <div className="text-xs text-[#718096] mt-1">These are distribution benchmarks across reps (within window).</div>
+                    {bench.outliers ? (
+                      <div className="mt-3 text-xs text-[#4A5568] space-y-2">
+                        <div>
+                          <div className="font-semibold text-[#2D3748]">Lowest appointment rate</div>
+                          <div>{bench.outliers.lowestApptRate.map((r) => `${r.rid}: ${r.apptRate.toFixed(2)}%`).join(' • ')}</div>
+                        </div>
+                        <div>
+                          <div className="font-semibold text-[#2D3748]">Highest Not Interested rate</div>
+                          <div>{bench.outliers.highestNiRate.map((r) => `${r.rid}: ${r.niRate.toFixed(2)}%`).join(' • ')}</div>
+                        </div>
+                        <div>
+                          <div className="font-semibold text-[#2D3748]">Lowest prime-time share</div>
+                          <div>{bench.outliers.lowestPrimeShare.map((r) => `${r.rid}: ${r.primeShare.toFixed(2)}%`).join(' • ')}</div>
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="mt-3 text-xs text-[#718096]">Select a rep to view Struggle Signature + outlier flags.</div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[520px] w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-[#718096]">
+                          <th className="text-left font-semibold py-2">Metric</th>
+                          <th className="text-right font-semibold py-2">Team median</th>
+                          <th className="text-right font-semibold py-2">Team p75</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {([
+                          { k: 'attemptsPerDay', label: 'Attempts/day', fmt: (v: number) => v.toFixed(2) },
+                          { k: 'apptRate', label: 'Appt rate %', fmt: (v: number) => v.toFixed(2) + '%' },
+                          { k: 'niRate', label: 'Not Interested %', fmt: (v: number) => v.toFixed(2) + '%' },
+                          { k: 'primeShare', label: 'Prime-time share %', fmt: (v: number) => v.toFixed(2) + '%' },
+                        ] as const).map((m) => (
+                          <tr key={m.k} className="border-t border-[#EDF2F7]">
+                            <td className="py-2 text-[#2D3748] font-medium">{m.label}</td>
+                            <td className="py-2 text-right tabular-nums">{m.fmt((bench.team.median as any)[m.k])}</td>
+                            <td className="py-2 text-right tabular-nums">{m.fmt((bench.team.p75 as any)[m.k])}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               ) : !bench.rep ? (
                 <div className="mt-3 text-sm text-[#718096]">No benchmark data for this rep in the current window.</div>
               ) : (
