@@ -8,6 +8,7 @@ function clamp(n: number, a: number, b: number) {
 
 export default function HeatmapView({
   title,
+  subtitle,
   // If provided, show rate (numerator/denominator) as percent.
   numerator,
   denominator,
@@ -17,6 +18,7 @@ export default function HeatmapView({
   showTotals = false,
 }: {
   title: string;
+  subtitle?: string;
   mode?: 'count' | 'rate';
   data?: Heatmap;
   numerator?: Heatmap;
@@ -109,6 +111,7 @@ export default function HeatmapView({
           <div className="text-sm font-semibold text-[#2D3748]">{title}</div>
           <div className="text-xs text-[#718096]">
             {mode === 'rate' ? 'Appointment rate (% of knocks)' : `Max: ${max}`}
+            {subtitle ? ` • ${subtitle}` : ''}
           </div>
         </div>
       </div>

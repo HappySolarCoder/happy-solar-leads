@@ -1164,6 +1164,7 @@ export default function DataAnalysisPage() {
             {/* Heatmaps */}
             <HeatmapView
               title={`${selected.repName}: Appointment ${mode === 'rate' ? 'Rate' : 'Count'}`}
+              subtitle="Heatmaps include 9am–8pm EST; totals reflect included hours only"
               mode={mode}
               numerator={selected.appointments as Heatmap}
               denominator={selected.activity as Heatmap}
@@ -1173,6 +1174,7 @@ export default function DataAnalysisPage() {
             />
             <HeatmapView
               title={`${selected.repName}: Activity (Knocks / Working)`}
+              subtitle="Heatmaps include 9am–8pm EST; totals reflect included hours only"
               data={selected.activity as Heatmap}
               palette="emerald"
               mode="count"
