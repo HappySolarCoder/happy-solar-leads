@@ -1,11 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import { X, Download } from 'lucide-react';
 
 export default function InstallPrompt() {
+  const pathname = usePathname();
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showPrompt, setShowPrompt] = useState(false);
+
+  // Suppress install modal on analysis workflows (it can obscure UI on first load/mobile).
+  if (pathname?.startsWith('/data-analysis')) return null;
 
   useEffect(() => {
     // Check if already installed

@@ -61,6 +61,21 @@ export default function DataAnalysisPage() {
   const [trendsDays, setTrendsDays] = useState<14 | 30>(14);
   const [trendsError, setTrendsError] = useState<string | null>(null);
 
+  const [bench, setBench] = useState<null | {
+    windowDays: number;
+    team: {
+      median: Record<string, number>;
+      p75: Record<string, number>;
+    };
+    rep?: {
+      repId: string;
+      repName: string;
+      metrics: Record<string, number>;
+      flags: string[];
+      signature: { primary: string; secondary?: string; reasons: string[] };
+    };
+  }>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [coachError, setCoachError] = useState<string | null>(null);
 
@@ -150,7 +165,7 @@ export default function DataAnalysisPage() {
     };
   }, [repId, applied.start, applied.end]);
 
-  // V2 Trends: compute client-side using same Firestore browser SDK pathway as /setter-stats.
+  // V2 Trends + Benchmarks: compute client-side using same Firestore browser SDK pathway as /setter-stats.
   useEffect(() => {
     let cancelled = false;
 
@@ -199,32 +214,57 @@ export default function DataAnalysisPage() {
     ]);
 
     const isAttempt = (label: string) => ATTEMPT_LABELS.has(label);
-
     const isAppointment = (label: string) => label === 'appointment set' || label === 'appointment';
     const isModerate = (label: string) => label === 'go back' || label === 'interested';
     const isNotInterested = (label: string) => label === 'not interested';
+    const isNotHome = (label: string) => label === 'not home';
+
+    const quantile = (arr: number[], q: number) => {
+      const xs = [...arr].sort((a, b) => a - b);
+      if (!xs.length) return 0;
+      const pos = (xs.length - 1) * q;
+      const base = Math.floor(pos);
+      const rest = pos - base;
+      if (xs[base + 1] !== undefined) return xs[base] + rest * (xs[base + 1] - xs[base]);
+      return xs[base];
+    };
 
     const run = async () => {
       try {
         setTrendsError(null);
         setTrends(null);
+        setBench(null);
 
         const leads: Lead[] = await getLeadsAsync();
 
-        // compute window based on trendsDays ending at applied.end
         const endMs = Date.now();
         const startMs = endMs - trendsDays * 24 * 60 * 60_000;
 
-        const byDay: Record<string, {
+        // -------- Trends (selected rep/team) --------
+        const byDay: Record<string, { attempts: number; appointments: number; moderate: number; notInterested: number; primeAttempts: number }> = {};
+        const ensureDay = (day: string) =>
+          (byDay[day] ||= { attempts: 0, appointments: 0, moderate: 0, notInterested: 0, primeAttempts: 0 });
+
+        // -------- Benchmarks (per rep aggregate) --------
+        const byRep: Record<string, {
           attempts: number;
           appointments: number;
           moderate: number;
           notInterested: number;
+          notHome: number;
           primeAttempts: number;
+          activeDays: Set<string>;
         }> = {};
-
-        const ensure = (day: string) =>
-          (byDay[day] ||= { attempts: 0, appointments: 0, moderate: 0, notInterested: 0, primeAttempts: 0 });
+        const ensureRep = (rid: string) =>
+          (byRep[rid] ||= {
+            attempts: 0,
+            appointments: 0,
+            moderate: 0,
+            notInterested: 0,
+            notHome: 0,
+            primeAttempts: 0,
+            activeDays: new Set<string>(),
+          });
 
         for (const lead of leads) {
           const hist = Array.isArray((lead as any).dispositionHistory) ? (lead as any).dispositionHistory : [];
@@ -235,20 +275,33 @@ export default function DataAnalysisPage() {
             if (ts < startMs || ts > endMs) continue;
 
             const uid = String(e?.userId ?? '');
-            if (repId !== 'team' && uid !== repId) continue;
+            if (!uid) continue;
 
             const label = String(e?.disposition ?? '').trim().toLowerCase();
             if (!isAttempt(label)) continue;
 
-            const day = toYmd(ts);
-            const agg = ensure(day);
-            agg.attempts += 1;
-            if (isAppointment(label)) agg.appointments += 1;
-            if (isModerate(label)) agg.moderate += 1;
-            if (isNotInterested(label)) agg.notInterested += 1;
+            // selected trends filter
+            if (repId === 'team' || uid === repId) {
+              const day = toYmd(ts);
+              const agg = ensureDay(day);
+              agg.attempts += 1;
+              if (isAppointment(label)) agg.appointments += 1;
+              if (isModerate(label)) agg.moderate += 1;
+              if (isNotInterested(label)) agg.notInterested += 1;
+              const hr = hourInTz(ts);
+              if (hr >= PRIME_START && hr <= PRIME_END) agg.primeAttempts += 1;
+            }
 
+            // per-rep aggregate for benchmarks
+            const repAgg = ensureRep(uid);
+            repAgg.attempts += 1;
+            if (isAppointment(label)) repAgg.appointments += 1;
+            if (isModerate(label)) repAgg.moderate += 1;
+            if (isNotInterested(label)) repAgg.notInterested += 1;
+            if (isNotHome(label)) repAgg.notHome += 1;
             const hr = hourInTz(ts);
-            if (hr >= PRIME_START && hr <= PRIME_END) agg.primeAttempts += 1;
+            if (hr >= PRIME_START && hr <= PRIME_END) repAgg.primeAttempts += 1;
+            repAgg.activeDays.add(toYmd(ts));
           }
         }
 
@@ -272,8 +325,96 @@ export default function DataAnalysisPage() {
           };
         });
 
+        // Compute team distribution arrays
+        const repRows = Object.entries(byRep)
+          .map(([rid, a]) => {
+            const activeDays = Math.max(1, a.activeDays.size);
+            const attemptsPerDay = a.attempts / activeDays;
+            const apptRate = a.attempts ? (a.appointments / a.attempts) * 100 : 0;
+            const niRate = a.attempts ? (a.notInterested / a.attempts) * 100 : 0;
+            const primeShare = a.attempts ? (a.primeAttempts / a.attempts) * 100 : 0;
+            const notHomeRate = a.attempts ? (a.notHome / a.attempts) * 100 : 0;
+            return {
+              rid,
+              attemptsPerDay,
+              apptRate,
+              niRate,
+              primeShare,
+              notHomeRate,
+              attempts: a.attempts,
+            };
+          })
+          .filter((r) => r.attempts > 0);
+
+        const dist = {
+          attemptsPerDay: repRows.map((r) => r.attemptsPerDay),
+          apptRate: repRows.map((r) => r.apptRate),
+          niRate: repRows.map((r) => r.niRate),
+          primeShare: repRows.map((r) => r.primeShare),
+        };
+
+        const teamMedian = {
+          attemptsPerDay: +quantile(dist.attemptsPerDay, 0.5).toFixed(2),
+          apptRate: +quantile(dist.apptRate, 0.5).toFixed(2),
+          niRate: +quantile(dist.niRate, 0.5).toFixed(2),
+          primeShare: +quantile(dist.primeShare, 0.5).toFixed(2),
+        };
+
+        const teamP75 = {
+          attemptsPerDay: +quantile(dist.attemptsPerDay, 0.75).toFixed(2),
+          apptRate: +quantile(dist.apptRate, 0.75).toFixed(2),
+          niRate: +quantile(dist.niRate, 0.75).toFixed(2),
+          primeShare: +quantile(dist.primeShare, 0.75).toFixed(2),
+        };
+
+        let repBench: any = undefined;
+        if (repId !== 'team') {
+          const row = repRows.find((r) => r.rid === repId);
+          if (row) {
+            const flags: string[] = [];
+            if (row.primeShare < teamMedian.primeShare - 10) flags.push('Prime-time underutilized');
+            if (row.apptRate < teamMedian.apptRate - 1) flags.push('Low appointment rate');
+            if (row.niRate > teamMedian.niRate + 5) flags.push('High Not Interested rate');
+
+            const reasons: string[] = [];
+            const sig: { primary: string; secondary?: string; reasons: string[] } = { primary: 'Normal', reasons };
+
+            const timingScore = (teamMedian.primeShare - row.primeShare) + (row.notHomeRate > 0 ? (row.notHomeRate - 40) : 0);
+            const pitchScore = (teamMedian.apptRate - row.apptRate);
+            const sentimentScore = (row.niRate - teamMedian.niRate);
+
+            const ranked = [
+              { k: 'Timing issue', v: timingScore },
+              { k: 'Pitch/close issue', v: pitchScore },
+              { k: 'Negative sentiment issue', v: sentimentScore },
+            ].sort((a, b) => b.v - a.v);
+
+            if (ranked[0].v > 5) {
+              sig.primary = ranked[0].k;
+              sig.secondary = ranked[1].v > 3 ? ranked[1].k : undefined;
+              if (sig.primary === 'Timing issue') reasons.push('Prime-time share is materially below team median and/or Not Home rate is high.');
+              if (sig.primary === 'Pitch/close issue') reasons.push('Attempts are present but appointment rate is below team median.');
+              if (sig.primary === 'Negative sentiment issue') reasons.push('Not Interested rate is above team median.');
+            }
+
+            repBench = {
+              repId,
+              repName: selected?.repName || repId,
+              metrics: {
+                attemptsPerDay: +row.attemptsPerDay.toFixed(2),
+                apptRate: +row.apptRate.toFixed(2),
+                niRate: +row.niRate.toFixed(2),
+                primeShare: +row.primeShare.toFixed(2),
+              },
+              flags,
+              signature: sig,
+            };
+          }
+        }
+
         if (cancelled) return;
         setTrends(series);
+        setBench({ windowDays: trendsDays, team: { median: teamMedian, p75: teamP75 }, rep: repBench });
       } catch (e: any) {
         if (cancelled) return;
         setTrendsError(e?.message || 'Failed to compute trends');
@@ -416,6 +557,73 @@ export default function DataAnalysisPage() {
                 </div>
               ) : (
                 <div className="text-sm text-[#718096]">Loading KPIs…</div>
+              )}
+            </div>
+
+            {/* Benchmarks & Diagnosis (V2.2) */}
+            <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4">
+              <div className="text-sm font-semibold text-[#2D3748]">Benchmarks & Diagnosis</div>
+              <div className="text-xs text-[#718096] mt-1">Rep vs Team (median + p75) • window {bench?.windowDays ?? trendsDays}d • EST</div>
+
+              {!bench ? (
+                <div className="mt-3 text-sm text-[#718096]">Computing benchmarks…</div>
+              ) : repId === 'team' ? (
+                <div className="mt-3 text-sm text-[#718096]">Select a rep to see diagnosis vs Team benchmarks.</div>
+              ) : !bench.rep ? (
+                <div className="mt-3 text-sm text-[#718096]">No benchmark data for this rep in the current window.</div>
+              ) : (
+                <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-[#F7FAFC] rounded-xl p-3">
+                    <div className="text-sm font-semibold text-[#2D3748]">{bench.rep.repName}</div>
+                    <div className="text-xs text-[#718096] mt-1">Signature: <span className="font-semibold text-[#2D3748]">{bench.rep.signature.primary}</span>{bench.rep.signature.secondary ? ` • Secondary: ${bench.rep.signature.secondary}` : ''}</div>
+                    {bench.rep.signature.reasons?.length ? (
+                      <ul className="mt-2 text-xs text-[#4A5568] list-disc pl-5">
+                        {bench.rep.signature.reasons.slice(0, 3).map((r, i) => (
+                          <li key={i}>{r}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {bench.rep.flags.length ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {bench.rep.flags.map((f) => (
+                          <span key={f} className="text-xs font-semibold px-2 py-1 rounded-full bg-[#FF5F5A]/10 text-[#C53030]">
+                            {f}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-3 text-xs text-[#718096]">No outlier flags.</div>
+                    )}
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[520px] w-full text-sm">
+                      <thead>
+                        <tr className="text-xs text-[#718096]">
+                          <th className="text-left font-semibold py-2">Metric</th>
+                          <th className="text-right font-semibold py-2">Rep</th>
+                          <th className="text-right font-semibold py-2">Team median</th>
+                          <th className="text-right font-semibold py-2">Team p75</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {([
+                          { k: 'attemptsPerDay', label: 'Attempts/day', fmt: (v: number) => v.toFixed(2) },
+                          { k: 'apptRate', label: 'Appt rate %', fmt: (v: number) => v.toFixed(2) + '%' },
+                          { k: 'niRate', label: 'Not Interested %', fmt: (v: number) => v.toFixed(2) + '%' },
+                          { k: 'primeShare', label: 'Prime-time share %', fmt: (v: number) => v.toFixed(2) + '%' },
+                        ] as const).map((m) => (
+                          <tr key={m.k} className="border-t border-[#EDF2F7]">
+                            <td className="py-2 text-[#2D3748] font-medium">{m.label}</td>
+                            <td className="py-2 text-right tabular-nums">{m.fmt(bench.rep!.metrics[m.k])}</td>
+                            <td className="py-2 text-right tabular-nums">{m.fmt((bench.team.median as any)[m.k])}</td>
+                            <td className="py-2 text-right tabular-nums">{m.fmt((bench.team.p75 as any)[m.k])}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )}
             </div>
 
