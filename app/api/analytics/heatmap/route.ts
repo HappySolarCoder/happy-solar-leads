@@ -55,7 +55,7 @@ function isInternalStatus(raw: any) {
 
 function isAppointmentSet(raw: any) {
   const v = String(raw ?? '').trim().toLowerCase();
-  return v === 'appointment' || v === 'appointment set';
+  return v === 'appointment' || v === 'appointment set' || v === 'sale' || v === 'sale!';
 }
 
 function ensureRep(reps: Record<string, RepAgg>, repId: string, repName: string, hours: number[]): RepAgg {
@@ -129,8 +129,11 @@ export async function GET(req: Request) {
   const end = url.searchParams.get('end'); // YYYY-MM-DD
   const days = Math.max(1, Math.min(90, Number(url.searchParams.get('days') || 14)));
 
-  const hoursParam = url.searchParams.get('hours') || '24'; // '24' | 'business'
-  const cacheKey = start && end ? `start=${start}&end=${end}&hours=${hoursParam}` : `days=${days}&hours=${hoursParam}`;
+  const mode = url.searchParams.get('mode') || 'latest'; // latest | history
+  const hoursParam = url.searchParams.get('hours') || 'day'; // day(9-20) | business(9-19) | 24
+  const cacheKey = start && end
+    ? `start=${start}&end=${end}&mode=${mode}&hours=${hoursParam}`
+    : `days=${days}&mode=${mode}&hours=${hoursParam}`;
   const cached = cache[cacheKey];
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
     return NextResponse.json(cached.data, {
@@ -142,11 +145,17 @@ export async function GET(req: Request) {
   }
 
   try {
-    // Optional hour bucketing modes:
-    // - hours=24 (default): include 0-23
+    // Hour bucketing modes:
+    // - hours=day (default): include 9-20 (9am–8pm EST)
     // - hours=business: include 9-19
-    const HOURS_MODE = hoursParam === 'business' ? 'business' : '24';
-    const hours = HOURS_MODE === 'business' ? [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] : HOURS;
+    // - hours=24: include 0-23
+    const HOURS_MODE = hoursParam === 'business' ? 'business' : hoursParam === '24' ? '24' : 'day';
+    const hours =
+      HOURS_MODE === 'business'
+        ? [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+        : HOURS_MODE === '24'
+          ? HOURS
+          : [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
 
     const now = Date.now();
 
@@ -188,6 +197,17 @@ export async function GET(req: Request) {
       if (name) userNameById.set(id, name);
     }
 
+    // Door-knock status ids (same source-of-truth as /setter-stats)
+    const dispoSnap = (await Promise.race([
+      db.collection('dispositions').get(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Heatmap dispositions query timeout')), 5000)),
+    ])) as any;
+    const doorKnockStatusIds = new Set<string>();
+    for (const d of dispoSnap?.docs ?? []) {
+      const dd: any = d.data();
+      if (dd?.countsAsDoorKnock) doorKnockStatusIds.add(String(dd?.id ?? d.id).toLowerCase());
+    }
+
     const leadSnap = (await Promise.race([
       db.collection('leads').limit(10000).get(),
       new Promise((_, reject) => setTimeout(() => reject(new Error('Heatmap leads query timeout')), 8000)),
@@ -205,40 +225,63 @@ export async function GET(req: Request) {
 
     for (const doc of leadSnap.docs) {
       const lead: any = doc.data();
-      const leadStatus = String(lead?.status ?? lead?.disposition ?? '').trim();
 
-      const history: any[] = Array.isArray(lead?.dispositionHistory) ? lead.dispositionHistory : [];
+      if (mode === 'history') {
+        const leadStatus = String(lead?.status ?? lead?.disposition ?? '').trim();
+        const history: any[] = Array.isArray(lead?.dispositionHistory) ? lead.dispositionHistory : [];
 
-      if (history.length > 0) {
-        for (const entry of history) {
-          const ts = parseDate(entry?.timestamp);
-          if (!ts) continue;
-          const tsMs = ts.getTime();
-          if (tsMs < sinceMs || tsMs >= untilMs) continue;
+        if (history.length > 0) {
+          for (const entry of history) {
+            const ts = parseDate(entry?.timestamp);
+            if (!ts) continue;
+            const tsMs = ts.getTime();
+            if (tsMs < sinceMs || tsMs >= untilMs) continue;
 
-          const entryDisposition = String(entry?.disposition ?? leadStatus ?? '').trim();
-          if (isInternalStatus(entryDisposition)) continue;
+            const entryDisposition = String(entry?.disposition ?? leadStatus ?? '').trim();
+            if (isInternalStatus(entryDisposition)) continue;
 
-          const repId = String(entry?.userId ?? lead?.claimedBy ?? lead?.setterId ?? 'unknown');
-          const repName = String(entry?.userName ?? userNameById.get(repId) ?? repId);
-          const rep = ensureRep(reps, repId, repName, hours);
+            const repId = String(entry?.userId ?? lead?.claimedBy ?? lead?.setterId ?? 'unknown');
+            const repName = String(entry?.userName ?? userNameById.get(repId) ?? repId);
+            const rep = ensureRep(reps, repId, repName, hours);
 
-          addEvent(rep, team, tsMs, entryDisposition, hours);
+            addEvent(rep, team, tsMs, entryDisposition, hours);
+          }
+          continue;
         }
+
+        // Fallback for leads without dispositionHistory: use latest disposition event only.
+        const fallbackTs = parseDate(lead?.dispositionedAt);
+        if (!fallbackTs) continue;
+        const tsMs = fallbackTs.getTime();
+        if (tsMs < sinceMs || tsMs >= untilMs) continue;
+        if (isInternalStatus(leadStatus)) continue;
+
+        const repId = String(lead?.claimedBy ?? lead?.setterId ?? 'unknown');
+        const repName = String(userNameById.get(repId) ?? repId);
+        const rep = ensureRep(reps, repId, repName, hours);
+        addEvent(rep, team, tsMs, leadStatus, hours);
         continue;
       }
 
-      // Fallback for leads without dispositionHistory: use latest disposition event only.
-      const fallbackTs = parseDate(lead?.dispositionedAt);
-      if (!fallbackTs) continue;
-      const tsMs = fallbackTs.getTime();
+      // mode === 'latest' (default): align denominator with /setter-stats (one-per-lead)
+      const isManual = lead?.source === 'manually-added';
+      const ts = isManual ? lead?.createdAt : lead?.dispositionedAt;
+      const dt = parseDate(ts);
+      if (!dt) continue;
+      const tsMs = dt.getTime();
       if (tsMs < sinceMs || tsMs >= untilMs) continue;
-      if (isInternalStatus(leadStatus)) continue;
 
-      const repId = String(lead?.claimedBy ?? lead?.setterId ?? 'unknown');
+      const statusId = String(lead?.status ?? '').toLowerCase();
+      if (isInternalStatus(statusId)) continue;
+
+      const countsAsKnock = isManual || doorKnockStatusIds.has(statusId);
+      if (!countsAsKnock) continue;
+
+      const repId = String(isManual ? lead?.setterId : lead?.claimedBy ?? 'unknown');
       const repName = String(userNameById.get(repId) ?? repId);
       const rep = ensureRep(reps, repId, repName, hours);
-      addEvent(rep, team, tsMs, leadStatus, hours);
+
+      addEvent(rep, team, tsMs, statusId, hours);
     }
 
     const repList = Object.values(reps)
@@ -259,6 +302,8 @@ export async function GET(req: Request) {
       windowStartMs: sinceMs,
       windowEndExclusiveMs: untilMs,
       timezone: TZ,
+      mode,
+      hoursMode: HOURS_MODE,
       appointmentDisposition: 'Appointment Set',
       team: {
         repId: team.repId,
@@ -268,7 +313,10 @@ export async function GET(req: Request) {
         totals: { appointments: team.totalAppointments, knocks: team.totalKnocks },
       },
       reps: repList,
-      note: 'v2.1 real data via leads.dispositionHistory; each non-internal disposition event counts as a knock.',
+      note:
+        mode === 'latest'
+          ? 'latest-per-lead buckets via lead.status + dispositionedAt (setter-stats aligned)'
+          : 'per-event buckets via leads.dispositionHistory (may not align with latest-per-lead KPIs)',
     };
 
     cache[cacheKey] = { ts: Date.now(), data: payload };
