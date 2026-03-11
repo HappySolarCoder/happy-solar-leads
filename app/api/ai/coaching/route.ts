@@ -21,9 +21,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'Missing metrics' }, { status: 400 });
     }
 
-    const key = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     if (!key) {
-      return NextResponse.json({ ok: false, error: 'Missing GEMINI_API_KEY' }, { status: 500 });
+      return NextResponse.json({ ok: false, error: 'Missing GEMINI_API_KEY (or GOOGLE_API_KEY)' }, { status: 500 });
     }
 
     const prompt = `You are an expert door-to-door solar canvassing manager and coach.
