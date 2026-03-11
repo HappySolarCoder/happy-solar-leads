@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 // Server-side AI coach: returns structured JSON.
-// Uses Gemini API key (existing in repo as NEXT_PUBLIC_GEMINI_API_KEY).
+// Uses server-side Gemini API key via GEMINI_API_KEY (preferred). Falls back to NEXT_PUBLIC_GEMINI_API_KEY only if present.
 
 function safeJsonParse(text: string) {
   try {
@@ -21,9 +21,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'Missing metrics' }, { status: 400 });
     }
 
-    const key = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    const key = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     if (!key) {
-      return NextResponse.json({ ok: false, error: 'Missing NEXT_PUBLIC_GEMINI_API_KEY' }, { status: 500 });
+      return NextResponse.json({ ok: false, error: 'Missing GEMINI_API_KEY' }, { status: 500 });
     }
 
     const prompt = `You are an expert door-to-door solar canvassing manager and coach.
