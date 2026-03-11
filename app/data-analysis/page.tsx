@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import HeatmapView from '@/app/components/Heatmap';
 import type { Heatmap, HeatmapMode, RepHeatmaps } from '@/app/data/knockers';
 import { getLeadsAsync } from '@/app/utils/storage';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
 import type { Lead } from '@/app/types';
+import type { Disposition } from '@/app/types/disposition';
 
 type HeatmapResp = {
   ok: boolean;
@@ -80,6 +82,8 @@ export default function DataAnalysisPage() {
   const [coaching, setCoaching] = useState<CoachingResp | null>(null);
   const [coachText, setCoachText] = useState<any | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
+
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
 
   const [trends, setTrends] = useState<TrendPoint[] | null>(null);
   const [trendsDays, setTrendsDays] = useState<14 | 30>(14);
@@ -238,44 +242,140 @@ export default function DataAnalysisPage() {
     };
   }, [applied.start, applied.end]);
 
+  // Load dispositions (used to match /setter-stats door-knock counting)
   useEffect(() => {
     let cancelled = false;
-    const ctrl = new AbortController();
-
-    const t = setTimeout(() => ctrl.abort(), 12000);
-
-    const qs = new URLSearchParams({
-      repId,
-      start: applied.start,
-      end: applied.end,
-      tz: 'America/New_York',
-    });
-
-    fetch(`/api/analytics/coaching?${qs.toString()}`, { cache: 'no-store', signal: ctrl.signal })
-      .then((r) => r.json())
-      .then((j) => {
+    getDispositionsAsync()
+      .then((d) => {
         if (cancelled) return;
-        if (j?.ok === false) {
-          setCoachError(j?.error || 'Failed to load coaching metrics');
-          setCoaching(null);
-          return;
-        }
+        setDispositions(d || []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDispositions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Coaching/KPIs: compute client-side using SAME method as /setter-stats (one event per lead)
+  useEffect(() => {
+    let cancelled = false;
+
+    const tz = 'America/New_York';
+    const PRIME_START = 16;
+    const PRIME_END = 19;
+
+    const hourInTz = (utcMs: number) =>
+      Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hour12: false }).format(new Date(utcMs)));
+
+    const parseLeadDate = (v: any): Date | null => {
+      if (!v) return null;
+      if ((v as any)?.toDate) return (v as any).toDate();
+      if (v instanceof Date) return v;
+      const d = new Date(v);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    const run = async () => {
+      try {
         setCoachError(null);
-        setCoaching(j);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setCoachError(e?.name === 'AbortError' ? 'Coaching request timed out' : (e?.message || 'Failed to load coaching metrics'));
         setCoaching(null);
-      })
-      .finally(() => clearTimeout(t));
+
+        const leads: Lead[] = await getLeadsAsync();
+
+        const startDate = new Date(`${applied.start}T00:00:00`);
+        const endExclusive = new Date(`${applied.end}T00:00:00`);
+        endExclusive.setDate(endExclusive.getDate() + 1);
+
+        const doorKnockStatusIds = dispositions
+          .filter((d) => d.countsAsDoorKnock)
+          .map((d) => String(d.id || '').toLowerCase());
+
+        let attempts = 0;
+        let successAppointments = 0;
+        let moderateSuccess = 0;
+        let primeAttempts = 0;
+
+        const byStatus: Record<string, number> = {};
+        const notInterestedReasons: Record<string, { count: number; label: string }> = {};
+
+        for (const lead of leads) {
+          const isManual = (lead as any).source === 'manually-added';
+          const ts = isManual ? (lead as any).createdAt : (lead as any).dispositionedAt;
+          const dt = parseLeadDate(ts);
+          if (!dt) continue;
+
+          if (dt < startDate || dt >= endExclusive) continue;
+
+          const uid = String(isManual ? (lead as any).setterId : (lead as any).claimedBy);
+          if (!uid) continue;
+          if (repId !== 'team' && uid !== repId) continue;
+
+          const statusId = String((lead as any).status || '').toLowerCase();
+
+          const countsAsKnock = isManual || doorKnockStatusIds.includes(statusId);
+          if (!countsAsKnock) continue;
+
+          attempts += 1;
+          byStatus[statusId] = (byStatus[statusId] || 0) + 1;
+
+          const hr = hourInTz(dt.getTime());
+          if (hr >= PRIME_START && hr <= PRIME_END) primeAttempts += 1;
+
+          if (statusId === 'appointment' || statusId === 'sale') successAppointments += 1;
+          if (statusId === 'go-back' || statusId === 'interested') moderateSuccess += 1;
+
+          if (statusId === 'not-interested') {
+            const ot = String((lead as any).objectionType || '').trim();
+            if (ot) {
+              notInterestedReasons[ot] = notInterestedReasons[ot] || { count: 0, label: ot };
+              notInterestedReasons[ot].count += 1;
+            }
+          }
+        }
+
+        const pct = (n: number, d: number) => (d > 0 ? +((n / d) * 100).toFixed(2) : 0);
+
+        const payload: CoachingResp = {
+          ok: true,
+          rep: { repId, repName: repId === 'team' ? 'Team' : repId },
+          timezone: tz,
+          totals: {
+            attempts,
+            successAppointments,
+            moderateSuccess,
+            appointmentRatePct: pct(successAppointments, attempts),
+            moderateSuccessRatePct: pct(moderateSuccess, attempts),
+            primeAttempts,
+            primeSharePct: pct(primeAttempts, attempts),
+          },
+          breakdown: {
+            byStatus,
+            notInterestedReasons,
+          },
+          samples: {
+            objections: [],
+            notes: [],
+          },
+        };
+
+        if (cancelled) return;
+        setCoaching(payload);
+      } catch (e: any) {
+        if (cancelled) return;
+        setCoachError(e?.message || 'Failed to compute coaching metrics');
+        setCoaching(null);
+      }
+    };
+
+    run();
 
     return () => {
       cancelled = true;
-      ctrl.abort();
-      clearTimeout(t);
     };
-  }, [repId, applied.start, applied.end]);
+  }, [repId, applied.start, applied.end, dispositions]);
 
   // V2 Trends + Benchmarks: compute client-side using same Firestore browser SDK pathway as /setter-stats.
   useEffect(() => {
@@ -310,26 +410,6 @@ export default function DataAnalysisPage() {
       return null;
     };
 
-    const ATTEMPT_LABELS = new Set([
-      'not home',
-      'interested',
-      'not interested',
-      'appointment set',
-      'go back',
-      'sale',
-      'sale!',
-      'dq credit',
-      'shade dq',
-      'callback scheduled',
-      'follow up later',
-      'renter',
-    ]);
-
-    const isAttempt = (label: string) => ATTEMPT_LABELS.has(label);
-    const isAppointment = (label: string) => label === 'appointment set' || label === 'appointment';
-    const isModerate = (label: string) => label === 'go back' || label === 'interested';
-    const isNotInterested = (label: string) => label === 'not interested';
-    const isNotHome = (label: string) => label === 'not home';
 
     const quantile = (arr: number[], q: number) => {
       const xs = [...arr].sort((a, b) => a - b);
@@ -378,43 +458,51 @@ export default function DataAnalysisPage() {
             activeDays: new Set<string>(),
           });
 
+        // Door-knock statuses (same as /setter-stats)
+        const doorKnockStatusIds = dispositions
+          .filter((d) => d.countsAsDoorKnock)
+          .map((d) => String(d.id || '').toLowerCase());
+
         for (const lead of leads) {
-          const hist = Array.isArray((lead as any).dispositionHistory) ? (lead as any).dispositionHistory : [];
-          for (const e of hist) {
-            const dt = parseEntryDate(e?.timestamp);
-            if (!dt) continue;
-            const ts = dt.getTime();
-            if (ts < startMs || ts > endMs) continue;
+          const isManual = (lead as any).source === 'manually-added';
+          const ts = isManual ? (lead as any).createdAt : (lead as any).dispositionedAt;
+          if (!ts) continue;
+          const dt = parseEntryDate(ts);
+          if (!dt) continue;
+          const ms = dt.getTime();
+          if (ms < startMs || ms > endMs) continue;
 
-            const uid = String(e?.userId ?? '');
-            if (!uid) continue;
+          const uid = String(isManual ? (lead as any).setterId : (lead as any).claimedBy);
+          if (!uid) continue;
 
-            const label = String(e?.disposition ?? '').trim().toLowerCase();
-            if (!isAttempt(label)) continue;
+          const statusId = String((lead as any).status || '').toLowerCase();
 
-            // selected trends filter
-            if (repId === 'team' || uid === repId) {
-              const day = toYmd(ts);
-              const agg = ensureDay(day);
-              agg.attempts += 1;
-              if (isAppointment(label)) agg.appointments += 1;
-              if (isModerate(label)) agg.moderate += 1;
-              if (isNotInterested(label)) agg.notInterested += 1;
-              const hr = hourInTz(ts);
-              if (hr >= PRIME_START && hr <= PRIME_END) agg.primeAttempts += 1;
-            }
+          // Count knocks/attempts using same rule as setter-stats
+          const countsAsKnock = isManual || doorKnockStatusIds.includes(statusId);
+          if (!countsAsKnock) continue;
 
-            // per-rep aggregate for benchmarks
-            const repAgg = ensureRep(uid);
-            repAgg.attempts += 1;
-            if (isAppointment(label)) repAgg.appointments += 1;
-            if (isModerate(label)) repAgg.moderate += 1;
-            if (isNotInterested(label)) repAgg.notInterested += 1;
-            if (isNotHome(label)) repAgg.notHome += 1;
-            const hr = hourInTz(ts);
-            if (hr >= PRIME_START && hr <= PRIME_END) repAgg.primeAttempts += 1;
-            repAgg.activeDays.add(toYmd(ts));
+          // selected trends filter
+          if (repId === 'team' || uid === repId) {
+            const day = toYmd(ms);
+            const agg = ensureDay(day);
+            agg.attempts += 1;
+            if (statusId === 'appointment' || statusId === 'sale') agg.appointments += 1;
+            if (statusId === 'go-back' || statusId === 'interested') agg.moderate += 1;
+            if (statusId === 'not-interested') agg.notInterested += 1;
+            const hr = hourInTz(ms);
+            if (hr >= PRIME_START && hr <= PRIME_END) agg.primeAttempts += 1;
           }
+
+          // per-rep aggregate for benchmarks
+          const repAgg = ensureRep(uid);
+          repAgg.attempts += 1;
+          if (statusId === 'appointment' || statusId === 'sale') repAgg.appointments += 1;
+          if (statusId === 'go-back' || statusId === 'interested') repAgg.moderate += 1;
+          if (statusId === 'not-interested') repAgg.notInterested += 1;
+          if (statusId === 'not-home') repAgg.notHome += 1;
+          const hr = hourInTz(ms);
+          if (hr >= PRIME_START && hr <= PRIME_END) repAgg.primeAttempts += 1;
+          repAgg.activeDays.add(toYmd(ms));
         }
 
         const daysSorted = Object.keys(byDay).sort();
