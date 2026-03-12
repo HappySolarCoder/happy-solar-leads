@@ -75,6 +75,7 @@ export default function LeadMap({
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const hasFitBoundsRef = useRef<boolean>(false); // Track if we've already fit bounds for activity routes
+  const hasFitRouteBoundsRef = useRef<boolean>(false); // Track if we've already fit bounds for single route mode
   const [isClient, setIsClient] = useState(false);
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
@@ -109,6 +110,11 @@ export default function LeadMap({
   useEffect(() => {
     hasFitBoundsRef.current = false;
   }, [userRoutes]);
+
+  // Reset route bounds fitting when routeWaypoints changes (avoid snap-back while panning)
+  useEffect(() => {
+    hasFitRouteBoundsRef.current = false;
+  }, [routeWaypoints]);
 
   // Reset lead bounds fitting when leads change significantly
   useEffect(() => {
@@ -385,7 +391,8 @@ export default function LeadMap({
           </a>
         </div>
       `;
-      searchMarkerRef.current.bindPopup(popupContent).openPopup();
+      // Prevent auto-pan snap when popup opens
+      searchMarkerRef.current.bindPopup(popupContent, { autoPan: false }).openPopup();
     }
   }, [searchLocation, isClient]);
 
@@ -517,9 +524,10 @@ export default function LeadMap({
         marker.addTo(layer);
       });
 
-      if (routeCoords.length > 0) {
+      if (routeCoords.length > 0 && !hasFitRouteBoundsRef.current) {
         const bounds = L.latLngBounds(routeCoords);
         map.fitBounds(bounds, { padding: [50, 50] });
+        hasFitRouteBoundsRef.current = true;
       }
       return;
     }
