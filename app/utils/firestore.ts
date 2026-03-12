@@ -25,6 +25,30 @@ const USERS_COLLECTION = 'users';
 // LEADS
 // ============================================
 
+function mapLeadDoc(docSnap: any): Lead {
+  const data = docSnap.data();
+  return {
+    ...data,
+    id: docSnap.id,
+    createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
+    claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
+    dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
+    assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
+    solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
+    objectionRecordedAt: data.objectionRecordedAt?.toDate
+      ? data.objectionRecordedAt.toDate()
+      : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
+    goBackScheduledDate: data.goBackScheduledDate?.toDate
+      ? data.goBackScheduledDate.toDate()
+      : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
+    dispositionHistory:
+      data.dispositionHistory?.map((entry: any) => ({
+        ...entry,
+        timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
+      })) || undefined,
+  } as Lead;
+}
+
 export async function getAllLeads(): Promise<Lead[]> {
   if (!db) {
     console.warn('Firestore not initialized');
@@ -33,26 +57,36 @@ export async function getAllLeads(): Promise<Lead[]> {
   try {
     const leadsRef = collection(db, LEADS_COLLECTION);
     const snapshot = await getDocs(leadsRef);
-    return snapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        ...data,
-        id: doc.id,
-        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
-        claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
-        dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
-        assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
-        solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
-        objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
-        goBackScheduledDate: data.goBackScheduledDate?.toDate ? data.goBackScheduledDate.toDate() : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
-        dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
-          ...entry,
-          timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
-        })) || undefined,
-      } as Lead;
-    });
+    return snapshot.docs.map(mapLeadDoc);
   } catch (error) {
     console.error('Error getting leads:', error);
+    return [];
+  }
+}
+
+export async function getLeadsForUser(uid: string): Promise<Lead[]> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return [];
+  }
+
+  try {
+    const leadsRef = collection(db, LEADS_COLLECTION);
+
+    // Firestore doesn't support OR queries in the simple client SDK without composite indexes,
+    // so we do two queries and merge:
+    const claimedQ = query(leadsRef, where('claimedBy', '==', uid));
+    const assignedQ = query(leadsRef, where('assignedTo', '==', uid));
+
+    const [claimedSnap, assignedSnap] = await Promise.all([getDocs(claimedQ), getDocs(assignedQ)]);
+
+    const byId = new Map<string, Lead>();
+    for (const d of claimedSnap.docs) byId.set(d.id, mapLeadDoc(d));
+    for (const d of assignedSnap.docs) byId.set(d.id, mapLeadDoc(d));
+
+    return Array.from(byId.values());
+  } catch (error) {
+    console.error('Error getting leads for user:', error);
     return [];
   }
 }

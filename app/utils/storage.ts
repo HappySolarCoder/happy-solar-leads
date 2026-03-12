@@ -2,6 +2,7 @@
 import { Lead, User, LeadStatus } from '@/app/types';
 import { 
   getAllLeads as firestoreGetAllLeads,
+  getLeadsForUser as firestoreGetLeadsForUser,
   getLeadsInBounds as firestoreGetLeadsInBounds,
   saveLead as firestoreSaveLead,
   batchSaveLeads as firestoreBatchSaveLeads,
@@ -65,18 +66,25 @@ export function getLeads(): Lead[] {
 
 export async function getLeadsAsync(): Promise<Lead[]> {
   try {
-    const leads = await firestoreGetAllLeads();
+    // Import here to avoid circular deps in some build paths
+    const { getCurrentAuthUser } = await import('./auth');
+    const me = await getCurrentAuthUser();
+
+    // Admins can read everything; reps must only query their assigned/claimed leads
+    const leads = me?.role === 'admin'
+      ? await firestoreGetAllLeads()
+      : me?.id
+        ? await firestoreGetLeadsForUser(me.id)
+        : [];
+
     if (leads && leads.length > 0) {
       leadsCache = leads;
       cacheTimestamp = Date.now();
-      // Note: Removed localStorage backup - causes QuotaExceededError with large datasets (11K+ leads)
-      // Firestore is source of truth now
       return leads;
     }
     return [];
   } catch (error) {
     console.error('Firestore getLeads failed:', error);
-    // Return empty array on error - no localStorage fallback for large datasets
     return [];
   }
 }
