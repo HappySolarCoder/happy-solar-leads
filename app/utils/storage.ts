@@ -4,6 +4,7 @@ import {
   getAllLeads as firestoreGetAllLeads,
   getLeadsForUser as firestoreGetLeadsForUser,
   getLeadsInBounds as firestoreGetLeadsInBounds,
+  getLeadsInBoundsForUser as firestoreGetLeadsInBoundsForUser,
   saveLead as firestoreSaveLead,
   batchSaveLeads as firestoreBatchSaveLeads,
   updateLead as firestoreUpdateLead,
@@ -101,7 +102,16 @@ export async function getLeadsInBoundsAsync(
   maxLeads: number = 2000
 ): Promise<Lead[]> {
   try {
-    const leads = await firestoreGetLeadsInBounds(south, north, west, east, maxLeads);
+    const { getCurrentAuthUser } = await import('./auth');
+    const me = await getCurrentAuthUser();
+
+    // Admins can query all leads in bounds; reps must query only their assigned/claimed leads
+    const leads = me?.role === 'admin'
+      ? await firestoreGetLeadsInBounds(south, north, west, east, maxLeads)
+      : me?.id
+        ? await firestoreGetLeadsInBoundsForUser(me.id, south, north, west, east, maxLeads)
+        : [];
+
     return leads;
   } catch (error) {
     console.error('Error getting leads in bounds:', error);

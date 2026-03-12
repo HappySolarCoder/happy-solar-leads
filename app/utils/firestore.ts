@@ -162,6 +162,83 @@ export async function getLeadsInBounds(
   }
 }
 
+// Same as getLeadsInBounds but restricted for non-admin users under Firestore rules.
+// We must include assignedTo/claimedBy filters in the query; otherwise Firestore will reject the query.
+export async function getLeadsInBoundsForUser(
+  uid: string,
+  south: number,
+  north: number,
+  west: number,
+  east: number,
+  maxLeads: number = 2000
+): Promise<Lead[]> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return [];
+  }
+
+  try {
+    const leadsRef = collection(db, LEADS_COLLECTION);
+
+    const claimedQ = query(
+      leadsRef,
+      where('claimedBy', '==', uid),
+      where('lat', '>=', south),
+      where('lat', '<=', north),
+      limit(maxLeads)
+    );
+
+    const assignedQ = query(
+      leadsRef,
+      where('assignedTo', '==', uid),
+      where('lat', '>=', south),
+      where('lat', '<=', north),
+      limit(maxLeads)
+    );
+
+    const [claimedSnap, assignedSnap] = await Promise.all([getDocs(claimedQ), getDocs(assignedQ)]);
+
+    const mapDoc = (docSnap: any) => {
+      const data = docSnap.data();
+      return {
+        ...data,
+        id: docSnap.id,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
+        claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
+        dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
+        assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
+        solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
+        objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
+        goBackScheduledDate: data.goBackScheduledDate?.toDate ? data.goBackScheduledDate.toDate() : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
+        dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
+          ...entry,
+          timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
+        })) || undefined,
+      } as Lead;
+    };
+
+    const byId = new Map<string, Lead>();
+    for (const d of claimedSnap.docs) byId.set(d.id, mapDoc(d));
+    for (const d of assignedSnap.docs) byId.set(d.id, mapDoc(d));
+
+    const all = Array.from(byId.values());
+
+    // Filter by longitude in memory (Firestore doesn't support multiple range queries)
+    const leadsInBounds = all.filter((lead) => {
+      if (!lead.lng) return false;
+      if (west > east) {
+        return lead.lng >= west || lead.lng <= east;
+      }
+      return lead.lng >= west && lead.lng <= east;
+    });
+
+    return leadsInBounds;
+  } catch (error) {
+    console.error('Error getting leads in bounds for user:', error);
+    return [];
+  }
+}
+
 export async function getLead(id: string): Promise<Lead | null> {
   if (!db) {
     console.warn('Firestore not initialized');
