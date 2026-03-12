@@ -1132,13 +1132,21 @@ export default function LeadMap({
       // Generate ID
       const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
+      const firebaseUid = auth?.currentUser?.uid;
+      if (!firebaseUid) {
+        throw new Error('Auth not ready — please wait 2 seconds and try again.');
+      }
+
       const newLead: Lead = {
         ...leadData,
         id,
-        status: 'unclaimed',
+        status: 'available',
         createdAt: new Date(),
-        // Use Firebase Auth UID for security rules consistency
-        setterId: auth?.currentUser?.uid || currentUser?.id,
+        // Manual lead ownership: must match Firestore rules (setterId == request.auth.uid)
+        setterId: firebaseUid,
+        // Also set claimedBy so rep-safe map queries (claimedBy/assignedTo) include it
+        claimedBy: firebaseUid,
+        claimedAt: new Date(),
         source: 'manually-added', // Mark as manually added via map pin drop
       } as Lead;
 
@@ -1212,9 +1220,16 @@ export default function LeadMap({
       if (onLeadAdded) {
         onLeadAdded();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving dropped lead:', error);
-      throw error;
+      // Surface the real reason up to UI (permission-denied vs auth-not-ready)
+      const msg = error?.message || String(error);
+      fetch('/api/debug-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level: 'error', message: 'manual lead save failed', data: { error: msg } })
+      }).catch(() => {});
+      throw new Error(msg);
     }
   };
 
