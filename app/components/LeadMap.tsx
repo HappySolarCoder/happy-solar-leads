@@ -1147,7 +1147,9 @@ export default function LeadMap({
       await saveLeadAsync(newLead);
 
       // Auto-assign to territory user if within a territory
-      if (newLead.lat && newLead.lng) {
+      // NOTE: This requires write permissions to change assignedTo.
+      // Under our Firestore rules, only admins can reassign leads.
+      if (currentUser?.role === 'admin' && newLead.lat && newLead.lng) {
         try {
           const territories = await getTerritoriesAsync();
           if (territories.length > 0) {
