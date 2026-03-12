@@ -1224,12 +1224,14 @@ export default function LeadMap({
       console.error('Error saving dropped lead:', error);
       // Surface the real reason up to UI (permission-denied vs auth-not-ready)
       const msg = error?.message || String(error);
+      const code = (error as any)?.code;
       fetch('/api/debug-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ level: 'error', message: 'manual lead save failed', data: { error: msg } })
+        body: JSON.stringify({ level: 'error', message: 'manual lead save failed', data: { code, error: msg } })
       }).catch(() => {});
-      throw new Error(msg);
+      const pretty = code ? `[${code}] ${msg}` : msg;
+      throw new Error(pretty);
     }
   };
 
