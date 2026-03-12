@@ -302,13 +302,33 @@ export async function getCurrentUserAsync(): Promise<User | null> {
 
 export function saveCurrentUser(user: User): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(CURRENT_USER_KEY, user.id);
+  try {
+    localStorage.setItem(CURRENT_USER_KEY, user.id);
+  } catch (e: any) {
+    // If localStorage is full, clear known large caches and retry once.
+    const msg = e?.message || String(e);
+    if (msg.includes('QuotaExceededError')) {
+      try {
+        localStorage.removeItem('raydar_leads');
+        localStorage.removeItem('raydar_users');
+        localStorage.removeItem('happy_solar_geocode_cache');
+        localStorage.removeItem('raydar_saved_coaching_reports_v1');
+      } catch {
+        // ignore
+      }
+      try {
+        localStorage.setItem(CURRENT_USER_KEY, user.id);
+      } catch {
+        // give up; app can still function via Firebase auth state
+      }
+    }
+  }
 }
 
 export async function saveCurrentUserAsync(user: User): Promise<void> {
   await firestoreSaveUser(user);
   if (typeof window !== 'undefined') {
-    localStorage.setItem(CURRENT_USER_KEY, user.id);
+    saveCurrentUser(user);
   }
 }
 
