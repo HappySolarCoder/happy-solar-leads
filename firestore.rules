@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function myUser() {
+      return get(/databases/$(database)/documents/users/$(uid())).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && myUser().role == "admin";
+    }
+
+    function leadIsClaimedByMe() {
+      return signedIn() && resource.data.claimedBy == uid();
+    }
+
+    function leadIsAssignedToMe() {
+      return signedIn() && resource.data.assignedTo == uid();
+    }
+
+    function leadIsManualByMe() {
+      return signedIn()
+        && resource.data.source == "manually-added"
+        && resource.data.setterId == uid();
+    }
+
+    function requestIsManualByMe() {
+      return signedIn()
+        && request.resource.data.source == "manually-added"
+        && request.resource.data.setterId == uid();
+    }
+
+    // USERS
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // DISPOSITIONS
+    match /dispositions/{dispositionId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // TERRITORIES
+    match /territories/{territoryId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == uid());
+      allow create, update, delete: if isAdmin();
+    }
+
+    // LEADS
+    match /leads/{leadId} {
+
+      // READ
+      allow read: if isAdmin()
+        || leadIsClaimedByMe()
+        || leadIsAssignedToMe()
+        || leadIsManualByMe();
+
+      // CREATE
+      allow create: if isAdmin() || requestIsManualByMe();
+
+      // UPDATE
+      allow update: if isAdmin() || (
+        (leadIsClaimedByMe() || leadIsAssignedToMe() || leadIsManualByMe())
+        && request.resource.data.claimedBy == resource.data.claimedBy
+        && request.resource.data.assignedTo == resource.data.assignedTo
+        && request.resource.data.territoryId == resource.data.territoryId
+      );
+
+      // DELETE
+      allow delete: if isAdmin();
+    }
+
+    // DISPOSITION HISTORY
+    match /disposition_history/{id} {
+      allow read: if isAdmin();
+      allow create: if signedIn() && request.resource.data.userId == uid();
+      allow update, delete: if isAdmin();
+    }
+
+    // DEFAULT DENY
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
