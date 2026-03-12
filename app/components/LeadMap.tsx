@@ -76,6 +76,7 @@ export default function LeadMap({
   const userMarkerRef = useRef<L.Marker | null>(null);
   const hasFitBoundsRef = useRef<boolean>(false); // Track if we've already fit bounds for activity routes
   const hasFitRouteBoundsRef = useRef<boolean>(false); // Track if we've already fit bounds for single route mode
+  const userInteractedRef = useRef<boolean>(false); // After user pans/zooms, never auto-fit/auto-pan
   const [isClient, setIsClient] = useState(false);
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
@@ -207,6 +208,14 @@ export default function LeadMap({
     }).addTo(map);
     
     mapInstanceRef.current = map;
+
+    // Mark user interaction to prevent auto-fit snapback
+    map.on('dragstart', () => {
+      userInteractedRef.current = true;
+    });
+    map.on('zoomstart', () => {
+      userInteractedRef.current = true;
+    });
 
     // Listen for zoom changes - update tier only when crossing thresholds
     map.on('zoomend', () => {
@@ -497,7 +506,7 @@ export default function LeadMap({
       });
 
       // Fit bounds to show all routes (only on first load, not on user zoom)
-      if (allCoords.length > 0 && !hasFitBoundsRef.current) {
+      if (allCoords.length > 0 && !hasFitBoundsRef.current && !userInteractedRef.current) {
         const bounds = L.latLngBounds(allCoords);
         map.fitBounds(bounds, { padding: [50, 50] });
         hasFitBoundsRef.current = true;
@@ -524,7 +533,7 @@ export default function LeadMap({
         marker.addTo(layer);
       });
 
-      if (routeCoords.length > 0 && !hasFitRouteBoundsRef.current) {
+      if (routeCoords.length > 0 && !hasFitRouteBoundsRef.current && !userInteractedRef.current) {
         const bounds = L.latLngBounds(routeCoords);
         map.fitBounds(bounds, { padding: [50, 50] });
         hasFitRouteBoundsRef.current = true;
@@ -595,7 +604,7 @@ export default function LeadMap({
       return ((l.solarCategory && l.solarCategory !== 'poor') || hasDisposition(l) || assignedToMe || claimedByMe);
     });
     // Only fit bounds once when leads first load, not on every render/pan/zoom
-    if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current) {
+    if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current && !userInteractedRef.current) {
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
       map.fitBounds(bounds, { padding: [50, 50] });
       hasFitLeadsBoundsRef.current = true;
