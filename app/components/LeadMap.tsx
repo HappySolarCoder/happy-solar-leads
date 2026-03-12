@@ -529,11 +529,17 @@ export default function LeadMap({
     visibleLeads.forEach(lead => {
       const hasDisposition = lead.status && KNOCK_STATUSES.includes(lead.status);
       if (!lead.lat || !lead.lng) return;
-      // Skip poor solar leads UNLESS they have a disposition (already knocked)
-      if (lead.solarCategory === 'poor' && !hasDisposition) return;
+
+      const isAssignedToMe = currentUser != null && lead.assignedTo != null && lead.assignedTo === currentUser.id;
+      const isClaimedByMe = currentUser != null && lead.claimedBy != null && lead.claimedBy === currentUser.id;
+
+      // Skip poor solar leads UNLESS:
+      // - they have a disposition (already knocked), OR
+      // - they are assigned/claimed by the current user (they still need to see their turf)
+      if (lead.solarCategory === 'poor' && !hasDisposition && !isAssignedToMe && !isClaimedByMe) return;
 
       const isSelected = lead.id === selectedLeadId;
-      const isClaimedByMe = currentUser != null && lead.claimedBy != null && lead.claimedBy === currentUser.id;
+      // isClaimedByMe already computed above
       const canClaim = lead.claimedBy == null || isClaimedByMe;
       const isSelectedForAssignment = selectedLeadIdsForAssignment.includes(lead.id);
 
@@ -568,10 +574,14 @@ export default function LeadMap({
     const hasDisposition = (l: any) => l.status && KNOCK_STATUSES.includes(l.status);
     
     // Include: good solar leads OR leads with dispositions
-    const goodLeads = leads.filter(l => 
-      l.lat && l.lng && 
-      ((l.solarCategory && l.solarCategory !== 'poor') || hasDisposition(l))
-    );
+    const goodLeads = leads.filter(l => {
+      if (!l.lat || !l.lng) return false;
+      const assignedToMe = currentUser != null && (l as any).assignedTo != null && (l as any).assignedTo === currentUser.id;
+      const claimedByMe = currentUser != null && (l as any).claimedBy != null && (l as any).claimedBy === currentUser.id;
+
+      // Include: good solar leads OR leads with dispositions OR leads assigned/claimed to me
+      return ((l.solarCategory && l.solarCategory !== 'poor') || hasDisposition(l) || assignedToMe || claimedByMe);
+    });
     // Only fit bounds once when leads first load, not on every render/pan/zoom
     if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current) {
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
