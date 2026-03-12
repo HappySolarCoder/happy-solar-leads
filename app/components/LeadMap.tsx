@@ -564,9 +564,12 @@ export default function LeadMap({
       );
 
       const marker = L.marker([lead.lat!, lead.lng!], { icon });
-      marker.bindPopup(createPopupContent(lead), { maxWidth: 300 });
+      // Prevent Leaflet from auto-panning the map to keep popups in view (this causes "snap back" / lock feeling on mobile).
+      marker.bindPopup(createPopupContent(lead), { maxWidth: 300, autoPan: false });
       marker.on('click', () => onLeadClick(lead));
-      if (isSelected) marker.openPopup();
+      // IMPORTANT: Do NOT call openPopup() inside the render loop.
+      // LeadMap re-renders on pan/zoom (viewportKey) and would repeatedly open the popup,
+      // which can force the map to re-center.
       marker.addTo(layer);
     });
 
