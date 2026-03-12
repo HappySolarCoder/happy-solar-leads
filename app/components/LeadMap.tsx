@@ -7,6 +7,7 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.markercluster';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
+import { auth } from '@/app/utils/firebase';
 import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
 import AddLeadModal from './AddLeadModal';
@@ -1136,7 +1137,8 @@ export default function LeadMap({
         id,
         status: 'unclaimed',
         createdAt: new Date(),
-        setterId: currentUser?.id,
+        // Use Firebase Auth UID for security rules consistency
+        setterId: auth?.currentUser?.uid || currentUser?.id,
         source: 'manually-added', // Mark as manually added via map pin drop
       } as Lead;
 
