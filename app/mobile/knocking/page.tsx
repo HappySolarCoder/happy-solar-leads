@@ -40,6 +40,7 @@ export default function KnockingPage() {
   const [solarFilter, setSolarFilter] = useState<string[]>([]);
   const [dispositionFilter, setDispositionFilter] = useState<string>('all');
   const [setterFilter, setSetterFilter] = useState<string>('all');
+  const [freshPinsOnly, setFreshPinsOnly] = useState<boolean>(false);
   const [showFilters, setShowFilters] = useState(false);
   const [dispositions, setDispositions] = useState<any[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -260,10 +261,10 @@ export default function KnockingPage() {
   // Estimate driving time (average 25 mph in city = 0.42 miles per minute)
   const drivingTimeMinutes = Math.round(routeDistance / 0.42);
 
-  // Role-based visibility: setters/closers only see their assigned leads
+  // Role-based visibility: setters/closers only see their claimed OR territory-assigned leads
   const roleFilteredLeads = currentUser
     ? (currentUser.role === 'setter' || currentUser.role === 'closer')
-      ? leads.filter(l => l.claimedBy === currentUser.id)
+      ? leads.filter(l => l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
       : leads
     : [];
 
@@ -300,6 +301,15 @@ export default function KnockingPage() {
   // Filter by disposition if selected
   if (dispositionFilter !== 'all') {
     goodLeads = goodLeads.filter(l => l.disposition === dispositionFilter);
+  }
+
+  // Fresh Pins: only show leads NOT dispositioned in the last 30 days
+  if (freshPinsOnly) {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    goodLeads = goodLeads.filter(l => {
+      const dt = l.dispositionedAt ? new Date(l.dispositionedAt).getTime() : null;
+      return !dt || dt < cutoff;
+    });
   }
 
   // Calculate distances and sort by nearest if GPS available
@@ -555,6 +565,20 @@ export default function KnockingPage() {
               </div>
             </div>
             
+            {/* Fresh Pins */}
+            <div className="mt-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={freshPinsOnly}
+                  onChange={(e) => setFreshPinsOnly(e.target.checked)}
+                  className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                />
+                <span className="text-xs text-[#2D3748] font-semibold">Fresh Pins</span>
+                <span className="text-[11px] text-[#718096]">(not dispositioned in last 30 days)</span>
+              </label>
+            </div>
+
             {/* Disposition Filter */}
             <div className="mt-3">
               <div className="flex items-center gap-2 mb-2">
