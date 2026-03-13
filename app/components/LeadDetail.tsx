@@ -231,8 +231,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           ...lead,
           status: newStatus,
           dispositionedAt: new Date(),
-          claimedBy: adminAssignUser || currentUser.id,
-          assignedTo: adminAssignUser || lead.assignedTo,
+          // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
+          claimedBy: lead.claimedBy,
+          assignedTo: lead.assignedTo,
           dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
           ...gpsData,
         };
@@ -332,8 +333,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         objectionNotes,
         objectionRecordedAt: new Date(),
         objectionRecordedBy: currentUser.id,
-        claimedBy: adminAssignUser || currentUser.id,
-        assignedTo: adminAssignUser || lead.assignedTo,
+        // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
+        claimedBy: lead.claimedBy,
+        assignedTo: lead.assignedTo,
         dispositionedAt: new Date(),
         dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
       };
@@ -369,8 +371,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         status: 'go-back',
         disposition: 'Go Back',
         dispositionedAt: new Date(),
-        claimedBy: adminAssignUser || currentUser.id,
-        assignedTo: adminAssignUser || lead.assignedTo,
+        // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
+        claimedBy: lead.claimedBy,
+        assignedTo: lead.assignedTo,
         goBackScheduledDate: scheduleData.date,
         goBackScheduledTime: scheduleData.time,
         goBackNotes: scheduleData.notes,
