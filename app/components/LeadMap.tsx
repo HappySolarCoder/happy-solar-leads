@@ -604,7 +604,10 @@ export default function LeadMap({
       return ((l.solarCategory && l.solarCategory !== 'poor') || hasDisposition(l) || assignedToMe || claimedByMe);
     });
     // Only fit bounds once when leads first load, not on every render/pan/zoom
-    if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current && !userInteractedRef.current) {
+    // On /mobile/knocking we want to default to GPS location (not last knocked pin / small lead set).
+    const preferGpsCenter = currentUser?.role !== 'admin' && Boolean(userPosition);
+
+    if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current && !userInteractedRef.current && !preferGpsCenter) {
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
       map.fitBounds(bounds, { padding: [50, 50] });
       hasFitLeadsBoundsRef.current = true;
@@ -613,7 +616,7 @@ export default function LeadMap({
     // Performance: Log completion time
     const duration = Date.now() - startTime;
     console.log(`[LeadMap] Rendered ${visibleLeads.length} markers in ${duration}ms (zoom tier: ${zoomTier})`);
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey]);
+  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey, userPosition]);
   // Note: Using zoomTier instead of direct mapZoom - only re-renders when crossing zoom thresholds
   // This prevents constant re-renders on every zoom event (just 4 tiers: <12, 12-14, 14-16, >16)
 
