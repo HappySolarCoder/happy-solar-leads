@@ -386,70 +386,99 @@ export default function KnockingPage() {
   return (
     <LocationPermissionGuard requireLocation={true}>
       <div className="h-screen flex flex-col bg-white overflow-hidden">
-      {/* Mobile Header - Compact */}
-      <header className="bg-white border-b border-[#E2E8F0] px-4 py-3 flex-shrink-0">
-        <div className="flex items-center justify-between">
+      {/* Mobile Header - Clean App Bar */}
+      <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200 px-4 flex-shrink-0">
+        <div className="h-14 flex items-center gap-2">
+          {/* Back */}
           <button
             onClick={() => router.push('/mobile')}
-            className="p-2 -ml-2 text-[#718096] hover:text-[#FF5F5A] active:scale-95 transition-all"
+            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all"
+            title="Back"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5 text-[#718096]" />
           </button>
 
-          <div className="flex flex-col gap-2 min-w-0 flex-1">
-            {/* Row 1: Today chip + Tools (keep clean and always visible) */}
-            <div className="flex items-center justify-between gap-2 min-w-0">
-              <div className="flex-1 min-w-0 flex items-center justify-center">
-                <div className="px-3 py-1 bg-[#F7FAFC] border border-[#E2E8F0] text-[#718096] rounded-full font-semibold text-xs">
-                  🚪 {todaysKnocks} Today
+          {/* Search (hero) */}
+          <div className="flex-1 min-w-0 relative">
+            <div className="h-11 rounded-full bg-gray-100 border border-gray-200 flex items-center gap-2 px-4">
+              <Search className="w-4 h-4 text-gray-500 flex-shrink-0" />
+              <input
+                type="text"
+                placeholder="Search address..."
+                value={addressSearch}
+                onChange={(e) => handleAddressSearch(e.target.value)}
+                className="bg-transparent w-full text-sm text-gray-900 placeholder:text-gray-500 outline-none"
+              />
+              {addressSearch && (
+                <button
+                  onClick={() => { setAddressSearch(''); setSearchResults([]); }}
+                  className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-gray-200"
+                  title="Clear"
+                >
+                  <X className="w-4 h-4 text-gray-500" />
+                </button>
+              )}
+            </div>
+
+            {/* Search Results Dropdown */}
+            {searchResults.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 max-h-60 overflow-y-auto">
+                {searchResults.map((result, index) => (
+                  <button
+                    key={index}
+                    onClick={() => handleSelectAddress(result)}
+                    className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                  >
+                    <p className="text-sm font-medium text-gray-900">{result.formatted_address || result.name}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+            {isSearching && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 p-3">
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <div className="w-4 h-4 border-2 border-[#FF5F5A] border-t-transparent rounded-full animate-spin" />
+                  Searching...
                 </div>
               </div>
-              <button
-                onClick={() => router.push('/tools')}
-                className="p-2 text-[#718096] hover:text-[#FF5F5A] active:scale-95 transition-all flex-shrink-0"
-                title="Tools"
-              >
-                <Settings className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Row 2: Nearest + Filters */}
-            <div className="flex items-center justify-between gap-2 min-w-0">
-              <button
-                onClick={() => {
-                  if (nextBest) handleLeadSelect(nextBest);
-                }}
-                disabled={!nextBest}
-                className={`flex-1 min-w-0 px-3 py-2 rounded-full font-semibold transition-all ${
-                  nextBest
-                    ? 'bg-gradient-to-r from-[#FF5F5A] to-[#FF7A6B] text-white shadow-sm active:scale-95'
-                    : 'bg-gray-100 text-gray-400'
-                }`}
-              >
-                {nextBest ? (
-                  <div className="flex items-center justify-between gap-2 min-w-0">
-                    <span className="text-[11px] uppercase tracking-wide opacity-90 flex-shrink-0">3⭐ Nearest</span>
-                    <span className="text-sm truncate">
-                      {nextBestIsFar ? 'Far' : nextBestDistance}
-                      {nextBestDirection ? ` ${nextBestDirection}` : ''}
-                    </span>
-                  </div>
-                ) : (
-                  <span className="text-sm">No 3⭐ Nearby</span>
-                )}
-              </button>
-
-              <button
-                onClick={() => setShowFilters(!showFilters)}
-                className={`p-2 rounded-full border border-[#E2E8F0] bg-white transition-all flex-shrink-0 ${
-                  showFilters ? 'text-[#FF5F5A]' : 'text-[#718096] hover:text-[#FF5F5A]'
-                } active:scale-95`}
-                title="Filters"
-              >
-                <Filter className="w-5 h-5" />
-              </button>
-            </div>
+            )}
           </div>
+
+          {/* Tools */}
+          <button
+            onClick={() => router.push('/tools')}
+            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all"
+            title="Tools"
+          >
+            <Settings className="w-5 h-5 text-[#718096]" />
+          </button>
+        </div>
+
+        {/* Row 2: Chips */}
+        <div className="pb-3 pt-2 -mt-1 flex items-center gap-2 overflow-x-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="h-9 px-3 rounded-full bg-white border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex items-center whitespace-nowrap">
+            🚪 Today: {todaysKnocks}
+          </div>
+
+          <button
+            onClick={() => { if (nextBest) handleLeadSelect(nextBest); }}
+            disabled={!nextBest}
+            className="h-9 px-3 rounded-full bg-white border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex items-center whitespace-nowrap disabled:opacity-50"
+            title="Go to nearest 3⭐"
+          >
+            3⭐ Nearest: {nextBest ? (nextBestIsFar ? 'Far' : `${nextBestDistance}${nextBestDirection ? ` ${nextBestDirection}` : ''}`) : 'None'}
+          </button>
+
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`h-9 px-3 rounded-full border text-xs font-semibold flex items-center whitespace-nowrap ${
+              showFilters ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-[#E2E8F0] text-[#2D3748] bg-white'
+            }`}
+            title="Filters"
+          >
+            <Filter className="w-4 h-4 mr-2" />
+            Filters
+          </button>
         </div>
 
         {/* Filters Panel */}
@@ -705,54 +734,6 @@ export default function KnockingPage() {
               Start Navigation
             </a>
           )}
-        </div>
-      )}
-
-      {/* Address Search Bar */}
-      {viewMode === 'map' && (
-        <div className="px-3 py-2 bg-white border-b border-gray-200">
-          <div className="relative">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search address..."
-                value={addressSearch}
-                onChange={(e) => handleAddressSearch(e.target.value)}
-                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A]"
-              />
-              {addressSearch && (
-                <button
-                  onClick={() => { setAddressSearch(''); setSearchResults([]); }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2"
-                >
-                  <X className="w-4 h-4 text-gray-400" />
-                </button>
-              )}
-            </div>
-            {/* Search Results Dropdown */}
-            {searchResults.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
-                {searchResults.map((result, index) => (
-                  <button
-                    key={index}
-                    onClick={() => handleSelectAddress(result)}
-                    className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
-                  >
-                    <p className="text-sm font-medium text-gray-900">{result.formatted_address || result.name}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-            {isSearching && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-3">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <div className="w-4 h-4 border-2 border-[#FF5F5A] border-t-transparent rounded-full animate-spin" />
-                  Searching...
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
 
