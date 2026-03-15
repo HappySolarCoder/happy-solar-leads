@@ -60,23 +60,35 @@ export async function saveAdminSettingsAsync(settings: AdminSettings): Promise<v
         throw new Error(data?.error || `Failed to save settings (${res.status})`);
       }
 
-      // Backup
-      localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
+      // Backup (best-effort only; never fail save due to localStorage quota)
+      try {
+        localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
+      } catch (e) {
+        console.warn('Could not backup admin settings to localStorage (ignored):', e);
+      }
       return;
     }
 
     // Fallback: if not authenticated yet, attempt Firestore direct write
     if (!db) {
       console.error('Firestore not initialized - saving to localStorage only');
-      localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
+      try {
+        localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
+      } catch (e) {
+        console.warn('Could not save admin settings to localStorage (quota?)', e);
+      }
       return;
     }
 
     const docRef = doc(db, 'adminSettings', SETTINGS_DOC_ID);
     await setDoc(docRef, settings);
 
-    // Also save to localStorage as backup
-    localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
+    // Also save to localStorage as backup (best-effort)
+    try {
+      localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
+    } catch (e) {
+      console.warn('Could not backup admin settings to localStorage (quota?)', e);
+    }
   } catch (error) {
     console.error('Error saving admin settings:', error);
     throw error;
