@@ -74,8 +74,9 @@ service cloud.firestore {
 
     // ====================== USER SESSIONS ======================
     // Simple per-user client session storage (used for UI state / onboarding)
+    // Doc id is Firebase Auth UID (see app/utils/auth.ts + app/utils/userSession.ts)
     match /userSessions/{docId} {
-      allow read, write: if signedIn();
+      allow read, write: if signedIn() && docId == uid();
     }
 
     // ====================== USER GOALS ======================
