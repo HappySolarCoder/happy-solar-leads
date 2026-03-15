@@ -936,7 +936,7 @@ export default function KnockingPage() {
             onLeadAdded={refreshLeads}
             searchLocation={searchLocation}
             heatCells={heatCells}
-            heatCellRadiusMeters={4828}
+            heatCellRadiusMeters={2414}
           />
           {/* GPS Locate button is now built into LeadMap component */}
         </main>
