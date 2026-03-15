@@ -63,6 +63,15 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // ====================== ADMIN SETTINGS ======================
+    // Any signed-in user can READ global admin settings (needed for client-side flows like
+    // "Send info to Scheduling Manager" to fetch the webhook URL).
+    // Writes are intentionally server-only via Admin SDK (e.g. /api/admin/settings).
+    match /adminSettings/{docId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
     // ====================== TERRITORIES ======================
     // Admins see everything; reps can only read their own assigned territory
     match /territories/{territoryId} {
