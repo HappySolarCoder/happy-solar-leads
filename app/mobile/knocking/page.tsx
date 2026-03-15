@@ -583,13 +583,12 @@ export default function KnockingPage() {
 
           <button
             onClick={() => setShowHeat(!showHeat)}
-            className={`h-10 min-h-10 px-3 rounded-full border inline-flex items-center gap-2 leading-none whitespace-nowrap ${
+            className={`h-10 w-10 min-h-10 rounded-full border inline-flex items-center justify-center leading-none ${
               showHeat ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-gray-200 text-[#2D3748] bg-white'
             }`}
             title="Heat map"
           >
             <span className="text-sm leading-none">🔥</span>
-            <span className="text-sm font-semibold leading-none">Heat</span>
           </button>
 
           <button
