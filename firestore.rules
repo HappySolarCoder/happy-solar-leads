@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ====================== HELPER FUNCTIONS ======================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function myUser() {
+      return get(/databases/$(database)/documents/users/$(uid())).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && myUser().role == "admin";
+    }
+
+    // Helper: allows a field to be either unchanged OR completely omitted in the update
+    function unchangedOrMissing(field) {
+      return !(field in request.resource.data) ||
+             request.resource.data[field] == resource.data[field];
+    }
+
+    // Lead ownership checks
+    function leadIsClaimedByMe() {
+      return signedIn() && resource.data.claimedBy == uid();
+    }
+
+    function leadIsAssignedToMe() {
+      return signedIn() && resource.data.assignedTo == uid();
+    }
+
+    function leadIsManualByMe() {
+      return signedIn()
+        && resource.data.source == "manually-added"
+        && resource.data.setterId == uid();
+    }
+
+    function requestIsManualByMe() {
+      return signedIn()
+        && request.resource.data.source == "manually-added"
+        && request.resource.data.setterId == uid();
+    }
+
+    // ====================== USERS ======================
+    // Any signed-in user can read (supports UI: names, colors, dropdowns, etc.)
+    // Only admins can create/update/delete users
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ====================== DISPOSITIONS ======================
+    // All signed-in users can read dispositions (for labels, dropdowns, analytics)
+    // Only admins can modify
+    match /dispositions/{dispositionId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ====================== TERRITORIES ======================
+    // Admins see everything; reps can only read their own assigned territory
+    match /territories/{territoryId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == uid());
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ====================== LEADS ======================
+    match /leads/{leadId} {
+
+      // READ: Admins = all; reps = only their claimed / assigned / manually-created leads
+      allow read: if isAdmin()
+        || leadIsClaimedByMe()
+        || leadIsAssignedToMe()
+        || leadIsManualByMe();
+
+      // CREATE: Admins = anything; reps = only manual leads they set themselves
+      allow create: if isAdmin() || requestIsManualByMe();
+
+      // UPDATE:
+      //   Admins = anything
+      //   Reps = only their own leads + cannot change ownership/assignment fields
+      allow update: if isAdmin() || (
+        (leadIsClaimedByMe() || leadIsAssignedToMe() || leadIsManualByMe())
+        && unchangedOrMissing("claimedBy")
+        && unchangedOrMissing("assignedTo")
+        && unchangedOrMissing("territoryId")
+      );
+
+      // DELETE: admin only
+      allow delete: if isAdmin();
+    }
+
+    // ====================== DISPOSITION HISTORY ======================
+    match /disposition_history/{id} {
+      allow read: if isAdmin();
+      allow create: if signedIn() && request.resource.data.userId == uid();
+      allow update, delete: if isAdmin();
+    }
+
+    // ====================== DEFAULT DENY (critical security rule) ======================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
