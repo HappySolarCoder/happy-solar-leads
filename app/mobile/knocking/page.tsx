@@ -373,6 +373,32 @@ export default function KnockingPage() {
     l.claimedBy === currentUser?.id
   ).length;
 
+  // Goals (v1) — deterministic goal read via API
+  const [dailyTarget, setDailyTarget] = useState<number | null>(null);
+
+  useEffect(() => {
+    async function loadGoalTarget() {
+      if (!currentUser) return;
+      try {
+        const monthId = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        const { getMyGoalViaApiAsync, getMyMonthlyKnocksAsync, countWorkdaysElapsedAndRemaining } = await import('@/app/utils/goals');
+        const goal = await getMyGoalViaApiAsync(monthId);
+        if (!goal?.doorKnocksGoal) {
+          setDailyTarget(null);
+          return;
+        }
+        const K = await getMyMonthlyKnocksAsync(new Date(), currentUser);
+        const { remaining } = countWorkdaysElapsedAndRemaining(new Date());
+        const remainingWorkdays = Math.max(1, remaining);
+        const needed = Math.max(0, Number(goal.doorKnocksGoal) - K);
+        setDailyTarget(Math.ceil(needed / remainingWorkdays));
+      } catch {
+        setDailyTarget(null);
+      }
+    }
+    loadGoalTarget();
+  }, [currentUser]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
@@ -461,6 +487,12 @@ export default function KnockingPage() {
           <div className="h-9 px-3 rounded-full bg-white border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex items-center whitespace-nowrap">
             🚪 Today: {todaysKnocks}
           </div>
+
+          {dailyTarget !== null && (
+            <div className="h-9 px-3 rounded-full bg-white border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex items-center whitespace-nowrap">
+              🎯 Target: {dailyTarget}/day
+            </div>
+          )}
 
           <button
             onClick={() => { if (nextBest) handleLeadSelect(nextBest); }}
