@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { ArrowLeft, Calendar, BarChart3, Users, Zap, TrendingUp, MapPin, Navigation, Shield, Clock, ChevronDown, ChevronRight, Sparkles, Bug, List, FileText } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 
 interface ReleaseNote {
   id: string;
@@ -17,6 +18,24 @@ interface ReleaseNote {
 }
 
 const releaseNotes: ReleaseNote[] = [
+  // Mar 15, 2026 - Customer uploads (smiley pins)
+  {
+    id: 'customer-upload-smiley-pins',
+    date: '2026-03-15',
+    title: 'Upload Customers (🙂 pins on the map)',
+    description: 'Upload a list of customers/sales and show them on the map as 🙂 pins. Tap a customer pin to see sale details (rep, FMA, sold date, phone).',
+    icon: Users,
+    category: 'new',
+    permissions: 'all',
+    screenshot: '/release-notes/customer-upload.png',
+    howTo: [
+      'Upload → switch upload type to Customers',
+      'Upload your CSV',
+      'Customers show on the map as 🙂 pins',
+      'Tap a 🙂 pin to view the sale/customer info',
+    ],
+  },
+
   // Mar 15, 2026 - Go Backs overhaul + fixes
   {
     id: 'go-backs-mobile-upcoming',
@@ -525,6 +544,20 @@ function NoteItem({ note, getCategoryColor }: { note: ReleaseNote; getCategoryCo
       
       {expanded && note.howTo && (
         <div className="mt-3 ml-13 bg-[#F7FAFC] rounded-lg p-3">
+          {note.screenshot && (
+            <div className="mb-3">
+              <div className="relative w-full overflow-hidden rounded-lg border border-[#E2E8F0] bg-white">
+                <Image
+                  src={note.screenshot}
+                  alt={`${note.title} screenshot`}
+                  width={1200}
+                  height={800}
+                  className="w-full h-auto"
+                />
+              </div>
+            </div>
+          )}
+
           <p className="text-xs font-semibold text-[#2D3748] mb-2">How to use:</p>
           <ol className="text-sm text-[#718096] space-y-1">
             {note.howTo.map((step, i) => (
