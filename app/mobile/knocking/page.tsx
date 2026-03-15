@@ -454,32 +454,38 @@ export default function KnockingPage() {
 
         {/* Row 2: Chips (icon + number only) */}
         <div className="pb-3 pt-2 -mt-1 flex items-center gap-2 overflow-x-auto pr-1 text-xs font-semibold tabular-nums [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="h-9 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] flex items-center whitespace-nowrap">
-            🚪 {todaysKnocks}
+          {/* Standard chip class: consistent height + rhythm */}
+          <div className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap">
+            <span className="text-sm leading-none">🚪</span>
+            <span className="text-sm font-semibold leading-none tabular-nums">{todaysKnocks}</span>
           </div>
 
           {dailyTarget !== null && (
             <button
               onClick={() => setShowGoalsModal(true)}
-              className="h-9 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] flex items-center whitespace-nowrap hover:bg-gray-50"
+              className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap hover:bg-gray-50"
               title="Goal details"
             >
-              🎯 {dailyTarget}
+              <span className="text-sm leading-none">🎯</span>
+              <span className="text-sm font-semibold leading-none tabular-nums">{dailyTarget}</span>
             </button>
           )}
 
           <button
             onClick={() => { if (nextBest) handleLeadSelect(nextBest); }}
             disabled={!nextBest}
-            className="h-9 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] flex items-center whitespace-nowrap disabled:opacity-50"
+            className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap disabled:opacity-50"
             title="Nearest 3⭐"
           >
-            ⭐ {nextBest ? (nextBestIsFar ? 'Far' : `${nextBestDistance}${nextBestDirection ? ` ${nextBestDirection}` : ''}`) : '—'}
+            <span className="text-sm leading-none">⭐</span>
+            <span className="text-sm font-semibold leading-none truncate max-w-[140px]">
+              {nextBest ? (nextBestIsFar ? 'Far' : `${nextBestDistance}${nextBestDirection ? ` ${nextBestDirection}` : ''}`) : '—'}
+            </span>
           </button>
 
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`h-9 w-9 rounded-full border flex items-center justify-center ${
+            className={`h-10 w-10 min-h-10 rounded-full border inline-flex items-center justify-center leading-none ${
               showFilters ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-gray-200 text-[#2D3748] bg-white'
             }`}
             title="Filters"
