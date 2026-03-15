@@ -396,74 +396,58 @@ export default function KnockingPage() {
             <ArrowLeft className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            {/* Field-Optimized Stats (horizontal scroll, clean + professional) */}
-            <div
-              className="flex items-center gap-2 text-xs overflow-x-auto whitespace-nowrap min-w-0 flex-1 pr-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-              style={{ WebkitOverflowScrolling: 'touch' }}
-            >
-              {/* Next Best Lead */}
+          <div className="flex flex-col gap-2 min-w-0 flex-1">
+            {/* Row 1: Today chip + Tools (keep clean and always visible) */}
+            <div className="flex items-center justify-between gap-2 min-w-0">
+              <div className="flex-1 min-w-0 flex items-center justify-center">
+                <div className="px-3 py-1 bg-[#F7FAFC] border border-[#E2E8F0] text-[#718096] rounded-full font-semibold text-xs">
+                  🚪 {todaysKnocks} Today
+                </div>
+              </div>
+              <button
+                onClick={() => router.push('/tools')}
+                className="p-2 text-[#718096] hover:text-[#FF5F5A] active:scale-95 transition-all flex-shrink-0"
+                title="Tools"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Row 2: Nearest + Filters */}
+            <div className="flex items-center justify-between gap-2 min-w-0">
               <button
                 onClick={() => {
-                  if (nextBest) {
-                    handleLeadSelect(nextBest);
-                  }
+                  if (nextBest) handleLeadSelect(nextBest);
                 }}
                 disabled={!nextBest}
-                className={`min-w-[120px] max-w-[140px] px-3 py-1 rounded-full font-semibold transition-all ${
+                className={`flex-1 min-w-0 px-3 py-2 rounded-full font-semibold transition-all ${
                   nextBest
                     ? 'bg-gradient-to-r from-[#FF5F5A] to-[#FF7A6B] text-white shadow-sm active:scale-95'
                     : 'bg-gray-100 text-gray-400'
                 }`}
               >
                 {nextBest ? (
-                  <div className="flex flex-col leading-tight text-left whitespace-nowrap">
-                    <span className="text-[10px] uppercase tracking-wide opacity-80">Nearest 3⭐</span>
-                    <span className="text-sm">
-                      {nextBestIsFar ? 'Far Away' : nextBestDistance}
+                  <div className="flex items-center justify-between gap-2 min-w-0">
+                    <span className="text-[11px] uppercase tracking-wide opacity-90 flex-shrink-0">3⭐ Nearest</span>
+                    <span className="text-sm truncate">
+                      {nextBestIsFar ? 'Far' : nextBestDistance}
                       {nextBestDirection ? ` ${nextBestDirection}` : ''}
                     </span>
                   </div>
                 ) : (
-                  <span className="text-sm">3⭐ Not Found</span>
+                  <span className="text-sm">No 3⭐ Nearby</span>
                 )}
               </button>
-              
-              {/* Today's Knocks */}
-              <div className="px-3 py-1 bg-[#F7FAFC] border border-[#E2E8F0] text-[#718096] rounded-full font-semibold">
-                🚪 {todaysKnocks} Today
-              </div>
-              
-              {/* Weather Widget - Click to show hourly */}
-              {weather && (
-                <button 
-                  onClick={() => setShowWeatherPopup(true)}
-                  className="px-3 py-1 bg-blue-50 border border-blue-200 text-blue-800 rounded-full font-semibold text-xs flex items-center gap-1 hover:bg-blue-100"
-                >
-                  <span>{weather.icon}</span>
-                  <span>{Math.round(weather.temperature)}°F</span>
-                </button>
-              )}
-            </div>
 
-            {/* Action Icons (always visible) */}
-            <div className="flex items-center flex-shrink-0">
-            {/* Filter Toggle */}
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className={`p-2 transition-all ${showFilters ? 'text-[#FF5F5A]' : 'text-[#718096] hover:text-[#FF5F5A]'} active:scale-95`}
-            >
-              <Filter className="w-5 h-5" />
-            </button>
-
-
-            {/* Tools Button */}
-            <button
-              onClick={() => router.push('/tools')}
-              className="p-2 text-[#718096] hover:text-[#FF5F5A] active:scale-95 transition-all"
-            >
-              <Settings className="w-5 h-5" />
-            </button>
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`p-2 rounded-full border border-[#E2E8F0] bg-white transition-all flex-shrink-0 ${
+                  showFilters ? 'text-[#FF5F5A]' : 'text-[#718096] hover:text-[#FF5F5A]'
+                } active:scale-95`}
+                title="Filters"
+              >
+                <Filter className="w-5 h-5" />
+              </button>
             </div>
           </div>
         </div>
