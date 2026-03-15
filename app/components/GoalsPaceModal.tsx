@@ -5,7 +5,15 @@ import { X, Target, Calendar, Clock } from 'lucide-react';
 import { getMonthId, getMyGoalViaApiAsync, getMyMonthlyKnocksAsync, countWorkdaysElapsedAndRemaining, countWorkdaysInMonth } from '@/app/utils/goals';
 import { User } from '@/app/types';
 
-export default function GoalsPaceModal({ currentUser }: { currentUser: User }) {
+export default function GoalsPaceModal({
+  currentUser,
+  openOverride,
+  onCloseOverride,
+}: {
+  currentUser: User;
+  openOverride?: boolean;
+  onCloseOverride?: () => void;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [goal, setGoal] = useState<any>(null);
   const [knocks, setKnocks] = useState<number>(0);
@@ -47,7 +55,8 @@ export default function GoalsPaceModal({ currentUser }: { currentUser: User }) {
     };
   }, [currentUser, monthId]);
 
-  if (loading || !goal || !isOpen) return null;
+  const shouldShow = openOverride ?? isOpen;
+  if (loading || !goal || !shouldShow) return null;
 
   const G = Number(goal.doorKnocksGoal || 0);
   const K = knocks;
@@ -65,6 +74,7 @@ export default function GoalsPaceModal({ currentUser }: { currentUser: User }) {
     const lsKey = `raydar_goal_popup_seen_${currentUser.id}_${yyyy}-${mm}-${dd}`;
     try { localStorage.setItem(lsKey, '1'); } catch {}
     setIsOpen(false);
+    onCloseOverride?.();
   };
 
   return (
