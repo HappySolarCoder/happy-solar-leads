@@ -67,6 +67,30 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     setIsSending(true);
 
     try {
+      // 0. Validate required fields before doing anything
+      const missing: string[] = [];
+      const isBlank = (v: any) => !String(v ?? '').trim();
+
+      if (isBlank(formData.name)) missing.push('Name');
+      if (isBlank(formData.address)) missing.push('Street Address');
+      if (isBlank(formData.city)) missing.push('City');
+      if (isBlank(formData.state)) missing.push('State');
+      if (isBlank(formData.zip)) missing.push('Zip');
+      // Strongly recommended: phone is required for scheduling manager to call
+      if (isBlank(formData.phone)) missing.push('Phone');
+
+      if (missing.length > 0) {
+        alert(`Missing required fields:\n\n- ${missing.join('\n- ')}\n\nPlease fill these out before sending to the Scheduling Manager.`);
+        return;
+      }
+
+      // Basic format sanity checks (non-blocking beyond alerts)
+      const zipClean = String(formData.zip).trim();
+      if (!/^\d{5}(-\d{4})?$/.test(zipClean)) {
+        alert('Zip code looks invalid. Please enter a 5-digit ZIP (or ZIP+4) before sending.');
+        return;
+      }
+
       // 1. Get current user (fallback if state not loaded yet)
       const user = currentUser || await getCurrentUserAsync();
       
