@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowLeft, Calendar, BarChart3, Users, Zap, TrendingUp, MapPin, Navigation, Shield, Clock, ChevronDown, ChevronRight, Sparkles, Bug } from 'lucide-react';
+import { ArrowLeft, Calendar, BarChart3, Users, Zap, TrendingUp, MapPin, Navigation, Shield, Clock, ChevronDown, ChevronRight, Sparkles, Bug, List, FileText } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 interface ReleaseNote {
@@ -17,6 +17,76 @@ interface ReleaseNote {
 }
 
 const releaseNotes: ReleaseNote[] = [
+  // Mar 15, 2026 - Go Backs overhaul + fixes
+  {
+    id: 'go-backs-mobile-upcoming',
+    date: '2026-03-15',
+    title: 'Go Backs (Mobile): Upcoming Agenda View',
+    description: 'Go Backs is now mobile-first: default Upcoming list view for fast one-handed scanning.',
+    icon: List,
+    category: 'improvement',
+    permissions: 'setters',
+    howTo: [
+      'Tools → Go Backs',
+      'Mobile default is Upcoming (agenda list)',
+      'Tap a lead to open Lead Detail',
+    ],
+  },
+  {
+    id: 'go-backs-mobile-calendar-dots',
+    date: '2026-03-15',
+    title: 'Go Backs (Mobile): Clean Calendar + Day Sheet',
+    description: 'Calendar cells now show day number + dots/count only (no clipped text). Tap a day to open a bottom sheet list.',
+    icon: Calendar,
+    category: 'improvement',
+    permissions: 'setters',
+    howTo: [
+      'Tools → Go Backs → Calendar',
+      'Dots indicate go-backs scheduled for that day',
+      'Tap a day to see the list in a bottom sheet',
+    ],
+  },
+  {
+    id: 'go-backs-mobile-layout-polish',
+    date: '2026-03-15',
+    title: 'Go Backs (Mobile): Layout Polish',
+    description: 'Header and layout no longer require zooming on mobile; full-width spacing and consistent card rhythm.',
+    icon: Sparkles,
+    category: 'improvement',
+    permissions: 'setters',
+    howTo: [
+      'Tools → Go Backs on your phone',
+      'Header controls are fully visible without zooming',
+      'Notes snippets are clamped to one line for faster scanning',
+    ],
+  },
+  {
+    id: 'go-backs-timezone-fix',
+    date: '2026-03-15',
+    title: 'Go Backs: Timezone Date Fix',
+    description: 'Fixed an issue where selected go-back dates could display one day earlier in Phoenix and other timezones.',
+    icon: Bug,
+    category: 'fix',
+    permissions: 'all',
+    howTo: [
+      'Schedule a Go Back (e.g. 3/18)',
+      'It will display as the same date everywhere',
+    ],
+  },
+  {
+    id: 'go-backs-notes-in-lead-detail',
+    date: '2026-03-15',
+    title: 'Go Backs: Notes Visible in Lead Detail',
+    description: 'When you tap a go-back item, Lead Detail now shows the scheduled date/time and full go-back notes.',
+    icon: FileText,
+    category: 'improvement',
+    permissions: 'all',
+    howTo: [
+      'Tools → Go Backs → tap an entry',
+      'In Lead Detail, see Go Back scheduled date/time + notes',
+    ],
+  },
+
   // Feb 25, 2026 - TODAY
   {
     id: 'smart-go-backs',
