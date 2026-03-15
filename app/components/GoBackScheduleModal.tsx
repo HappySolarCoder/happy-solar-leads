@@ -47,8 +47,14 @@ export default function GoBackScheduleModal({
       return;
     }
 
+    // IMPORTANT: selectedDate is an <input type="date"> value (YYYY-MM-DD).
+    // `new Date("YYYY-MM-DD")` is parsed as UTC midnight, which can shift to the prior day
+    // in US timezones (e.g. Phoenix). Build a *local* date instead.
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const localDate = new Date(y, (m || 1) - 1, d || 1);
+
     const scheduleData: GoBackScheduleData = {
-      date: new Date(selectedDate),
+      date: localDate,
       time: selectedTime || undefined,
       notes: notes || undefined,
     };
