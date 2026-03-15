@@ -18,7 +18,9 @@ export default function GoalsPaceModal({ currentUser }: { currentUser: User }) {
     async function load() {
       try {
         setLoading(true);
-        const g = await getMyGoalAsync(monthId);
+        // IMPORTANT: our app-level user id is `currentUser.id` and may differ from Firebase Auth uid.
+        // Goals are stored under docId `${user.id}_${yyyyMM}`.
+        const g = await getMyGoalAsync(monthId, currentUser.id);
         if (!mounted) return;
         if (!g || !g.doorKnocksGoal) {
           setGoal(null);
