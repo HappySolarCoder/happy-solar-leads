@@ -42,6 +42,7 @@ export default function KnockingPage() {
   const [dispositionFilter, setDispositionFilter] = useState<string>('all');
   const [setterFilter, setSetterFilter] = useState<string>('all');
   const [freshPinsOnly, setFreshPinsOnly] = useState<boolean>(false);
+  const [leadTypeFilter, setLeadTypeFilter] = useState<'all' | 'prospects' | 'customers'>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [dispositions, setDispositions] = useState<any[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -290,41 +291,59 @@ export default function KnockingPage() {
     setShowRoute(true);
   }, [roleFilteredLeads, gpsPosition, calculateOptimizedRoute]);
 
-  // Exclude customer pins and poor solar leads
-  let goodLeads = roleFilteredLeads.filter(l => (l.leadType !== 'customer' && l.leadType !== 'sale') && l.solarCategory !== 'poor');
-  
-  // Filter by setter if selected (Admin/Manager only)
+  const isCustomerLead = useCallback((l: Lead) => {
+    return l.leadType === 'customer' || l.leadType === 'sale' || l.status === 'customer';
+  }, []);
+
+  // Lead type filter (mobile): All / Prospects / Customers
+  // Guardrail: this applies AFTER role/permission filtering (roleFilteredLeads)
+  const leadTypeFilteredLeads = useMemo(() => {
+    if (leadTypeFilter === 'customers') return roleFilteredLeads.filter(isCustomerLead);
+    if (leadTypeFilter === 'prospects') return roleFilteredLeads.filter(l => !isCustomerLead(l));
+    return roleFilteredLeads;
+  }, [roleFilteredLeads, leadTypeFilter, isCustomerLead]);
+
+  // Prospects baseline (exclude poor solar leads). Customers are unaffected by solar filters.
+  let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l) && l.solarCategory !== 'poor');
+  const customers = leadTypeFilteredLeads.filter(isCustomerLead);
+
+  // Filter by setter if selected (Admin/Manager only) — prospects only
   if (setterFilter !== 'all') {
-    goodLeads = goodLeads.filter(l => l.claimedBy === setterFilter);
-  }
-  
-  // Filter by solar category if selected
-  if (solarFilter.length > 0) {
-    goodLeads = goodLeads.filter(l => solarFilter.includes(l.solarCategory || ''));
-  }
-  
-  // Filter by disposition if selected
-  if (dispositionFilter !== 'all') {
-    goodLeads = goodLeads.filter(l => l.disposition === dispositionFilter);
+    prospects = prospects.filter(l => l.claimedBy === setterFilter);
   }
 
-  // Fresh Pins: only show leads NOT dispositioned in the last 30 days
+  // Filter by solar category if selected — prospects only
+  if (solarFilter.length > 0) {
+    prospects = prospects.filter(l => solarFilter.includes(l.solarCategory || ''));
+  }
+
+  // Filter by disposition if selected — prospects only
+  if (dispositionFilter !== 'all') {
+    prospects = prospects.filter(l => l.disposition === dispositionFilter);
+  }
+
+  // Fresh Pins: only show leads NOT dispositioned in the last 30 days — prospects only
   if (freshPinsOnly) {
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    goodLeads = goodLeads.filter(l => {
+    prospects = prospects.filter(l => {
       const dt = l.dispositionedAt ? new Date(l.dispositionedAt).getTime() : null;
       return !dt || dt < cutoff;
     });
   }
 
+  const filteredLeads = leadTypeFilter === 'customers'
+    ? customers
+    : leadTypeFilter === 'prospects'
+      ? prospects
+      : [...customers, ...prospects];
+
   // Calculate distances and sort by nearest if GPS available
-  const leadsWithDistance = goodLeads.map(lead => ({
+  const leadsWithDistance = filteredLeads.map(lead => ({
     ...lead,
     distance: gpsPosition && lead.lat && lead.lng
       ? calculateDistance(gpsPosition.lat, gpsPosition.lng, lead.lat, lead.lng)
       : undefined,
   })).sort((a, b) => {
-    // Sort by distance (nearest first), then by status
     if (a.distance !== undefined && b.distance !== undefined) {
       return a.distance - b.distance;
     }
@@ -663,6 +682,36 @@ export default function KnockingPage() {
         {/* Filters Panel */}
         {showFilters && (
           <div className="px-4 py-3 border-t border-[#E2E8F0] bg-[#F7FAFC]">
+            {/* Lead Type Filter (mobile) */}
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-base">🙂</span>
+                <label className="text-xs font-semibold text-[#2D3748]">Lead Type</label>
+              </div>
+              <div className="inline-flex w-full rounded-xl bg-white border border-[#E2E8F0] p-1">
+                {(
+                  [
+                    { key: 'all' as const, label: 'All' },
+                    { key: 'prospects' as const, label: 'Prospects' },
+                    { key: 'customers' as const, label: 'Customers' },
+                  ]
+                ).map(opt => (
+                  <button
+                    key={opt.key}
+                    onClick={() => setLeadTypeFilter(opt.key)}
+                    className={`flex-1 h-9 rounded-lg text-xs font-semibold transition-colors ${
+                      leadTypeFilter === opt.key
+                        ? 'bg-[#FF5F5A] text-white'
+                        : 'bg-transparent text-[#2D3748] hover:bg-gray-50'
+                    }`}
+                    type="button"
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Setter Filter - Admin/Manager only */}
             {currentUser && canSeeAllLeads(currentUser.role) && (
               <div className="mb-3">
