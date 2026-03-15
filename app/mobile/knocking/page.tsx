@@ -457,10 +457,23 @@ export default function KnockingPage() {
 
     // Normalize intensity to 0..1 for opacity
     const max = Math.max(...out.map(o => o.intensity));
-    return out
+    const normalized = out
       .sort((a, b) => b.intensity - a.intensity)
-      .slice(0, 35)
       .map(o => ({ ...o, intensity: max ? o.intensity / max : 0 }));
+
+    // Top-N distinct hotspots (reduce overlap)
+    const TOP_N = 8;
+    const MIN_SEPARATION_MILES = 1.2; // keep neighborhoods distinct
+    const picked: { lat: number; lng: number; intensity: number; count: number }[] = [];
+
+    for (const c of normalized) {
+      if (picked.length >= TOP_N) break;
+      const tooClose = picked.some(p => calculateDistance(p.lat, p.lng, c.lat, c.lng) < MIN_SEPARATION_MILES);
+      if (tooClose) continue;
+      picked.push(c);
+    }
+
+    return picked;
   }, [showHeat, leads, currentUser]);
 
   // Stats: Today's Knocks (must match canonical rule from /setter-stats)
