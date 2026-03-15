@@ -420,36 +420,34 @@ export default function KnockingPage() {
 
       {/* Mobile Header - Clean App Bar (icon-first) */}
       <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200 px-4 flex-shrink-0">
-        <div className="h-14 flex items-center justify-between">
+        <div className="h-14 flex items-center gap-2">
           {/* Back */}
           <button
             onClick={() => router.push('/mobile')}
-            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all"
+            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all flex-none"
             title="Back"
           >
             <ArrowLeft className="w-5 h-5 text-[#718096]" />
           </button>
 
-          <div className="text-sm font-semibold text-[#2D3748]">Knocking</div>
+          {/* Search pill (button) */}
+          <button
+            onClick={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+            className="h-11 flex-1 min-w-0 rounded-full bg-gray-100 border border-gray-200 px-4 inline-flex items-center gap-2 text-left hover:bg-gray-200/60 transition-colors"
+            title="Search address"
+          >
+            <Search className="w-4 h-4 text-gray-500 flex-none" />
+            <span className="text-sm text-gray-500 truncate">Search address…</span>
+          </button>
 
-          <div className="flex items-center gap-1">
-            {/* Search */}
-            <button
-              onClick={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
-              className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all"
-              title="Search"
-            >
-              <Search className="w-5 h-5 text-[#718096]" />
-            </button>
-            {/* Tools */}
-            <button
-              onClick={() => router.push('/tools')}
-              className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all"
-              title="Tools"
-            >
-              <Settings className="w-5 h-5 text-[#718096]" />
-            </button>
-          </div>
+          {/* Tools */}
+          <button
+            onClick={() => router.push('/tools')}
+            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all flex-none"
+            title="Tools"
+          >
+            <Settings className="w-5 h-5 text-[#718096]" />
+          </button>
         </div>
 
         {/* Row 2: Chips (icon + number only) */}
