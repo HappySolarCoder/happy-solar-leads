@@ -396,9 +396,9 @@ export default function KnockingPage() {
             <ArrowLeft className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-4">
-            {/* Field-Optimized Stats */}
-            <div className="flex items-center gap-2 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Field-Optimized Stats (scrollable on small screens so action icons never get pushed off) */}
+            <div className="flex items-center gap-2 text-xs overflow-x-auto whitespace-nowrap min-w-0 flex-1 pr-2" style={{ WebkitOverflowScrolling: 'touch' }}>
               {/* Next Best Lead */}
               <button
                 onClick={() => {
@@ -443,6 +443,8 @@ export default function KnockingPage() {
               )}
             </div>
 
+            {/* Action Icons (always visible) */}
+            <div className="flex items-center flex-shrink-0">
             {/* Filter Toggle */}
             <button
               onClick={() => setShowFilters(!showFilters)}
@@ -467,6 +469,7 @@ export default function KnockingPage() {
             >
               <Settings className="w-5 h-5" />
             </button>
+            </div>
           </div>
         </div>
 
