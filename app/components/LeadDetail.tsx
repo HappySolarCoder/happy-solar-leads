@@ -232,9 +232,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           status: newStatus,
           dispositionedAt: new Date(),
           // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
-          claimedBy: lead.claimedBy ?? null,
-          assignedTo: lead.assignedTo ?? null,
-          territoryId: (lead as any).territoryId ?? null,
+          claimedBy: lead.claimedBy ?? undefined,
+          assignedTo: lead.assignedTo ?? undefined,
           dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
           ...gpsData,
         };
