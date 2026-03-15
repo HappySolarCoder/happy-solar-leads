@@ -43,6 +43,8 @@ interface LeadMapProps {
   onTerritoryDelete?: (territoryId: string) => void; // Callback when territory deleted
   onLeadAdded?: () => void; // Callback when a new lead is added via map pin drop
   searchLocation?: { lat: number; lng: number } | null; // For address search marker
+  heatCells?: { lat: number; lng: number; intensity: number; count: number }[]; // Optional heat overlay
+  heatCellRadiusMeters?: number;
 }
 
 export default function LeadMap({ 
@@ -66,6 +68,8 @@ export default function LeadMap({
   onTerritoryDelete,
   onLeadAdded,
   searchLocation,
+  heatCells = [],
+  heatCellRadiusMeters = 180,
 }: LeadMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -88,6 +92,7 @@ export default function LeadMap({
   const [dropPinAddress, setDropPinAddress] = useState({ address: '', city: '', state: '', zip: '' });
   const tempPinRef = useRef<L.Marker | null>(null);
   const searchMarkerRef = useRef<L.Marker | null>(null);
+  const heatLayerRef = useRef<L.LayerGroup | null>(null);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite'); // Default to satellite
   const baseTileLayerRef = useRef<L.TileLayer | null>(null);
   const labelsTileLayerRef = useRef<L.TileLayer | null>(null);
@@ -116,6 +121,29 @@ export default function LeadMap({
   useEffect(() => {
     hasFitRouteBoundsRef.current = false;
   }, [routeWaypoints]);
+
+  // Heat overlay
+  useEffect(() => {
+    if (!mapInstanceRef.current || !isClient || !heatLayerRef.current) return;
+
+    const layer = heatLayerRef.current;
+    layer.clearLayers();
+
+    if (!heatCells || heatCells.length === 0) return;
+
+    for (const cell of heatCells) {
+      const opacity = Math.max(0.08, Math.min(0.45, cell.intensity));
+      const circle = L.circle([cell.lat, cell.lng], {
+        radius: heatCellRadiusMeters,
+        color: '#FF5F5A',
+        weight: 0,
+        fillColor: '#FF5F5A',
+        fillOpacity: opacity,
+        interactive: false,
+      });
+      circle.addTo(layer);
+    }
+  }, [heatCells, heatCellRadiusMeters, isClient]);
 
   // Reset lead bounds fitting when leads change significantly
   useEffect(() => {
@@ -193,6 +221,9 @@ export default function LeadMap({
       maxZoom: 19,
       pane: 'shadowPane', // Put labels above satellite but below markers
     }).addTo(map);
+
+    // Heat layer (optional overlays)
+    heatLayerRef.current = L.layerGroup().addTo(map);
 
     // Create marker cluster group with optimized clustering for performance
     markersLayerRef.current = L.markerClusterGroup({

@@ -53,6 +53,7 @@ export default function KnockingPage() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [showSearchSheet, setShowSearchSheet] = useState(false);
   const [showGoalsModal, setShowGoalsModal] = useState(false);
+  const [showHeat, setShowHeat] = useState(false);
   
   // Route optimization state
   const [showRoute, setShowRoute] = useState(false);
@@ -367,6 +368,84 @@ export default function KnockingPage() {
     : null;
   const nextBestIsFar = (nextBestDistanceRaw || 0) > 50;
 
+  // Heat Map v1 (client-side grid scoring)
+  const heatCells = useMemo(() => {
+    if (!showHeat || !currentUser) return [] as { lat: number; lng: number; intensity: number; count: number }[];
+
+    const now = new Date();
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - 30);
+
+    const weight = (cat?: string) => {
+      const c = String(cat || '').toLowerCase();
+      if (c === 'great') return 1.0;
+      if (c === 'good') return 0.7;
+      if (c === 'solid') return 0.4;
+      return 0;
+    };
+
+    // Eligible leads (solar + fresh)
+    const eligible = leads
+      .filter((l: any) => l.lat && l.lng)
+      .filter((l: any) => weight(l.solarCategory) > 0)
+      .filter((l: any) => !l.dispositionedAt || new Date(l.dispositionedAt) < cutoff);
+
+    if (eligible.length === 0) return [];
+
+    const cellSizeMiles = 0.25;
+    const latStep = cellSizeMiles / 69; // deg
+    const lngStep = cellSizeMiles / 69;
+
+    const cellMap = new Map<string, { latIdx: number; lngIdx: number; count: number; weightSum: number }>();
+
+    for (const l of eligible as any[]) {
+      const lat = Number(l.lat);
+      const lng = Number(l.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      const latIdx = Math.floor(lat / latStep);
+      const lngIdx = Math.floor(lng / lngStep);
+      const key = `${latIdx}:${lngIdx}`;
+      const entry = cellMap.get(key) || { latIdx, lngIdx, count: 0, weightSum: 0 };
+      entry.count += 1;
+      entry.weightSum += weight(l.solarCategory);
+      cellMap.set(key, entry);
+    }
+
+    const radiusCells = Math.ceil(3 / cellSizeMiles);
+    const cells = Array.from(cellMap.values());
+
+    // Compute density via neighboring cells (approx)
+    const out: { lat: number; lng: number; intensity: number; count: number }[] = [];
+    for (const c of cells) {
+      const centerLat = (c.latIdx + 0.5) * latStep;
+      const centerLng = (c.lngIdx + 0.5) * lngStep;
+
+      let within = 0;
+      for (let di = -radiusCells; di <= radiusCells; di++) {
+        for (let dj = -radiusCells; dj <= radiusCells; dj++) {
+          const key = `${c.latIdx + di}:${c.lngIdx + dj}`;
+          const n = cellMap.get(key);
+          if (!n) continue;
+          const nLat = (n.latIdx + 0.5) * latStep;
+          const nLng = (n.lngIdx + 0.5) * lngStep;
+          const dist = calculateDistance(centerLat, centerLng, nLat, nLng);
+          if (dist <= 3) within += n.count;
+        }
+      }
+
+      const avgW = c.weightSum / Math.max(1, c.count);
+      const score = (c.count * 2 + within * 0.25) * avgW;
+      out.push({ lat: centerLat, lng: centerLng, intensity: score, count: c.count });
+    }
+
+    // Normalize intensity to 0..1 for opacity
+    const max = Math.max(...out.map(o => o.intensity));
+    return out
+      .sort((a, b) => b.intensity - a.intensity)
+      .slice(0, 120)
+      .map(o => ({ ...o, intensity: max ? o.intensity / max : 0 }));
+  }, [showHeat, leads, currentUser]);
+
   // Stats: Today's Knocks (must match canonical rule from /setter-stats)
   // Only count dispositions where disposition.countsAsDoorKnock === true.
   const todayStart = new Date();
@@ -485,6 +564,17 @@ export default function KnockingPage() {
             <span className="text-sm font-semibold leading-none truncate max-w-[140px]">
               {nextBest ? (nextBestIsFar ? 'Far' : `${nextBestDistance}${nextBestDirection ? ` ${nextBestDirection}` : ''}`) : '—'}
             </span>
+          </button>
+
+          <button
+            onClick={() => setShowHeat(!showHeat)}
+            className={`h-10 min-h-10 px-3 rounded-full border inline-flex items-center gap-2 leading-none whitespace-nowrap ${
+              showHeat ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-gray-200 text-[#2D3748] bg-white'
+            }`}
+            title="Heat map"
+          >
+            <span className="text-sm leading-none">🔥</span>
+            <span className="text-sm font-semibold leading-none">Heat</span>
           </button>
 
           <button
@@ -828,6 +918,8 @@ export default function KnockingPage() {
             zoom={mapZoom} // Closer zoom for mobile
             onLeadAdded={refreshLeads}
             searchLocation={searchLocation}
+            heatCells={heatCells}
+            heatCellRadiusMeters={220}
           />
           {/* GPS Locate button is now built into LeadMap component */}
         </main>
