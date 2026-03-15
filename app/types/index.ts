@@ -40,8 +40,13 @@ export interface User {
 export type LeadTag = 'solar-data' | 'homeowner' | 'home-data';
 export type PropertyType = 'house' | 'apartment' | 'commercial' | 'unknown';
 
+// Lead type: prospect (default) vs customer (installed sale/customer record)
+// Back-compat: older docs may contain leadType==='sale' (treat as customer).
+export type LeadType = 'prospect' | 'customer' | 'sale';
+
 export interface Lead {
   id: string;
+  leadType?: LeadType; // default: prospect
   name: string;
   address: string;
   city: string;
@@ -65,6 +70,13 @@ export interface Lead {
   tags?: LeadTag[];
   // Property type (from Geocoding API)
   propertyType?: PropertyType;
+
+  // Sales pins (customers) — used when leadType === 'sale'
+  customerFirstName?: string;
+  customerLastName?: string;
+  soldByName?: string; // Sales Rep last name (v1)
+  setByName?: string;  // FMA last name (v1)
+  soldDate?: Date;
   // Solar data (populated when available)
   solarScore?: number;        // 0-100 score
   solarCategory?: 'poor' | 'solid' | 'good' | 'great';
@@ -139,6 +151,11 @@ export interface CSVRow {
   phone?: string;
   email?: string;
   estimatedBill?: number;  // Monthly electric bill estimate
+
+  // Sales pins (upload columns)
+  salesRep?: string; // last name string
+  fma?: string;      // last name string
+  soldDate?: string; // raw date string from CSV
 }
 
 // DEPRECATED: Use getDispositionsAsync() from utils/dispositions instead

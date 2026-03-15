@@ -39,6 +39,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
   const [failedAddresses, setFailedAddresses] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<LeadTag[]>([]);
   const [excludeApartments, setExcludeApartments] = useState(true); // Filter out apartments by default
+  const [leadType, setLeadType] = useState<'prospect' | 'customer'>('prospect');
   const [isAdmin, setIsAdmin] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -91,7 +92,8 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
     if (rows.length === 0) return;
 
     setStep('processing');
-    setProgress({ current: 0, total: rows.length * 2 }); // Geocode + Solar
+    const totalSteps = leadType === 'customer' ? rows.length : rows.length * 2;
+    setProgress({ current: 0, total: totalSteps }); // Geocode (+ Solar for prospects)
     setError(null);
 
     try {
@@ -100,7 +102,8 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       // Step 1: Geocode all addresses
       const geocodeResults = await geocodeBatch(rows, (current, total) => {
         logToFile('INFO', 'UploadModal', 'Geocode progress', { current, total });
-        setProgress({ current, total: rows.length * 2 });
+        const totalSteps = leadType === 'customer' ? rows.length : rows.length * 2;
+        setProgress({ current, total: totalSteps });
       });
 
       // Filter successful geocodes
@@ -163,6 +166,45 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
         }
         
         try {
+          // Customer pins: skip solar enrichment entirely
+          if (leadType === 'customer') {
+            const [firstName, ...rest] = String(result.row.name || '').trim().split(' ');
+            const lastName = rest.join(' ').trim();
+
+            const soldDateRaw = (result.row as any).soldDate || '';
+            let soldDate: Date | undefined = undefined;
+            if (soldDateRaw) {
+              const dt = new Date(soldDateRaw);
+              if (!isNaN(dt.getTime())) soldDate = dt;
+            }
+
+            const customerLead: Lead = {
+              id: existingLead?.id || `customer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              leadType: 'customer',
+              name: String(result.row.name || '').trim(),
+              customerFirstName: firstName || undefined,
+              customerLastName: lastName || undefined,
+              soldByName: (result.row as any).salesRep || undefined,
+              setByName: (result.row as any).fma || undefined,
+              soldDate,
+              phone: result.row.phone || undefined,
+              address: result.row.address,
+              city: result.row.city,
+              state: result.row.state,
+              zip: result.row.zip,
+              lat: result.lat,
+              lng: result.lng,
+              tags: [],
+              status: 'customer',
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            } as any;
+
+            newLeads.push(customerLead as any);
+
+            continue;
+          }
+
           // Fetch solar data
           const solarResp = await fetch('/api/solar', {
             method: 'POST',
@@ -292,7 +334,9 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
         }
         
         // Update progress
-        setProgress({ current: rows.length + i + 1, total: rows.length * 2 });
+        if (leadType !== 'customer') {
+          setProgress({ current: rows.length + i + 1, total: rows.length * 2 });
+        }
       }
 
       // Count poor leads (not added)
@@ -311,9 +355,10 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       await batchSaveLeadsAsync(newLeads, (saved, total) => {
         // Update progress during save
         const percentageSaved = Math.round((saved / total) * 100);
+        const base = leadType === 'customer' ? rows.length : rows.length * 2;
         setProgress({ 
-          current: rows.length * 2 + saved, 
-          total: rows.length * 2 + total 
+          current: base + saved, 
+          total: base + total 
         });
         console.log(`[UploadModal] Saved ${saved}/${total} leads (${percentageSaved}%)`);
       });
@@ -325,7 +370,8 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
         console.log('[UploadModal] Territories loaded:', territories.length, territories.map(t => ({ id: t.id, userId: t.userId, userName: t.userName })));
         
         if (territories.length > 0) {
-          const assignments = autoAssignLeadsByTerritories(newLeads, territories);
+          const assignableLeads = newLeads.filter(l => (l as any).leadType !== 'customer' && (l as any).leadType !== 'sale');
+          const assignments = autoAssignLeadsByTerritories(assignableLeads as any, territories);
           console.log('[UploadModal] Territory assignments found:', assignments.length, assignments.map(a => ({ leadId: a.lead.id, territoryUserId: a.territory.userId })));
           
           if (assignments.length > 0) {
@@ -524,6 +570,37 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
                   </div>
                 </div>
               )}
+
+              {/* Lead Type */}
+              <div className="mt-4">
+                <div className="text-sm font-semibold text-gray-900 mb-2">Lead Type</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLeadType('prospect')}
+                    className={`p-3 rounded-xl border-2 text-left transition-all ${
+                      leadType === 'prospect'
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 bg-white hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="font-semibold text-sm text-gray-900">🎯 Prospect</div>
+                    <div className="text-xs text-gray-600 mt-0.5">Normal lead-gen pins (solar scoring + dispositions)</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeadType('customer')}
+                    className={`p-3 rounded-xl border-2 text-left transition-all ${
+                      leadType === 'customer'
+                        ? 'border-green-600 bg-green-50'
+                        : 'border-gray-200 bg-white hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="font-semibold text-sm text-gray-900">🙂 Customer</div>
+                    <div className="text-xs text-gray-600 mt-0.5">Customer pins (no solar API, no dispositions)</div>
+                  </button>
+                </div>
+              </div>
 
               {/* Apartment Filter */}
               <div className="mt-4">

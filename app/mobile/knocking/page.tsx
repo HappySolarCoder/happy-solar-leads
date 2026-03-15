@@ -269,7 +269,7 @@ export default function KnockingPage() {
   // Role-based visibility: setters/closers only see their claimed OR territory-assigned leads
   const roleFilteredLeads = currentUser
     ? (currentUser.role === 'setter' || currentUser.role === 'closer')
-      ? leads.filter(l => l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
+      ? leads.filter(l => (l.leadType === 'customer' || l.leadType === 'sale') || l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
       : leads
     : [];
 
@@ -290,8 +290,8 @@ export default function KnockingPage() {
     setShowRoute(true);
   }, [roleFilteredLeads, gpsPosition, calculateOptimizedRoute]);
 
-  // Exclude poor solar leads
-  let goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor');
+  // Exclude customer pins and poor solar leads
+  let goodLeads = roleFilteredLeads.filter(l => (l.leadType !== 'customer' && l.leadType !== 'sale') && l.solarCategory !== 'poor');
   
   // Filter by setter if selected (Admin/Manager only)
   if (setterFilter !== 'all') {
@@ -920,7 +920,7 @@ export default function KnockingPage() {
       {viewMode === 'map' && (
         <main className="flex-1 relative overflow-hidden">
           <LeadMap
-            leads={leadsWithDistance}
+            leads={[...leadsWithDistance, ...leads.filter(l => l.leadType === 'customer' || l.leadType === 'sale')]}
             currentUser={currentUser}
             users={ensureUserColors(users)}
             onLeadClick={handleLeadSelect}

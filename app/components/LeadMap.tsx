@@ -1490,6 +1490,10 @@ function createCustomIcon(
   zoom: number = 12,
   tags?: string[]
 ): L.DivIcon {
+  // Customer pins (installed sales/customers)
+  const leadType = (lead.leadType === 'sale' ? 'customer' : lead.leadType) || 'prospect';
+  const isCustomerPin = leadType === 'customer';
+
   // Check if this is a manually-added lead (red pins)
   const isManuallyAdded = lead.source === 'manually-added';
   
@@ -1524,6 +1528,17 @@ function createCustomIcon(
   
   // For simple dots (zoomed out), use circles instead of teardrops
   const isSimpleDot = zoom < 14;
+
+  // Customer pins: always smiley marker, smaller + non-disposition
+  if (isCustomerPin) {
+    const customerSize = Math.max(10, Math.round(size * 0.75));
+    const html = `
+      <div style="width:${customerSize}px;height:${customerSize}px;background:white;border:2px solid #10b981;border-radius:9999px;box-shadow:0 3px 6px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;">
+        <span style="font-size:${Math.round(customerSize * 0.55)}px;line-height:1;">🙂</span>
+      </div>
+    `;
+    return L.divIcon({ html, className: 'custom-marker', iconSize: [customerSize, customerSize], iconAnchor: [customerSize / 2, customerSize / 2], popupAnchor: [0, -customerSize / 2] });
+  }
   
   const solarColors: Record<string, string> = {
     great: '#10b981',
@@ -1621,6 +1636,26 @@ function createCustomIcon(
 }
 
 function createPopupContent(lead: Lead): string {
+  const leadType = (lead.leadType === 'sale' ? 'customer' : lead.leadType) || 'prospect';
+  if (leadType === 'customer') {
+    const name = (lead.customerFirstName || lead.customerLastName)
+      ? `${lead.customerFirstName || ''} ${lead.customerLastName || ''}`.trim()
+      : (lead.name || 'Customer');
+
+    return `
+      <div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
+        <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:#1f2937;">🙂 ${name}</h3>
+        <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${lead.address}</p>
+        <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${lead.city}, ${lead.state} ${lead.zip || ''}</p>
+        <div style="font-size:12px;color:#4b5563;">
+          ${lead.soldByName ? `<div><strong>Sales Rep:</strong> ${lead.soldByName}</div>` : ''}
+          ${lead.setByName ? `<div><strong>FMA:</strong> ${lead.setByName}</div>` : ''}
+        </div>
+        ${lead.phone ? `<p style="margin:8px 0 0 0;font-size:13px;color:#4b5563;">📞 ${lead.phone}</p>` : ''}
+      </div>
+    `;
+  }
+
   const statusColor = STATUS_COLORS[lead.status];
   const statusLabel = STATUS_LABELS[lead.status];
   
