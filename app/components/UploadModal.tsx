@@ -179,6 +179,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             }
 
             const customerLead: Lead = {
+              // Override: if a prospect already exists at this address, convert it to customer (reuse id)
               id: existingLead?.id || `customer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
               leadType: 'customer',
               name: String(result.row.name || '').trim(),
@@ -196,7 +197,15 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               lng: result.lng,
               tags: [],
               status: 'customer',
-              createdAt: new Date(),
+              // Clear prospect-only fields (ensures it no longer behaves like a prospect)
+              solarCategory: undefined as any,
+              shading: undefined as any,
+              disposition: undefined as any,
+              dispositionedAt: undefined as any,
+              goBackScheduledDate: undefined as any,
+              goBackScheduledTime: undefined as any,
+              goBackNotes: undefined as any,
+              createdAt: existingLead?.createdAt || new Date(),
               updatedAt: new Date(),
             } as any;
 
