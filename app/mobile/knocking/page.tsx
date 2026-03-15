@@ -50,6 +50,9 @@ export default function KnockingPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchLocation, setSearchLocation] = useState<{ lat: number; lng: number } | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [showSearchSheet, setShowSearchSheet] = useState(false);
+  const [showGoalsModal, setShowGoalsModal] = useState(false);
   
   // Route optimization state
   const [showRoute, setShowRoute] = useState(false);
@@ -413,10 +416,11 @@ export default function KnockingPage() {
   return (
     <LocationPermissionGuard requireLocation={true}>
       <div className="h-screen flex flex-col bg-white overflow-hidden">
-      {currentUser && <GoalsPaceModal currentUser={currentUser} />}
-      {/* Mobile Header - Clean App Bar */}
+      {currentUser && <GoalsPaceModal currentUser={currentUser} openOverride={showGoalsModal} onCloseOverride={() => setShowGoalsModal(false)} />}
+
+      {/* Mobile Header - Clean App Bar (icon-first) */}
       <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200 px-4 flex-shrink-0">
-        <div className="h-14 flex items-center gap-2">
+        <div className="h-14 flex items-center justify-between">
           {/* Back */}
           <button
             onClick={() => router.push('/mobile')}
@@ -426,94 +430,121 @@ export default function KnockingPage() {
             <ArrowLeft className="w-5 h-5 text-[#718096]" />
           </button>
 
-          {/* Search (hero) */}
-          <div className="flex-1 min-w-0 relative">
-            <div className="h-11 rounded-full bg-gray-100 border border-gray-200 flex items-center gap-2 px-4">
-              <Search className="w-4 h-4 text-gray-500 flex-shrink-0" />
-              <input
-                type="text"
-                placeholder="Search address..."
-                value={addressSearch}
-                onChange={(e) => handleAddressSearch(e.target.value)}
-                className="bg-transparent w-full text-sm text-gray-900 placeholder:text-gray-500 outline-none"
-              />
-              {addressSearch && (
-                <button
-                  onClick={() => { setAddressSearch(''); setSearchResults([]); }}
-                  className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-gray-200"
-                  title="Clear"
-                >
-                  <X className="w-4 h-4 text-gray-500" />
-                </button>
-              )}
-            </div>
+          <div className="text-sm font-semibold text-[#2D3748]">Knocking</div>
 
-            {/* Search Results Dropdown */}
-            {searchResults.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 max-h-60 overflow-y-auto">
-                {searchResults.map((result, index) => (
-                  <button
-                    key={index}
-                    onClick={() => handleSelectAddress(result)}
-                    className="w-full px-4 py-3 text-left hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
-                  >
-                    <p className="text-sm font-medium text-gray-900">{result.formatted_address || result.name}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-            {isSearching && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 p-3">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <div className="w-4 h-4 border-2 border-[#FF5F5A] border-t-transparent rounded-full animate-spin" />
-                  Searching...
-                </div>
-              </div>
-            )}
+          <div className="flex items-center gap-1">
+            {/* Search */}
+            <button
+              onClick={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+              className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all"
+              title="Search"
+            >
+              <Search className="w-5 h-5 text-[#718096]" />
+            </button>
+            {/* Tools */}
+            <button
+              onClick={() => router.push('/tools')}
+              className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all"
+              title="Tools"
+            >
+              <Settings className="w-5 h-5 text-[#718096]" />
+            </button>
           </div>
-
-          {/* Tools */}
-          <button
-            onClick={() => router.push('/tools')}
-            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all"
-            title="Tools"
-          >
-            <Settings className="w-5 h-5 text-[#718096]" />
-          </button>
         </div>
 
-        {/* Row 2: Chips */}
-        <div className="pb-3 pt-2 -mt-1 flex items-center gap-2 overflow-x-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="h-9 px-3 rounded-full bg-white border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex items-center whitespace-nowrap">
-            🚪 Today: {todaysKnocks}
+        {/* Row 2: Chips (icon + number only) */}
+        <div className="pb-3 pt-2 -mt-1 flex items-center gap-2 overflow-x-auto pr-1 text-xs font-semibold tabular-nums [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="h-9 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] flex items-center whitespace-nowrap">
+            🚪 {todaysKnocks}
           </div>
 
           {dailyTarget !== null && (
-            <div className="h-9 px-3 rounded-full bg-white border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex items-center whitespace-nowrap">
-              🎯 Target: {dailyTarget}/day
-            </div>
+            <button
+              onClick={() => setShowGoalsModal(true)}
+              className="h-9 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] flex items-center whitespace-nowrap hover:bg-gray-50"
+              title="Goal details"
+            >
+              🎯 {dailyTarget}
+            </button>
           )}
 
           <button
             onClick={() => { if (nextBest) handleLeadSelect(nextBest); }}
             disabled={!nextBest}
-            className="h-9 px-3 rounded-full bg-white border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex items-center whitespace-nowrap disabled:opacity-50"
-            title="Go to nearest 3⭐"
+            className="h-9 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] flex items-center whitespace-nowrap disabled:opacity-50"
+            title="Nearest 3⭐"
           >
-            3⭐ Nearest: {nextBest ? (nextBestIsFar ? 'Far' : `${nextBestDistance}${nextBestDirection ? ` ${nextBestDirection}` : ''}`) : 'None'}
+            ⭐ {nextBest ? (nextBestIsFar ? 'Far' : `${nextBestDistance}${nextBestDirection ? ` ${nextBestDirection}` : ''}`) : '—'}
           </button>
 
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`h-9 px-3 rounded-full border text-xs font-semibold flex items-center whitespace-nowrap ${
-              showFilters ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-[#E2E8F0] text-[#2D3748] bg-white'
+            className={`h-9 w-9 rounded-full border flex items-center justify-center ${
+              showFilters ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-gray-200 text-[#2D3748] bg-white'
             }`}
             title="Filters"
           >
-            <Filter className="w-4 h-4 mr-2" />
-            Filters
+            <Filter className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Search Sheet */}
+        {showSearchSheet && (
+          <div className="fixed inset-0 z-50">
+            <div className="absolute inset-0 bg-black/30" onClick={() => setShowSearchSheet(false)} />
+            <div className="absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl shadow-2xl max-h-[75vh] overflow-hidden">
+              <div className="p-4 border-b border-gray-200 flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-[#2D3748]">Search address</div>
+                <button
+                  onClick={() => setShowSearchSheet(false)}
+                  className="h-10 w-10 rounded-full hover:bg-gray-100 flex items-center justify-center"
+                  title="Close"
+                >
+                  <X className="w-5 h-5 text-[#718096]" />
+                </button>
+              </div>
+              <div className="p-4">
+                <div className="h-11 rounded-full bg-gray-100 border border-gray-200 flex items-center gap-2 px-4">
+                  <Search className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    placeholder="Search address..."
+                    value={addressSearch}
+                    onChange={(e) => handleAddressSearch(e.target.value)}
+                    className="bg-transparent w-full text-sm text-gray-900 placeholder:text-gray-500 outline-none"
+                  />
+                  {addressSearch && (
+                    <button
+                      onClick={() => { setAddressSearch(''); setSearchResults([]); }}
+                      className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-gray-200"
+                      title="Clear"
+                    >
+                      <X className="w-4 h-4 text-gray-500" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="px-4 pb-4 overflow-y-auto max-h-[55vh]">
+                {isSearching && (
+                  <div className="p-3 text-sm text-gray-500 flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-[#FF5F5A] border-t-transparent rounded-full animate-spin" />
+                    Searching...
+                  </div>
+                )}
+                {searchResults.map((result, index) => (
+                  <button
+                    key={index}
+                    onClick={() => { handleSelectAddress(result); setShowSearchSheet(false); }}
+                    className="w-full px-4 py-3 text-left hover:bg-gray-50 border border-gray-200 rounded-xl mb-2"
+                  >
+                    <p className="text-sm font-medium text-gray-900">{result.formatted_address || result.name}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Filters Panel */}
         {showFilters && (
