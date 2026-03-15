@@ -91,9 +91,10 @@ export async function getMyMonthlyKnocksAsync(monthDate: Date, currentUser: User
   return knocks;
 }
 
-export async function getMyGoalAsync(month: string): Promise<UserGoal | null> {
-  if (!auth?.currentUser || !db) return null;
-  const uid = auth.currentUser.uid;
+export async function getMyGoalAsync(month: string, uidOverride?: string): Promise<UserGoal | null> {
+  if (!db) return null;
+  const uid = uidOverride || auth?.currentUser?.uid;
+  if (!uid) return null;
   const docId = getUserGoalDocId(uid, month);
   const snap = await getDoc(doc(db, 'userGoals', docId));
   if (!snap.exists()) return null;
