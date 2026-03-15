@@ -368,7 +368,7 @@ export default function KnockingPage() {
     : null;
   const nextBestIsFar = (nextBestDistanceRaw || 0) > 50;
 
-  // Heat Map v1 (client-side grid scoring)
+  // Heat Map v2 (micro-hotzones)
   const heatCells = useMemo(() => {
     if (!showHeat || !currentUser) return [] as { lat: number; lng: number; intensity: number; count: number }[];
 
@@ -376,27 +376,25 @@ export default function KnockingPage() {
     const cutoff = new Date(now);
     cutoff.setDate(cutoff.getDate() - 30);
 
-    const weight = (cat?: string) => {
+    // Evan: 2⭐+ only (good/great). Solid excluded.
+    const isTwoStarPlus = (cat?: string) => {
       const c = String(cat || '').toLowerCase();
-      if (c === 'great') return 1.0;
-      if (c === 'good') return 0.7;
-      if (c === 'solid') return 0.4;
-      return 0;
+      return c === 'good' || c === 'great';
     };
 
-    // Eligible leads (solar + fresh)
+    // Eligible leads (2⭐+ + fresh)
     const eligible = leads
       .filter((l: any) => l.lat && l.lng)
-      .filter((l: any) => weight(l.solarCategory) > 0)
+      .filter((l: any) => isTwoStarPlus(l.solarCategory))
       .filter((l: any) => !l.dispositionedAt || new Date(l.dispositionedAt) < cutoff);
 
     if (eligible.length === 0) return [];
 
-    const cellSizeMiles = 0.25;
-    const latStep = cellSizeMiles / 69; // deg
+    const cellSizeMiles = 0.2; // slightly smaller than before for more precise blocks
+    const latStep = cellSizeMiles / 69;
     const lngStep = cellSizeMiles / 69;
 
-    const cellMap = new Map<string, { latIdx: number; lngIdx: number; count: number; weightSum: number; greenCount: number }>();
+    const cellMap = new Map<string, { latIdx: number; lngIdx: number; count: number }>();
 
     for (const l of eligible as any[]) {
       const lat = Number(l.lat);
@@ -405,31 +403,24 @@ export default function KnockingPage() {
       const latIdx = Math.floor(lat / latStep);
       const lngIdx = Math.floor(lng / lngStep);
       const key = `${latIdx}:${lngIdx}`;
-      const entry = cellMap.get(key) || { latIdx, lngIdx, count: 0, weightSum: 0, greenCount: 0 };
+      const entry = cellMap.get(key) || { latIdx, lngIdx, count: 0 };
       entry.count += 1;
-      entry.weightSum += weight(l.solarCategory);
-      const cat = String(l.solarCategory || '').toLowerCase();
-      if (cat === 'good' || cat === 'great') entry.greenCount += 1;
       cellMap.set(key, entry);
     }
 
-    const radiusCells = Math.ceil(3 / cellSizeMiles);
+    // Hot zone rule: within 0.5 miles, >= 5 eligible (2⭐+, fresh)
+    const RADIUS_MILES = 0.5;
+    const radiusCells = Math.ceil(RADIUS_MILES / cellSizeMiles);
+    const MIN_WITHIN = 5;
+
+    const out: { lat: number; lng: number; intensity: number; count: number }[] = [];
     const cells = Array.from(cellMap.values());
 
-    // Strictness thresholds (Evan): Hot area requires, within 3mi of cell center:
-    // - >=10 total eligible pins (solid+good+great, fresh)
-    // - >=5 green pins (good+great, fresh)
-    const MIN_ELIGIBLE_WITHIN_3MI = 10;
-    const MIN_GREEN_WITHIN_3MI = 5;
-
-    // Compute density via neighboring cells (approx)
-    const out: { lat: number; lng: number; intensity: number; count: number }[] = [];
     for (const c of cells) {
       const centerLat = (c.latIdx + 0.5) * latStep;
       const centerLng = (c.lngIdx + 0.5) * lngStep;
 
-      let withinEligible = 0;
-      let withinGreen = 0;
+      let within = 0;
       for (let di = -radiusCells; di <= radiusCells; di++) {
         for (let dj = -radiusCells; dj <= radiusCells; dj++) {
           const key = `${c.latIdx + di}:${c.lngIdx + dj}`;
@@ -438,32 +429,26 @@ export default function KnockingPage() {
           const nLat = (n.latIdx + 0.5) * latStep;
           const nLng = (n.lngIdx + 0.5) * lngStep;
           const dist = calculateDistance(centerLat, centerLng, nLat, nLng);
-          if (dist <= 3) {
-            withinEligible += n.count;
-            withinGreen += n.greenCount;
-          }
+          if (dist <= RADIUS_MILES) within += n.count;
         }
       }
 
-      if (withinEligible < MIN_ELIGIBLE_WITHIN_3MI) continue;
-      if (withinGreen < MIN_GREEN_WITHIN_3MI) continue;
+      if (within < MIN_WITHIN) continue;
 
-      const avgW = c.weightSum / Math.max(1, c.count);
-      const score = (c.count * 2 + withinEligible * 0.25) * avgW;
-      out.push({ lat: centerLat, lng: centerLng, intensity: score, count: c.count });
+      // Score emphasizes density in walkable radius
+      out.push({ lat: centerLat, lng: centerLng, intensity: within, count: within });
     }
 
     if (out.length === 0) return [];
 
-    // Normalize intensity to 0..1 for opacity
     const max = Math.max(...out.map(o => o.intensity));
     const normalized = out
       .sort((a, b) => b.intensity - a.intensity)
       .map(o => ({ ...o, intensity: max ? o.intensity / max : 0 }));
 
-    // Top-N distinct hotspots (reduce overlap)
-    const TOP_N = 8;
-    const MIN_SEPARATION_MILES = 1.2; // keep neighborhoods distinct
+    // Cap + enforce separation to avoid carpet
+    const TOP_N = 15;
+    const MIN_SEPARATION_MILES = 0.4;
     const picked: { lat: number; lng: number; intensity: number; count: number }[] = [];
 
     for (const c of normalized) {
@@ -949,7 +934,7 @@ export default function KnockingPage() {
             onLeadAdded={refreshLeads}
             searchLocation={searchLocation}
             heatCells={heatCells}
-            heatCellRadiusMeters={2414}
+            heatCellRadiusMeters={805}
           />
           {/* GPS Locate button is now built into LeadMap component */}
         </main>
