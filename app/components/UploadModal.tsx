@@ -97,7 +97,8 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
     setError(null);
 
     try {
-      logToFile('INFO', 'UploadModal', 'Starting geocode batch', { rowCount: rows.length });
+      console.log(`[UploadModal] mode=client isAdmin=${isAdmin}`);
+      logToFile('INFO', 'UploadModal', 'Starting geocode batch', { rowCount: rows.length, mode: 'client', isAdmin });
 
       // Step 1: Geocode all addresses
       const geocodeResults = await geocodeBatch(rows, (current, total) => {
@@ -455,12 +456,19 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Upload Lead Data
-          </h2>
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Upload Lead Data
+            </h2>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Upload mode: <span className="font-medium">Client (Firestore)</span>
+              {isAdmin ? ' (admin)' : ''}
+            </p>
+          </div>
           <button 
             onClick={handleClose}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+            aria-label="Close"
           >
             <X className="w-5 h-5 text-gray-500" />
           </button>
