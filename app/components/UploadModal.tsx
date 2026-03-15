@@ -118,9 +118,20 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       
       // Create a map for faster lookup (address -> lead)
       const existingLeadsMap = new Map<string, Lead>();
+
+      const normalizeAddressKey = (addr?: string, city?: string, state?: string, zip?: string | number) => {
+        const a = (addr ?? '').toLowerCase().trim();
+        const c = (city ?? '').toLowerCase().trim();
+        const s = (state ?? '').toLowerCase().trim();
+        const z = (zip ?? '').toString().trim();
+        if (!a || !c || !s) return null;
+        return `${a}, ${c}, ${s} ${z}`;
+      };
+
       existingLeads.forEach(lead => {
-        const normalizedAddress = `${lead.address.toLowerCase().trim()}, ${lead.city.toLowerCase().trim()}, ${lead.state.toLowerCase().trim()} ${lead.zip}`;
-        existingLeadsMap.set(normalizedAddress, lead);
+        const key = normalizeAddressKey(lead.address, lead.city, lead.state, lead.zip);
+        if (!key) return; // skip malformed legacy records
+        existingLeadsMap.set(key, lead);
       });
       
       for (let i = 0; i < geocodedSuccess.length; i++) {
@@ -134,8 +145,13 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
         }
         
         // Check for duplicate address
-        const normalizedAddress = `${result.row.address?.toLowerCase().trim()}, ${result.row.city?.toLowerCase().trim()}, ${result.row.state?.toLowerCase().trim()} ${result.row.zip}`;
-        const existingLead = existingLeadsMap.get(normalizedAddress);
+        const normalizedAddress = normalizeAddressKey(
+          result.row.address,
+          result.row.city,
+          result.row.state,
+          result.row.zip
+        );
+        const existingLead = normalizedAddress ? existingLeadsMap.get(normalizedAddress) : undefined;
         
         // Determine if we should skip this lead based on tags
         // RULE: solar-data always wins! If new lead will have solar-data tag, it should update/replace existing
