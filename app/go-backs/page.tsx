@@ -241,7 +241,7 @@ export default function GoBacksPage() {
       </div>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto px-3 py-4 sm:max-w-7xl sm:px-6 sm:py-8 lg:px-8">
         {leads.length === 0 ? (
           <div className="bg-white rounded-lg shadow-sm p-12 text-center">
             <Calendar className="w-16 h-16 text-[#CBD5E0] mx-auto mb-4" />
@@ -261,7 +261,7 @@ export default function GoBacksPage() {
               {groupedUpcoming().map(({ date, leads: dayLeads }) => (
                 <div key={format(date, 'yyyy-MM-dd')} className="p-4">
                   <div className="text-xs font-semibold text-[#718096] mb-3">{getDateLabel(date)}</div>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {dayLeads.map((lead) => (
                       <button
                         key={lead.id}
@@ -281,7 +281,7 @@ export default function GoBacksPage() {
                           </div>
                         </div>
                         {lead.goBackNotes && (
-                          <div className="mt-2 text-xs text-[#4A5568] line-clamp-2">{lead.goBackNotes}</div>
+                          <div className="mt-2 text-xs text-[#4A5568] line-clamp-1">{lead.goBackNotes}</div>
                         )}
                       </button>
                     ))}
@@ -438,7 +438,7 @@ export default function GoBacksPage() {
                         {lead.goBackNotes && (
                           <div className="flex items-start gap-2 text-sm text-[#718096]">
                             <FileText className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                            <span className="line-clamp-2">{lead.goBackNotes}</span>
+                            <span className="line-clamp-1">{lead.goBackNotes}</span>
                           </div>
                         )}
                         {user && (
@@ -504,7 +504,7 @@ export default function GoBacksPage() {
                       </span>
                     </div>
                     {lead.goBackNotes && (
-                      <div className="mt-2 text-xs text-[#4A5568] line-clamp-2">{lead.goBackNotes}</div>
+                      <div className="mt-2 text-xs text-[#4A5568] line-clamp-1">{lead.goBackNotes}</div>
                     )}
                   </button>
                 ))
