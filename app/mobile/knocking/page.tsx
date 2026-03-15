@@ -414,6 +414,10 @@ export default function KnockingPage() {
     const radiusCells = Math.ceil(3 / cellSizeMiles);
     const cells = Array.from(cellMap.values());
 
+    // Strictness thresholds (make hotspots rare + actionable)
+    const MIN_WITHIN_3MI = 40; // minimum eligible density
+    const MIN_CELL_COUNT = 6; // minimum eligible pins in the cell itself
+
     // Compute density via neighboring cells (approx)
     const out: { lat: number; lng: number; intensity: number; count: number }[] = [];
     for (const c of cells) {
@@ -433,16 +437,21 @@ export default function KnockingPage() {
         }
       }
 
+      if (c.count < MIN_CELL_COUNT) continue;
+      if (within < MIN_WITHIN_3MI) continue;
+
       const avgW = c.weightSum / Math.max(1, c.count);
       const score = (c.count * 2 + within * 0.25) * avgW;
       out.push({ lat: centerLat, lng: centerLng, intensity: score, count: c.count });
     }
 
+    if (out.length === 0) return [];
+
     // Normalize intensity to 0..1 for opacity
     const max = Math.max(...out.map(o => o.intensity));
     return out
       .sort((a, b) => b.intensity - a.intensity)
-      .slice(0, 120)
+      .slice(0, 50)
       .map(o => ({ ...o, intensity: max ? o.intensity / max : 0 }));
   }, [showHeat, leads, currentUser]);
 
