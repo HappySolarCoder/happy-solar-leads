@@ -1,4 +1,4 @@
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export interface AdminSettings {
@@ -43,6 +43,29 @@ export async function getAdminSettingsAsync(): Promise<AdminSettings | null> {
 
 export async function saveAdminSettingsAsync(settings: AdminSettings): Promise<void> {
   try {
+    // Preferred: save via server API (Admin SDK) to avoid Firestore client rules issues
+    if (auth?.currentUser) {
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify(settings),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Failed to save settings (${res.status})`);
+      }
+
+      // Backup
+      localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
+      return;
+    }
+
+    // Fallback: if not authenticated yet, attempt Firestore direct write
     if (!db) {
       console.error('Firestore not initialized - saving to localStorage only');
       localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
@@ -51,7 +74,7 @@ export async function saveAdminSettingsAsync(settings: AdminSettings): Promise<v
 
     const docRef = doc(db, 'adminSettings', SETTINGS_DOC_ID);
     await setDoc(docRef, settings);
-    
+
     // Also save to localStorage as backup
     localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
   } catch (error) {
