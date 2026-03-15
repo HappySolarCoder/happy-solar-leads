@@ -153,26 +153,26 @@ export default function GoBacksPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F7FAFC]">
+    <div className="min-h-screen bg-[#F7FAFC] overflow-x-hidden">
       {/* Header */}
-      <div className="bg-white border-b border-[#E2E8F0] sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+      <div className="bg-white border-b border-[#E2E8F0] sticky top-0 z-10 overflow-x-hidden">
+        <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3 min-w-0">
               <button
                 onClick={() => router.push('/mobile/knocking')}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
               >
                 <ArrowLeft className="w-5 h-5 text-[#718096]" />
               </button>
-              <h1 className="text-2xl font-bold text-[#2D3748]">Go Backs</h1>
-              <span className="px-3 py-1 bg-[#FF5F5A] text-white text-sm rounded-full font-medium">
+              <h1 className="text-xl sm:text-2xl font-bold text-[#2D3748] truncate">Go Backs</h1>
+              <span className="px-2.5 py-1 bg-[#FF5F5A] text-white text-xs sm:text-sm rounded-full font-medium flex-shrink-0">
                 {leads.length}
               </span>
             </div>
 
             {/* View Toggle & Tools */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
               <button
                 onClick={() => setShowTools(true)}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
@@ -182,12 +182,12 @@ export default function GoBacksPage() {
               </button>
 
               {/* Desktop: Calendar/List. Mobile: Upcoming/Calendar */}
-              <div className="flex items-center gap-1 sm:gap-2 bg-[#F7FAFC] p-1 rounded-lg">
+              <div className="flex items-center gap-1 sm:gap-2 bg-[#F7FAFC] p-1 rounded-lg w-full sm:w-auto">
                 {isMobile ? (
                   <>
                     <button
                       onClick={() => setViewMode('upcoming')}
-                      className={`px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${
+                      className={`flex-1 px-3 py-2 rounded-md transition-colors flex items-center justify-center gap-2 ${
                         viewMode === 'upcoming'
                           ? 'bg-white text-[#FF5F5A] shadow-sm'
                           : 'text-[#718096] hover:text-[#2D3748]'
@@ -198,7 +198,7 @@ export default function GoBacksPage() {
                     </button>
                     <button
                       onClick={() => setViewMode('calendar')}
-                      className={`px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${
+                      className={`flex-1 px-3 py-2 rounded-md transition-colors flex items-center justify-center gap-2 ${
                         viewMode === 'calendar'
                           ? 'bg-white text-[#FF5F5A] shadow-sm'
                           : 'text-[#718096] hover:text-[#2D3748]'
