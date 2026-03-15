@@ -402,6 +402,73 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     );
   }
 
+  const effectiveLeadType = lead.leadType === 'sale' ? 'customer' : (lead.leadType || 'prospect');
+  const isCustomerLead = effectiveLeadType === 'customer';
+
+  if (isCustomerLead) {
+    const displayName = (lead.customerFirstName || lead.customerLastName)
+      ? `${lead.customerFirstName || ''} ${lead.customerLastName || ''}`.trim()
+      : (lead.name || 'Customer');
+
+    return (
+      <>
+        <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 overflow-hidden flex flex-col border-l border-[#E2E8F0]">
+          <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🙂</span>
+              <span className="font-semibold text-[#2D3748]">Customer</span>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-white rounded-lg transition-colors">
+              <X className="w-5 h-5 text-[#718096]" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div>
+              <h2 className="text-xl font-bold text-[#2D3748]">{displayName}</h2>
+              <p className="text-sm text-[#718096] mt-1">{lead.address}</p>
+              <p className="text-sm text-[#718096]">{lead.city}, {lead.state} {lead.zip || ''}</p>
+            </div>
+
+            <div className="bg-white border border-[#E2E8F0] rounded-lg p-4 space-y-2 text-sm">
+              {lead.phone && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[#718096]">Phone</span>
+                  <span className="font-semibold text-[#2D3748]">{lead.phone}</span>
+                </div>
+              )}
+              {lead.soldByName && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[#718096]">Sales Rep</span>
+                  <span className="font-semibold text-[#2D3748]">{lead.soldByName}</span>
+                </div>
+              )}
+              {lead.setByName && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[#718096]">FMA</span>
+                  <span className="font-semibold text-[#2D3748]">{lead.setByName}</span>
+                </div>
+              )}
+              {lead.soldDate && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[#718096]">Sold Date</span>
+                  <span className="font-semibold text-[#2D3748]">{format(new Date(lead.soldDate as any), 'MMM d, yyyy')}</span>
+                </div>
+              )}
+            </div>
+
+            {lead.notes && (
+              <div className="bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg p-4">
+                <div className="text-sm font-semibold text-[#2D3748] mb-1">Notes</div>
+                <div className="text-sm text-[#4A5568] whitespace-pre-wrap">{lead.notes}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 overflow-hidden flex flex-col border-l border-[#E2E8F0]">

@@ -35,6 +35,11 @@ export function parseCSV(file: File): Promise<CSVRow[]> {
             estimatedBill: normalized.estimatedbill || normalized['estimated bill'] || normalized.monthlybill || normalized['monthly bill'] 
               ? parseFloat(normalized.estimatedbill || normalized['estimated bill'] || normalized.monthlybill || normalized['monthly bill'] || '0') 
               : undefined,
+
+            // Sales pins
+            salesRep: normalized.salesrep || normalized['sales rep'] || normalized['sales rep (sales rep last name)'] || normalized['sales rep last name'] || '',
+            fma: normalized.fma || normalized['fma (fma last name)'] || normalized['fma last name'] || '',
+            soldDate: normalized.solddate || normalized['sold date'] || '',
           };
           
           // Only add if it has at least an address
