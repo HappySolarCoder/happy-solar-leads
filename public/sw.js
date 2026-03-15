@@ -63,6 +63,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // IMPORTANT: Cache API only supports GET requests. Never attempt to cache POST/PUT/etc.
+  // Let non-GET requests go straight to the network without SW caching.
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
   // Network first for HTML pages (always get fresh content)
   if (event.request.mode === 'navigate' || event.request.headers.get('accept').includes('text/html')) {
     event.respondWith(
@@ -85,7 +91,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network first strategy for API calls
+  // Network first strategy for API GET calls (read-only). Never cache mutations.
   if (event.request.url.includes('/api/')) {
     event.respondWith(
       fetch(event.request)
