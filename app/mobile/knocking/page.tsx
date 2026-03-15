@@ -396,7 +396,7 @@ export default function KnockingPage() {
     const latStep = cellSizeMiles / 69; // deg
     const lngStep = cellSizeMiles / 69;
 
-    const cellMap = new Map<string, { latIdx: number; lngIdx: number; count: number; weightSum: number }>();
+    const cellMap = new Map<string, { latIdx: number; lngIdx: number; count: number; weightSum: number; greenCount: number }>();
 
     for (const l of eligible as any[]) {
       const lat = Number(l.lat);
@@ -405,18 +405,22 @@ export default function KnockingPage() {
       const latIdx = Math.floor(lat / latStep);
       const lngIdx = Math.floor(lng / lngStep);
       const key = `${latIdx}:${lngIdx}`;
-      const entry = cellMap.get(key) || { latIdx, lngIdx, count: 0, weightSum: 0 };
+      const entry = cellMap.get(key) || { latIdx, lngIdx, count: 0, weightSum: 0, greenCount: 0 };
       entry.count += 1;
       entry.weightSum += weight(l.solarCategory);
+      const cat = String(l.solarCategory || '').toLowerCase();
+      if (cat === 'good' || cat === 'great') entry.greenCount += 1;
       cellMap.set(key, entry);
     }
 
     const radiusCells = Math.ceil(3 / cellSizeMiles);
     const cells = Array.from(cellMap.values());
 
-    // Strictness thresholds (make hotspots rare + actionable)
-    const MIN_WITHIN_3MI = 40; // minimum eligible density
-    const MIN_CELL_COUNT = 6; // minimum eligible pins in the cell itself
+    // Strictness thresholds (Evan): Hot area requires, within 3mi of cell center:
+    // - >=10 total eligible pins (solid+good+great, fresh)
+    // - >=5 green pins (good+great, fresh)
+    const MIN_ELIGIBLE_WITHIN_3MI = 10;
+    const MIN_GREEN_WITHIN_3MI = 5;
 
     // Compute density via neighboring cells (approx)
     const out: { lat: number; lng: number; intensity: number; count: number }[] = [];
@@ -424,7 +428,8 @@ export default function KnockingPage() {
       const centerLat = (c.latIdx + 0.5) * latStep;
       const centerLng = (c.lngIdx + 0.5) * lngStep;
 
-      let within = 0;
+      let withinEligible = 0;
+      let withinGreen = 0;
       for (let di = -radiusCells; di <= radiusCells; di++) {
         for (let dj = -radiusCells; dj <= radiusCells; dj++) {
           const key = `${c.latIdx + di}:${c.lngIdx + dj}`;
@@ -433,15 +438,18 @@ export default function KnockingPage() {
           const nLat = (n.latIdx + 0.5) * latStep;
           const nLng = (n.lngIdx + 0.5) * lngStep;
           const dist = calculateDistance(centerLat, centerLng, nLat, nLng);
-          if (dist <= 3) within += n.count;
+          if (dist <= 3) {
+            withinEligible += n.count;
+            withinGreen += n.greenCount;
+          }
         }
       }
 
-      if (c.count < MIN_CELL_COUNT) continue;
-      if (within < MIN_WITHIN_3MI) continue;
+      if (withinEligible < MIN_ELIGIBLE_WITHIN_3MI) continue;
+      if (withinGreen < MIN_GREEN_WITHIN_3MI) continue;
 
       const avgW = c.weightSum / Math.max(1, c.count);
-      const score = (c.count * 2 + within * 0.25) * avgW;
+      const score = (c.count * 2 + withinEligible * 0.25) * avgW;
       out.push({ lat: centerLat, lng: centerLng, intensity: score, count: c.count });
     }
 
@@ -451,7 +459,7 @@ export default function KnockingPage() {
     const max = Math.max(...out.map(o => o.intensity));
     return out
       .sort((a, b) => b.intensity - a.intensity)
-      .slice(0, 50)
+      .slice(0, 35)
       .map(o => ({ ...o, intensity: max ? o.intensity / max : 0 }));
   }, [showHeat, leads, currentUser]);
 
