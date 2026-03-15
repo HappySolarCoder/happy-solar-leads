@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { X, Target, Calendar, Clock } from 'lucide-react';
-import { getMonthId, getMyGoalAsync, getMyMonthlyKnocksAsync, countWorkdaysElapsedAndRemaining, countWorkdaysInMonth } from '@/app/utils/goals';
+import { getMonthId, getMyGoalViaApiAsync, getMyMonthlyKnocksAsync, countWorkdaysElapsedAndRemaining, countWorkdaysInMonth } from '@/app/utils/goals';
 import { User } from '@/app/types';
 
 export default function GoalsPaceModal({ currentUser }: { currentUser: User }) {
@@ -18,15 +18,13 @@ export default function GoalsPaceModal({ currentUser }: { currentUser: User }) {
     async function load() {
       try {
         setLoading(true);
-        // IMPORTANT: our app-level user id is `currentUser.id` and may differ from Firebase Auth uid.
-        // Goals are stored under docId `${user.id}_${yyyyMM}`.
-        const g = await getMyGoalAsync(monthId, currentUser.id);
+        const g = await getMyGoalViaApiAsync(monthId);
         if (!mounted) return;
         if (!g || !g.doorKnocksGoal) {
           setGoal(null);
           return;
         }
-        setGoal(g);
+        setGoal({ doorKnocksGoal: g.doorKnocksGoal });
         const k = await getMyMonthlyKnocksAsync(new Date(), currentUser);
         if (!mounted) return;
         setKnocks(k);

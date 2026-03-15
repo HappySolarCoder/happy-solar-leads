@@ -92,6 +92,7 @@ export async function getMyMonthlyKnocksAsync(monthDate: Date, currentUser: User
 }
 
 export async function getMyGoalAsync(month: string, uidOverride?: string): Promise<UserGoal | null> {
+  // Legacy fallback (client Firestore). Prefer getMyGoalViaApiAsync().
   if (!db) return null;
   const uid = uidOverride || auth?.currentUser?.uid;
   if (!uid) return null;
@@ -99,4 +100,15 @@ export async function getMyGoalAsync(month: string, uidOverride?: string): Promi
   const snap = await getDoc(doc(db, 'userGoals', docId));
   if (!snap.exists()) return null;
   return snap.data() as any;
+}
+
+export async function getMyGoalViaApiAsync(month: string): Promise<{ month: string; doorKnocksGoal: number | null } | null> {
+  if (!auth?.currentUser) return null;
+  const token = await auth.currentUser.getIdToken();
+  const res = await fetch(`/api/goals/me?month=${encodeURIComponent(month)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return { month: data.month, doorKnocksGoal: data.doorKnocksGoal };
 }
