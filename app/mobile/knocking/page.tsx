@@ -396,9 +396,12 @@ export default function KnockingPage() {
             <ArrowLeft className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-2 min-w-0">
-            {/* Field-Optimized Stats (scrollable on small screens so action icons never get pushed off) */}
-            <div className="flex items-center gap-2 text-xs overflow-x-auto whitespace-nowrap min-w-0 flex-1 pr-2" style={{ WebkitOverflowScrolling: 'touch' }}>
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            {/* Field-Optimized Stats (horizontal scroll, clean + professional) */}
+            <div
+              className="flex items-center gap-2 text-xs overflow-x-auto whitespace-nowrap min-w-0 flex-1 pr-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+            >
               {/* Next Best Lead */}
               <button
                 onClick={() => {
@@ -453,14 +456,6 @@ export default function KnockingPage() {
               <Filter className="w-5 h-5" />
             </button>
 
-            {/* Today's Route Button */}
-            <button
-              onClick={handleGenerateRoute}
-              className={`p-2 transition-all ${showRoute ? 'text-[#FF5F5A]' : 'text-[#718096] hover:text-[#FF5F5A]'} active:scale-95`}
-              title="Generate optimized route"
-            >
-              <Route className="w-5 h-5" />
-            </button>
 
             {/* Tools Button */}
             <button
@@ -655,8 +650,8 @@ export default function KnockingPage() {
         </div>
       )}
 
-      {/* Route Panel */}
-      {showRoute && routeLeads.length > 0 && (
+      {/* Route Panel (disabled - feature not shipped yet) */}
+      {false && showRoute && routeLeads.length > 0 && (
         <div className="px-3 py-3 bg-gradient-to-r from-[#FF5F5A] to-[#F27141] text-white">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -717,7 +712,7 @@ export default function KnockingPage() {
           {/* Start Navigation Button */}
           {gpsPosition && (
             <a
-              href={`https://www.google.com/maps/dir/${gpsPosition.lat},${gpsPosition.lng}/${routeLeads[0]?.lat},${routeLeads[0]?.lng}`}
+              href={`https://www.google.com/maps/dir/${gpsPosition!.lat},${gpsPosition!.lng}/${routeLeads[0]?.lat},${routeLeads[0]?.lng}`}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-3 w-full py-2 bg-white text-[#FF5F5A] rounded-lg font-semibold text-center flex items-center justify-center gap-2"
