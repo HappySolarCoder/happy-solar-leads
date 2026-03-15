@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { format } from 'date-fns';
 import { Lead, User, ObjectionType, LeadDispositionHistoryEntry } from '@/app/types';
 import { 
   X, MapPin, Phone, Mail, Clock, User as UserIcon, 
@@ -618,6 +619,35 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           >
             {showAllStatuses ? 'Show Less' : 'Show All Dispositions'}
           </button>
+
+          {/* Go Back Section */}
+          {(lead.status === 'go-back' || !!lead.goBackScheduledDate) && (
+            <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
+              <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Go Back</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2 text-[#2D3748]">
+                  <Calendar className="w-4 h-4 text-[#FF5F5A]" />
+                  <span className="font-medium">Go Back Scheduled:</span>
+                  <span>
+                    {lead.goBackScheduledDate
+                      ? format(new Date(lead.goBackScheduledDate), 'MMM d, yyyy')
+                      : 'Not set'}
+                    {lead.goBackScheduledTime ? ` • ${lead.goBackScheduledTime}` : ' • Anytime'}
+                  </span>
+                </div>
+
+                {lead.goBackNotes && (
+                  <div className="flex items-start gap-2 text-[#2D3748]">
+                    <FileText className="w-4 h-4 text-[#718096] mt-0.5" />
+                    <div>
+                      <div className="font-medium">Notes:</div>
+                      <div className="text-[#4A5568] whitespace-pre-wrap">{lead.goBackNotes}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Metadata */}
           <div className="mt-6 pt-6 border-t border-[#E2E8F0] space-y-2 text-xs text-[#718096]">
