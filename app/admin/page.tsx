@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Users, Shield, MapPin, Database, BarChart3, Upload, Target, 
-  FileText, TrendingUp, Settings, ArrowRight, ChevronRight
+  FileText, TrendingUp, Settings, ArrowRight, ChevronRight, Link as LinkIcon
 } from 'lucide-react';
 import { 
   User, UserRole, canManageUsers 
@@ -96,12 +96,21 @@ export default function AdminPage() {
                 <p className="text-sm text-[#718096]">System configuration and management</p>
               </div>
             </div>
-            <button
-              onClick={() => router.push('/')}
-              className="px-5 py-2.5 text-[#2D3748] hover:bg-[#F7FAFC] rounded-lg font-medium transition-colors border border-[#E2E8F0]"
-            >
-              ← Back to App
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => router.push('/admin/settings')}
+                className="px-5 py-2.5 text-white bg-[#4299E1] hover:bg-[#3182CE] rounded-lg font-medium transition-colors flex items-center gap-2"
+              >
+                <Settings className="w-4 h-4" />
+                Settings
+              </button>
+              <button
+                onClick={() => router.push('/')}
+                className="px-5 py-2.5 text-[#2D3748] hover:bg-[#F7FAFC] rounded-lg font-medium transition-colors border border-[#E2E8F0]"
+              >
+                ← Back to App
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -306,7 +315,30 @@ export default function AdminPage() {
           </div>
         </section>
 
-        {/* Section 4: Dashboards & Reporting */}
+        {/* Section 4: Connections */}
+        <section className="mb-8">
+          <h2 className="text-xl font-bold text-[#2D3748] mb-4 flex items-center gap-2">
+            <LinkIcon className="w-6 h-6 text-[#FF5F5A]" />
+            Connections
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button
+              onClick={() => router.push('/admin/connections')}
+              className="bg-white border border-[#E2E8F0] rounded-lg p-6 hover:border-[#4299E1] hover:shadow-md transition-all text-left group"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-3 bg-[#4299E1]/10 rounded-lg">
+                  <LinkIcon className="w-6 h-6 text-[#4299E1]" />
+                </div>
+                <ArrowRight className="w-5 h-5 text-[#718096] group-hover:text-[#4299E1] group-hover:translate-x-1 transition-all" />
+              </div>
+              <h3 className="font-semibold text-[#2D3748] mb-1">Integrations</h3>
+              <p className="text-sm text-[#718096]">Manage Discord/Chat webhooks, notification endpoints, and more</p>
+            </button>
+          </div>
+        </section>
+
+        {/* Section 5: Dashboards & Reporting */}
         <section>
           <h2 className="text-xl font-bold text-[#2D3748] mb-4 flex items-center gap-2">
             <BarChart3 className="w-6 h-6 text-[#FF5F5A]" />
