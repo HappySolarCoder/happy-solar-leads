@@ -14,12 +14,29 @@ export default function GoBacksPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
+  const [viewMode, setViewMode] = useState<'upcoming' | 'calendar' | 'list'>('calendar');
+  const [isMobile, setIsMobile] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedDayLeads, setSelectedDayLeads] = useState<Lead[]>([]);
+  const [showDaySheet, setShowDaySheet] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [showTools, setShowTools] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 767px)');
+    const apply = () => {
+      const mobile = mq.matches;
+      setIsMobile(mobile);
+      // Mobile default: Upcoming agenda
+      setViewMode((prev) => (mobile && prev === 'calendar' ? 'upcoming' : prev));
+    };
+    apply();
+    mq.addEventListener?.('change', apply);
+    return () => mq.removeEventListener?.('change', apply);
+  }, []);
 
   useEffect(() => {
     async function loadData() {
@@ -86,6 +103,36 @@ export default function GoBacksPage() {
     );
   };
 
+  const sortByScheduled = (a: Lead, b: Lead) => {
+    const dateA = a.goBackScheduledDate ? new Date(a.goBackScheduledDate).getTime() : 0;
+    const dateB = b.goBackScheduledDate ? new Date(b.goBackScheduledDate).getTime() : 0;
+    if (dateA !== dateB) return dateA - dateB;
+    const tA = a.goBackScheduledTime || '';
+    const tB = b.goBackScheduledTime || '';
+    return tA.localeCompare(tB);
+  };
+
+  const getDateLabel = (d: Date) => {
+    if (isSameDay(d, new Date())) return 'Today';
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    if (isSameDay(d, tomorrow)) return 'Tomorrow';
+    return format(d, 'EEE, MMM d');
+  };
+
+  const groupedUpcoming = (): Array<{ date: Date; leads: Lead[] }> => {
+    const map = new globalThis.Map<string, { date: Date; leads: Lead[] }>();
+    for (const lead of [...leads].sort(sortByScheduled)) {
+      if (!lead.goBackScheduledDate) continue;
+      const d = new Date(lead.goBackScheduledDate);
+      const key = format(d, 'yyyy-MM-dd');
+      const entry = map.get(key) || { date: d, leads: [] as Lead[] };
+      entry.leads.push(lead);
+      map.set(key, entry);
+    }
+    return Array.from(map.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
+  };
+
   const nextMonth = () => {
     setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1));
   };
@@ -133,30 +180,61 @@ export default function GoBacksPage() {
               >
                 <Settings className="w-5 h-5 text-[#718096]" />
               </button>
+
+              {/* Desktop: Calendar/List. Mobile: Upcoming/Calendar */}
               <div className="flex items-center gap-1 sm:gap-2 bg-[#F7FAFC] p-1 rounded-lg">
-              <button
-                onClick={() => setViewMode('calendar')}
-                className={`px-2 sm:px-4 py-2 rounded-md transition-colors flex items-center gap-1 sm:gap-2 ${
-                  viewMode === 'calendar'
-                    ? 'bg-white text-[#FF5F5A] shadow-sm'
-                    : 'text-[#718096] hover:text-[#2D3748]'
-                }`}
-              >
-                <Calendar className="w-4 h-4" />
-                <span className="hidden sm:inline">Calendar</span>
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`px-2 sm:px-4 py-2 rounded-md transition-colors flex items-center gap-1 sm:gap-2 ${
-                  viewMode === 'list'
-                    ? 'bg-white text-[#FF5F5A] shadow-sm'
-                    : 'text-[#718096] hover:text-[#2D3748]'
-                }`}
-              >
-                <List className="w-4 h-4" />
-                <span className="hidden sm:inline">List</span>
-              </button>
-            </div>
+                {isMobile ? (
+                  <>
+                    <button
+                      onClick={() => setViewMode('upcoming')}
+                      className={`px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${
+                        viewMode === 'upcoming'
+                          ? 'bg-white text-[#FF5F5A] shadow-sm'
+                          : 'text-[#718096] hover:text-[#2D3748]'
+                      }`}
+                    >
+                      <List className="w-4 h-4" />
+                      <span>Upcoming</span>
+                    </button>
+                    <button
+                      onClick={() => setViewMode('calendar')}
+                      className={`px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${
+                        viewMode === 'calendar'
+                          ? 'bg-white text-[#FF5F5A] shadow-sm'
+                          : 'text-[#718096] hover:text-[#2D3748]'
+                      }`}
+                    >
+                      <Calendar className="w-4 h-4" />
+                      <span>Calendar</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setViewMode('calendar')}
+                      className={`px-2 sm:px-4 py-2 rounded-md transition-colors flex items-center gap-1 sm:gap-2 ${
+                        viewMode === 'calendar'
+                          ? 'bg-white text-[#FF5F5A] shadow-sm'
+                          : 'text-[#718096] hover:text-[#2D3748]'
+                      }`}
+                    >
+                      <Calendar className="w-4 h-4" />
+                      <span className="hidden sm:inline">Calendar</span>
+                    </button>
+                    <button
+                      onClick={() => setViewMode('list')}
+                      className={`px-2 sm:px-4 py-2 rounded-md transition-colors flex items-center gap-1 sm:gap-2 ${
+                        viewMode === 'list'
+                          ? 'bg-white text-[#FF5F5A] shadow-sm'
+                          : 'text-[#718096] hover:text-[#2D3748]'
+                      }`}
+                    >
+                      <List className="w-4 h-4" />
+                      <span className="hidden sm:inline">List</span>
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -171,6 +249,46 @@ export default function GoBacksPage() {
             <p className="text-[#718096]">
               When you mark leads as "Go Back" and schedule a date, they'll appear here.
             </p>
+          </div>
+        ) : viewMode === 'upcoming' ? (
+          <div className="bg-white rounded-lg shadow-sm">
+            <div className="p-4 border-b border-[#E2E8F0]">
+              <h2 className="text-lg font-semibold text-[#2D3748]">Upcoming</h2>
+              <p className="text-sm text-[#718096]">Mobile-first agenda view</p>
+            </div>
+
+            <div className="divide-y divide-[#E2E8F0]">
+              {groupedUpcoming().map(({ date, leads: dayLeads }) => (
+                <div key={format(date, 'yyyy-MM-dd')} className="p-4">
+                  <div className="text-xs font-semibold text-[#718096] mb-3">{getDateLabel(date)}</div>
+                  <div className="space-y-2">
+                    {dayLeads.map((lead) => (
+                      <button
+                        key={lead.id}
+                        onClick={() => { setSelectedLeadId(lead.id); setShowLeadDetail(true); }}
+                        className="w-full text-left border border-[#E2E8F0] rounded-xl p-3 hover:bg-[#F7FAFC] active:scale-[0.99] transition-all"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-[#2D3748] truncate">{lead.name || 'Unknown'}</div>
+                            <div className="mt-0.5 text-xs text-[#718096] truncate">{lead.address}</div>
+                          </div>
+                          <div className="flex-shrink-0">
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#F7FAFC] border border-[#E2E8F0] text-xs font-semibold text-[#2D3748]">
+                              <Clock className="w-3.5 h-3.5 text-[#718096]" />
+                              {lead.goBackScheduledTime || 'Anytime'}
+                            </span>
+                          </div>
+                        </div>
+                        {lead.goBackNotes && (
+                          <div className="mt-2 text-xs text-[#4A5568] line-clamp-2">{lead.goBackNotes}</div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ) : viewMode === 'calendar' ? (
           <div className="bg-white rounded-lg shadow-sm p-6">
@@ -213,7 +331,7 @@ export default function GoBacksPage() {
                 return (
                   <div
                     key={index}
-                    className={`min-h-[100px] border rounded-lg p-2 ${
+                    className={`min-h-[${isMobile ? '64px' : '100px'}] border rounded-lg p-2 ${
                       !isCurrentMonth ? 'bg-[#F7FAFC] opacity-50' : 'bg-white'
                     } ${dayIsToday ? 'border-[#FF5F5A] border-2' : 'border-[#E2E8F0]'}`}
                   >
@@ -222,23 +340,47 @@ export default function GoBacksPage() {
                     }`}>
                       {format(day, 'd')}
                     </div>
-                    <div className="space-y-1">
-                      {dayLeads.map((lead) => (
-                        <button
-                          key={lead.id}
-                          onClick={() => {
-                            setSelectedLeadId(lead.id);
-                            setShowLeadDetail(true);
-                          }}
-                          className="w-full text-left px-2 py-1 bg-[#FEF5E7] hover:bg-[#FDE7C5] rounded text-xs text-[#2D3748] truncate transition-colors"
-                        >
-                          {lead.goBackScheduledTime && (
-                            <span className="font-medium">{lead.goBackScheduledTime} </span>
-                          )}
-                          {lead.address.split(',')[0]}
-                        </button>
-                      ))}
-                    </div>
+                    {isMobile ? (
+                      <button
+                        onClick={() => {
+                          setSelectedDate(day);
+                          setSelectedDayLeads(dayLeads.sort(sortByScheduled));
+                          setShowDaySheet(true);
+                        }}
+                        className="mt-2 w-full flex items-center justify-center"
+                      >
+                        {dayLeads.length > 0 ? (
+                          <div className="flex items-center gap-1">
+                            {Array.from({ length: Math.min(dayLeads.length, 3) }).map((_, i) => (
+                              <span key={i} className="w-1.5 h-1.5 rounded-full bg-[#FF5F5A]" />
+                            ))}
+                            {dayLeads.length > 3 && (
+                              <span className="ml-1 text-[10px] font-semibold text-[#FF5F5A]">+{dayLeads.length - 3}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-transparent">.</span>
+                        )}
+                      </button>
+                    ) : (
+                      <div className="space-y-1">
+                        {dayLeads.map((lead) => (
+                          <button
+                            key={lead.id}
+                            onClick={() => {
+                              setSelectedLeadId(lead.id);
+                              setShowLeadDetail(true);
+                            }}
+                            className="w-full text-left px-2 py-1 bg-[#FEF5E7] hover:bg-[#FDE7C5] rounded text-xs text-[#2D3748] truncate transition-colors"
+                          >
+                            {lead.goBackScheduledTime && (
+                              <span className="font-medium">{lead.goBackScheduledTime} </span>
+                            )}
+                            {lead.address.split(',')[0]}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -322,6 +464,55 @@ export default function GoBacksPage() {
           </div>
         )}
       </div>
+
+      {/* Mobile Day Sheet (Calendar → day details) */}
+      {showDaySheet && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setShowDaySheet(false)} />
+          <div className="absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl shadow-2xl max-h-[70vh] overflow-y-auto">
+            <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold text-[#2D3748]">{getDateLabel(selectedDate)}</div>
+                <div className="text-xs text-[#718096]">{selectedDayLeads.length} go back{selectedDayLeads.length === 1 ? '' : 's'}</div>
+              </div>
+              <button
+                onClick={() => setShowDaySheet(false)}
+                className="h-10 w-10 rounded-full hover:bg-[#F7FAFC] flex items-center justify-center"
+                title="Close"
+              >
+                <X className="w-5 h-5 text-[#718096]" />
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              {selectedDayLeads.length === 0 ? (
+                <div className="text-sm text-[#718096]">No go backs scheduled.</div>
+              ) : (
+                selectedDayLeads.map((lead) => (
+                  <button
+                    key={lead.id}
+                    onClick={() => { setSelectedLeadId(lead.id); setShowLeadDetail(true); setShowDaySheet(false); }}
+                    className="w-full text-left border border-[#E2E8F0] rounded-xl p-3 hover:bg-[#F7FAFC] transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-[#2D3748] truncate">{lead.name || 'Unknown'}</div>
+                        <div className="mt-0.5 text-xs text-[#718096] truncate">{lead.address}</div>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#F7FAFC] border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex-shrink-0">
+                        <Clock className="w-3.5 h-3.5 text-[#718096]" />
+                        {lead.goBackScheduledTime || 'Anytime'}
+                      </span>
+                    </div>
+                    {lead.goBackNotes && (
+                      <div className="mt-2 text-xs text-[#4A5568] line-clamp-2">{lead.goBackNotes}</div>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Lead Detail Sidebar */}
       {showLeadDetail && selectedLeadId && currentUser && (
