@@ -12,6 +12,7 @@ import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/u
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
+import GoalsPaceModal from '@/app/components/GoalsPaceModal';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -386,6 +387,7 @@ export default function KnockingPage() {
   return (
     <LocationPermissionGuard requireLocation={true}>
       <div className="h-screen flex flex-col bg-white overflow-hidden">
+      {currentUser && <GoalsPaceModal currentUser={currentUser} />}
       {/* Mobile Header - Clean App Bar */}
       <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200 px-4 flex-shrink-0">
         <div className="h-14 flex items-center gap-2">

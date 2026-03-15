@@ -72,6 +72,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ====================== USER GOALS ======================
+    // Users can read only their own goals; admins can read all.
+    // Writes are admin-only (preferably via Admin SDK route).
+    match /userGoals/{docId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == uid());
+      allow create, update, delete: if isAdmin();
+    }
+
     // ====================== TERRITORIES ======================
     // Admins see everything; reps can only read their own assigned territory
     match /territories/{territoryId} {

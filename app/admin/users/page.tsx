@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
-  Users, Edit2, Trash2, Check, X, ArrowLeft, AlertTriangle, UserPlus, Shield, MapPin
+  Users, Edit2, Trash2, Check, X, ArrowLeft, AlertTriangle, UserPlus, Shield, MapPin, Target
 } from 'lucide-react';
 import { 
   User, UserRole, ROLE_LABELS, canManageUsers 
@@ -38,6 +38,17 @@ export default function UsersManagementPage() {
   const [newTeamName, setNewTeamName] = useState('');
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [editTeamName, setEditTeamName] = useState('');
+
+  // Goals (v1)
+  const [goalsMonth, setGoalsMonth] = useState(() => {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}`; // YYYY-MM
+  });
+  const [goalsByUserId, setGoalsByUserId] = useState<Record<string, number>>({});
+  const [goalsLoading, setGoalsLoading] = useState(false);
+  const [goalsSaving, setGoalsSaving] = useState(false);
+  const [goalsError, setGoalsError] = useState('');
 
   // Load current user and check permissions
   useEffect(() => {
@@ -75,6 +86,62 @@ export default function UsersManagementPage() {
     
     loadData();
   }, [router]);
+
+  // Load goals for selected month
+  useEffect(() => {
+    async function loadGoals() {
+      if (!auth?.currentUser || !currentUser) return;
+      try {
+        setGoalsLoading(true);
+        setGoalsError('');
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`/api/admin/user-goals?month=${encodeURIComponent(goalsMonth)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error || `Failed to load goals (${res.status})`);
+        }
+        const data = await res.json();
+        const map: Record<string, number> = {};
+        for (const g of (data.goals || [])) {
+          if (g?.uid) map[g.uid] = Number(g.doorKnocksGoal || 0);
+        }
+        setGoalsByUserId(map);
+      } catch (e: any) {
+        setGoalsError(e?.message || 'Failed to load goals');
+      } finally {
+        setGoalsLoading(false);
+      }
+    }
+    loadGoals();
+  }, [goalsMonth, currentUser]);
+
+  const handleSaveGoals = async () => {
+    if (!auth?.currentUser) return;
+    try {
+      setGoalsSaving(true);
+      setGoalsError('');
+      const token = await auth.currentUser.getIdToken();
+      const payload = {
+        month: goalsMonth,
+        goals: users.map(u => ({ uid: u.id, doorKnocksGoal: goalsByUserId[u.id] || 0 })),
+      };
+      const res = await fetch('/api/admin/user-goals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Failed to save goals (${res.status})`);
+      }
+    } catch (e: any) {
+      setGoalsError(e?.message || 'Failed to save goals');
+    } finally {
+      setGoalsSaving(false);
+    }
+  };
 
   const handleEditStart = (user: User) => {
     setEditingUserId(user.id);
@@ -615,6 +682,74 @@ export default function UsersManagementPage() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* Monthly Goals (v1) */}
+        <div className="mt-6 bg-white border border-[#E2E8F0] rounded-lg p-6">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-lg font-semibold text-[#2D3748] flex items-center gap-2">
+                <Target className="w-5 h-5 text-[#FF5F5A]" />
+                Monthly Door Knock Goals
+              </h2>
+              <p className="text-sm text-[#718096]">Set monthly knock goals per user. Users only see reminders if they have a goal assigned.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="month"
+                value={goalsMonth}
+                onChange={(e) => setGoalsMonth(e.target.value)}
+                className="px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm"
+              />
+              <button
+                onClick={handleSaveGoals}
+                disabled={goalsSaving}
+                className="px-4 py-2 bg-[#FF5F5A] text-white rounded-lg font-semibold text-sm disabled:opacity-50"
+              >
+                {goalsSaving ? 'Saving…' : 'Save Goals'}
+              </button>
+            </div>
+          </div>
+
+          {goalsError && (
+            <div className="mt-3 p-3 rounded-lg border border-red-200 bg-red-50 text-sm text-red-700">
+              {goalsError}
+            </div>
+          )}
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[640px]">
+              <thead className="bg-[#F7FAFC] border-b border-[#E2E8F0]">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">User</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">Role</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">Monthly Knock Goal</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E2E8F0]">
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td className="px-4 py-3 text-sm font-medium text-[#2D3748]">{u.name}</td>
+                    <td className="px-4 py-3 text-sm text-[#718096]">{ROLE_LABELS[u.role]}</td>
+                    <td className="px-4 py-3">
+                      <input
+                        type="number"
+                        min={0}
+                        value={goalsByUserId[u.id] ?? ''}
+                        onChange={(e) => setGoalsByUserId(prev => ({ ...prev, [u.id]: Number(e.target.value || 0) }))}
+                        className="w-40 px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm"
+                        placeholder="0"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {goalsLoading && (
+            <div className="mt-3 text-sm text-[#718096]">Loading goals…</div>
+          )}
         </div>
 
         {/* Warning */}
