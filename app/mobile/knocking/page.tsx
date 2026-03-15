@@ -367,14 +367,20 @@ export default function KnockingPage() {
     : null;
   const nextBestIsFar = (nextBestDistanceRaw || 0) > 50;
 
-  // Stats: Today's Knocks (leads dispositioned today by current user)
+  // Stats: Today's Knocks (must match canonical rule from /setter-stats)
+  // Only count dispositions where disposition.countsAsDoorKnock === true.
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-  const todaysKnocks = leads.filter(l => 
-    l.dispositionedAt && 
-    l.dispositionedAt >= todayStart &&
-    l.claimedBy === currentUser?.id
-  ).length;
+  const doorKnockStatusIds = dispositions
+    .filter((d: any) => d.countsAsDoorKnock)
+    .map((d: any) => String(d.id).toLowerCase());
+
+  const todaysKnocks = leads.filter(l => {
+    if (!l.dispositionedAt || l.dispositionedAt < todayStart) return false;
+    if (l.claimedBy !== currentUser?.id) return false;
+    const disp = String(l.status || l.disposition || '').toLowerCase();
+    return doorKnockStatusIds.includes(disp);
+  }).length;
 
   // Goals (v1) — deterministic goal read via API
   const [dailyTarget, setDailyTarget] = useState<number | null>(null);
