@@ -108,10 +108,10 @@ export default function MobilePage() {
             </div>
           </button>
 
-          {/* Admin Settings - Only for Admins */}
+          {/* Admin - Only for Admins */}
           {currentUser && canManageUsers(currentUser.role) && (
             <button
-              onClick={() => router.push('/admin/settings')}
+              onClick={() => router.push('/admin')}
               className="w-full bg-[#4299E1] text-white rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98"
             >
               <div className="flex items-center gap-4">
@@ -119,8 +119,26 @@ export default function MobilePage() {
                   <Settings className="w-6 h-6" />
                 </div>
                 <div className="text-left">
-                  <div className="text-lg font-bold">Admin Settings</div>
-                  <div className="text-sm text-white/80">Configure notifications</div>
+                  <div className="text-lg font-bold">Admin Dashboard</div>
+                  <div className="text-sm text-white/80">Users, territories, settings</div>
+                </div>
+              </div>
+            </button>
+          )}
+
+          {/* Integrations - Only for Admins */}
+          {currentUser && canManageUsers(currentUser.role) && (
+            <button
+              onClick={() => router.push('/admin/settings')}
+              className="w-full bg-white border-2 border-[#E2E8F0] rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98 hover:border-[#4299E1]"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center flex-shrink-0">
+                  <Settings className="w-6 h-6 text-[#4299E1]" />
+                </div>
+                <div className="flex-1 text-left">
+                  <div className="text-lg font-bold text-[#2D3748]">Integrations</div>
+                  <div className="text-sm text-[#718096]">Discord webhook & notifications</div>
                 </div>
               </div>
             </button>
