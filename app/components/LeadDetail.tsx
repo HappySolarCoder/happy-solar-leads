@@ -449,12 +449,34 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
                   <span className="font-semibold text-[#2D3748]">{lead.setByName}</span>
                 </div>
               )}
-              {lead.soldDate && (
-                <div className="flex items-center justify-between">
-                  <span className="text-[#718096]">Sold Date</span>
-                  <span className="font-semibold text-[#2D3748]">{format(new Date(lead.soldDate as any), 'MMM d, yyyy')}</span>
-                </div>
-              )}
+              {(() => {
+                // soldDate may be a Date, ISO string, number, or Firestore Timestamp-like object
+                const raw: any = (lead as any).soldDate;
+                if (!raw) return null;
+
+                let dt: Date | null = null;
+                if (raw instanceof Date) {
+                  dt = raw;
+                } else if (typeof raw === 'string' || typeof raw === 'number') {
+                  const d = new Date(raw);
+                  dt = isNaN(d.getTime()) ? null : d;
+                } else if (typeof raw?.toDate === 'function') {
+                  const d = raw.toDate();
+                  dt = d instanceof Date && !isNaN(d.getTime()) ? d : null;
+                } else if (typeof raw?.seconds === 'number') {
+                  const d = new Date(raw.seconds * 1000);
+                  dt = isNaN(d.getTime()) ? null : d;
+                }
+
+                if (!dt) return null;
+
+                return (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[#718096]">Sold Date</span>
+                    <span className="font-semibold text-[#2D3748]">{format(dt, 'MMM d, yyyy')}</span>
+                  </div>
+                );
+              })()}
             </div>
 
             {lead.notes && (
