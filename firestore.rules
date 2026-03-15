@@ -72,6 +72,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ====================== USER SESSIONS ======================
+    // Simple per-user client session storage (used for UI state / onboarding)
+    match /userSessions/{docId} {
+      allow read, write: if signedIn();
+    }
+
     // ====================== USER GOALS ======================
     // Users can read only their own goals; admins can read all.
     // Writes are admin-only (preferably via Admin SDK route).
