@@ -95,6 +95,7 @@ export async function POST(request: NextRequest) {
         seasonName: cfg.seasonName,
         eventId: idempotencyKey,
         totalPoints,
+        matchup: null,
       });
     }
 
@@ -166,6 +167,47 @@ export async function POST(request: NextRequest) {
     const totalDoc = await totalRef.get();
     const totalPoints = totalDoc.exists ? Number((totalDoc.data() as any)?.points || 0) : pointsAwarded;
 
+    // Bracket matchup snippet (best-effort) — included directly in award response
+    let matchup: any = null;
+    try {
+      const bracketDoc = await adminDb().collection('solarMadnessBracket').doc('current').get();
+      if (bracketDoc.exists) {
+        const bracket = bracketDoc.data() as any;
+        const matchups = Array.isArray(bracket?.matchups) ? bracket.matchups : [];
+        const now = new Date();
+        const active = matchups.find((m: any) => {
+          const s = m?.startsAt?.toDate ? m.startsAt.toDate() : new Date(m?.startsAt);
+          const e = m?.endsAt?.toDate ? m.endsAt.toDate() : new Date(m?.endsAt);
+          return (String(m?.aUid) === decoded.uid || String(m?.bUid) === decoded.uid) && s <= now && now <= e;
+        });
+        if (active) {
+          const start = active?.startsAt?.toDate ? active.startsAt.toDate() : new Date(active.startsAt);
+          const end = active?.endsAt?.toDate ? active.endsAt.toDate() : new Date(active.endsAt);
+          const opponentUid = String(active.aUid) === decoded.uid ? String(active.bUid) : String(active.aUid);
+
+          const mySnap = await adminDb()
+            .collection('solarMadnessEvents')
+            .where('uid', '==', decoded.uid)
+            .where('createdAt', '>=', start)
+            .where('createdAt', '<=', end)
+            .get();
+          const myPoints = mySnap.docs.reduce((s, d) => s + Number((d.data() as any)?.pointsAwarded || 0), 0);
+
+          const oppSnap = await adminDb()
+            .collection('solarMadnessEvents')
+            .where('uid', '==', opponentUid)
+            .where('createdAt', '>=', start)
+            .where('createdAt', '<=', end)
+            .get();
+          const oppPoints = oppSnap.docs.reduce((s, d) => s + Number((d.data() as any)?.pointsAwarded || 0), 0);
+
+          matchup = { id: active.id, opponentUid, myPoints, opponentPoints: oppPoints, startsAt: start, endsAt: end };
+        }
+      }
+    } catch {
+      matchup = null;
+    }
+
     return NextResponse.json({
       awarded: true,
       seasonName: cfg.seasonName,
@@ -175,6 +217,7 @@ export async function POST(request: NextRequest) {
       pointsAwarded,
       totalPoints,
       eventId: idempotencyKey,
+      matchup,
     });
   } catch (error: any) {
     console.error('[SolarMadness] award error:', error);
