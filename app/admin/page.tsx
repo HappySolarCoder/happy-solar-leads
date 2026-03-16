@@ -422,19 +422,18 @@ export default function AdminPage() {
             </button>
 
             <button
-              onClick={() => router.push('/admin/leaderboards')}
-              className="bg-white border border-[#E2E8F0] rounded-lg p-6 hover:border-[#FF5F5A] hover:shadow-md transition-all text-left group opacity-50 cursor-not-allowed"
-              disabled
+              onClick={() => router.push('/admin/solar-madness')}
+              className="bg-white border border-[#E2E8F0] rounded-lg p-6 hover:border-[#FF5F5A] hover:shadow-md transition-all text-left group"
             >
               <div className="flex items-center justify-between mb-3">
-                <div className="p-3 bg-[#F6AD55]/10 rounded-lg">
-                  <span className="text-2xl">🏆</span>
+                <div className="p-3 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg">
+                  <span className="text-2xl">🏀</span>
                 </div>
-                <span className="text-xs px-2 py-1 bg-[#718096]/10 text-[#718096] rounded font-medium">Coming Soon</span>
+                <ArrowRight className="w-5 h-5 text-[#718096] group-hover:text-[#FF5F5A] group-hover:translate-x-1 transition-all" />
               </div>
-              <h3 className="font-semibold text-[#2D3748] mb-1">Leaderboards</h3>
+              <h3 className="font-semibold text-[#2D3748] mb-1">Solar Madness</h3>
               <p className="text-sm text-[#718096]">
-                Rankings, achievements, and performance tracking
+                Configure basket odds, prize pools, and bracket scoring
               </p>
             </button>
           </div>

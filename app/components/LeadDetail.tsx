@@ -18,6 +18,10 @@ import ObjectionTracker from './ObjectionTracker';
 import LeadEditorModal from './LeadEditorModal';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
 import { checkEasterEggTrigger } from '@/app/utils/easterEggs';
+import { awardSolarMadnessAsync } from '@/app/utils/solarMadness';
+import { auth } from '@/app/utils/firebase';
+import type { SolarMadnessAwardResponse } from '@/app/types/solarMadness';
+import SolarMadnessWinModal from './SolarMadnessWinModal';
 import { EasterEgg } from '@/app/types/easterEgg';
 import EasterEggWinModal from './EasterEggWinModal';
 import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
@@ -98,6 +102,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [adminAssignUser, setAdminAssignUser] = useState<string>('');
   const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
   const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
+  const [solarMadnessAward, setSolarMadnessAward] = useState<SolarMadnessAwardResponse | null>(null);
   const [photos, setPhotos] = useState(lead.photos || []);
 
   const isClaimedByMe = currentUser && lead.claimedBy === currentUser.id;
@@ -250,7 +255,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           currentUser.name,
           lead.address
         );
-        
+
         if (eggWon) {
           setWonEasterEgg(eggWon);
         }
@@ -258,7 +263,26 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         console.error('Easter egg check failed:', err);
         // Don't block the disposition save if egg check fails
       }
-      
+
+      // Solar Madness (basket win)
+      try {
+        const token = await auth?.currentUser?.getIdToken();
+        if (token) {
+          const resp = await awardSolarMadnessAsync({
+            idToken: token,
+            leadId: lead.id,
+            dispositionId: disposition?.id,
+            dispositionName: disposition?.name || newStatus,
+          });
+          if (resp?.awarded) {
+            setSolarMadnessAward(resp);
+          }
+        }
+      } catch (err) {
+        console.error('Solar Madness award failed:', err);
+        // Don't block the disposition save if award fails
+      }
+
       onUpdate();
     } finally {
       setIsUpdating(false);
@@ -892,6 +916,14 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         <EasterEggWinModal
           egg={wonEasterEgg}
           onClose={() => setWonEasterEgg(null)}
+        />
+      )}
+
+      {/* Solar Madness Win Modal */}
+      {solarMadnessAward?.awarded && (
+        <SolarMadnessWinModal
+          award={solarMadnessAward}
+          onClose={() => setSolarMadnessAward(null)}
         />
       )}
     </>
