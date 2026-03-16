@@ -223,8 +223,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         unclaimLead(lead.id);
       } else {
         // Handle status change with GPS data
-        const { saveLeadAsync } = await import('@/app/utils/storage');
-        
+        // IMPORTANT: use partial update so we don't accidentally send ownership fields that could trip rules.
+        const { updateLeadAsync } = await import('@/app/utils/storage');
+
         // Add to disposition history
         const historyEntry: LeadDispositionHistoryEntry = {
           disposition: disposition?.name || newStatus,
@@ -232,19 +233,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           userId: currentUser.id,
           userName: currentUser.name,
         };
-        
-        const updatedLead: Lead = {
-          ...lead,
+
+        await updateLeadAsync(lead.id, {
           status: newStatus,
           dispositionedAt: new Date(),
-          // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
-          claimedBy: lead.claimedBy ?? undefined,
-          assignedTo: lead.assignedTo ?? undefined,
           dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
           ...gpsData,
-        };
-        
-        await saveLeadAsync(updatedLead);
+        });
       }
       
       // Check for Easter Egg win!
@@ -284,6 +279,10 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       }
 
       onUpdate();
+    } catch (error: any) {
+      console.error('Disposition save failed:', error);
+      const msg = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error));
+      alert(`Disposition failed to save.\n\n${msg}`);
     } finally {
       setIsUpdating(false);
     }
