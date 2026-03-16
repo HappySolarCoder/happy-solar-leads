@@ -540,13 +540,24 @@ export default function KnockingPage() {
       {/* Mobile Header - Clean App Bar (icon-first) */}
       <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200 px-4 flex-shrink-0">
         <div className="h-14 flex items-center gap-2">
-          {/* Back */}
+          {/* Back / Close detail */}
           <button
-            onClick={() => router.push('/mobile')}
+            onClick={() => {
+              if (showLeadDetail) {
+                setShowLeadDetail(false);
+                setSelectedLeadId(undefined);
+              } else {
+                router.push('/mobile');
+              }
+            }}
             className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all flex-none"
-            title="Back"
+            title={showLeadDetail ? 'Close' : 'Back'}
           >
-            <ArrowLeft className="w-5 h-5 text-[#718096]" />
+            {showLeadDetail ? (
+              <X className="w-5 h-5 text-[#718096]" />
+            ) : (
+              <ArrowLeft className="w-5 h-5 text-[#718096]" />
+            )}
           </button>
 
           {/* Search pill (button) */}
