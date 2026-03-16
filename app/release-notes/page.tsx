@@ -35,6 +35,23 @@ const releaseNotes: ReleaseNote[] = [
       'Tap a 🙂 pin to view the sale/customer info',
     ],
   },
+  {
+    id: 'mobile-hot-zones-heatmap',
+    date: '2026-03-15',
+    title: 'Mobile Hot Zones (🔥 heat map)',
+    description: 'See micro-hotzones on mobile to focus on dense pockets of high-quality, fresh leads.',
+    icon: TrendingUp,
+    category: 'new',
+    permissions: 'all',
+    screenshot: '/release-notes/hot-zones.jpg',
+    howTo: [
+      'Mobile → Knocking Map',
+      'Tap 🔥 to toggle Hot Zones on/off',
+      'Numbers show the count of eligible leads in a walkable radius',
+      'Focus your route on the highest-density circles',
+      'Hot Zone logic: last 30 days + solarCategory is Good/Great only (2⭐+) + not dispositioned recently; then find clusters with ≥5 eligible leads within 0.5 miles; show up to 15 zones with ~0.4 mile minimum separation',
+    ],
+  },
 
   // Mar 15, 2026 - Go Backs overhaul + fixes
   {
