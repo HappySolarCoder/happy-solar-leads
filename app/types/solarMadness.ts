@@ -18,6 +18,7 @@ export interface SolarMadnessConfig {
   endsAt: any;   // Firestore Timestamp
   baseOddsRegular: number;      // 0..1
   baseOddsAppointment: number;  // 0..1
+  appointmentDispositionIds?: string[]; // preferred appointment detection
   regularPrizes: SolarMadnessPrize[];
   appointmentPrizes: SolarMadnessPrize[];
 }

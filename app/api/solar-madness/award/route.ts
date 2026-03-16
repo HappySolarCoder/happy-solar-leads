@@ -27,9 +27,13 @@ function pickWeighted(prizes: SolarMadnessPrize[]): SolarMadnessPrize | null {
   return enabled[enabled.length - 1];
 }
 
-function isAppointmentDisposition(dispositionName?: string) {
+function isAppointmentDisposition(params: { dispositionId?: string; dispositionName?: string; cfg?: SolarMadnessConfig }) {
+  const { dispositionId, dispositionName, cfg } = params;
+  const ids = (cfg?.appointmentDispositionIds || []).map(x => String(x));
+  if (dispositionId && ids.includes(String(dispositionId))) return true;
+  // fallback
   const n = String(dispositionName || '').toLowerCase();
-  return n.includes('appointment');
+  return n.includes('appointment') || n.includes('appt');
 }
 
 function sha1(input: string) {
@@ -63,12 +67,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ awarded: false, reason: 'disabled' });
     }
 
+    // Basic config validation: ensure prize pools exist
+    if (!Array.isArray(cfg.regularPrizes) || !Array.isArray(cfg.appointmentPrizes)) {
+      return NextResponse.json({ awarded: false, reason: 'invalid-config' });
+    }
+
     const now = new Date();
     if (!isWithinSeason(cfg, now)) {
       return NextResponse.json({ awarded: false, reason: 'out-of-season' });
     }
 
-    const triggerType: SolarMadnessTriggerType = isAppointmentDisposition(dispositionName) ? 'appointment' : 'regular';
+    const triggerType: SolarMadnessTriggerType = isAppointmentDisposition({ dispositionId, dispositionName, cfg }) ? 'appointment' : 'regular';
     const oddsUsed = clamp01(triggerType === 'appointment' ? Number(cfg.baseOddsAppointment) : Number(cfg.baseOddsRegular));
 
     // Idempotency: one award per uid+lead+trigger+disposition+day
@@ -89,6 +98,23 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Server verification: ensure lead was dispositioned recently and matches the request
+    const leadDoc = await adminDb().collection('leads').doc(leadId).get();
+    if (!leadDoc.exists) {
+      return NextResponse.json({ awarded: false, reason: 'lead-not-found', seasonName: cfg.seasonName, triggerType, oddsUsed });
+    }
+    const lead = leadDoc.data() as any;
+    const dispNameFromLead = String(lead?.status || lead?.disposition || '').toLowerCase();
+    const requestedDisp = String(dispositionName || '').toLowerCase();
+    const dispAt = lead?.dispositionedAt?.toDate ? lead.dispositionedAt.toDate() : lead?.dispositionedAt ? new Date(lead.dispositionedAt) : null;
+    const minutesAgo = dispAt instanceof Date && !isNaN(dispAt.getTime()) ? (Date.now() - dispAt.getTime()) / 1000 / 60 : Infinity;
+    const sameDisp = requestedDisp ? dispNameFromLead === requestedDisp : true;
+    const byUser = String(lead?.claimedBy || '') === String(decoded.uid) || String(lead?.assignedTo || '') === String(decoded.uid);
+
+    if (!sameDisp || minutesAgo > 10 || !byUser) {
+      return NextResponse.json({ awarded: false, reason: 'not-verified', seasonName: cfg.seasonName, triggerType, oddsUsed });
+    }
+
     const hit = Math.random() < oddsUsed;
     if (!hit) {
       return NextResponse.json({ awarded: false, reason: 'miss', seasonName: cfg.seasonName, triggerType, oddsUsed });
@@ -100,7 +126,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ awarded: false, reason: 'empty-prize-pool', seasonName: cfg.seasonName, triggerType, oddsUsed });
     }
 
-    const pointsAwarded = Number(prize.pointsValue ?? 0);
+    // Guarantee points for every award (bracket depends on points)
+    const pointsAwarded = Number(
+      prize.pointsValue ?? (prize.type === 'cash' ? 25 : prize.type === 'swag' ? 50 : 0)
+    );
 
     // Resolve app user name snapshot
     const userDoc = await adminDb().collection('users').doc(decoded.uid).get();

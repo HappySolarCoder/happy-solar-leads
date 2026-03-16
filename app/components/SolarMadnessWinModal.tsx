@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import type { SolarMadnessAwardResponse } from '@/app/types/solarMadness';
 
-export default function SolarMadnessWinModal({ award, onClose }: { award: SolarMadnessAwardResponse; onClose: () => void; }) {
+export default function SolarMadnessWinModal({ award, onClose }: { award: SolarMadnessAwardResponse & { matchup?: any }; onClose: () => void; }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -39,6 +39,13 @@ export default function SolarMadnessWinModal({ award, onClose }: { award: SolarM
             )}
             {typeof award.totalPoints === 'number' && (
               <div className="mt-1 text-sm text-[#718096]">Total points: {award.totalPoints}</div>
+            )}
+            {award.matchup && (
+              <div className="mt-3 rounded-xl border border-[#E2E8F0] bg-[#F7FAFC] p-3 text-left">
+                <div className="text-xs font-semibold text-[#2D3748]">Bracket matchup</div>
+                <div className="mt-1 text-sm text-[#718096]">You: <span className="font-semibold text-[#2D3748]">{award.matchup.myPoints}</span> pts</div>
+                <div className="text-sm text-[#718096]">Opponent: <span className="font-semibold text-[#2D3748]">{award.matchup.opponentPoints}</span> pts</div>
+              </div>
             )}
           </div>
 

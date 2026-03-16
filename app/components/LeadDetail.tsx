@@ -275,7 +275,14 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             dispositionName: disposition?.name || newStatus,
           });
           if (resp?.awarded) {
-            setSolarMadnessAward(resp);
+            // Pull matchup snippet (best-effort)
+            try {
+              const meRes = await fetch('/api/solar-madness/me', { headers: { Authorization: `Bearer ${token}` } });
+              const meJson = meRes.ok ? await meRes.json() : null;
+              setSolarMadnessAward({ ...resp, matchup: meJson?.matchup });
+            } catch {
+              setSolarMadnessAward(resp);
+            }
           }
         }
       } catch (err) {
