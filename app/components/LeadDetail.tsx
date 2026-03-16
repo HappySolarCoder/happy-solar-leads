@@ -102,7 +102,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [adminAssignUser, setAdminAssignUser] = useState<string>('');
   const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
   const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
-  const [solarMadnessAward, setSolarMadnessAward] = useState<SolarMadnessAwardResponse | null>(null);
+  const [solarMadnessAward, setSolarMadnessAward] = useState<(SolarMadnessAwardResponse & { matchup?: any }) | null>(null);
   const [photos, setPhotos] = useState(lead.photos || []);
 
   const isClaimedByMe = currentUser && lead.claimedBy === currentUser.id;
@@ -275,14 +275,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             dispositionName: disposition?.name || newStatus,
           });
           if (resp?.awarded) {
-            // Pull matchup snippet (best-effort)
-            try {
-              const meRes = await fetch('/api/solar-madness/me', { headers: { Authorization: `Bearer ${token}` } });
-              const meJson = meRes.ok ? await meRes.json() : null;
-              setSolarMadnessAward({ ...resp, matchup: meJson?.matchup });
-            } catch {
-              setSolarMadnessAward(resp);
-            }
+            setSolarMadnessAward(resp);
           }
         }
       } catch (err) {
