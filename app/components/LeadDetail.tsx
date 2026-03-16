@@ -436,7 +436,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     return (
       <>
         <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 overflow-hidden flex flex-col border-l border-[#E2E8F0]">
-          <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
+          <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
             <div className="flex items-center gap-2">
               <span className="text-lg">🙂</span>
               <span className="font-semibold text-[#2D3748]">Customer</span>
@@ -518,7 +518,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     <>
       <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 overflow-hidden flex flex-col border-l border-[#E2E8F0]">
         {/* Header */}
-        <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
+        <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
           <div className="flex items-center gap-3">
             <div 
               className="w-3 h-3 rounded-full"
