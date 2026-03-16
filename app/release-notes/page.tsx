@@ -52,6 +52,23 @@ const releaseNotes: ReleaseNote[] = [
       'Hot Zone logic: last 30 days + solarCategory is Good/Great only (2⭐+) + not dispositioned recently; then find clusters with ≥5 eligible leads within 0.5 miles; show up to 15 zones with ~0.4 mile minimum separation',
     ],
   },
+  {
+    id: 'mobile-target-knocks-pill',
+    date: '2026-03-15',
+    title: 'Target Knocks (🎯) on Mobile',
+    description: 'Mobile now shows your remaining daily target knocks so you always know the pace needed to hit your monthly goal.',
+    icon: Clock,
+    category: 'new',
+    permissions: 'all',
+    screenshot: '/release-notes/target-knocks.jpg',
+    howTo: [
+      'Mobile → Knocking Map',
+      'Look for the 🎯 pill in the header',
+      'Tap 🎯 to open goal details',
+      'Logic: pulls your monthly Door Knocks Goal from Goals API; computes K = your door knocks so far this month; computes remaining workdays in the month; daily target = ceil(max(0, goal - K) / max(1, remainingWorkdays))',
+      'Door knocks count matches setter stats: only dispositions where countsAsDoorKnock === true',
+    ],
+  },
 
   // Mar 15, 2026 - Go Backs overhaul + fixes
   {
