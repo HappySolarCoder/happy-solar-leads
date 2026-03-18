@@ -1204,8 +1204,8 @@ export default function LeadMap({
         source: 'manually-added', // Mark as manually added via map pin drop
       } as Lead;
 
-      // Save to Firestore
-      const { saveLeadAsync } = await import('@/app/utils/storage');
+      // Save to Firestore (create)
+      const { saveLeadAsync, updateLeadAsync } = await import('@/app/utils/storage');
       await saveLeadAsync(newLead);
 
       // Auto-assign to territory user if within a territory
@@ -1217,13 +1217,11 @@ export default function LeadMap({
           if (territories.length > 0) {
             const territory = findLeadTerritory(newLead, territories);
             if (territory?.userId) {
-              const updatedLead: Lead = {
-                ...newLead,
+              await updateLeadAsync(newLead.id, {
                 assignedTo: territory.userId,
                 assignedAt: new Date(),
                 status: 'assigned',
-              };
-              await saveLeadAsync(updatedLead);
+              });
               console.log('[LeadMap] Auto-assigned lead to territory user:', territory.userId);
             }
           }
@@ -1246,15 +1244,16 @@ export default function LeadMap({
           .then((res) => res.json())
           .then((solarData) => {
             if (solarData.solarScore) {
-              // Update lead with solar data
-              saveLeadAsync({
-                ...newLead,
+              // Update lead with solar data (partial update; do not overwrite ownership fields)
+              updateLeadAsync(newLead.id, {
                 solarScore: solarData.solarScore,
                 solarCategory: solarData.solarCategory,
                 solarMaxPanels: solarData.maxPanels,
                 solarSunshineHours: solarData.sunshineHours,
                 hasSouthFacingRoof: solarData.hasSouthFacingRoof,
                 solarTestedAt: new Date(),
+              }).catch((err: any) => {
+                console.error('Solar enrichment update failed:', err);
               });
             }
           })
