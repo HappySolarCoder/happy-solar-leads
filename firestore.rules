@@ -63,6 +63,24 @@ service cloud.firestore {
         && request.resource.data.setterId == uid();
     }
 
+    // Allow first-time claim transition: unowned lead -> claimed by current user.
+    function claimTransitionByMe() {
+      return signedIn()
+        && (
+          !("claimedBy" in resource.data)
+          || resource.data.claimedBy == null
+          || resource.data.claimedBy == ""
+        )
+        && request.resource.data.claimedBy == uid()
+        && unchangedOrMissing("assignedTo")
+        && unchangedOrMissing("territoryId")
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "claimedBy",
+          "claimedAt",
+          "status"
+        ]);
+    }
+
     // ====================== USERS ======================
     // Any signed-in user can read (supports UI: names, colors, dropdowns, etc.)
     // Only admins can create/update/delete users
@@ -137,7 +155,7 @@ service cloud.firestore {
         && unchangedOrMissing("claimedBy")
         && unchangedOrMissing("assignedTo")
         && unchangedOrMissing("territoryId")
-      );
+      ) || claimTransitionByMe();
 
       // DELETE: admin only
       allow delete: if isAdmin();
