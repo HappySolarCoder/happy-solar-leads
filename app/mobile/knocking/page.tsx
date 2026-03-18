@@ -53,6 +53,7 @@ export default function KnockingPage() {
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [showSearchSheet, setShowSearchSheet] = useState(false);
+  const [writeError, setWriteError] = useState<string | null>(null);
   const [showGoalsModal, setShowGoalsModal] = useState(false);
   const [showHeat, setShowHeat] = useState(false);
   
@@ -152,8 +153,15 @@ export default function KnockingPage() {
 
   // Refresh leads
   const refreshLeads = useCallback(async () => {
-    const loadedLeads = await getLeadsAsync();
-    setLeads(loadedLeads);
+    try {
+      const loadedLeads = await getLeadsAsync();
+      setLeads(loadedLeads);
+      setWriteError(null);
+    } catch (error: any) {
+      const code = error?.code || 'unknown';
+      const msg = error?.message || 'Failed to save changes.';
+      setWriteError(`${code}: ${msg}`);
+    }
   }, []);
 
   // Handle lead selection
@@ -631,6 +639,12 @@ export default function KnockingPage() {
             <Filter className="w-4 h-4" />
           </button>
         </div>
+
+        {writeError && (
+          <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            Save failed: {writeError}
+          </div>
+        )}
 
         {/* Search Sheet */}
         {showSearchSheet && (
