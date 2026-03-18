@@ -31,6 +31,22 @@ service cloud.firestore {
       return signedIn() && resource.data.claimedBy == uid();
     }
 
+    // Disposition/door-knock-only updates allowed for any signed-in user.
+    // Prevents ownership/assignment edits while allowing status saves across existing pins.
+    function dispositionUpdateOnly() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        'status',
+        'disposition',
+        'dispositionedAt',
+        'dispositionHistory',
+        'knockGpsLat',
+        'knockGpsLng',
+        'knockGpsAccuracy',
+        'knockGpsTimestamp',
+        'knockDistanceFromAddress'
+      ]);
+    }
+
     function leadIsAssignedToMe() {
       return signedIn() && resource.data.assignedTo == uid();
     }
@@ -108,9 +124,16 @@ service cloud.firestore {
 
       // UPDATE:
       //   Admins = anything
-      //   Reps = only their own leads + cannot change ownership/assignment fields
+      //   Reps on owned leads = normal updates (no ownership/assignment mutations)
+      //   Any signed-in user = disposition/door-knock-only updates (no ownership/assignment mutations)
       allow update: if isAdmin() || (
         (leadIsClaimedByMe() || leadIsAssignedToMe() || leadIsManualByMe())
+        && unchangedOrMissing("claimedBy")
+        && unchangedOrMissing("assignedTo")
+        && unchangedOrMissing("territoryId")
+      ) || (
+        signedIn()
+        && dispositionUpdateOnly()
         && unchangedOrMissing("claimedBy")
         && unchangedOrMissing("assignedTo")
         && unchangedOrMissing("territoryId")
