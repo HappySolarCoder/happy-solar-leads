@@ -498,7 +498,12 @@ export default function KnockingPage() {
 
   const todaysKnocks = leads.filter(l => {
     if (!l.dispositionedAt || l.dispositionedAt < todayStart) return false;
-    if (l.claimedBy !== currentUser?.id) return false;
+
+    // Count by actor (who actually dispositioned), fallback to claimedBy for legacy rows.
+    const lastHistoryUserId = (l.dispositionHistory && l.dispositionHistory[0]?.userId) ? String(l.dispositionHistory[0].userId) : null;
+    const actedByMe = lastHistoryUserId === currentUser?.id || l.claimedBy === currentUser?.id;
+    if (!actedByMe) return false;
+
     const disp = String(l.status || l.disposition || '').toLowerCase();
     return doorKnockStatusIds.includes(disp);
   }).length;

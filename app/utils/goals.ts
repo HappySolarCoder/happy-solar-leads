@@ -75,8 +75,13 @@ export async function getMyMonthlyKnocksAsync(monthDate: Date, currentUser: User
 
   const knocks = leads.filter((lead: Lead) => {
     if (!lead.dispositionedAt) return false;
-    if (!lead.claimedBy) return false;
-    if (lead.claimedBy !== currentUser.id) return false;
+
+    // Count by actor (who dispositioned), fallback to claimedBy for legacy rows.
+    const lastHistoryUserId = (lead.dispositionHistory && lead.dispositionHistory[0]?.userId)
+      ? String(lead.dispositionHistory[0].userId)
+      : null;
+    const actedByMe = lastHistoryUserId === currentUser.id || lead.claimedBy === currentUser.id;
+    if (!actedByMe) return false;
 
     const disp = (lead.status || lead.disposition || '').toLowerCase();
     if (!doorKnockStatusIds.includes(disp)) return false;
