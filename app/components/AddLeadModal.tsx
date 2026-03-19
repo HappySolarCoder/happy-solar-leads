@@ -1,8 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, MapPin, Loader, Home, Phone, Mail, DollarSign } from 'lucide-react';
 import { Lead } from '@/app/types';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
+import type { Disposition } from '@/app/types/disposition';
 
 interface AddLeadModalProps {
   isOpen: boolean;
@@ -36,6 +38,23 @@ export default function AddLeadModal({
   const [email, setEmail] = useState('');
   const [estimatedBill, setEstimatedBill] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
+  const [selectedDisposition, setSelectedDisposition] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    getDispositionsAsync()
+      .then((rows) => {
+        const options = rows
+          .filter((d) => d.id !== 'claimed' && d.id !== 'unclaimed')
+          .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+        setDispositions(options);
+        if (!selectedDisposition && options.length > 0) {
+          setSelectedDisposition(options[0].id);
+        }
+      })
+      .catch(() => setDispositions([]));
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -43,6 +62,13 @@ export default function AddLeadModal({
     setIsSaving(true);
 
     try {
+      if (!selectedDisposition) {
+        alert('Please select a disposition.');
+        setIsSaving(false);
+        return;
+      }
+
+      const dispositionedAt = selectedDisposition ? new Date() : undefined;
       const leadData: Partial<Lead> = {
         name: name.trim() || undefined,
         address: address.trim() || undefined,
@@ -54,7 +80,9 @@ export default function AddLeadModal({
         estimatedBill: estimatedBill ? parseFloat(estimatedBill) : undefined,
         lat,
         lng,
-        status: 'unclaimed',
+        status: selectedDisposition,
+        disposition: selectedDisposition,
+        dispositionedAt,
         createdAt: new Date(),
       };
 
@@ -70,6 +98,7 @@ export default function AddLeadModal({
       setPhone('');
       setEmail('');
       setEstimatedBill('');
+      setSelectedDisposition('');
     } catch (error) {
       console.error('Error saving lead:', error);
       alert('Failed to save lead. Please try again.');
@@ -120,6 +149,22 @@ export default function AddLeadModal({
                 <span className="font-semibold">GPS:</span>
                 <span>{lat.toFixed(6)}, {lng.toFixed(6)}</span>
               </div>
+            </div>
+
+            {/* Disposition (Required) */}
+            <div>
+              <label className="block text-sm font-semibold text-[#2D3748] mb-2">
+                Disposition <span className="text-[#FF5F5A]">*</span>
+              </label>
+              <select
+                value={selectedDisposition}
+                onChange={(e) => setSelectedDisposition(e.target.value)}
+                className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10 bg-white"
+              >
+                {dispositions.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
             </div>
 
             {/* Name (Required) */}
