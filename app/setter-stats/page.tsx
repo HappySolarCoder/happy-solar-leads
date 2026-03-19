@@ -128,7 +128,9 @@ export default function DataDashboard() {
 
     // Process leads
     filteredLeads.forEach(lead => {
-      const userId = lead.claimedBy;
+      // Attribute to the actor who actually dispositioned (latest history entry),
+      // fallback to claimedBy for legacy rows without history.
+      const userId = lead.dispositionHistory?.[0]?.userId || lead.claimedBy;
       if (!userId) return;
 
       if (!setterMap.has(userId)) {
