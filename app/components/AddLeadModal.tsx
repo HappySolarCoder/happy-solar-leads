@@ -68,6 +68,7 @@ export default function AddLeadModal({
         return;
       }
 
+      const selectedDispositionObj = dispositions.find(d => d.id === selectedDisposition);
       const dispositionedAt = selectedDisposition ? new Date() : undefined;
       const leadData: Partial<Lead> = {
         name: name.trim() || undefined,
@@ -81,7 +82,7 @@ export default function AddLeadModal({
         lat,
         lng,
         status: selectedDisposition,
-        disposition: selectedDisposition,
+        disposition: selectedDispositionObj?.name || selectedDisposition,
         dispositionedAt,
         createdAt: new Date(),
       };
@@ -98,7 +99,7 @@ export default function AddLeadModal({
       setPhone('');
       setEmail('');
       setEstimatedBill('');
-      setSelectedDisposition('');
+      setSelectedDisposition(dispositions[0]?.id || selectedDisposition);
     } catch (error) {
       console.error('Error saving lead:', error);
       alert('Failed to save lead. Please try again.');
