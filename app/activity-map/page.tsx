@@ -29,6 +29,10 @@ interface UserActivity {
   startTime: Date;
   endTime: Date;
   totalKnocks: number;
+  pacePerHour: number;
+  consistencyPct: number;
+  medianGapMin: number;
+  qualityPct: number;
 }
 
 export default function ActivityMapPage() {
@@ -163,12 +167,48 @@ export default function ActivityMapPage() {
         ? new Date(lastDispositionedAt)
         : new Date();
 
+      const durationHours = Math.max(1 / 60, (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60));
+      const pacePerHour = sortedKnocks.length / durationHours;
+
+      // Consistency: % of 30-min buckets with at least 1 knock in session window
+      const bucketMs = 30 * 60 * 1000;
+      const totalBuckets = Math.max(1, Math.ceil((endTime.getTime() - startTime.getTime()) / bucketMs));
+      const activeBuckets = new Set<number>();
+      sortedKnocks.forEach((k) => {
+        const dt = k.dispositionedAt ? new Date(k.dispositionedAt).getTime() : null;
+        if (!dt) return;
+        const idx = Math.floor((dt - startTime.getTime()) / bucketMs);
+        if (idx >= 0) activeBuckets.add(idx);
+      });
+      const consistencyPct = (activeBuckets.size / totalBuckets) * 100;
+
+      // Median gap between knocks (minutes)
+      const times = sortedKnocks
+        .map(k => (k.dispositionedAt ? new Date(k.dispositionedAt).getTime() : null))
+        .filter((t): t is number => !!t)
+        .sort((a, b) => a - b);
+      const gaps = times.slice(1).map((t, i) => (t - times[i]) / 60000).sort((a, b) => a - b);
+      const medianGapMin = gaps.length
+        ? (gaps.length % 2 ? gaps[(gaps.length - 1) / 2] : (gaps[gaps.length / 2 - 1] + gaps[gaps.length / 2]) / 2)
+        : 0;
+
+      // Quality mix: Interested / Appointment / Go Back as % of knocks
+      const productive = sortedKnocks.filter((k) => {
+        const s = String(k.status || k.disposition || '').toLowerCase();
+        return s.includes('interested') || s.includes('appointment') || s.includes('go-back') || s.includes('go back');
+      }).length;
+      const qualityPct = sortedKnocks.length > 0 ? (productive / sortedKnocks.length) * 100 : 0;
+
       activities.push({
         user,
         knocks: sortedKnocks,
         startTime,
         endTime,
         totalKnocks: sortedKnocks.length,
+        pacePerHour,
+        consistencyPct,
+        medianGapMin,
+        qualityPct,
       });
     });
 
@@ -330,6 +370,10 @@ export default function ActivityMapPage() {
                       <span>{formatTimeEST(activity.endTime)}</span>
                       <span className="text-xs text-[#A0AEC0]">EST</span>
                     </div>
+                    <div className="text-xs text-[#4A5568]">Pace: <span className="font-semibold">{activity.pacePerHour.toFixed(1)}/hr</span></div>
+                    <div className="text-xs text-[#4A5568]">Consistency: <span className="font-semibold">{Math.round(activity.consistencyPct)}%</span></div>
+                    <div className="text-xs text-[#4A5568]">Avg gap: <span className="font-semibold">{Math.round(activity.medianGapMin)}m</span></div>
+                    <div className="text-xs text-[#4A5568]">Quality: <span className="font-semibold">{Math.round(activity.qualityPct)}%</span></div>
                   </div>
                 </button>
               ))}
