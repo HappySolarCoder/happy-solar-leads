@@ -331,7 +331,12 @@ export default function KnockingPage() {
 
   // Filter by disposition if selected — prospects only
   if (dispositionFilter !== 'all') {
-    prospects = prospects.filter(l => l.disposition === dispositionFilter);
+    const selected = String(dispositionFilter).toLowerCase();
+    prospects = prospects.filter(l => {
+      const byId = String(l.status || '').toLowerCase() === selected;
+      const byName = String(l.disposition || '').toLowerCase() === selected;
+      return byId || byName;
+    });
   }
 
   // Fresh Pins: only show leads NOT dispositioned in the last 30 days — prospects only

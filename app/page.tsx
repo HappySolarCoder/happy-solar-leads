@@ -336,7 +336,12 @@ export default function Home() {
     
     // Filter by disposition if selected
     if (dispositionFilter !== 'all') {
-      result = result.filter(l => l.disposition === dispositionFilter);
+      const selected = String(dispositionFilter).toLowerCase();
+      result = result.filter(l => {
+        const byId = String(l.status || '').toLowerCase() === selected;
+        const byName = String(l.disposition || '').toLowerCase() === selected;
+        return byId || byName;
+      });
     }
 
     // Sort leads if selected
