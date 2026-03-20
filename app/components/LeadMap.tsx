@@ -1191,10 +1191,24 @@ export default function LeadMap({
         throw new Error('Auth not ready — please wait 2 seconds and try again.');
       }
 
+      const manualDisposition = typeof leadData.disposition === 'string' ? leadData.disposition : undefined;
+      const manualStatus = typeof leadData.status === 'string' ? leadData.status : undefined;
+      const historyEntry = manualDisposition
+        ? [{
+            disposition: manualDisposition,
+            timestamp: new Date(),
+            userId: currentUser?.id || firebaseUid,
+            userName: currentUser?.name || 'User',
+          }]
+        : undefined;
+
       const newLead: Lead = {
         ...leadData,
         id,
-        status: 'available',
+        status: manualStatus || 'available',
+        disposition: manualDisposition,
+        dispositionedAt: manualDisposition ? (leadData.dispositionedAt || new Date()) : leadData.dispositionedAt,
+        dispositionHistory: (leadData.dispositionHistory as any) || historyEntry,
         createdAt: new Date(),
         // Manual lead ownership: must match Firestore rules (setterId == request.auth.uid)
         setterId: firebaseUid,
