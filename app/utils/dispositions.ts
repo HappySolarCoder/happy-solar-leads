@@ -7,12 +7,19 @@ import { Disposition, DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 export type { Disposition } from '@/app/types/disposition';
 
 const DISPOSITIONS_COLLECTION = 'dispositions';
+let dispositionsCache: Disposition[] | null = null;
+let dispositionsCacheTimestamp = 0;
+const DISPOSITIONS_CACHE_TTL = 90000; // 90s
 
 // Get all dispositions (with defaults as fallback)
 export async function getDispositionsAsync(): Promise<Disposition[]> {
   try {
+    if (dispositionsCache && Date.now() - dispositionsCacheTimestamp < DISPOSITIONS_CACHE_TTL) {
+      return dispositionsCache;
+    }
+
     if (typeof window === 'undefined' || !db) {
-      return DEFAULT_DISPOSITIONS;
+      return dispositionsCache || DEFAULT_DISPOSITIONS;
     }
 
     const q = query(collection(db, DISPOSITIONS_COLLECTION), orderBy('order', 'asc'));
@@ -21,6 +28,8 @@ export async function getDispositionsAsync(): Promise<Disposition[]> {
     if (snapshot.empty) {
       // First time - initialize with defaults
       await initializeDefaultDispositions();
+      dispositionsCache = DEFAULT_DISPOSITIONS;
+      dispositionsCacheTimestamp = Date.now();
       return DEFAULT_DISPOSITIONS;
     }
     
@@ -29,11 +38,13 @@ export async function getDispositionsAsync(): Promise<Disposition[]> {
       createdAt: doc.data().createdAt?.toDate?.() || new Date(),
       updatedAt: doc.data().updatedAt?.toDate?.() || new Date(),
     })) as Disposition[];
-    
+
+    dispositionsCache = dispositions;
+    dispositionsCacheTimestamp = Date.now();
     return dispositions;
   } catch (error) {
     console.error('Error loading dispositions:', error);
-    return DEFAULT_DISPOSITIONS;
+    return dispositionsCache || DEFAULT_DISPOSITIONS;
   }
 }
 

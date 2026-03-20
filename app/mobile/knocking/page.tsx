@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, List, Navigation, Filter, MapPin, Settings, Search, X, Route, Clock, Footprints, Car } from 'lucide-react';
-import { getLeadsAsync, getUsersAsync, saveCurrentUser } from '@/app/utils/storage';
+import { getLeads, getLeadsAsync, getUsersAsync, saveCurrentUser } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
 import LeadDetail from '@/app/components/LeadDetail';
@@ -29,12 +29,13 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
 
 export default function KnockingPage() {
   const router = useRouter();
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [leads, setLeads] = useState<Lead[]>(() => getLeads());
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
   const [mapZoom, setMapZoom] = useState(15);
@@ -138,9 +139,12 @@ export default function KnockingPage() {
       setCurrentUser(user);
       saveCurrentUser(user); // Save to localStorage for later retrieval
 
+      // Non-blocking: show cached content immediately, refresh in background
+      setIsLoading(false);
+      setIsRefreshing(true);
       const loadedLeads = await getLeadsAsync();
       setLeads(loadedLeads);
-      setIsLoading(false);
+      setIsRefreshing(false);
     }
     loadData();
   }, [router]);
@@ -595,6 +599,12 @@ export default function KnockingPage() {
 
         {/* Row 2: Chips (icon + number only) */}
         <div className="pb-3 pt-2 -mt-1 flex items-center gap-2 overflow-x-auto pr-1 text-xs font-semibold tabular-nums [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {isRefreshing && (
+            <div className="h-10 min-h-10 px-3 rounded-full bg-[#FFF7ED] border border-[#FDBA74] text-[#9A3412] inline-flex items-center gap-2 leading-none whitespace-nowrap">
+              <span className="animate-pulse">⟳</span>
+              <span>Refreshing…</span>
+            </div>
+          )}
           {/* Standard chip class: consistent height + rhythm */}
           <div className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap">
             <span className="text-sm leading-none">🚪</span>

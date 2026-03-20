@@ -21,7 +21,7 @@ import {
 
 let leadsCache: Lead[] | null = null;
 let cacheTimestamp = 0;
-const CACHE_TTL = 5000; // 5 seconds
+const CACHE_TTL = 90000; // 90 seconds
 
 // Helper: Convert date strings from JSON to Date objects
 function convertLeadDates(lead: any): Lead {
@@ -67,6 +67,11 @@ export function getLeads(): Lead[] {
 
 export async function getLeadsAsync(): Promise<Lead[]> {
   try {
+    // Return fresh cache first
+    if (leadsCache && Date.now() - cacheTimestamp < CACHE_TTL) {
+      return leadsCache;
+    }
+
     // Import here to avoid circular deps in some build paths
     const { getCurrentAuthUser } = await import('./auth');
     const me = await getCurrentAuthUser();
@@ -78,15 +83,13 @@ export async function getLeadsAsync(): Promise<Lead[]> {
         ? await firestoreGetLeadsForUser(me.id)
         : [];
 
-    if (leads && leads.length > 0) {
-      leadsCache = leads;
-      cacheTimestamp = Date.now();
-      return leads;
-    }
-    return [];
+    leadsCache = leads || [];
+    cacheTimestamp = Date.now();
+    return leadsCache;
   } catch (error) {
     console.error('Firestore getLeads failed:', error);
-    return [];
+    // Stale-while-error fallback
+    return leadsCache || [];
   }
 }
 
@@ -229,10 +232,19 @@ export function getUsers(): User[] {
 }
 
 export async function getUsersAsync(): Promise<User[]> {
-  const users = await firestoreGetAllUsers();
-  usersCache = users;
-  usersCacheTimestamp = Date.now();
-  return users;
+  if (usersCache && Date.now() - usersCacheTimestamp < CACHE_TTL) {
+    return usersCache;
+  }
+
+  try {
+    const users = await firestoreGetAllUsers();
+    usersCache = users;
+    usersCacheTimestamp = Date.now();
+    return users;
+  } catch (error) {
+    console.error('Firestore getUsers failed:', error);
+    return usersCache || [];
+  }
 }
 
 export function saveUsers(users: User[]): void {
