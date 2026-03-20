@@ -341,8 +341,7 @@ export default function Home() {
       result = result.filter(l => {
         const byId = normalize(l.status).replace(/\s+/g, '-') === selected;
         const byName = normalize(l.disposition) === selected;
-        const byGoBackSchedule = selected === 'go-back' && Boolean(l.goBackScheduledDate);
-        return byId || byName || byGoBackSchedule;
+        return byId || byName;
       });
     }
 
