@@ -12,8 +12,13 @@ export default function ToolsPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [goBackCount, setGoBackCount] = useState(0);
+  const [isMobileView, setIsMobileView] = useState(false);
 
   useEffect(() => {
+    setIsMobileView(window.innerWidth < 768);
+    const onResize = () => setIsMobileView(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+
     async function loadData() {
       const user = await getCurrentAuthUser();
       if (!user) {
@@ -34,6 +39,7 @@ export default function ToolsPage() {
     }
 
     loadData();
+    return () => window.removeEventListener('resize', onResize);
   }, [router]);
 
   if (isLoading) {
@@ -58,7 +64,7 @@ export default function ToolsPage() {
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => router.push('/mobile/knocking')}
+              onClick={() => router.push(isMobileView ? '/mobile/knocking' : '/')}
               className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
             >
               <ArrowLeft className="w-5 h-5 text-[#718096]" />
