@@ -1517,6 +1517,12 @@ function createCustomIcon(
     baseSize = 24;
     showIcon = true;
   }
+
+  // Manual pins with dispositions should always show an icon/emoji
+  if (isManuallyAdded && disposition) {
+    showIcon = true;
+    baseSize = Math.max(baseSize, 18);
+  }
   
   // Homeowner leads are 70% smaller (more subtle)
   if (isHomeownerLead) {
