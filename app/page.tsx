@@ -336,11 +336,13 @@ export default function Home() {
     
     // Filter by disposition if selected
     if (dispositionFilter !== 'all') {
-      const selected = String(dispositionFilter).toLowerCase();
+      const normalize = (v: unknown) => String(v || '').trim().toLowerCase();
+      const selected = normalize(dispositionFilter).replace(/\s+/g, '-');
       result = result.filter(l => {
-        const byId = String(l.status || '').toLowerCase() === selected;
-        const byName = String(l.disposition || '').toLowerCase() === selected;
-        return byId || byName;
+        const byId = normalize(l.status).replace(/\s+/g, '-') === selected;
+        const byName = normalize(l.disposition) === selected;
+        const byGoBackSchedule = selected === 'go-back' && Boolean(l.goBackScheduledDate);
+        return byId || byName || byGoBackSchedule;
       });
     }
 
