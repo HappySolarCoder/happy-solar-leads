@@ -341,7 +341,8 @@ export default function Home() {
       result = result.filter(l => {
         const byId = normalize(l.status).replace(/\s+/g, '-') === selected;
         const byName = normalize(l.disposition) === selected;
-        return byId || byName;
+        const byHistoryName = normalize(l.dispositionHistory?.[0]?.disposition) === selected;
+        return byId || byName || byHistoryName;
       });
     }
 
