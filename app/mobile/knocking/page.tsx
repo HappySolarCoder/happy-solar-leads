@@ -317,7 +317,7 @@ export default function KnockingPage() {
 
   // Prospects baseline (exclude poor solar leads). Customers are unaffected by solar filters.
   let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l) && l.solarCategory !== 'poor');
-  const customers = leadTypeFilteredLeads.filter(isCustomerLead);
+  let customers = leadTypeFilteredLeads.filter(isCustomerLead);
 
   // Filter by setter if selected (Admin/Manager only) — prospects only
   if (setterFilter !== 'all') {
@@ -329,14 +329,17 @@ export default function KnockingPage() {
     prospects = prospects.filter(l => solarFilter.includes(l.solarCategory || ''));
   }
 
-  // Filter by disposition if selected — prospects only
+  // Filter by disposition if selected — apply to both prospects and customers
   if (dispositionFilter !== 'all') {
     const selected = String(dispositionFilter).toLowerCase();
-    prospects = prospects.filter(l => {
+    const matchesDisposition = (l: Lead) => {
       const byId = String(l.status || '').toLowerCase() === selected;
       const byName = String(l.disposition || '').toLowerCase() === selected;
       return byId || byName;
-    });
+    };
+
+    prospects = prospects.filter(matchesDisposition);
+    customers = customers.filter(matchesDisposition);
   }
 
   // Fresh Pins: only show leads NOT dispositioned in the last 30 days — prospects only
