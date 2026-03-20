@@ -342,10 +342,7 @@ export default function KnockingPage() {
       const byId = statusNorm === selectedNorm;
       const byLegacyName = selectedName && normalize(l.disposition) === selectedName;
 
-      // Go Back compatibility: some legacy rows are tracked by scheduled date field
-      const byGoBackSchedule = selectedNorm === 'go-back' && Boolean(l.goBackScheduledDate);
-
-      return Boolean(byId || byLegacyName || byGoBackSchedule);
+      return Boolean(byId || byLegacyName);
     };
 
     prospects = prospects.filter(matchesDisposition);
