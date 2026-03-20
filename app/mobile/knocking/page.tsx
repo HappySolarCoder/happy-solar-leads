@@ -337,9 +337,15 @@ export default function KnockingPage() {
     const selectedName = normalize(dispositionsById.get(selectedId)?.name);
 
     const matchesDisposition = (l: Lead) => {
-      const byId = String(l.status || '') === selectedId;
+      const statusNorm = normalize(l.status).replace(/\s+/g, '-');
+      const selectedNorm = normalize(selectedId).replace(/\s+/g, '-');
+      const byId = statusNorm === selectedNorm;
       const byLegacyName = selectedName && normalize(l.disposition) === selectedName;
-      return Boolean(byId || byLegacyName);
+
+      // Go Back compatibility: some legacy rows are tracked by scheduled date field
+      const byGoBackSchedule = selectedNorm === 'go-back' && Boolean(l.goBackScheduledDate);
+
+      return Boolean(byId || byLegacyName || byGoBackSchedule);
     };
 
     prospects = prospects.filter(matchesDisposition);
