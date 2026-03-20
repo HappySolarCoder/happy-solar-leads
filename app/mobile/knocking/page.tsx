@@ -331,11 +331,15 @@ export default function KnockingPage() {
 
   // Filter by disposition if selected — apply to both prospects and customers
   if (dispositionFilter !== 'all') {
-    const selected = String(dispositionFilter).toLowerCase();
+    const normalize = (v: unknown) => String(v || '').trim().toLowerCase();
+    const dispositionsById = new Map(dispositions.map((d: any) => [String(d.id), d]));
+    const selectedId = String(dispositionFilter);
+    const selectedName = normalize(dispositionsById.get(selectedId)?.name);
+
     const matchesDisposition = (l: Lead) => {
-      const byId = String(l.status || '').toLowerCase() === selected;
-      const byName = String(l.disposition || '').toLowerCase() === selected;
-      return byId || byName;
+      const byId = String(l.status || '') === selectedId;
+      const byLegacyName = selectedName && normalize(l.disposition) === selectedName;
+      return Boolean(byId || byLegacyName);
     };
 
     prospects = prospects.filter(matchesDisposition);
@@ -881,7 +885,7 @@ export default function KnockingPage() {
               >
                 <option value="all">All Dispositions</option>
                 {dispositions.map(dispo => (
-                  <option key={dispo.id} value={dispo.name}>
+                  <option key={dispo.id} value={dispo.id}>
                     {dispo.emoji} {dispo.name}
                   </option>
                 ))}
