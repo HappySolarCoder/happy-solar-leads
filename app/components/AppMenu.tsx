@@ -294,7 +294,7 @@ export default function AppMenu({
               >
                 <option value="all">All Dispositions</option>
                 {dispositions.map(dispo => (
-                  <option key={dispo.id} value={dispo.name}>
+                  <option key={dispo.id} value={dispo.id}>
                     {dispo.emoji} {dispo.name}
                   </option>
                 ))}
