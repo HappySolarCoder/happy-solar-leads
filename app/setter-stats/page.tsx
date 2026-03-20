@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { TrendingUp, Target, DollarSign, Award, ArrowLeft, Users, Calendar, Trophy, BarChart3 } from 'lucide-react';
-import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getLeads, getLeadsAsync, getUsers, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User } from '@/app/types';
@@ -42,11 +42,12 @@ type SortBy = 'knocks' | 'conversations' | 'appointments' | 'goBacks';
 
 export default function DataDashboard() {
   const router = useRouter();
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+  const [leads, setLeads] = useState<Lead[]>(() => getLeads());
+  const [users, setUsers] = useState<User[]>(() => getUsers());
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [sortBy, setSortBy] = useState<SortBy>('knocks');
 
@@ -59,6 +60,10 @@ export default function DataDashboard() {
       }
       setCurrentUser(user);
 
+      // Non-blocking: render cached data immediately, refresh in background
+      setIsLoading(false);
+      setIsRefreshing(true);
+
       const loadedLeads = await getLeadsAsync();
       const loadedUsers = await getUsersAsync();
       const loadedDispositions = await getDispositionsAsync();
@@ -66,7 +71,7 @@ export default function DataDashboard() {
       setLeads(loadedLeads);
       setUsers(loadedUsers);
       setDispositions(loadedDispositions);
-      setIsLoading(false);
+      setIsRefreshing(false);
     }
 
     loadData();
@@ -273,7 +278,7 @@ export default function DataDashboard() {
           {/* Centered Title & Filters */}
           <div className="text-center">
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-[#2D3748] mb-1 sm:mb-2">Team Performance</h1>
-            <p className="text-xs sm:text-sm text-[#718096] mb-3 sm:mb-4">Real-time setter metrics</p>
+            <p className="text-xs sm:text-sm text-[#718096] mb-3 sm:mb-4">Real-time setter metrics {isRefreshing ? '• Refreshing…' : ''}</p>
             
             {/* Time Filter */}
             <div className="flex flex-wrap justify-center gap-1 sm:gap-2 bg-white p-2 rounded-lg shadow-sm">
