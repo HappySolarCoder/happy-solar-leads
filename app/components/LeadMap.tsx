@@ -592,8 +592,10 @@ export default function LeadMap({
       const canClaim = lead.claimedBy == null || isClaimedByMe;
       const isSelectedForAssignment = selectedLeadIdsForAssignment.includes(lead.id);
 
-      // Find disposition for this lead
-      const disposition = dispositions.find(d => d.id === lead.status);
+      // Find disposition for this lead (prefer current status id, fallback to latest history label)
+      const latestHistoryDisposition = String(lead.dispositionHistory?.[0]?.disposition || '').toLowerCase();
+      const disposition = dispositions.find(d => d.id === lead.status)
+        || dispositions.find(d => String(d.name || '').toLowerCase() === latestHistoryDisposition);
 
       const icon = createCustomIcon(
         lead,

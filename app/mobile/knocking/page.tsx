@@ -339,10 +339,12 @@ export default function KnockingPage() {
     const matchesDisposition = (l: Lead) => {
       const statusNorm = normalize(l.status).replace(/\s+/g, '-');
       const selectedNorm = normalize(selectedId).replace(/\s+/g, '-');
+      const latestHistoryName = normalize(l.dispositionHistory?.[0]?.disposition);
       const byId = statusNorm === selectedNorm;
       const byLegacyName = selectedName && normalize(l.disposition) === selectedName;
+      const byHistoryName = selectedName && latestHistoryName === selectedName;
 
-      return Boolean(byId || byLegacyName);
+      return Boolean(byId || byLegacyName || byHistoryName);
     };
 
     prospects = prospects.filter(matchesDisposition);
