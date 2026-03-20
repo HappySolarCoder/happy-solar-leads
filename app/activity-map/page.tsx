@@ -36,7 +36,15 @@ export default function ActivityMapPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [allLeads, setAllLeads] = useState<Lead[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const getLocalDateInputValue = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const [selectedDate, setSelectedDate] = useState<string>(getLocalDateInputValue());
   const [selectedUserId, setSelectedUserId] = useState<string>('all');
   const [focusedUserId, setFocusedUserId] = useState<string | null>(null); // For zoom focus
   const [userActivities, setUserActivities] = useState<UserActivity[]>([]);
@@ -93,11 +101,10 @@ export default function ActivityMapPage() {
   useEffect(() => {
     if (!selectedDate) return;
 
-    // Parse selected date
-    const dateStart = new Date(selectedDate);
-    dateStart.setHours(0, 0, 0, 0);
-    const dateEnd = new Date(selectedDate);
-    dateEnd.setHours(23, 59, 59, 999);
+    // Parse selected date in LOCAL time (avoid UTC date-only shift)
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const dateStart = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+    const dateEnd = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
 
     // Filter leads knocked on selected date
     const knockedLeads = allLeads.filter(lead => {
@@ -115,9 +122,9 @@ export default function ActivityMapPage() {
       let userId: string | undefined;
       
       if (lead.dispositionHistory && lead.dispositionHistory.length > 0) {
-        // Get the last disposition entry (most recent)
-        const lastEntry = lead.dispositionHistory[lead.dispositionHistory.length - 1];
-        userId = lastEntry.userId;
+        // Most-recent-first convention
+        const latestEntry = lead.dispositionHistory[0];
+        userId = latestEntry.userId;
       } else {
         // Fallback to claimedBy if no disposition history
         userId = lead.claimedBy;
