@@ -20,6 +20,7 @@ import {
 // ============================================
 
 let leadsCache: Lead[] | null = null;
+let leadsCacheKey: string | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL = 90000; // 90 seconds
 
@@ -67,14 +68,16 @@ export function getLeads(): Lead[] {
 
 export async function getLeadsAsync(): Promise<Lead[]> {
   try {
-    // Return fresh cache first
-    if (leadsCache && Date.now() - cacheTimestamp < CACHE_TTL) {
-      return leadsCache;
-    }
-
     // Import here to avoid circular deps in some build paths
     const { getCurrentAuthUser } = await import('./auth');
     const me = await getCurrentAuthUser();
+
+    const cacheKey = me?.role === 'admin' ? 'admin' : me?.id ? `user:${me.id}` : 'anon';
+
+    // Return fresh cache only when it matches the current user scope
+    if (leadsCache && leadsCacheKey === cacheKey && Date.now() - cacheTimestamp < CACHE_TTL) {
+      return leadsCache;
+    }
 
     // Admins can read everything; reps must only query their assigned/claimed leads
     const leads = me?.role === 'admin'
@@ -84,11 +87,12 @@ export async function getLeadsAsync(): Promise<Lead[]> {
         : [];
 
     leadsCache = leads || [];
+    leadsCacheKey = cacheKey;
     cacheTimestamp = Date.now();
     return leadsCache;
   } catch (error) {
     console.error('Firestore getLeads failed:', error);
-    // Stale-while-error fallback
+    // Stale-while-error fallback (only if cache exists)
     return leadsCache || [];
   }
 }
