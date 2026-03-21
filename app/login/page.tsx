@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { fetchSignInMethodsForEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/app/utils/firebase';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { saveCurrentUser } from '@/app/utils/storage';
@@ -39,14 +39,27 @@ export default function LoginPage() {
     } catch (err: any) {
       console.error('Login error:', err);
       
-      if (err.code === 'auth/invalid-credential') {
-        setError('Invalid email or password');
+      if (err.code === 'auth/user-disabled') {
+        setError('This account is disabled. Contact an admin.');
       } else if (err.code === 'auth/user-not-found') {
-        setError('No account found with this email');
+        setError('No account found with this email. Please create one.');
       } else if (err.code === 'auth/wrong-password') {
-        setError('Incorrect password');
+        setError('Incorrect password.');
+      } else if (err.code === 'auth/invalid-credential') {
+        // Firebase often collapses wrong-password + user-not-found into invalid-credential.
+        // Probe sign-in methods to show a clearer message.
+        try {
+          const methods = auth ? await fetchSignInMethodsForEmail(auth, email) : [];
+          if (!methods || methods.length === 0) {
+            setError('No account found with this email. Please create one.');
+          } else {
+            setError('Incorrect password.');
+          }
+        } catch {
+          setError('Invalid email or password.');
+        }
       } else if (err.code === 'auth/invalid-email') {
-        setError('Invalid email address');
+        setError('Invalid email address.');
       } else {
         setError('Login failed. Please try again.');
       }
