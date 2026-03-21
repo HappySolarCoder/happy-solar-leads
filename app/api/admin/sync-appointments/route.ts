@@ -6,24 +6,58 @@ function norm(v: any) {
   return String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+const STATUS_DOC = 'appointments-sync-status';
+const MIN_INTERVAL_MS = 5 * 60 * 1000;
+
+async function requireManager(request: NextRequest) {
+  const authHeader = request.headers.get('authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    throw new Error('Missing credentials');
+  }
+
+  const idToken = authHeader.split(' ')[1];
+  const decoded = await adminAuth().verifyIdToken(idToken);
+  const meDoc = await adminDb().collection('users').doc(decoded.uid).get();
+  const me = meDoc.data() as any;
+  if (!meDoc.exists || !['admin', 'manager'].includes(String(me?.role || ''))) {
+    throw new Error('Not authorized');
+  }
+  return decoded.uid;
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    await requireManager(request);
+    const doc = await adminDb().collection('system').doc(STATUS_DOC).get();
+    return NextResponse.json({ status: doc.exists ? doc.data() : null });
+  } catch (error: any) {
+    const status = /authorized/i.test(String(error?.message)) ? 403 : /credentials/i.test(String(error?.message)) ? 401 : 500;
+    return NextResponse.json({ error: error?.message || 'Internal error' }, { status });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
       return NextResponse.json({ error: 'ghl-not-configured' }, { status: 503 });
     }
 
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Missing credentials' }, { status: 401 });
+    const actorUid = await requireManager(request);
+
+    const statusRef = adminDb().collection('system').doc(STATUS_DOC);
+    const statusSnap = await statusRef.get();
+    const lastStartedAt = statusSnap.exists ? (statusSnap.data() as any)?.startedAt : null;
+    const lastStart = lastStartedAt?.toDate ? lastStartedAt.toDate().getTime() : lastStartedAt ? new Date(lastStartedAt).getTime() : 0;
+    if (Date.now() - lastStart < MIN_INTERVAL_MS) {
+      return NextResponse.json({ error: 'sync-cooldown', retryAfterMs: MIN_INTERVAL_MS - (Date.now() - lastStart) }, { status: 429 });
     }
 
-    const idToken = authHeader.split(' ')[1];
-    const decoded = await adminAuth().verifyIdToken(idToken);
-    const meDoc = await adminDb().collection('users').doc(decoded.uid).get();
-    const me = meDoc.data() as any;
-    if (!meDoc.exists || !['admin', 'manager'].includes(String(me?.role || ''))) {
-      return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-    }
+    await statusRef.set({
+      state: 'running',
+      startedAt: new Date(),
+      startedBy: actorUid,
+      lastError: null,
+    }, { merge: true });
 
     const [opps, leadsSnap] = await Promise.all([
       getGhlOpportunitiesAsync(),
@@ -69,9 +103,25 @@ export async function POST(request: NextRequest) {
     }
 
     if (updated > 0) await batch.commit();
+
+    await statusRef.set({
+      state: 'idle',
+      lastSuccessAt: new Date(),
+      matched,
+      updated,
+      lastError: null,
+    }, { merge: true });
+
     return NextResponse.json({ success: true, matched, updated });
   } catch (error: any) {
     console.error('[admin/sync-appointments] error:', error);
+    try {
+      await adminDb().collection('system').doc(STATUS_DOC).set({
+        state: 'error',
+        lastError: error?.message || 'Internal error',
+        lastFailureAt: new Date(),
+      }, { merge: true });
+    } catch {}
     return NextResponse.json({ error: error?.message || 'Internal error' }, { status: 500 });
   }
 }
