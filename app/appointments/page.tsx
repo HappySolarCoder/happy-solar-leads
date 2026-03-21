@@ -215,6 +215,7 @@ export default function AppointmentsPage() {
           <div className="bg-white border border-[#E2E8F0] rounded-lg p-3 text-xs text-[#4A5568]">
             Sync: <span className="font-semibold">{syncStatus.state || 'idle'}</span>
             {syncStatus.lastSuccessAt && <> • Last success: <span className="font-semibold">{new Date(syncStatus.lastSuccessAt).toLocaleString()}</span></>}
+            {typeof syncStatus.skippedAmbiguous === 'number' && <> • Skipped ambiguous: <span className="font-semibold">{syncStatus.skippedAmbiguous}</span></>}
             {syncStatus.lastError && <> • Last error: <span className="font-semibold text-red-600">{syncStatus.lastError}</span></>}
           </div>
         )}
