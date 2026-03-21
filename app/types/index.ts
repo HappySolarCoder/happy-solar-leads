@@ -110,6 +110,13 @@ export interface Lead {
   goBackScheduledBy?: string;    // User ID who scheduled it
   // Disposition history (simplified inline tracking)
   dispositionHistory?: LeadDispositionHistoryEntry[];  // Track all disposition changes
+  // Appointment feedback loop (Raydar ↔ CRM)
+  appointmentDateTime?: Date;
+  ghlStatus?: string;
+  ghlOpportunityId?: string;
+  appointmentOutcome?: string;
+  ghlLastUpdatedAt?: Date;
+
   // Photos & Attachments
   photos?: LeadPhoto[];  // Photos attached to this lead
 }
