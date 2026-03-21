@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Calendar, Clock, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Calendar, Clock, CheckCircle2, RefreshCw } from 'lucide-react';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync } from '@/app/utils/storage';
 import { Lead, User } from '@/app/types';
@@ -18,6 +18,12 @@ export default function AppointmentsPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const reloadLeads = async () => {
+    const rows = await getLeadsAsync();
+    setLeads(rows);
+  };
 
   useEffect(() => {
     async function load() {
@@ -27,12 +33,33 @@ export default function AppointmentsPage() {
         return;
       }
       setCurrentUser(user);
-      const rows = await getLeadsAsync();
-      setLeads(rows);
+      await reloadLeads();
       setIsLoading(false);
     }
     load();
   }, [router]);
+
+  const handleSync = async () => {
+    if (!(currentUser?.role === 'admin' || currentUser?.role === 'manager')) return;
+    try {
+      setIsSyncing(true);
+      const { auth } = await import('@/app/utils/firebase');
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) return;
+
+      const res = await fetch('/api/appointments/sync', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await reloadLeads();
+    } catch (e) {
+      console.error('Appointments sync failed:', e);
+      alert('Sync failed. Check server logs.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const rows = useMemo(() => {
     const appointmentLeads = leads.filter(isAppointmentLead);
@@ -64,7 +91,16 @@ export default function AppointmentsPage() {
           <ArrowLeft className="w-5 h-5 text-[#718096]" />
         </button>
         <h1 className="text-lg font-bold text-[#2D3748]">Appointments</h1>
-        <span className="ml-auto text-xs text-[#718096]">{rows.length} total</span>
+        {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
+          <button
+            onClick={handleSync}
+            disabled={isSyncing}
+            className="ml-auto mr-2 inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-[#E2E8F0] bg-white hover:bg-[#F7FAFC] disabled:opacity-60"
+          >
+            <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} /> Sync CRM
+          </button>
+        )}
+        <span className="text-xs text-[#718096]">{rows.length} total</span>
       </header>
 
       <div className="p-4 space-y-3">
