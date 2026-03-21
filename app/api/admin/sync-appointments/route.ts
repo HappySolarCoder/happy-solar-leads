@@ -49,7 +49,51 @@ function pickTimestamp(value: any): number {
 
 function toDateOrNull(value: any): Date | null {
   if (!value) return null;
-  if (typeof value?.toDate === 'function') return value.toDate();
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value?.toDate === 'function') {
+    const converted = value.toDate();
+    return converted instanceof Date && !Number.isNaN(converted.getTime()) ? converted : null;
+  }
+
+  if (typeof value === 'object') {
+    if (typeof value.seconds === 'number') {
+      const millis = value.seconds * 1000 + Math.floor(Number(value.nanoseconds || 0) / 1_000_000);
+      const converted = new Date(millis);
+      return Number.isNaN(converted.getTime()) ? null : converted;
+    }
+
+    if (typeof value._seconds === 'number') {
+      const millis = value._seconds * 1000 + Math.floor(Number(value._nanoseconds || 0) / 1_000_000);
+      const converted = new Date(millis);
+      return Number.isNaN(converted.getTime()) ? null : converted;
+    }
+
+    const datePart = getFieldString(value.date || value.appointmentDate || value.startDate);
+    const timePart = getFieldString(value.time || value.appointmentTime || value.startTime);
+    if (datePart && timePart) {
+      const combined = new Date(`${datePart} ${timePart}`);
+      if (!Number.isNaN(combined.getTime())) return combined;
+      const isoCombined = new Date(`${datePart}T${timePart}`);
+      if (!Number.isNaN(isoCombined.getTime())) return isoCombined;
+    }
+
+    const isoLike = getFieldString(value.iso || value.isoString || value.datetime || value.dateTime || value.value);
+    if (isoLike) {
+      const converted = new Date(isoLike);
+      return Number.isNaN(converted.getTime()) ? null : converted;
+    }
+  }
+
+  if (typeof value === 'number') {
+    const millis = value > 1e12 ? value : value * 1000;
+    const converted = new Date(millis);
+    return Number.isNaN(converted.getTime()) ? null : converted;
+  }
+
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
@@ -281,7 +325,15 @@ export async function POST(request: NextRequest) {
           || (pipelineStageId ? stageNameById.get(pipelineStageId) : null)
           || opportunity?.status
       );
-      const appointmentDateTime = toDateOrNull(opportunity?.appointmentDateTime || opportunity?.appointmentOccurredAt || opportunity?.startTime || opportunity?.appointmentTime);
+      const appointmentDateTime = toDateOrNull(
+        opportunity?.appointmentDateTime
+        || opportunity?.appointmentDate
+        || opportunity?.scheduledAt
+        || opportunity?.scheduledFor
+        || opportunity?.startTime
+        || opportunity?.appointmentTime
+        || opportunity?.appointmentOccurredAt
+      );
       const appointmentOutcome = normalizeOutcomeFromOpportunity(opportunity, stageNameById);
       const patch = withNullSafePatch(lead, {
         appointmentDateTime,
