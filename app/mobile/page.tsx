@@ -4,12 +4,16 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { MapPin, BarChart3, Lightbulb, LogOut, Menu, Users, Settings } from 'lucide-react';
 import { getCurrentAuthUser, signOut } from '@/app/utils/auth';
-import { User, canAssignLeads, canManageUsers } from '@/app/types';
+import { User, canManageUsers } from '@/app/types';
+import { getLeadsAsync } from '@/app/utils/storage';
 
 export default function MobilePage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [monthlyKnocks, setMonthlyKnocks] = useState(0);
+  const [monthlyAppointments, setMonthlyAppointments] = useState(0);
+  const [dailyTarget, setDailyTarget] = useState<number | null>(null);
 
   useEffect(() => {
     async function loadUser() {
@@ -24,6 +28,50 @@ export default function MobilePage() {
     }
     loadUser();
   }, [router]);
+
+  useEffect(() => {
+    async function loadMonthlyStats() {
+      if (!currentUser) return;
+      if (!(currentUser.role === 'setter' || currentUser.role === 'closer')) return;
+
+      try {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        const { getMyGoalViaApiAsync, getMyMonthlyKnocksAsync, countWorkdaysElapsedAndRemaining } = await import('@/app/utils/goals');
+        const monthId = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+        const knocks = await getMyMonthlyKnocksAsync(now, currentUser);
+        setMonthlyKnocks(knocks);
+
+        const leads = await getLeadsAsync();
+        const appointments = leads.filter((l) => {
+          if (!l.dispositionedAt) return false;
+          const dt = new Date(l.dispositionedAt);
+          if (dt < monthStart) return false;
+          const actor = l.dispositionHistory?.[0]?.userId || l.claimedBy || l.assignedTo;
+          if (actor !== currentUser.id) return false;
+          const s = String(l.status || l.disposition || '').toLowerCase();
+          return s.includes('appointment') || s === 'sale';
+        }).length;
+        setMonthlyAppointments(appointments);
+
+        const goal = await getMyGoalViaApiAsync(monthId);
+        if (!goal?.doorKnocksGoal) {
+          setDailyTarget(null);
+        } else {
+          const { remaining } = countWorkdaysElapsedAndRemaining(now);
+          const remainingWorkdays = Math.max(1, remaining);
+          const needed = Math.max(0, Number(goal.doorKnocksGoal) - knocks);
+          setDailyTarget(Math.ceil(needed / remainingWorkdays));
+        }
+      } catch {
+        setDailyTarget(null);
+      }
+    }
+
+    loadMonthlyStats();
+  }, [currentUser]);
 
   const handleLogout = async () => {
     await signOut();
@@ -74,6 +122,26 @@ export default function MobilePage() {
           </p>
         </div>
 
+        {(currentUser?.role === 'setter' || currentUser?.role === 'closer') && (
+          <div className="w-full max-w-sm mb-6 bg-[#F7FAFC] border border-[#E2E8F0] rounded-2xl p-4">
+            <div className="text-xs font-semibold text-[#718096] mb-2">Monthly Stats</div>
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div>
+                <div className="text-lg font-bold text-[#2D3748]">{monthlyKnocks}</div>
+                <div className="text-[11px] text-[#718096]">Knocks</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold text-[#2D3748]">{monthlyAppointments}</div>
+                <div className="text-[11px] text-[#718096]">Appts</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold text-[#2D3748]">{dailyTarget ?? '-'}</div>
+                <div className="text-[11px] text-[#718096]">Knocks/day</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="w-full max-w-sm space-y-4">
           {/* Start Knocking - Primary Action */}
@@ -92,21 +160,38 @@ export default function MobilePage() {
             </div>
           </button>
 
-          {/* Dashboard */}
-          <button
-            onClick={() => router.push('/dashboard')}
-            className="w-full bg-white border-2 border-[#E2E8F0] rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98 hover:border-[#FF5F5A]"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <BarChart3 className="w-6 h-6 text-teal-600" />
+          {/* Team Stats (Setter/Closer) */}
+          {(currentUser?.role === 'setter' || currentUser?.role === 'closer') ? (
+            <button
+              onClick={() => router.push('/setter-stats')}
+              className="w-full bg-white border-2 border-[#E2E8F0] rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98 hover:border-[#805AD5]"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <BarChart3 className="w-6 h-6 text-purple-600" />
+                </div>
+                <div className="flex-1 text-left">
+                  <div className="text-lg font-bold text-[#2D3748]">Team Stats</div>
+                  <div className="text-sm text-[#718096]">View full team performance</div>
+                </div>
               </div>
-              <div className="flex-1 text-left">
-                <div className="text-lg font-bold text-[#2D3748]">Daily Dashboard</div>
-                <div className="text-sm text-[#718096]">View today's stats</div>
+            </button>
+          ) : (
+            <button
+              onClick={() => router.push('/dashboard')}
+              className="w-full bg-white border-2 border-[#E2E8F0] rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98 hover:border-[#FF5F5A]"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <BarChart3 className="w-6 h-6 text-teal-600" />
+                </div>
+                <div className="flex-1 text-left">
+                  <div className="text-lg font-bold text-[#2D3748]">Daily Dashboard</div>
+                  <div className="text-sm text-[#718096]">View today's stats</div>
+                </div>
               </div>
-            </div>
-          </button>
+            </button>
+          )}
 
           {/* Admin - Only for Admins */}
           {currentUser && canManageUsers(currentUser.role) && (
@@ -144,21 +229,23 @@ export default function MobilePage() {
             </button>
           )}
 
-          {/* My Data - Performance Stats */}
-          <button
-            onClick={() => router.push('/mobile/stats')}
-            className="w-full bg-white border-2 border-[#E2E8F0] rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98 hover:border-[#FF5F5A]"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <BarChart3 className="w-6 h-6 text-purple-600" />
+          {/* My Data - Performance Stats (non-setter/closer) */}
+          {!(currentUser?.role === 'setter' || currentUser?.role === 'closer') && (
+            <button
+              onClick={() => router.push('/mobile/stats')}
+              className="w-full bg-white border-2 border-[#E2E8F0] rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98 hover:border-[#FF5F5A]"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <BarChart3 className="w-6 h-6 text-purple-600" />
+                </div>
+                <div className="flex-1 text-left">
+                  <div className="text-lg font-bold text-[#2D3748]">My Data</div>
+                  <div className="text-sm text-[#718096]">Performance stats & trends</div>
+                </div>
               </div>
-              <div className="flex-1 text-left">
-                <div className="text-lg font-bold text-[#2D3748]">My Data</div>
-                <div className="text-sm text-[#718096]">Performance stats & trends</div>
-              </div>
-            </div>
-          </button>
+            </button>
+          )}
 
           {/* AI Tips - Coming Soon */}
           <button
