@@ -160,6 +160,33 @@ export default function AppointmentsPage() {
     return { total, sold, pending, showRate, noShowRate, wonRate };
   }, [rows]);
 
+  const setterAnalytics = useMemo(() => {
+    const map = new Map<string, { name: string; total: number; show: number; noShow: number; sold: number; lost: number; rescheduled: number; pending: number }>();
+
+    rows.forEach((lead) => {
+      const setterName = lead.dispositionHistory?.[0]?.userName || 'Unknown';
+      const outcome = normalizeOutcomeLabel((lead as any).appointmentOutcome || (lead as any).ghlStatus);
+      const current = map.get(setterName) || { name: setterName, total: 0, show: 0, noShow: 0, sold: 0, lost: 0, rescheduled: 0, pending: 0 };
+      current.total += 1;
+      if (outcome === 'Show') current.show += 1;
+      else if (outcome === 'No Show') current.noShow += 1;
+      else if (outcome === 'Sold') current.sold += 1;
+      else if (outcome === 'Lost') current.lost += 1;
+      else if (outcome === 'Rescheduled') current.rescheduled += 1;
+      else current.pending += 1;
+      map.set(setterName, current);
+    });
+
+    return Array.from(map.values())
+      .map((row) => ({
+        ...row,
+        showRate: row.total ? Math.round((row.show / row.total) * 100) : 0,
+        noShowRate: row.total ? Math.round((row.noShow / row.total) * 100) : 0,
+        wonRate: row.total ? Math.round((row.sold / row.total) * 100) : 0,
+      }))
+      .sort((a, b) => b.total - a.total || b.wonRate - a.wonRate);
+  }, [rows]);
+
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center text-[#718096]">Loading appointments…</div>;
   }
@@ -218,6 +245,34 @@ export default function AppointmentsPage() {
             <option value="no-show">No Show</option>
             <option value="rescheduled">Rescheduled</option>
           </select>
+        </div>
+
+        <div className="bg-white border border-[#E2E8F0] rounded-lg p-3">
+          <div className="text-sm font-semibold text-[#2D3748] mb-3">Setter Feedback Analytics</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[#718096] border-b border-[#E2E8F0]">
+                  <th className="py-2 pr-3">Setter</th>
+                  <th className="py-2 pr-3">Set</th>
+                  <th className="py-2 pr-3">Show%</th>
+                  <th className="py-2 pr-3">No Show%</th>
+                  <th className="py-2 pr-3">Won%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {setterAnalytics.map((row) => (
+                  <tr key={row.name} className="border-b border-[#F1F5F9] last:border-0">
+                    <td className="py-2 pr-3 font-medium text-[#2D3748]">{row.name}</td>
+                    <td className="py-2 pr-3">{row.total}</td>
+                    <td className="py-2 pr-3">{row.showRate}%</td>
+                    <td className="py-2 pr-3">{row.noShowRate}%</td>
+                    <td className="py-2 pr-3">{row.wonRate}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
         {rows.map((lead) => {
           const appointmentDateTime = (lead as any).appointmentDateTime;
