@@ -134,10 +134,7 @@ export default function DataDashboard() {
         endDate = undefined;
     }
 
-    // Get door knock statuses from dispositions
-    const doorKnockStatusIds = dispositions
-      .filter(d => d.countsAsDoorKnock)
-      .map(d => d.id.toLowerCase());
+    // For this dashboard, "knocks" means all dispositioned leads in range.
 
     // Filter leads by time
     const filteredLeads = leads.filter(lead => {
@@ -154,7 +151,7 @@ export default function DataDashboard() {
     filteredLeads.forEach(lead => {
       // Attribute to the actor who actually dispositioned (latest history entry),
       // fallback to claimedBy for legacy rows without history.
-      const userId = lead.dispositionHistory?.[0]?.userId || lead.claimedBy;
+      const userId = lead.dispositionHistory?.[0]?.userId || lead.claimedBy || lead.assignedTo;
       if (!userId) return;
 
       if (!setterMap.has(userId)) {
@@ -176,10 +173,8 @@ export default function DataDashboard() {
       const metrics = setterMap.get(userId)!;
       const leadStatus = lead.status?.toLowerCase() || '';
 
-      // Count knocks (disposition where countsAsDoorKnock === true)
-      if (doorKnockStatusIds.includes(leadStatus)) {
-        metrics.knocks++;
-      }
+      // Count knocks (all dispositioned leads in selected range)
+      metrics.knocks++;
 
       // Count specific dispositions
       switch (lead.status) {
