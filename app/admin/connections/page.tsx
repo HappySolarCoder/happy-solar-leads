@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { auth } from '@/app/utils/firebase';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, MessageSquare, Settings, Link as LinkIcon } from 'lucide-react';
 import { canManageUsers, User } from '@/app/types';
@@ -10,6 +11,7 @@ export default function AdminConnectionsPage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -43,6 +45,24 @@ export default function AdminConnectionsPage() {
   }
 
   if (!currentUser) return null;
+
+  const handleSyncAppointments = async () => {
+    try {
+      setIsSyncing(true);
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) return;
+      const res = await fetch('/api/admin/sync-appointments', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      alert('GHL appointment sync complete.');
+    } catch (error: any) {
+      alert(error?.message || 'Sync failed');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#F7FAFC]">
@@ -82,6 +102,23 @@ export default function AdminConnectionsPage() {
             <h3 className="font-semibold text-[#2D3748] mb-1">Notifications & Webhooks</h3>
             <p className="text-sm text-[#718096]">
               Configure Discord / Google Chat / Slack webhooks (Scheduling Manager alerts)
+            </p>
+          </button>
+
+          <button
+            onClick={handleSyncAppointments}
+            disabled={isSyncing}
+            className="bg-white border border-[#E2E8F0] rounded-lg p-6 hover:border-[#48BB78] hover:shadow-md transition-all text-left group disabled:opacity-60"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="p-3 bg-[#48BB78]/10 rounded-lg">
+                <LinkIcon className="w-6 h-6 text-[#48BB78]" />
+              </div>
+              <Settings className="w-5 h-5 text-[#718096] group-hover:text-[#48BB78] transition-colors" />
+            </div>
+            <h3 className="font-semibold text-[#2D3748] mb-1">GHL Appointment Sync</h3>
+            <p className="text-sm text-[#718096]">
+              Pull appointment updates from the GHL Firebase mirror into Raydar
             </p>
           </button>
         </div>
