@@ -531,7 +531,7 @@ export default function DataDashboard() {
               <tbody className="divide-y divide-[#E2E8F0]">
                 {setterMetrics.map((setter) => {
                   const convRate = parseFloat(calculateRate(setter.conversations, setter.knocks));
-                  const apptRateConvos = parseFloat(calculateRate(setter.appointments, setter.conversations));
+                  const apptRateKnocks = parseFloat(calculateRate(setter.appointments, setter.knocks));
                   const gbConvRate = parseFloat(calculateRate(setter.goBacksConverted, setter.goBacksScheduled));
 
                   return (
@@ -548,8 +548,8 @@ export default function DataDashboard() {
                       </td>
                       <td className="px-1 py-3 text-center font-semibold text-[#805AD5] text-sm">{setter.appointments}</td>
                       <td className="px-1 py-3 text-center hidden md:table-cell">
-                        <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${getPerformanceColor(apptRateConvos, 'appointment')}`}>
-                          {apptRateConvos}%
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${getPerformanceColor(apptRateKnocks, 'appointment')}`}>
+                          {apptRateKnocks}%
                         </span>
                       </td>
                       <td className="px-1 py-3 text-center hidden lg:table-cell font-semibold text-[#D69E2E] text-sm">{setter.goBacksScheduled}</td>
