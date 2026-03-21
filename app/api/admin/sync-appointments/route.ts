@@ -170,11 +170,18 @@ function buildEventStartIndex(events: any[]) {
     const start = toDateOrNull(
       event?.startTime
       || event?.start
+      || event?.startAt
+      || event?.startDateTime
       || event?.appointmentDateTime
+      || event?.appointmentStartTime
       || event?.scheduledAt
       || event?.scheduledFor
       || event?.dateTime
       || event?.date
+      || event?.calendar?.startTime
+      || event?.calendar?.startAt
+      || event?.appointment?.startTime
+      || event?.appointment?.startAt
     );
     if (!start) continue;
 
@@ -185,8 +192,12 @@ function buildEventStartIndex(events: any[]) {
       event?.opportunityId,
       event?.linkedOpportunityId,
       event?.opportunity,
+      event?.opportunityIds,
+      event?.relatedOpportunity,
       event?.relations,
       event?.relatedOpportunityIds,
+      event?.calendar?.opportunityId,
+      event?.appointment?.opportunityId,
     ]);
     opportunityIds.forEach((id) => byOpportunityId.set(id, start));
 
@@ -194,8 +205,12 @@ function buildEventStartIndex(events: any[]) {
       event?.contactId,
       event?.linkedContactId,
       event?.contact,
+      event?.contactIds,
+      event?.relatedContact,
       event?.relations,
       event?.relatedContactIds,
+      event?.calendar?.contactId,
+      event?.appointment?.contactId,
     ]);
     contactIds.forEach((id) => byContactId.set(id, start));
   }
@@ -208,8 +223,11 @@ function getLinkedEventStartTime(opportunity: any, contact: any, eventIndex: Ret
     opportunity?.id,
     opportunity?.opportunityId,
     opportunity?.eventId,
+    opportunity?.eventIds,
     opportunity?.appointmentId,
+    opportunity?.appointmentIds,
     opportunity?.calendarEventId,
+    opportunity?.calendarEventIds,
     opportunity?.relations,
     opportunity?.related,
     opportunity?.events,
@@ -226,8 +244,11 @@ function getLinkedEventStartTime(opportunity: any, contact: any, eventIndex: Ret
     contact?.id,
     contact?.contactId,
     contact?.eventId,
+    contact?.eventIds,
     contact?.appointmentId,
+    contact?.appointmentIds,
     contact?.calendarEventId,
+    contact?.calendarEventIds,
     contact?.relations,
     contact?.related,
     contact?.events,
