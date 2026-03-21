@@ -6,8 +6,41 @@ function norm(v: any) {
   return String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+function getStageOutcomes() {
+  try {
+    const raw = process.env.STAGE_OUTCOMES;
+    if (!raw) return DEFAULT_STAGE_OUTCOMES;
+    return { ...DEFAULT_STAGE_OUTCOMES, ...JSON.parse(raw) };
+  } catch {
+    return DEFAULT_STAGE_OUTCOMES;
+  }
+}
+
+function normalizeOutcomeFromOpportunity(o: any) {
+  const map = getStageOutcomes();
+  const stageId = String(o.pipelineStageId || o.stageId || '').trim();
+  const stageName = String(o.stage || o.pipelineStage || o.status || o.outcome || '').trim();
+  const keyById = norm(stageId);
+  const keyByName = norm(stageName);
+  return map[keyById] || map[keyByName] || stageName || null;
+}
+
 const STATUS_DOC = 'appointments-sync-status';
 const MIN_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_STAGE_OUTCOMES: Record<string, string> = {
+  show: 'Show',
+  showed: 'Show',
+  no_show: 'No Show',
+  noshow: 'No Show',
+  no_showed: 'No Show',
+  sold: 'Sold',
+  closed_won: 'Sold',
+  won: 'Sold',
+  closed_lost: 'Lost',
+  lost: 'Lost',
+  rescheduled: 'Rescheduled',
+  reschedule: 'Rescheduled',
+};
 
 async function requireManager(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
@@ -86,9 +119,10 @@ export async function POST(request: NextRequest) {
       if (!lead) continue;
       matched++;
 
+      const normalizedOutcome = normalizeOutcomeFromOpportunity(o);
       const patch: any = {
         ghlStatus: o.status || o.stage || o.pipelineStage || null,
-        appointmentOutcome: o.outcome || o.status || o.stage || null,
+        appointmentOutcome: normalizedOutcome,
         ghlOpportunityId: o.opportunityId || o.id || null,
         ghlLastUpdatedAt: o.updatedAt?.toDate ? o.updatedAt.toDate() : (o.updatedAt ? new Date(o.updatedAt) : new Date()),
       };

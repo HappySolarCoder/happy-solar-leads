@@ -13,6 +13,27 @@ function isAppointmentLead(lead: Lead) {
   return s.includes('appointment') || d.includes('appointment') || s === 'sale';
 }
 
+function normalizeOutcomeLabel(v: unknown) {
+  const s = String(v || '').toLowerCase();
+  if (s.includes('show')) return 'Show';
+  if (s.includes('no show') || s.includes('noshow')) return 'No Show';
+  if (s.includes('sold') || s.includes('won')) return 'Sold';
+  if (s.includes('lost')) return 'Lost';
+  if (s.includes('resched')) return 'Rescheduled';
+  return String(v || 'Pending');
+}
+
+function outcomeBadgeClass(label: string) {
+  switch (label) {
+    case 'Show': return 'bg-blue-50 text-blue-700 border-blue-200';
+    case 'No Show': return 'bg-orange-50 text-orange-700 border-orange-200';
+    case 'Sold': return 'bg-green-50 text-green-700 border-green-200';
+    case 'Lost': return 'bg-red-50 text-red-700 border-red-200';
+    case 'Rescheduled': return 'bg-purple-50 text-purple-700 border-purple-200';
+    default: return 'bg-gray-50 text-gray-700 border-gray-200';
+  }
+}
+
 export default function AppointmentsPage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -113,7 +134,7 @@ export default function AppointmentsPage() {
   const rows = useMemo(() => {
     const norm = (v: unknown) => String(v || '').toLowerCase();
     return baseRows.filter((l) => {
-      const outcome = norm((l as any).appointmentOutcome || (l as any).ghlStatus);
+      const outcome = norm(normalizeOutcomeLabel((l as any).appointmentOutcome || (l as any).ghlStatus));
       const searchHit = !search || norm(l.address).includes(norm(search)) || norm(l.name).includes(norm(search));
 
       let outcomeHit = true;
@@ -129,15 +150,14 @@ export default function AppointmentsPage() {
 
   const kpis = useMemo(() => {
     const total = rows.length;
-    const won = rows.filter((l) => String((l as any).appointmentOutcome || (l as any).ghlStatus || '').toLowerCase().includes('won')).length;
+    const sold = rows.filter((l) => normalizeOutcomeLabel((l as any).appointmentOutcome || (l as any).ghlStatus) === 'Sold').length;
+    const show = rows.filter((l) => normalizeOutcomeLabel((l as any).appointmentOutcome || (l as any).ghlStatus) === 'Show').length;
+    const noShow = rows.filter((l) => normalizeOutcomeLabel((l as any).appointmentOutcome || (l as any).ghlStatus) === 'No Show').length;
     const pending = rows.filter((l) => !((l as any).appointmentOutcome || (l as any).ghlStatus)).length;
-    const setToday = rows.filter((l) => {
-      if (!l.dispositionedAt) return false;
-      const d = new Date(l.dispositionedAt);
-      const n = new Date();
-      return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
-    }).length;
-    return { total, won, pending, setToday };
+    const showRate = total ? Math.round((show / total) * 100) : 0;
+    const noShowRate = total ? Math.round((noShow / total) * 100) : 0;
+    const wonRate = total ? Math.round((sold / total) * 100) : 0;
+    return { total, sold, pending, showRate, noShowRate, wonRate };
   }, [rows]);
 
   if (isLoading) {
@@ -171,10 +191,11 @@ export default function AppointmentsPage() {
             {syncStatus.lastError && <> • Last error: <span className="font-semibold text-red-600">{syncStatus.lastError}</span></>}
           </div>
         )}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
           <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Total</div><div className="text-lg font-bold">{kpis.total}</div></div>
-          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Set Today</div><div className="text-lg font-bold">{kpis.setToday}</div></div>
-          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Won</div><div className="text-lg font-bold">{kpis.won}</div></div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Show Rate</div><div className="text-lg font-bold">{kpis.showRate}%</div></div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">No Show Rate</div><div className="text-lg font-bold">{kpis.noShowRate}%</div></div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Won Rate</div><div className="text-lg font-bold">{kpis.wonRate}%</div></div>
           <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Pending</div><div className="text-lg font-bold">{kpis.pending}</div></div>
         </div>
 
@@ -201,7 +222,7 @@ export default function AppointmentsPage() {
         {rows.map((lead) => {
           const appointmentDateTime = (lead as any).appointmentDateTime;
           const ghlStatus = (lead as any).ghlStatus;
-          const outcome = (lead as any).appointmentOutcome;
+          const outcome = normalizeOutcomeLabel((lead as any).appointmentOutcome || (lead as any).ghlStatus);
           const setterName = lead.dispositionHistory?.[0]?.userName || 'Unknown';
 
           return (
@@ -209,6 +230,7 @@ export default function AppointmentsPage() {
               <div className="font-semibold text-[#2D3748]">{lead.address}</div>
               <div className="text-sm text-[#718096] mt-1">{lead.city}, {lead.state} {lead.zip}</div>
               <div className="text-xs text-[#4A5568] mt-1">Setter: <span className="font-semibold">{setterName}</span></div>
+              <div className={`mt-2 inline-flex px-2 py-1 rounded-full border text-xs font-semibold ${outcomeBadgeClass(outcome)}`}>{outcome}</div>
 
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                 <div className="inline-flex items-center gap-1 text-[#4A5568]"><Calendar className="w-3 h-3" /> Set: {lead.dispositionedAt ? new Date(lead.dispositionedAt).toLocaleString() : '—'}</div>
