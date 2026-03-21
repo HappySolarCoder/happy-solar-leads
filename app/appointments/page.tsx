@@ -19,6 +19,7 @@ export default function AppointmentsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<any>(null);
   const [search, setSearch] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState<'all' | 'pending' | 'won' | 'lost' | 'no-show' | 'rescheduled'>('all');
 
@@ -36,10 +37,36 @@ export default function AppointmentsPage() {
       }
       setCurrentUser(user);
       await reloadLeads();
+
+      if (user.role === 'admin' || user.role === 'manager') {
+        const status = await loadSyncStatus();
+        const lastSuccess = status?.lastSuccessAt ? new Date(status.lastSuccessAt).getTime() : 0;
+        if (!lastSuccess || Date.now() - lastSuccess > 5 * 60 * 1000) {
+          await handleSync();
+        }
+      }
+
       setIsLoading(false);
     }
     load();
   }, [router]);
+
+  const loadSyncStatus = async () => {
+    try {
+      const { auth } = await import('@/app/utils/firebase');
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) return null;
+      const res = await fetch('/api/admin/sync-appointments', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return null;
+      const json = await res.json();
+      setSyncStatus(json?.status || null);
+      return json?.status || null;
+    } catch {
+      return null;
+    }
+  };
 
   const handleSync = async () => {
     if (!(currentUser?.role === 'admin' || currentUser?.role === 'manager')) return;
@@ -49,12 +76,13 @@ export default function AppointmentsPage() {
       const token = await auth?.currentUser?.getIdToken();
       if (!token) return;
 
-      const res = await fetch('/api/appointments/sync', {
+      const res = await fetch('/api/admin/sync-appointments', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error(await res.text());
       await reloadLeads();
+      await loadSyncStatus();
     } catch (e) {
       console.error('Appointments sync failed:', e);
       alert('Sync failed. Check server logs.');
@@ -136,6 +164,13 @@ export default function AppointmentsPage() {
       </header>
 
       <div className="p-4 space-y-3">
+        {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && syncStatus && (
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3 text-xs text-[#4A5568]">
+            Sync: <span className="font-semibold">{syncStatus.state || 'idle'}</span>
+            {syncStatus.lastSuccessAt && <> • Last success: <span className="font-semibold">{new Date(syncStatus.lastSuccessAt).toLocaleString()}</span></>}
+            {syncStatus.lastError && <> • Last error: <span className="font-semibold text-red-600">{syncStatus.lastError}</span></>}
+          </div>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Total</div><div className="text-lg font-bold">{kpis.total}</div></div>
           <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Set Today</div><div className="text-lg font-bold">{kpis.setToday}</div></div>
