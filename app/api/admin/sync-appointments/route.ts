@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
 import {
+  getGhlAppointmentEventsAsync,
   getGhlContactsAsync,
   getGhlOpportunitiesAsync,
   getGhlPipelinesAsync,
@@ -113,6 +114,133 @@ function getOpportunityCustomField(opportunity: any, fieldId: string): string | 
       ?? match?.fieldValue
       ?? match?.stringValue
   );
+}
+
+function collectPossibleRelationIds(value: any): string[] {
+  const results = new Set<string>();
+
+  const visit = (input: any) => {
+    if (!input) return;
+
+    if (Array.isArray(input)) {
+      input.forEach(visit);
+      return;
+    }
+
+    if (typeof input === 'string') {
+      const trimmed = input.trim();
+      if (trimmed) results.add(trimmed);
+      return;
+    }
+
+    if (typeof input === 'object') {
+      const directId = getFieldString(
+        input.id
+        || input._id
+        || input.eventId
+        || input.appointmentId
+        || input.calendarEventId
+        || input.relatedId
+        || input.entityId
+      );
+      if (directId) results.add(directId);
+
+      const nestedCandidates = [
+        input.relations,
+        input.related,
+        input.events,
+        input.appointments,
+        input.calendarEvents,
+        input.links,
+      ];
+      nestedCandidates.forEach(visit);
+    }
+  };
+
+  visit(value);
+  return Array.from(results);
+}
+
+function buildEventStartIndex(events: any[]) {
+  const byId = new Map<string, Date>();
+  const byOpportunityId = new Map<string, Date>();
+  const byContactId = new Map<string, Date>();
+
+  for (const event of events) {
+    const start = toDateOrNull(
+      event?.startTime
+      || event?.start
+      || event?.appointmentDateTime
+      || event?.scheduledAt
+      || event?.scheduledFor
+      || event?.dateTime
+      || event?.date
+    );
+    if (!start) continue;
+
+    const eventIds = collectPossibleRelationIds([event?.id, event?.eventId, event?.appointmentId, event?.calendarEventId]);
+    eventIds.forEach((id) => byId.set(id, start));
+
+    const opportunityIds = collectPossibleRelationIds([
+      event?.opportunityId,
+      event?.linkedOpportunityId,
+      event?.opportunity,
+      event?.relations,
+      event?.relatedOpportunityIds,
+    ]);
+    opportunityIds.forEach((id) => byOpportunityId.set(id, start));
+
+    const contactIds = collectPossibleRelationIds([
+      event?.contactId,
+      event?.linkedContactId,
+      event?.contact,
+      event?.relations,
+      event?.relatedContactIds,
+    ]);
+    contactIds.forEach((id) => byContactId.set(id, start));
+  }
+
+  return { byId, byOpportunityId, byContactId };
+}
+
+function getLinkedEventStartTime(opportunity: any, contact: any, eventIndex: ReturnType<typeof buildEventStartIndex>) {
+  const opportunityRelationIds = collectPossibleRelationIds([
+    opportunity?.id,
+    opportunity?.opportunityId,
+    opportunity?.eventId,
+    opportunity?.appointmentId,
+    opportunity?.calendarEventId,
+    opportunity?.relations,
+    opportunity?.related,
+    opportunity?.events,
+    opportunity?.appointments,
+    opportunity?.calendarEvents,
+  ]);
+
+  for (const id of opportunityRelationIds) {
+    const match = eventIndex.byId.get(id) || eventIndex.byOpportunityId.get(id);
+    if (match) return match;
+  }
+
+  const contactRelationIds = collectPossibleRelationIds([
+    contact?.id,
+    contact?.contactId,
+    contact?.eventId,
+    contact?.appointmentId,
+    contact?.calendarEventId,
+    contact?.relations,
+    contact?.related,
+    contact?.events,
+    contact?.appointments,
+    contact?.calendarEvents,
+  ]);
+
+  for (const id of contactRelationIds) {
+    const match = eventIndex.byId.get(id) || eventIndex.byContactId.get(id);
+    if (match) return match;
+  }
+
+  return null;
 }
 
 function buildPipelineStageNameMap(pipelines: any[]) {
@@ -233,15 +361,17 @@ export async function POST(request: NextRequest) {
       lastError: null,
     }, { merge: true });
 
-    const [contacts, opportunities, pipelines, leadsSnap] = await Promise.all([
+    const [contacts, opportunities, pipelines, appointmentEvents, leadsSnap] = await Promise.all([
       getGhlContactsAsync(),
       getGhlOpportunitiesAsync(),
       getGhlPipelinesAsync().catch(() => []),
+      getGhlAppointmentEventsAsync().catch(() => []),
       adminDb().collection('leads').get(),
     ]);
 
     const leads = leadsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
     const stageNameById = buildPipelineStageNameMap(pipelines);
+    const eventIndex = buildEventStartIndex(appointmentEvents);
 
     const contactsByPhone = new Map<string, any[]>();
     for (const contact of contacts) {
@@ -327,10 +457,11 @@ export async function POST(request: NextRequest) {
       );
       const appointmentDateTime = toDateOrNull(
         opportunity?.appointmentDateTime
+        || opportunity?.startTime
+        || getLinkedEventStartTime(opportunity, contact, eventIndex)
         || opportunity?.appointmentDate
         || opportunity?.scheduledAt
         || opportunity?.scheduledFor
-        || opportunity?.startTime
         || opportunity?.appointmentTime
         || opportunity?.appointmentOccurredAt
       );

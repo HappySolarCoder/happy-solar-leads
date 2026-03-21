@@ -59,3 +59,25 @@ export async function getGhlPipelinesAsync(): Promise<GhlDoc[]> {
   const snap = await getGhlDb().collection(getCollectionName('GHL_PIPELINES_COLLECTION', 'ghl_pipelines_v2')).get();
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
 }
+
+export async function getGhlAppointmentEventsAsync(): Promise<GhlDoc[]> {
+  const candidates = [
+    process.env.GHL_APPOINTMENT_EVENTS_COLLECTION,
+    'ghl_appointment_events_v2',
+    'ghl_calendar_events_v2',
+    'ghl_appointments_v2',
+  ].filter((value, index, arr): value is string => !!value && arr.indexOf(value) === index);
+
+  for (const collectionName of candidates) {
+    try {
+      const snap = await getGhlDb().collection(collectionName).get();
+      if (!snap.empty) {
+        return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
+      }
+    } catch {
+      // Try next candidate collection name.
+    }
+  }
+
+  return [];
+}
