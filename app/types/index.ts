@@ -114,7 +114,10 @@ export interface Lead {
   appointmentDateTime?: Date;
   ghlStatus?: string;
   ghlOpportunityId?: string;
+  ghlContactId?: string;
+  pipelineStageId?: string;
   appointmentOutcome?: string;
+  dispositionNotes?: string;
   ghlLastUpdatedAt?: Date;
 
   // Photos & Attachments
