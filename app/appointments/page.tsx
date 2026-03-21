@@ -72,11 +72,13 @@ export default function AppointmentsPage() {
           const appointmentDateTime = (lead as any).appointmentDateTime;
           const ghlStatus = (lead as any).ghlStatus;
           const outcome = (lead as any).appointmentOutcome;
+          const setterName = lead.dispositionHistory?.[0]?.userName || 'Unknown';
 
           return (
             <div key={lead.id} className="bg-white border border-[#E2E8F0] rounded-xl p-4">
               <div className="font-semibold text-[#2D3748]">{lead.address}</div>
               <div className="text-sm text-[#718096] mt-1">{lead.city}, {lead.state} {lead.zip}</div>
+              <div className="text-xs text-[#4A5568] mt-1">Setter: <span className="font-semibold">{setterName}</span></div>
 
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                 <div className="inline-flex items-center gap-1 text-[#4A5568]"><Calendar className="w-3 h-3" /> Set: {lead.dispositionedAt ? new Date(lead.dispositionedAt).toLocaleString() : '—'}</div>
