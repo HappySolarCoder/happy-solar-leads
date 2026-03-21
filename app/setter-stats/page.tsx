@@ -52,6 +52,11 @@ export default function DataDashboard() {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [sortBy, setSortBy] = useState<SortBy>('knocks');
 
+  const canSeeAllLeads = (role?: string) => {
+    // Team Stats page is intended to match admin totals for all roles.
+    return role === 'admin' || role === 'manager' || role === 'setter' || role === 'closer';
+  };
+
   useEffect(() => {
     async function loadData() {
       const user = await getCurrentAuthUser();
@@ -61,40 +66,40 @@ export default function DataDashboard() {
       }
       setCurrentUser(user);
 
-      // Non-blocking: render cached data immediately, refresh in background
       setIsLoading(false);
       setIsRefreshing(true);
 
-      // Start with scoped leads immediately, then upgrade to full all-user set.
-      const scopedLeads = await getLeadsAsync();
-      setLeads(scopedLeads);
+      let loadedLeads: Lead[] = [];
 
-      // Team stats should show all users' activity for every role.
-      // Fetch full leads set from server route (admin SDK) and make that authoritative.
       try {
-        let token = await auth?.currentUser?.getIdToken();
-        if (!token) {
-          await new Promise((r) => setTimeout(r, 250));
-          token = await auth?.currentUser?.getIdToken();
-        }
+        if (canSeeAllLeads(user.role)) {
+          let token = await auth?.currentUser?.getIdToken();
+          if (!token) {
+            await new Promise((r) => setTimeout(r, 250));
+            token = await auth?.currentUser?.getIdToken();
+          }
 
-        if (token) {
-          const res = await fetch('/api/stats/all-leads', {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (res.ok) {
-            const json = await res.json();
-            if (Array.isArray(json?.leads)) {
-              setLeads(json.leads);
+          if (token) {
+            const res = await fetch('/api/stats/all-leads', {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (res.ok) {
+              const json = await res.json();
+              if (Array.isArray(json?.leads)) loadedLeads = json.leads;
             }
           }
         }
       } catch (e) {
-        console.error('All-leads stats fetch failed, keeping scoped leads:', e);
+        console.error('All-leads stats fetch failed:', e);
+      }
+
+      if (!loadedLeads.length) {
+        loadedLeads = await getLeadsAsync();
       }
 
       const loadedUsers = await getUsersAsync();
       const loadedDispositions = await getDispositionsAsync();
+      setLeads(loadedLeads);
       setUsers(loadedUsers);
       setDispositions(loadedDispositions);
       setIsRefreshing(false);
