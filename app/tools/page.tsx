@@ -118,7 +118,7 @@ export default function ToolsPage() {
 
             {/* Team Stats (All Roles) */}
             <button
-              onClick={() => router.push(isMobileView ? '/mobile/stats' : '/setter-stats')}
+              onClick={() => router.push('/setter-stats')}
               className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow text-left group"
             >
               <div className="p-3 bg-[#FAF5FF] rounded-lg group-hover:bg-[#E9D8FD] transition-colors mb-3">
