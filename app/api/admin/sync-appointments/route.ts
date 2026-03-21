@@ -416,6 +416,7 @@ export async function POST(request: NextRequest) {
     let updated = 0;
     let skippedAmbiguous = 0;
     let unmatched = 0;
+    let missingScheduledDateTime = 0;
     const auditRows: any[] = [];
     const batch = adminDb().batch();
 
@@ -476,10 +477,11 @@ export async function POST(request: NextRequest) {
           || (pipelineStageId ? stageNameById.get(pipelineStageId) : null)
           || opportunity?.status
       );
+      const linkedEventStartTime = getLinkedEventStartTime(opportunity, contact, eventIndex);
       const appointmentDateTime = toDateOrNull(
         opportunity?.appointmentDateTime
         || opportunity?.startTime
-        || getLinkedEventStartTime(opportunity, contact, eventIndex)
+        || linkedEventStartTime
         || opportunity?.appointmentDate
         || opportunity?.scheduledAt
         || opportunity?.scheduledFor
@@ -487,11 +489,12 @@ export async function POST(request: NextRequest) {
         || opportunity?.appointmentOccurredAt
       );
       const appointmentOutcome = normalizeOutcomeFromOpportunity(opportunity, stageNameById);
+      const opportunityId = getFieldString(opportunity?.id || opportunity?.opportunityId);
       const patch = withNullSafePatch(lead, {
         appointmentDateTime,
         pipelineStageId,
         appointmentOutcome,
-        ghlOpportunityId: getFieldString(opportunity?.id || opportunity?.opportunityId),
+        ghlOpportunityId: opportunityId,
         ghlContactId: contactId,
         ghlStatus,
         dispositionNotes: getFieldString(
@@ -503,6 +506,32 @@ export async function POST(request: NextRequest) {
         ghlLastUpdatedAt: toDateOrNull(opportunity?.updatedAt) || new Date(),
       });
 
+      if (!appointmentDateTime) {
+        missingScheduledDateTime++;
+        auditRows.push({
+          leadId: lead.id,
+          leadName: getFieldString(lead?.name),
+          phone: phoneKey,
+          contactId,
+          opportunityId,
+          result: 'matched-missing-datetime',
+          reason: 'opportunity-matched-but-no-scheduled-datetime',
+          matchedBy: 'phone',
+          pipelineStageId,
+          opportunityFieldPresence: {
+            appointmentDateTime: !!opportunity?.appointmentDateTime,
+            startTime: !!opportunity?.startTime,
+            appointmentDate: !!opportunity?.appointmentDate,
+            scheduledAt: !!opportunity?.scheduledAt,
+            scheduledFor: !!opportunity?.scheduledFor,
+            appointmentTime: !!opportunity?.appointmentTime,
+            appointmentOccurredAt: !!opportunity?.appointmentOccurredAt,
+          },
+          linkedEventFound: !!linkedEventStartTime,
+          syncedAt: new Date(),
+        });
+      }
+
       if (Object.keys(patch).length === 0) continue;
 
       batch.set(adminDb().collection('leads').doc(lead.id), patch, { merge: true });
@@ -510,13 +539,16 @@ export async function POST(request: NextRequest) {
 
       auditRows.push({
         leadId: lead.id,
+        leadName: getFieldString(lead?.name),
         phone: phoneKey,
         contactId,
-        opportunityId: getFieldString(opportunity?.id || opportunity?.opportunityId),
+        opportunityId,
         result: 'updated',
         matchedBy: 'phone',
         outcome: appointmentOutcome,
         pipelineStageId,
+        hasScheduledDateTime: !!appointmentDateTime,
+        linkedEventFound: !!linkedEventStartTime,
         syncedAt: new Date(),
       });
     }
@@ -548,10 +580,11 @@ export async function POST(request: NextRequest) {
       updated,
       unmatched,
       skippedAmbiguous,
+      missingScheduledDateTime,
       lastError: null,
     }, { merge: true });
 
-    return NextResponse.json({ success: true, matched, updated, unmatched, skippedAmbiguous });
+    return NextResponse.json({ success: true, matched, updated, unmatched, skippedAmbiguous, missingScheduledDateTime });
   } catch (error: any) {
     console.error('[admin/sync-appointments] error:', error);
     try {
