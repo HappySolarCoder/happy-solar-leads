@@ -111,11 +111,23 @@ export async function POST(request: NextRequest) {
     const batch = adminDb().batch();
     let matched = 0;
     let updated = 0;
+    let skippedAmbiguous = 0;
+    const auditRows: any[] = [];
 
     for (const o of opps) {
-      const lead = (o.phone && byPhone.get(norm(o.phone)))
-        || (o.email && byEmail.get(norm(o.email)))
-        || (o.name && byName.get(norm(o.name)));
+      const matches = [
+        o.phone ? byPhone.get(norm(o.phone)) : null,
+        o.email ? byEmail.get(norm(o.email)) : null,
+        o.name ? byName.get(norm(o.name)) : null,
+      ].filter(Boolean);
+
+      const uniqueIds = Array.from(new Set(matches.map((m: any) => m.id)));
+      if (uniqueIds.length !== 1) {
+        if (uniqueIds.length > 1) skippedAmbiguous++;
+        continue;
+      }
+
+      const lead = matches[0] as any;
       if (!lead) continue;
       matched++;
 
@@ -134,19 +146,36 @@ export async function POST(request: NextRequest) {
 
       batch.update(adminDb().collection('leads').doc(lead.id), patch);
       updated++;
+      auditRows.push({
+        leadId: lead.id,
+        opportunityId: o.opportunityId || o.id || null,
+        matchedBy: o.phone ? 'phone' : o.email ? 'email' : o.name ? 'name' : 'unknown',
+        outcome: normalizedOutcome,
+        syncedAt: new Date(),
+      });
     }
 
     if (updated > 0) await batch.commit();
+
+    if (auditRows.length > 0) {
+      const auditBatch = adminDb().batch();
+      auditRows.slice(0, 500).forEach((row) => {
+        const ref = adminDb().collection('appointments_sync_audit').doc();
+        auditBatch.set(ref, row);
+      });
+      await auditBatch.commit();
+    }
 
     await statusRef.set({
       state: 'idle',
       lastSuccessAt: new Date(),
       matched,
       updated,
+      skippedAmbiguous,
       lastError: null,
     }, { merge: true });
 
-    return NextResponse.json({ success: true, matched, updated });
+    return NextResponse.json({ success: true, matched, updated, skippedAmbiguous });
   } catch (error: any) {
     console.error('[admin/sync-appointments] error:', error);
     try {
