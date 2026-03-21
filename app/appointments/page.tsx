@@ -1,5 +1,7 @@
 'use client';
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
+
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Calendar, Clock, CheckCircle2, RefreshCw } from 'lucide-react';
@@ -14,13 +16,15 @@ function isAppointmentLead(lead: Lead) {
 }
 
 function normalizeOutcomeLabel(v: unknown) {
-  const s = String(v || '').toLowerCase();
-  if (s.includes('show')) return 'Show';
+  const raw = String(v || '').trim();
+  if (!raw) return 'Pending';
+  const s = raw.toLowerCase();
   if (s.includes('no show') || s.includes('noshow')) return 'No Show';
+  if (s.includes('show')) return 'Show';
   if (s.includes('sold') || s.includes('won')) return 'Sold';
   if (s.includes('lost')) return 'Lost';
   if (s.includes('resched')) return 'Rescheduled';
-  return String(v || 'Pending');
+  return raw;
 }
 
 function outcomeBadgeClass(label: string) {
@@ -134,12 +138,13 @@ export default function AppointmentsPage() {
   const rows = useMemo(() => {
     const norm = (v: unknown) => String(v || '').toLowerCase();
     return baseRows.filter((l) => {
-      const outcome = norm(normalizeOutcomeLabel((l as any).appointmentOutcome || (l as any).ghlStatus));
+      const outcomeLabel = normalizeOutcomeLabel((l as any).appointmentOutcome || (l as any).ghlStatus);
+      const outcome = norm(outcomeLabel);
       const searchHit = !search || norm(l.address).includes(norm(search)) || norm(l.name).includes(norm(search));
 
       let outcomeHit = true;
-      if (outcomeFilter === 'pending') outcomeHit = !outcome;
-      else if (outcomeFilter === 'won') outcomeHit = outcome.includes('won') || outcome.includes('closed won') || outcome.includes('sale');
+      if (outcomeFilter === 'pending') outcomeHit = outcomeLabel === 'Pending';
+      else if (outcomeFilter === 'won') outcomeHit = outcome.includes('sold') || outcome.includes('won') || outcome.includes('closed won') || outcome.includes('sale');
       else if (outcomeFilter === 'lost') outcomeHit = outcome.includes('lost') || outcome.includes('closed lost');
       else if (outcomeFilter === 'no-show') outcomeHit = outcome.includes('no show') || outcome.includes('noshow');
       else if (outcomeFilter === 'rescheduled') outcomeHit = outcome.includes('rescheduled') || outcome.includes('reschedule');
@@ -216,6 +221,7 @@ export default function AppointmentsPage() {
             Sync: <span className="font-semibold">{syncStatus.state || 'idle'}</span>
             {syncStatus.lastSuccessAt && <> • Last success: <span className="font-semibold">{new Date(syncStatus.lastSuccessAt).toLocaleString()}</span></>}
             {typeof syncStatus.skippedAmbiguous === 'number' && <> • Skipped ambiguous: <span className="font-semibold">{syncStatus.skippedAmbiguous}</span></>}
+            {typeof syncStatus.unmatched === 'number' && <> • Unmatched: <span className="font-semibold">{syncStatus.unmatched}</span></>}
             {syncStatus.lastError && <> • Last error: <span className="font-semibold text-red-600">{syncStatus.lastError}</span></>}
           </div>
         )}

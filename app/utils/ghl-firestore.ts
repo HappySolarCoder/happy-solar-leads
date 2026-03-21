@@ -1,6 +1,8 @@
 import { App, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
+export type GhlDoc = Record<string, unknown> & { id: string };
+
 let ghlApp: App | null = null;
 
 function parseServiceAccount() {
@@ -9,6 +11,16 @@ function parseServiceAccount() {
   const parsed = JSON.parse(raw);
   if (parsed.private_key) parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
   return parsed;
+}
+
+function getCollectionName(envKey: string, fallback: string) {
+  const value = process.env[envKey];
+  return value && value.trim() ? value.trim() : fallback;
+}
+
+export function normalizePhoneToLast10(phone: unknown) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : digits;
 }
 
 export function getGhlApp() {
@@ -33,8 +45,17 @@ export function getGhlDb() {
   return dbId ? getFirestore(getGhlApp(), dbId) : getFirestore(getGhlApp());
 }
 
-export async function getGhlOpportunitiesAsync() {
-  const collectionName = process.env.GHL_OPPORTUNITIES_COLLECTION || 'opportunities';
-  const snap = await getGhlDb().collection(collectionName).get();
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+export async function getGhlContactsAsync(): Promise<GhlDoc[]> {
+  const snap = await getGhlDb().collection(getCollectionName('GHL_CONTACTS_COLLECTION', 'ghl_contacts_v2')).get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
+}
+
+export async function getGhlOpportunitiesAsync(): Promise<GhlDoc[]> {
+  const snap = await getGhlDb().collection(getCollectionName('GHL_OPPORTUNITIES_COLLECTION', 'ghl_opportunities_v2')).get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
+}
+
+export async function getGhlPipelinesAsync(): Promise<GhlDoc[]> {
+  const snap = await getGhlDb().collection(getCollectionName('GHL_PIPELINES_COLLECTION', 'ghl_pipelines_v2')).get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
 }

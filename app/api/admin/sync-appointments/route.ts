@@ -1,32 +1,16 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
-import { getGhlOpportunitiesAsync } from '@/app/utils/ghl-firestore';
-
-function norm(v: any) {
-  return String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-function getStageOutcomes() {
-  try {
-    const raw = process.env.STAGE_OUTCOMES;
-    if (!raw) return DEFAULT_STAGE_OUTCOMES;
-    return { ...DEFAULT_STAGE_OUTCOMES, ...JSON.parse(raw) };
-  } catch {
-    return DEFAULT_STAGE_OUTCOMES;
-  }
-}
-
-function normalizeOutcomeFromOpportunity(o: any) {
-  const map = getStageOutcomes();
-  const stageId = String(o.pipelineStageId || o.stageId || '').trim();
-  const stageName = String(o.stage || o.pipelineStage || o.status || o.outcome || '').trim();
-  const keyById = norm(stageId);
-  const keyByName = norm(stageName);
-  return map[keyById] || map[keyByName] || stageName || null;
-}
+import {
+  getGhlContactsAsync,
+  getGhlOpportunitiesAsync,
+  getGhlPipelinesAsync,
+  normalizePhoneToLast10,
+} from '@/app/utils/ghl-firestore';
 
 const STATUS_DOC = 'appointments-sync-status';
 const MIN_INTERVAL_MS = 5 * 60 * 1000;
+const APPOINTMENT_OUTCOME_CUSTOM_FIELD_ID = 'GYGpLKBPfMpiBqyU2ogQ';
 const DEFAULT_STAGE_OUTCOMES: Record<string, string> = {
   show: 'Show',
   showed: 'Show',
@@ -41,6 +25,119 @@ const DEFAULT_STAGE_OUTCOMES: Record<string, string> = {
   rescheduled: 'Rescheduled',
   reschedule: 'Rescheduled',
 };
+
+function norm(v: unknown) {
+  return String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function getStageOutcomes() {
+  try {
+    const raw = process.env.STAGE_OUTCOMES;
+    if (!raw) return DEFAULT_STAGE_OUTCOMES;
+    return { ...DEFAULT_STAGE_OUTCOMES, ...JSON.parse(raw) };
+  } catch {
+    return DEFAULT_STAGE_OUTCOMES;
+  }
+}
+
+function pickTimestamp(value: any): number {
+  if (!value) return 0;
+  if (typeof value?.toDate === 'function') return value.toDate().getTime();
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toDateOrNull(value: any): Date | null {
+  if (!value) return null;
+  if (typeof value?.toDate === 'function') return value.toDate();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getFieldString(value: any): string | null {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+function getOpportunityCustomField(opportunity: any, fieldId: string): string | null {
+  const customFields = Array.isArray(opportunity?.customFields) ? opportunity.customFields : [];
+  const match = customFields.find((field: any) => String(field?.id || field?.fieldId || '').trim() === fieldId);
+  return getFieldString(
+    match?.fieldValueString
+      ?? match?.value
+      ?? match?.fieldValue
+      ?? match?.stringValue
+  );
+}
+
+function buildPipelineStageNameMap(pipelines: any[]) {
+  const stageNameById = new Map<string, string>();
+
+  for (const pipeline of pipelines) {
+    const stages = [
+      ...(Array.isArray(pipeline?.stages) ? pipeline.stages : []),
+      ...(Array.isArray(pipeline?.pipelineStages) ? pipeline.pipelineStages : []),
+    ];
+
+    for (const stage of stages) {
+      const id = getFieldString(stage?.id || stage?.stageId);
+      const name = getFieldString(stage?.name || stage?.label || stage?.title);
+      if (id && name && !stageNameById.has(id)) {
+        stageNameById.set(id, name);
+      }
+    }
+  }
+
+  return stageNameById;
+}
+
+function normalizeOutcomeFromOpportunity(opportunity: any, stageNameById: Map<string, string>) {
+  const map = getStageOutcomes();
+  const customOutcome = getOpportunityCustomField(opportunity, APPOINTMENT_OUTCOME_CUSTOM_FIELD_ID);
+  if (customOutcome) return customOutcome;
+
+  const stageId = getFieldString(opportunity?.pipelineStageId || opportunity?.stageId);
+  const stageName = getFieldString(
+    opportunity?.stage
+      || opportunity?.pipelineStage
+      || (stageId ? stageNameById.get(stageId) : null)
+      || opportunity?.status
+      || opportunity?.outcome
+  );
+
+  const keyById = norm(stageId);
+  const keyByName = norm(stageName);
+  return map[keyById] || map[keyByName] || stageName || null;
+}
+
+function pickMostRecentOpportunity(opportunities: any[]) {
+  return [...opportunities].sort((a, b) => {
+    const aUpdated = pickTimestamp(a?.updatedAt);
+    const bUpdated = pickTimestamp(b?.updatedAt);
+    if (bUpdated !== aUpdated) return bUpdated - aUpdated;
+    const aCreated = pickTimestamp(a?.createdAt);
+    const bCreated = pickTimestamp(b?.createdAt);
+    return bCreated - aCreated;
+  })[0] || null;
+}
+
+function withNullSafePatch(lead: any, patch: Record<string, any>) {
+  const safePatch: Record<string, any> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== null && value !== undefined) {
+      safePatch[key] = value;
+      continue;
+    }
+
+    const existing = lead?.[key];
+    const hasExisting = existing !== null && existing !== undefined && String(existing).trim() !== '';
+    if (!hasExisting) {
+      safePatch[key] = value;
+    }
+  }
+  return safePatch;
+}
 
 async function requireManager(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
@@ -92,78 +189,152 @@ export async function POST(request: NextRequest) {
       lastError: null,
     }, { merge: true });
 
-    const [opps, leadsSnap] = await Promise.all([
+    const [contacts, opportunities, pipelines, leadsSnap] = await Promise.all([
+      getGhlContactsAsync(),
       getGhlOpportunitiesAsync(),
+      getGhlPipelinesAsync().catch(() => []),
       adminDb().collection('leads').get(),
     ]);
 
     const leads = leadsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    const stageNameById = buildPipelineStageNameMap(pipelines);
 
-    const byPhone = new Map<string, any>();
-    const byEmail = new Map<string, any>();
-    const byName = new Map<string, any>();
-    for (const l of leads) {
-      if (l.phone) byPhone.set(norm(l.phone), l);
-      if (l.email) byEmail.set(norm(l.email), l);
-      if (l.name) byName.set(norm(l.name), l);
+    const contactsByPhone = new Map<string, any[]>();
+    for (const contact of contacts) {
+      const phoneKey = normalizePhoneToLast10(contact?.phone);
+      if (!phoneKey) continue;
+      const current = contactsByPhone.get(phoneKey) || [];
+      current.push(contact);
+      contactsByPhone.set(phoneKey, current);
     }
 
-    const batch = adminDb().batch();
+    const opportunitiesByContactId = new Map<string, any[]>();
+    for (const opportunity of opportunities) {
+      const contactId = getFieldString(opportunity?.contactId);
+      if (!contactId) continue;
+      const current = opportunitiesByContactId.get(contactId) || [];
+      current.push(opportunity);
+      opportunitiesByContactId.set(contactId, current);
+    }
+
     let matched = 0;
     let updated = 0;
     let skippedAmbiguous = 0;
+    let unmatched = 0;
     const auditRows: any[] = [];
+    const batch = adminDb().batch();
 
-    for (const o of opps) {
-      const matches = [
-        o.phone ? byPhone.get(norm(o.phone)) : null,
-        o.email ? byEmail.get(norm(o.email)) : null,
-        o.name ? byName.get(norm(o.name)) : null,
-      ].filter(Boolean);
-
-      const uniqueIds = Array.from(new Set(matches.map((m: any) => m.id)));
-      if (uniqueIds.length !== 1) {
-        if (uniqueIds.length > 1) skippedAmbiguous++;
+    for (const lead of leads) {
+      const phoneKey = normalizePhoneToLast10(lead?.phone);
+      if (!phoneKey) {
+        unmatched++;
+        auditRows.push({
+          leadId: lead.id,
+          phone: null,
+          result: 'unmatched',
+          reason: 'missing-raydar-phone',
+          syncedAt: new Date(),
+        });
         continue;
       }
 
-      const lead = matches[0] as any;
-      if (!lead) continue;
-      matched++;
+      const matchedContacts = contactsByPhone.get(phoneKey) || [];
+      if (matchedContacts.length !== 1) {
+        if (matchedContacts.length > 1) skippedAmbiguous++;
+        else unmatched++;
 
-      const normalizedOutcome = normalizeOutcomeFromOpportunity(o);
-      const patch: any = {
-        ghlStatus: o.status || o.stage || o.pipelineStage || null,
-        appointmentOutcome: normalizedOutcome,
-        ghlOpportunityId: o.opportunityId || o.id || null,
-        ghlLastUpdatedAt: o.updatedAt?.toDate ? o.updatedAt.toDate() : (o.updatedAt ? new Date(o.updatedAt) : new Date()),
-      };
-
-      const appt = o.appointmentDateTime || o.startTime || o.appointmentTime;
-      if (appt) {
-        patch.appointmentDateTime = appt?.toDate ? appt.toDate() : new Date(appt);
+        auditRows.push({
+          leadId: lead.id,
+          phone: phoneKey,
+          result: matchedContacts.length > 1 ? 'ambiguous' : 'unmatched',
+          reason: matchedContacts.length > 1 ? 'multiple-ghl-contacts-for-phone' : 'no-ghl-contact-for-phone',
+          contactIds: matchedContacts.map((contact) => contact.id),
+          syncedAt: new Date(),
+        });
+        continue;
       }
 
-      batch.update(adminDb().collection('leads').doc(lead.id), patch);
+      const contact = matchedContacts[0];
+      const contactId = getFieldString(contact?.id) || String(contact.id);
+      const matchedOpportunities = opportunitiesByContactId.get(contactId) || [];
+      const opportunity = pickMostRecentOpportunity(matchedOpportunities);
+
+      if (!opportunity) {
+        unmatched++;
+        auditRows.push({
+          leadId: lead.id,
+          phone: phoneKey,
+          result: 'unmatched',
+          reason: 'no-ghl-opportunity-for-contact',
+          contactId,
+          syncedAt: new Date(),
+        });
+        continue;
+      }
+
+      matched++;
+
+      const pipelineStageId = getFieldString(opportunity?.pipelineStageId || opportunity?.stageId);
+      const ghlStatus = getFieldString(
+        opportunity?.stage
+          || opportunity?.pipelineStage
+          || (pipelineStageId ? stageNameById.get(pipelineStageId) : null)
+          || opportunity?.status
+      );
+      const appointmentDateTime = toDateOrNull(opportunity?.appointmentOccurredAt || opportunity?.appointmentDateTime || opportunity?.startTime || opportunity?.appointmentTime);
+      const appointmentOutcome = normalizeOutcomeFromOpportunity(opportunity, stageNameById);
+      const patch = withNullSafePatch(lead, {
+        appointmentDateTime,
+        pipelineStageId,
+        appointmentOutcome,
+        ghlOpportunityId: getFieldString(opportunity?.id || opportunity?.opportunityId),
+        ghlContactId: contactId,
+        ghlStatus,
+        dispositionNotes: getFieldString(
+          opportunity?.dispositionNotes
+            || opportunity?.notes
+            || opportunity?.note
+            || opportunity?.internalNotes
+        ),
+        ghlLastUpdatedAt: toDateOrNull(opportunity?.updatedAt) || new Date(),
+      });
+
+      if (Object.keys(patch).length === 0) continue;
+
+      batch.set(adminDb().collection('leads').doc(lead.id), patch, { merge: true });
       updated++;
+
       auditRows.push({
         leadId: lead.id,
-        opportunityId: o.opportunityId || o.id || null,
-        matchedBy: o.phone ? 'phone' : o.email ? 'email' : o.name ? 'name' : 'unknown',
-        outcome: normalizedOutcome,
+        phone: phoneKey,
+        contactId,
+        opportunityId: getFieldString(opportunity?.id || opportunity?.opportunityId),
+        result: 'updated',
+        matchedBy: 'phone',
+        outcome: appointmentOutcome,
+        pipelineStageId,
         syncedAt: new Date(),
       });
     }
 
-    if (updated > 0) await batch.commit();
+    if (updated > 0) {
+      await batch.commit();
+    }
 
     if (auditRows.length > 0) {
-      const auditBatch = adminDb().batch();
-      auditRows.slice(0, 500).forEach((row) => {
-        const ref = adminDb().collection('appointments_sync_audit').doc();
-        auditBatch.set(ref, row);
-      });
-      await auditBatch.commit();
+      const chunks: any[][] = [];
+      for (let i = 0; i < auditRows.length; i += 500) {
+        chunks.push(auditRows.slice(i, i + 500));
+      }
+
+      for (const rows of chunks) {
+        const auditBatch = adminDb().batch();
+        rows.forEach((row) => {
+          const ref = adminDb().collection('appointments_sync_audit').doc();
+          auditBatch.set(ref, row);
+        });
+        await auditBatch.commit();
+      }
     }
 
     await statusRef.set({
@@ -171,11 +342,12 @@ export async function POST(request: NextRequest) {
       lastSuccessAt: new Date(),
       matched,
       updated,
+      unmatched,
       skippedAmbiguous,
       lastError: null,
     }, { merge: true });
 
-    return NextResponse.json({ success: true, matched, updated, skippedAmbiguous });
+    return NextResponse.json({ success: true, matched, updated, unmatched, skippedAmbiguous });
   } catch (error: any) {
     console.error('[admin/sync-appointments] error:', error);
     try {
