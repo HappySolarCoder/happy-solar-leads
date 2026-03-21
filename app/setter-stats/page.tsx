@@ -65,29 +65,36 @@ export default function DataDashboard() {
       setIsLoading(false);
       setIsRefreshing(true);
 
-      let loadedLeads = await getLeadsAsync();
+      // Start with scoped leads immediately, then upgrade to full all-user set.
+      const scopedLeads = await getLeadsAsync();
+      setLeads(scopedLeads);
 
       // Team stats should show all users' activity for every role.
-      // Fetch full leads set from server route (admin SDK) when possible.
+      // Fetch full leads set from server route (admin SDK) and make that authoritative.
       try {
-        const token = await auth?.currentUser?.getIdToken();
+        let token = await auth?.currentUser?.getIdToken();
+        if (!token) {
+          await new Promise((r) => setTimeout(r, 250));
+          token = await auth?.currentUser?.getIdToken();
+        }
+
         if (token) {
           const res = await fetch('/api/stats/all-leads', {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (res.ok) {
             const json = await res.json();
-            if (Array.isArray(json?.leads)) loadedLeads = json.leads;
+            if (Array.isArray(json?.leads)) {
+              setLeads(json.leads);
+            }
           }
         }
       } catch (e) {
-        console.error('All-leads stats fetch failed, using scoped leads:', e);
+        console.error('All-leads stats fetch failed, keeping scoped leads:', e);
       }
 
       const loadedUsers = await getUsersAsync();
       const loadedDispositions = await getDispositionsAsync();
-
-      setLeads(loadedLeads);
       setUsers(loadedUsers);
       setDispositions(loadedDispositions);
       setIsRefreshing(false);
