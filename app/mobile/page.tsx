@@ -136,7 +136,7 @@ export default function MobilePage() {
               </div>
               <div>
                 <div className="text-lg font-bold text-[#2D3748]">{dailyTarget ?? '-'}</div>
-                <div className="text-[11px] text-[#718096]">Knocks/day</div>
+                <div className="text-[11px] text-[#718096]">Target Knocks/Day</div>
               </div>
             </div>
           </div>
