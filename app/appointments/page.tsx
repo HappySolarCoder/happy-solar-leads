@@ -293,11 +293,11 @@ export default function AppointmentsPage() {
               <div className="text-sm text-[#718096] mt-1">{lead.address}</div>
               <div className="text-sm text-[#718096] mt-1">{lead.city}, {lead.state} {lead.zip}</div>
               <div className="text-xs text-[#4A5568] mt-1">Setter: <span className="font-semibold">{setterName}</span></div>
+              <div className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-[#2D3748]"><Clock className="w-4 h-4" /> Appointment: {appointmentDateTime ? new Date(appointmentDateTime).toLocaleString() : 'Pending sync'}</div>
               <div className={`mt-2 inline-flex px-2 py-1 rounded-full border text-xs font-semibold ${outcomeBadgeClass(outcome)}`}>{outcome}</div>
 
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                 <div className="inline-flex items-center gap-1 text-[#4A5568]"><Calendar className="w-3 h-3" /> Set: {lead.dispositionedAt ? new Date(lead.dispositionedAt).toLocaleString() : '—'}</div>
-                <div className="inline-flex items-center gap-1 text-[#4A5568]"><Clock className="w-3 h-3" /> Appt: {appointmentDateTime ? new Date(appointmentDateTime).toLocaleString() : 'Pending sync'}</div>
                 <div className="inline-flex items-center gap-1 text-[#4A5568]"><CheckCircle2 className="w-3 h-3" /> Outcome: {outcome || ghlStatus || 'Pending'}</div>
               </div>
             </div>
