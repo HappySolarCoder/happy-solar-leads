@@ -212,7 +212,7 @@ export default function UsersManagementPage() {
       return;
     }
 
-    if (!confirm(`Delete user "${user.name}"? This cannot be undone.`)) {
+    if (!confirm(`Permanently delete user "${user.name}"? This cannot be undone.`)) {
       return;
     }
 
@@ -227,7 +227,7 @@ export default function UsersManagementPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId, deleteType: 'hard' }),
       });
 
       const data = await response.json();

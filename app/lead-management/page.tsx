@@ -103,7 +103,7 @@ export default function LeadManagementPage() {
 
     // In assign mode, save the territory polygon and auto-assign leads
     if (mode === 'assign' && assignToUser && polygon.length >= 3) {
-      const user = users.find(u => u.id === assignToUser);
+      const user = activeAssignableUsers.find(u => u.id === assignToUser);
       if (user) {
         setOperationType('assigning');
         setIsDeleting(true);
@@ -182,13 +182,18 @@ export default function LeadManagementPage() {
     }
   };
 
+  const activeAssignableUsers = users.filter(u => {
+    const ux = u as any;
+    return !ux.deleted && ux.isActive !== false;
+  });
+
   // Filter leads by selected user
   const filteredLeads = userFilter === 'all' 
     ? leads 
     : leads.filter(lead => lead.assignedTo === userFilter || lead.claimedBy === userFilter);
 
-  // Get lead counts per user
-  const userLeadCounts = users.map(user => ({
+  // Get lead counts per user (active users only for assignment UX)
+  const userLeadCounts = activeAssignableUsers.map(user => ({
     user,
     count: leads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
   }));
@@ -358,7 +363,7 @@ export default function LeadManagementPage() {
   const handleBulkAssign = async () => {
     if (selectedLeads.size === 0 || !assignToUser) return;
     
-    const targetUser = users.find(u => u.id === assignToUser);
+    const targetUser = activeAssignableUsers.find(u => u.id === assignToUser);
     if (!targetUser) return;
 
     const confirmed = confirm(
@@ -589,7 +594,7 @@ export default function LeadManagementPage() {
                 className="w-full px-4 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A] focus:border-transparent"
               >
                 <option value="">Select User...</option>
-                {users.map(user => (
+                {activeAssignableUsers.map(user => (
                   <option key={user.id} value={user.id}>
                     {user.name}
                   </option>
