@@ -281,7 +281,7 @@ export async function POST(request: NextRequest) {
           || (pipelineStageId ? stageNameById.get(pipelineStageId) : null)
           || opportunity?.status
       );
-      const appointmentDateTime = toDateOrNull(opportunity?.appointmentOccurredAt || opportunity?.appointmentDateTime || opportunity?.startTime || opportunity?.appointmentTime);
+      const appointmentDateTime = toDateOrNull(opportunity?.appointmentDateTime || opportunity?.appointmentOccurredAt || opportunity?.startTime || opportunity?.appointmentTime);
       const appointmentOutcome = normalizeOutcomeFromOpportunity(opportunity, stageNameById);
       const patch = withNullSafePatch(lead, {
         appointmentDateTime,
