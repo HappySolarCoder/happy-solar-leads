@@ -94,7 +94,12 @@ export default function DataDashboard() {
       }
 
       if (!loadedLeads.length) {
-        loadedLeads = await getLeadsAsync();
+        if (canSeeAllLeads(user.role)) {
+          // Do NOT overwrite with scoped subset; keep cached/all-user data.
+          loadedLeads = getLeads();
+        } else {
+          loadedLeads = await getLeadsAsync();
+        }
       }
 
       const loadedUsers = await getUsersAsync();
