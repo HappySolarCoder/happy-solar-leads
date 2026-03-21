@@ -19,6 +19,8 @@ export default function AppointmentsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [search, setSearch] = useState('');
+  const [outcomeFilter, setOutcomeFilter] = useState<'all' | 'pending' | 'won' | 'lost' | 'no-show' | 'rescheduled'>('all');
 
   const reloadLeads = async () => {
     const rows = await getLeadsAsync();
@@ -61,7 +63,7 @@ export default function AppointmentsPage() {
     }
   };
 
-  const rows = useMemo(() => {
+  const baseRows = useMemo(() => {
     const appointmentLeads = leads.filter(isAppointmentLead);
 
     const mine = appointmentLeads.filter((l) => {
@@ -79,6 +81,36 @@ export default function AppointmentsPage() {
       return bt - at;
     });
   }, [leads, currentUser]);
+
+  const rows = useMemo(() => {
+    const norm = (v: unknown) => String(v || '').toLowerCase();
+    return baseRows.filter((l) => {
+      const outcome = norm((l as any).appointmentOutcome || (l as any).ghlStatus);
+      const searchHit = !search || norm(l.address).includes(norm(search)) || norm(l.name).includes(norm(search));
+
+      let outcomeHit = true;
+      if (outcomeFilter === 'pending') outcomeHit = !outcome;
+      else if (outcomeFilter === 'won') outcomeHit = outcome.includes('won') || outcome.includes('closed won') || outcome.includes('sale');
+      else if (outcomeFilter === 'lost') outcomeHit = outcome.includes('lost') || outcome.includes('closed lost');
+      else if (outcomeFilter === 'no-show') outcomeHit = outcome.includes('no show') || outcome.includes('noshow');
+      else if (outcomeFilter === 'rescheduled') outcomeHit = outcome.includes('rescheduled') || outcome.includes('reschedule');
+
+      return searchHit && outcomeHit;
+    });
+  }, [baseRows, search, outcomeFilter]);
+
+  const kpis = useMemo(() => {
+    const total = rows.length;
+    const won = rows.filter((l) => String((l as any).appointmentOutcome || (l as any).ghlStatus || '').toLowerCase().includes('won')).length;
+    const pending = rows.filter((l) => !((l as any).appointmentOutcome || (l as any).ghlStatus)).length;
+    const setToday = rows.filter((l) => {
+      if (!l.dispositionedAt) return false;
+      const d = new Date(l.dispositionedAt);
+      const n = new Date();
+      return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+    }).length;
+    return { total, won, pending, setToday };
+  }, [rows]);
 
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center text-[#718096]">Loading appointments…</div>;
@@ -104,6 +136,33 @@ export default function AppointmentsPage() {
       </header>
 
       <div className="p-4 space-y-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Total</div><div className="text-lg font-bold">{kpis.total}</div></div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Set Today</div><div className="text-lg font-bold">{kpis.setToday}</div></div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Won</div><div className="text-lg font-bold">{kpis.won}</div></div>
+          <div className="bg-white border border-[#E2E8F0] rounded-lg p-3"><div className="text-xs text-[#718096]">Pending</div><div className="text-lg font-bold">{kpis.pending}</div></div>
+        </div>
+
+        <div className="bg-white border border-[#E2E8F0] rounded-lg p-3 space-y-2">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search address or name"
+            className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm"
+          />
+          <select
+            value={outcomeFilter}
+            onChange={(e) => setOutcomeFilter(e.target.value as any)}
+            className="w-full px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm"
+          >
+            <option value="all">All outcomes</option>
+            <option value="pending">Pending</option>
+            <option value="won">Won</option>
+            <option value="lost">Lost</option>
+            <option value="no-show">No Show</option>
+            <option value="rescheduled">Rescheduled</option>
+          </select>
+        </div>
         {rows.map((lead) => {
           const appointmentDateTime = (lead as any).appointmentDateTime;
           const ghlStatus = (lead as any).ghlStatus;
