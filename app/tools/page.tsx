@@ -116,6 +116,18 @@ export default function ToolsPage() {
               <p className="text-sm text-[#718096]">View and manage scheduled go backs</p>
             </button>
 
+            {/* Appointments */}
+            <button
+              onClick={() => router.push('/appointments')}
+              className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow text-left group"
+            >
+              <div className="p-3 bg-[#EBF8FF] rounded-lg group-hover:bg-[#BEE3F8] transition-colors mb-3">
+                <Calendar className="w-6 h-6 text-[#2B6CB0]" />
+              </div>
+              <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Appointments</h3>
+              <p className="text-sm text-[#718096]">Track set appointments and outcomes</p>
+            </button>
+
             {/* Team Stats (All Roles) */}
             <button
               onClick={() => router.push('/setter-stats')}
