@@ -38,6 +38,30 @@ function outcomeBadgeClass(label: string) {
   }
 }
 
+function formatMaybeDateTime(value: unknown, fallback = 'Pending sync') {
+  if (!value) return fallback;
+
+  let date: Date | null = null;
+
+  if (value instanceof Date) {
+    date = value;
+  } else if (typeof value === 'object' && value !== null && 'seconds' in (value as Record<string, unknown>)) {
+    const seconds = Number((value as { seconds?: unknown }).seconds);
+    const nanoseconds = Number((value as { nanoseconds?: unknown }).nanoseconds || 0);
+    if (Number.isFinite(seconds)) {
+      date = new Date(seconds * 1000 + Math.floor(nanoseconds / 1_000_000));
+    }
+  } else if (typeof value === 'string' || typeof value === 'number') {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      date = parsed;
+    }
+  }
+
+  if (!date || Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleString();
+}
+
 export default function AppointmentsPage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -293,11 +317,11 @@ export default function AppointmentsPage() {
               <div className="text-sm text-[#718096] mt-1">{lead.address}</div>
               <div className="text-sm text-[#718096] mt-1">{lead.city}, {lead.state} {lead.zip}</div>
               <div className="text-xs text-[#4A5568] mt-1">Setter: <span className="font-semibold">{setterName}</span></div>
-              <div className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-[#2D3748]"><Clock className="w-4 h-4" /> Appointment: {appointmentDateTime ? new Date(appointmentDateTime).toLocaleString() : 'Pending sync'}</div>
+              <div className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-[#2D3748]"><Clock className="w-4 h-4" /> Appointment: {formatMaybeDateTime(appointmentDateTime)}</div>
               <div className={`mt-2 inline-flex px-2 py-1 rounded-full border text-xs font-semibold ${outcomeBadgeClass(outcome)}`}>{outcome}</div>
 
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                <div className="inline-flex items-center gap-1 text-[#4A5568]"><Calendar className="w-3 h-3" /> Set: {lead.dispositionedAt ? new Date(lead.dispositionedAt).toLocaleString() : '—'}</div>
+                <div className="inline-flex items-center gap-1 text-[#4A5568]"><Calendar className="w-3 h-3" /> Set: {formatMaybeDateTime(lead.dispositionedAt, '—')}</div>
                 <div className="inline-flex items-center gap-1 text-[#4A5568]"><CheckCircle2 className="w-3 h-3" /> Outcome: {outcome || ghlStatus || 'Pending'}</div>
               </div>
             </div>
