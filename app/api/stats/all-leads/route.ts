@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     const idToken = authHeader.split(' ')[1];
     await adminAuth().verifyIdToken(idToken);
 
-    const snap = await adminDb().collection('leads').limit(10000).get();
+    const snap = await adminDb().collection('leads').get();
     const leads = snap.docs.map((d) => serializeValue({ id: d.id, ...(d.data() as any) }));
 
     return NextResponse.json({ leads });
