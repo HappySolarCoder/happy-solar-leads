@@ -27,7 +27,7 @@ export default function ObjectionTracker({ lead, currentUserId, onSave, onClose 
   const objectionTypes = Object.keys(OBJECTION_LABELS) as ObjectionType[];
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4 overflow-y-auto">
       <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full my-8 max-h-[calc(100vh-4rem)] overflow-y-auto">
         {/* Header */}
         <div className="bg-gradient-to-r from-red-500 to-pink-600 p-6 text-white sticky top-0">
