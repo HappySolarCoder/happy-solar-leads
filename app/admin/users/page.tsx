@@ -15,6 +15,7 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { auth, createSecondaryAuth } from '@/app/utils/firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { getTeams, addTeam, updateTeam, deleteTeam, Team } from '@/app/utils/teams';
+import { getTerritoriesAsync, deleteTerritoryAsync } from '@/app/utils/territories';
 
 export default function UsersManagementPage() {
   const router = useRouter();
@@ -252,12 +253,20 @@ export default function UsersManagementPage() {
     // Remove legacy fields that are no longer in the User type
     const { homeAddress, homeLat, homeLng, ...cleanUser } = user as any;
 
+    const nextActive = !user.isActive;
     const updatedUser: User = {
       ...cleanUser,
-      isActive: !user.isActive,
+      isActive: nextActive,
     };
 
     await saveUserAsync(updatedUser);
+
+    // If user is being inactivated, remove all assigned territories
+    if (!nextActive) {
+      const territories = await getTerritoriesAsync();
+      const mine = territories.filter((t) => t.userId === userId);
+      await Promise.all(mine.map((t) => deleteTerritoryAsync(t.id)));
+    }
     
     // Refresh users list
     const allUsers = await getUsersAsync();
