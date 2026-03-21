@@ -1185,6 +1185,49 @@ export default function LeadMap({
   // Handle saving new lead from dropped pin
   const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
     try {
+      const requiresProximity = currentUser?.role != null && ['setter', 'manager', 'sales'].includes(currentUser.role);
+      if (requiresProximity && navigator.geolocation) {
+        try {
+          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 5000,
+              maximumAge: 0,
+            });
+          });
+
+          const pinLat = typeof leadData.lat === 'number' ? leadData.lat : dropPinLocation?.lat;
+          const pinLng = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
+
+          if (typeof pinLat === 'number' && typeof pinLng === 'number') {
+            const R = 6371000;
+            const dLat = (pinLat - position.coords.latitude) * Math.PI / 180;
+            const dLng = (pinLng - position.coords.longitude) * Math.PI / 180;
+            const a =
+              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(position.coords.latitude * Math.PI / 180) *
+              Math.cos(pinLat * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distanceFromPin = R * c;
+            const MAX_DISTANCE_METERS = 50;
+
+            if (distanceFromPin > MAX_DISTANCE_METERS) {
+              const distanceFeet = Math.round(distanceFromPin * 3.281);
+              alert(
+                `You are not close enough to this pin to create it.\n\n` +
+                `Distance: ${distanceFeet} feet away\n` +
+                `Required: Within 100 feet\n\n` +
+                `Please move closer to the location and try again.`
+              );
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('[LeadMap] Manual pin GPS capture failed:', err);
+        }
+      }
+
       // Generate ID
       const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
