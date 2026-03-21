@@ -21,6 +21,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
 
+    // Phase 4 guard: never break when GHL env is not configured.
+    if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      return NextResponse.json({ error: 'ghl-not-configured' }, { status: 503 });
+    }
+
     // Expected mirror collection shape (flexible):
     // { raydarLeadId?, address?, phone?, appointmentDateTime?, status?, outcome?, opportunityId?, updatedAt? }
     const mirrorSnap = await adminDb().collection('ghl_appointments').limit(5000).get();
