@@ -116,17 +116,31 @@ export default function ToolsPage() {
               <p className="text-sm text-[#718096]">View and manage scheduled go backs</p>
             </button>
 
-            {/* Team Activity */}
+            {/* Team Stats (All Roles) */}
             <button
-              onClick={() => router.push('/activity-map')}
+              onClick={() => router.push(isMobileView ? '/mobile/stats' : '/setter-stats')}
               className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow text-left group"
             >
-              <div className="p-3 bg-[#EDF2F7] rounded-lg group-hover:bg-[#E2E8F0] transition-colors mb-3">
-                <Map className="w-6 h-6 text-[#4299E1]" />
+              <div className="p-3 bg-[#FAF5FF] rounded-lg group-hover:bg-[#E9D8FD] transition-colors mb-3">
+                <BarChart3 className="w-6 h-6 text-[#805AD5]" />
               </div>
-              <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Team Activity</h3>
-              <p className="text-sm text-[#718096]">Live team locations & activity</p>
+              <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Team Stats</h3>
+              <p className="text-sm text-[#718096]">View team performance and behavior metrics</p>
             </button>
+
+            {/* Team Activity (Manager/Admin only) */}
+            {(isManager || isAdmin) && (
+              <button
+                onClick={() => router.push('/activity-map')}
+                className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow text-left group"
+              >
+                <div className="p-3 bg-[#EDF2F7] rounded-lg group-hover:bg-[#E2E8F0] transition-colors mb-3">
+                  <Map className="w-6 h-6 text-[#4299E1]" />
+                </div>
+                <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Team Activity</h3>
+                <p className="text-sm text-[#718096]">Live team locations & activity</p>
+              </button>
+            )}
           </div>
         </div>
 
@@ -159,17 +173,6 @@ export default function ToolsPage() {
                 <p className="text-sm text-[#718096]">Manage territory assignments</p>
               </button>
 
-              {/* Data & Stats */}
-              <button
-                onClick={() => router.push('/setter-stats')}
-                className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow text-left group"
-              >
-                <div className="p-3 bg-[#FAF5FF] rounded-lg group-hover:bg-[#E9D8FD] transition-colors mb-3">
-                  <BarChart3 className="w-6 h-6 text-[#805AD5]" />
-                </div>
-                <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Team Stats</h3>
-                <p className="text-sm text-[#718096]">View setter performance data</p>
-              </button>
             </div>
           </div>
         )}
