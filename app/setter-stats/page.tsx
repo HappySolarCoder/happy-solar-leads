@@ -9,6 +9,7 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User } from '@/app/types';
 import { Disposition } from '@/app/types/disposition';
 import { startOfToday, startOfWeek, startOfMonth, isAfter, format } from 'date-fns';
+import { auth } from '@/app/utils/firebase';
 
 interface SetterMetrics {
   userId: string;
@@ -64,7 +65,25 @@ export default function DataDashboard() {
       setIsLoading(false);
       setIsRefreshing(true);
 
-      const loadedLeads = await getLeadsAsync();
+      let loadedLeads = await getLeadsAsync();
+
+      // Team stats should show all users' activity for every role.
+      // Fetch full leads set from server route (admin SDK) when possible.
+      try {
+        const token = await auth?.currentUser?.getIdToken();
+        if (token) {
+          const res = await fetch('/api/stats/all-leads', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const json = await res.json();
+            if (Array.isArray(json?.leads)) loadedLeads = json.leads;
+          }
+        }
+      } catch (e) {
+        console.error('All-leads stats fetch failed, using scoped leads:', e);
+      }
+
       const loadedUsers = await getUsersAsync();
       const loadedDispositions = await getDispositionsAsync();
 
