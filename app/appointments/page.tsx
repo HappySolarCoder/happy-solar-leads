@@ -289,7 +289,8 @@ export default function AppointmentsPage() {
 
           return (
             <div key={lead.id} className="bg-white border border-[#E2E8F0] rounded-xl p-4">
-              <div className="font-semibold text-[#2D3748]">{lead.address}</div>
+              <div className="font-semibold text-[#2D3748]">{lead.name || 'Unknown Lead'}</div>
+              <div className="text-sm text-[#718096] mt-1">{lead.address}</div>
               <div className="text-sm text-[#718096] mt-1">{lead.city}, {lead.state} {lead.zip}</div>
               <div className="text-xs text-[#4A5568] mt-1">Setter: <span className="font-semibold">{setterName}</span></div>
               <div className={`mt-2 inline-flex px-2 py-1 rounded-full border text-xs font-semibold ${outcomeBadgeClass(outcome)}`}>{outcome}</div>
