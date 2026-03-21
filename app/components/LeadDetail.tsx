@@ -121,6 +121,22 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     loadData();
   }, []);
 
+  // Lock background scroll while lead detail is open so the app header/page does not fight the panel
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, []);
+
   // Get current disposition
   const currentDisposition = dispositions.find(d => d.id === lead.status);
   const CurrentIcon = currentDisposition ? ICON_MAP[currentDisposition.icon] || Circle : Circle;
@@ -416,7 +432,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
   if (isLoadingDispositions) {
     return (
-      <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 flex items-center justify-center">
+      <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
           <p className="text-sm text-[#718096]">Loading...</p>
@@ -435,7 +451,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
     return (
       <>
-        <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 overflow-hidden flex flex-col border-l border-[#E2E8F0]">
+        <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
           <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
             <div className="flex items-center gap-2">
               <span className="text-lg">🙂</span>
@@ -516,7 +532,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
   return (
     <>
-      <div className="fixed inset-y-0 right-0 w-full max-w-sm bg-white shadow-2xl z-40 overflow-hidden flex flex-col border-l border-[#E2E8F0]">
+      <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
         {/* Header */}
         <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
           <div className="flex items-center gap-3">
