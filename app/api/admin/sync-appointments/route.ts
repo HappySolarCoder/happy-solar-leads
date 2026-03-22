@@ -264,10 +264,17 @@ function getLinkedEventStartTime(opportunity: any, contact: any, eventIndex: Ret
   return null;
 }
 
-function buildPipelineStageNameMap(pipelines: any[]) {
+function buildPipelineMetadata(pipelines: any[]) {
   const stageNameById = new Map<string, string>();
+  const pipelineNameById = new Map<string, string>();
 
   for (const pipeline of pipelines) {
+    const pipelineId = getFieldString(pipeline?.id || pipeline?.pipelineId);
+    const pipelineName = getFieldString(pipeline?.name || pipeline?.label || pipeline?.title);
+    if (pipelineId && pipelineName && !pipelineNameById.has(pipelineId)) {
+      pipelineNameById.set(pipelineId, pipelineName);
+    }
+
     const stages = [
       ...(Array.isArray(pipeline?.stages) ? pipeline.stages : []),
       ...(Array.isArray(pipeline?.pipelineStages) ? pipeline.pipelineStages : []),
@@ -282,7 +289,7 @@ function buildPipelineStageNameMap(pipelines: any[]) {
     }
   }
 
-  return stageNameById;
+  return { stageNameById, pipelineNameById };
 }
 
 function normalizeOutcomeFromOpportunity(opportunity: any, stageNameById: Map<string, string>) {
@@ -391,7 +398,7 @@ export async function POST(request: NextRequest) {
     ]);
 
     const leads = leadsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-    const stageNameById = buildPipelineStageNameMap(pipelines);
+    const { stageNameById, pipelineNameById } = buildPipelineMetadata(pipelines);
     const eventIndex = buildEventStartIndex(appointmentEvents);
 
     const contactsByPhone = new Map<string, any[]>();
@@ -468,6 +475,24 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
+      const pipelineId = getFieldString(opportunity?.pipelineId);
+      const pipelineName = getFieldString(opportunity?.pipelineName || (pipelineId ? pipelineNameById.get(pipelineId) : null));
+      if (norm(pipelineName) === 'inboundleadlocker') {
+        auditRows.push({
+          leadId: lead.id,
+          leadName: getFieldString(lead?.name),
+          phone: phoneKey,
+          contactId,
+          opportunityId: getFieldString(opportunity?.id || opportunity?.opportunityId),
+          result: 'skipped',
+          reason: 'excluded-pipeline-inbound-lead-locker',
+          pipelineId,
+          pipelineName,
+          syncedAt: new Date(),
+        });
+        continue;
+      }
+
       matched++;
 
       const pipelineStageId = getFieldString(opportunity?.pipelineStageId || opportunity?.stageId);
@@ -479,7 +504,9 @@ export async function POST(request: NextRequest) {
       );
       const linkedEventStartTime = getLinkedEventStartTime(opportunity, contact, eventIndex);
       const appointmentDateTime = toDateOrNull(
-        opportunity?.appointmentDateTime
+        opportunity?.appointmentStartTime
+        || opportunity?.appointmentScheduledAtCanonical
+        || opportunity?.appointmentDateTime
         || opportunity?.startTime
         || linkedEventStartTime
         || opportunity?.appointmentDate
@@ -519,6 +546,8 @@ export async function POST(request: NextRequest) {
           matchedBy: 'phone',
           pipelineStageId,
           opportunityFieldPresence: {
+            appointmentStartTime: !!opportunity?.appointmentStartTime,
+            appointmentScheduledAtCanonical: !!opportunity?.appointmentScheduledAtCanonical,
             appointmentDateTime: !!opportunity?.appointmentDateTime,
             startTime: !!opportunity?.startTime,
             appointmentDate: !!opportunity?.appointmentDate,
@@ -526,6 +555,8 @@ export async function POST(request: NextRequest) {
             scheduledFor: !!opportunity?.scheduledFor,
             appointmentTime: !!opportunity?.appointmentTime,
             appointmentOccurredAt: !!opportunity?.appointmentOccurredAt,
+            appointmentScheduledAtSource: !!opportunity?.appointmentScheduledAtSource,
+            appointmentEventId: !!opportunity?.appointmentEventId,
           },
           linkedEventFound: !!linkedEventStartTime,
           syncedAt: new Date(),
