@@ -116,6 +116,32 @@ function getOpportunityCustomField(opportunity: any, fieldId: string): string | 
   );
 }
 
+function getContactPhoneKeys(contact: any): string[] {
+  const candidates = [
+    contact?.phone,
+    contact?.mobile,
+    contact?.phoneNumber,
+    contact?.contact?.phone,
+    contact?.contact?.phoneNumber,
+  ];
+
+  const keys = new Set<string>();
+  for (const candidate of candidates) {
+    const normalized = normalizePhoneToLast10(candidate);
+    if (normalized) keys.add(normalized);
+  }
+  return Array.from(keys);
+}
+
+function getOpportunityContactId(opportunity: any): string | null {
+  return getFieldString(
+    opportunity?.contactId
+      || opportunity?.contact?.id
+      || opportunity?.contact?._id
+      || opportunity?.contact?.contactId
+  );
+}
+
 function collectPossibleRelationIds(value: any): string[] {
   const results = new Set<string>();
 
@@ -403,16 +429,18 @@ export async function POST(request: NextRequest) {
 
     const contactsByPhone = new Map<string, any[]>();
     for (const contact of contacts) {
-      const phoneKey = normalizePhoneToLast10(contact?.phone);
-      if (!phoneKey) continue;
-      const current = contactsByPhone.get(phoneKey) || [];
-      current.push(contact);
-      contactsByPhone.set(phoneKey, current);
+      const phoneKeys = getContactPhoneKeys(contact);
+      if (phoneKeys.length === 0) continue;
+      for (const phoneKey of phoneKeys) {
+        const current = contactsByPhone.get(phoneKey) || [];
+        current.push(contact);
+        contactsByPhone.set(phoneKey, current);
+      }
     }
 
     const opportunitiesByContactId = new Map<string, any[]>();
     for (const opportunity of opportunities) {
-      const contactId = getFieldString(opportunity?.contactId);
+      const contactId = getOpportunityContactId(opportunity);
       if (!contactId) continue;
       const current = opportunitiesByContactId.get(contactId) || [];
       current.push(opportunity);
