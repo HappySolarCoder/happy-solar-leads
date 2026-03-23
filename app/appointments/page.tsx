@@ -19,8 +19,11 @@ function normalizeOutcomeLabel(v: unknown) {
   const raw = String(v || '').trim();
   if (!raw) return 'Pending';
   const s = raw.toLowerCase();
+  if (s.includes('no sit')) return 'No Show';
   if (s.includes('no show') || s.includes('noshow')) return 'No Show';
+  if (s.includes('sit')) return 'Show';
   if (s.includes('show')) return 'Show';
+  if (s.includes('new appointment')) return 'Pending';
   if (s.includes('sold') || s.includes('won')) return 'Sold';
   if (s.includes('lost')) return 'Lost';
   if (s.includes('resched')) return 'Rescheduled';
@@ -38,28 +41,33 @@ function outcomeBadgeClass(label: string) {
   }
 }
 
-function formatMaybeDateTime(value: unknown, fallback = 'Pending sync') {
-  if (!value) return fallback;
-
-  let date: Date | null = null;
+function parseMaybeDateTime(value: unknown): Date | null {
+  if (!value) return null;
 
   if (value instanceof Date) {
-    date = value;
-  } else if (typeof value === 'object' && value !== null && 'seconds' in (value as Record<string, unknown>)) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value === 'object' && value !== null && 'seconds' in (value as Record<string, unknown>)) {
     const seconds = Number((value as { seconds?: unknown }).seconds);
     const nanoseconds = Number((value as { nanoseconds?: unknown }).nanoseconds || 0);
     if (Number.isFinite(seconds)) {
-      date = new Date(seconds * 1000 + Math.floor(nanoseconds / 1_000_000));
-    }
-  } else if (typeof value === 'string' || typeof value === 'number') {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) {
-      date = parsed;
+      const parsed = new Date(seconds * 1000 + Math.floor(nanoseconds / 1_000_000));
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
     }
   }
 
-  if (!date || Number.isNaN(date.getTime())) return fallback;
-  return date.toLocaleString();
+  if (typeof value === 'string' || typeof value === 'number') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  return null;
+}
+
+function formatMaybeDateTime(value: unknown, fallback = 'Pending sync') {
+  const date = parseMaybeDateTime(value);
+  return date ? date.toLocaleString() : fallback;
 }
 
 export default function AppointmentsPage() {
@@ -89,7 +97,7 @@ export default function AppointmentsPage() {
 
       if (user.role === 'admin' || user.role === 'manager') {
         const status = await loadSyncStatus();
-        const lastSuccess = status?.lastSuccessAt ? new Date(status.lastSuccessAt).getTime() : 0;
+        const lastSuccess = parseMaybeDateTime(status?.lastSuccessAt)?.getTime() || 0;
         if (!lastSuccess || Date.now() - lastSuccess > 5 * 60 * 1000) {
           await handleSync();
         }
@@ -243,9 +251,9 @@ export default function AppointmentsPage() {
         {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && syncStatus && (
           <div className="bg-white border border-[#E2E8F0] rounded-lg p-3 text-xs text-[#4A5568]">
             Sync: <span className="font-semibold">{syncStatus.state || 'idle'}</span>
-            {syncStatus.lastSuccessAt && <> • Last success: <span className="font-semibold">{new Date(syncStatus.lastSuccessAt).toLocaleString()}</span></>}
+            {syncStatus.lastSuccessAt && <> • Last success: <span className="font-semibold">{formatMaybeDateTime(syncStatus.lastSuccessAt, 'Unknown')}</span></>}
             {typeof syncStatus.skippedAmbiguous === 'number' && <> • Skipped ambiguous: <span className="font-semibold">{syncStatus.skippedAmbiguous}</span></>}
-            {typeof syncStatus.unmatched === 'number' && <> • Unmatched: <span className="font-semibold">{syncStatus.unmatched}</span></>}
+            {typeof syncStatus.lastRunUnmatched === 'number' && <> • Unmatched: <span className="font-semibold">{syncStatus.lastRunUnmatched}</span></>}
             {syncStatus.lastError && <> • Last error: <span className="font-semibold text-red-600">{syncStatus.lastError}</span></>}
           </div>
         )}

@@ -638,12 +638,13 @@ export async function POST(request: NextRequest) {
       matched,
       updated,
       unmatched,
+      lastRunUnmatched: unmatched,
       skippedAmbiguous,
       missingScheduledDateTime,
       lastError: null,
     }, { merge: true });
 
-    return NextResponse.json({ success: true, matched, updated, unmatched, skippedAmbiguous, missingScheduledDateTime });
+    return NextResponse.json({ success: true, matched, updated, unmatched, lastRunUnmatched: unmatched, skippedAmbiguous, missingScheduledDateTime });
   } catch (error: any) {
     console.error('[admin/sync-appointments] error:', error);
     try {
