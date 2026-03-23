@@ -365,6 +365,20 @@ function withNullSafePatch(lead: any, patch: Record<string, any>) {
   return safePatch;
 }
 
+function serializeStatusValue(value: any): any {
+  if (value == null) return value;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value?.toDate === 'function') {
+    const converted = value.toDate();
+    return converted instanceof Date && !Number.isNaN(converted.getTime()) ? converted.toISOString() : null;
+  }
+  if (Array.isArray(value)) return value.map(serializeStatusValue);
+  if (typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, serializeStatusValue(nested)]));
+  }
+  return value;
+}
+
 async function requireManager(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   if (!authHeader?.startsWith('Bearer ')) {
@@ -385,7 +399,7 @@ export async function GET(request: NextRequest) {
   try {
     await requireManager(request);
     const doc = await adminDb().collection('system').doc(STATUS_DOC).get();
-    return NextResponse.json({ status: doc.exists ? doc.data() : null });
+    return NextResponse.json({ status: doc.exists ? serializeStatusValue(doc.data()) : null });
   } catch (error: any) {
     const status = /authorized/i.test(String(error?.message)) ? 403 : /credentials/i.test(String(error?.message)) ? 401 : 500;
     return NextResponse.json({ error: error?.message || 'Internal error' }, { status });
