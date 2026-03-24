@@ -2,9 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
-import { auth, db } from '@/app/utils/firebase';
+import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { auth } from '@/app/utils/firebase';
 import { ArrowRight, Mail, Lock, User as UserIcon, AlertCircle, Shield } from 'lucide-react';
 import { requiresRoleApproval } from '@/app/types';
 
@@ -25,7 +24,7 @@ export default function SignupPage() {
     setIsLoading(true);
 
     try {
-      if (!auth || !db) {
+      if (!auth) {
         throw new Error('Firebase not initialized');
       }
 
@@ -36,28 +35,28 @@ export default function SignupPage() {
       }
 
       const needsApproval = requiresRoleApproval(role);
-      const assignedRole: UserRole = needsApproval ? 'setter' : role;
-      const now = new Date();
 
       // Create Firebase Auth account
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const uid = userCredential.user.uid;
+      const token = await userCredential.user.getIdToken();
 
-      // Save user data to Firestore
-      await setDoc(doc(db, 'users', uid), {
-        id: uid,
-        name,
-        email,
-        role: assignedRole,
-        requestedRole: role,
-        approved: !needsApproval,
-        approvalStatus: needsApproval ? 'pending' : 'approved',
-        approvalRequestedAt: needsApproval ? now : null,
-        createdAt: now,
-        status: needsApproval ? 'Pending Approval' : 'active',
-        isActive: !needsApproval, // Pending users shouldn't auto-assign leads
-        color: `#${Math.floor(Math.random()*16777215).toString(16)}`, // Random color for map pins
+      const response = await fetch('/api/auth/create-profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          email,
+          requestedRole: role,
+        }),
       });
+
+      if (!response.ok) {
+        await signOut(auth).catch(() => {});
+        throw new Error(await response.text());
+      }
 
       if (needsApproval) {
         router.push('/pending-approval');
