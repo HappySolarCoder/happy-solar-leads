@@ -5,8 +5,6 @@ import {
   getLeadsForUser as firestoreGetLeadsForUser,
   getLeadsInBounds as firestoreGetLeadsInBounds,
   getLeadsInBoundsForUser as firestoreGetLeadsInBoundsForUser,
-  getLeadsForUserLimited as firestoreGetLeadsForUserLimited,
-  toThinMapLead,
   saveLead as firestoreSaveLead,
   batchSaveLeads as firestoreBatchSaveLeads,
   updateLead as firestoreUpdateLead,
@@ -16,6 +14,7 @@ import {
   updateUser as firestoreUpdateUser,
   getUser as firestoreGetUser
 } from './firestore';
+import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, toThinMapLead } from './mapLeadFields';
 
 // ============================================
 // LEADS
