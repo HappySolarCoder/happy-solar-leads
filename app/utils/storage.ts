@@ -14,6 +14,7 @@ import {
   updateUser as firestoreUpdateUser,
   getUser as firestoreGetUser
 } from './firestore';
+import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, toThinMapLead } from './mapLeadFields';
 
 // ============================================
 // LEADS
@@ -124,6 +125,51 @@ export async function getLeadsInBoundsAsync(
     console.error('Error getting leads in bounds:', error);
     return [];
   }
+}
+
+const MAP_LEAD_CAP = 400;
+
+export type MapBounds = { south: number; north: number; west: number; east: number };
+
+/**
+ * Map pin fetch: never dump the full assigned+claimed set onto the map.
+ * Admin + bounds: lat-range query with a tight cap (single-field lat index exists).
+ * Everyone else: tight limit on existing equality queries + thin fields.
+ * Does not use claimedBy+lat / assignedTo+lat (those indexes are not on prod).
+ */
+export async function getMapLeadsAsync(bounds?: MapBounds): Promise<Lead[]> {
+  try {
+    const { getCurrentAuthUser } = await import('./auth');
+    const me = await getCurrentAuthUser();
+    if (!me) return [];
+
+    if (me.role === 'admin') {
+      const b = bounds || { south: 42.90, north: 43.40, west: -77.95, east: -77.30 };
+      const leads = await firestoreGetLeadsInBounds(b.south, b.north, b.west, b.east, MAP_LEAD_CAP);
+      return (leads || []).map(toThinMapLead);
+    }
+
+    if (me.id) {
+      return await firestoreGetLeadsForUserLimited(me.id, MAP_LEAD_CAP);
+    }
+
+    return [];
+  } catch (error) {
+    console.error('Error getting map leads:', error);
+    // Keep last cache so an index/query miss does not empty the map forever
+    return (leadsCache || []).map(toThinMapLead);
+  }
+}
+
+export function filterLeadsToBounds(leads: Lead[], bounds: MapBounds): Lead[] {
+  return leads.filter((lead) => {
+    if (lead.lat == null || lead.lng == null) return false;
+    if (lead.lat < bounds.south || lead.lat > bounds.north) return false;
+    if (bounds.west > bounds.east) {
+      return lead.lng >= bounds.west || lead.lng <= bounds.east;
+    }
+    return lead.lng >= bounds.west && lead.lng <= bounds.east;
+  });
 }
 
 export function saveLeads(leads: Lead[]): void {
@@ -444,8 +490,4 @@ export async function getLeadsByUserAsync(userId: string): Promise<Lead[]> {
 // INITIALIZATION
 // ============================================
 
-// Load initial data on client
-if (typeof window !== 'undefined') {
-  getLeadsAsync().catch(console.error);
-  getUsersAsync().catch(console.error);
-}
+// Do not eager-fetch all leads/users on import — maps and lists load scoped data themselves.

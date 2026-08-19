@@ -1,5 +1,5 @@
 // Raydar Service Worker - Enhanced PWA with Aggressive Updates
-const CACHE_VERSION = Date.now(); // Timestamp-based versioning
+const CACHE_VERSION = 'raydar-20260818-fieldperf';
 const CACHE_NAME = `raydar-v${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline';
 

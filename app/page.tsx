@@ -13,7 +13,7 @@ import UserSwitcher from '@/app/components/UserSwitcher';
 import LeadAssignmentPanel from '@/app/components/LeadAssignmentPanel';
 import AppMenu from '@/app/components/AppMenu';
 import EasterEggInfoModal from '@/app/components/EasterEggInfoModal';
-import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getMapLeadsAsync, getUsersAsync, type MapBounds } from '@/app/utils/storage';
 import { getTerritoriesAsync } from '@/app/utils/territories';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
@@ -64,6 +64,8 @@ export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchLocation, setSearchLocation] = useState<{ lat: number; lng: number } | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const mapBoundsRef = useRef<MapBounds | null>(null);
+  const mapFetchTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   // Mobile detection - redirect to mobile view (but allow admin pages)
   useEffect(() => {
@@ -136,25 +138,39 @@ export default function Home() {
         if (session.mapType) setMapType(session.mapType);
       }
       
-      // Show map immediately with empty leads, then load in background
-      // This prevents white screen while loading 18K+ leads
+      // Map must not receive the full assigned/claimed (or all-admin) set
       setLeads([]);
-      
-      // Load leads in background (non-blocking)
+      const centerLat = session?.mapCenter?.lat ?? 43.1566;
+      const centerLng = session?.mapCenter?.lng ?? -77.6088;
+      const initialBounds: MapBounds = {
+        south: centerLat - 0.12,
+        north: centerLat + 0.12,
+        west: centerLng - 0.16,
+        east: centerLng + 0.16,
+      };
+      mapBoundsRef.current = initialBounds;
       setTimeout(async () => {
-        console.log('[Page] Loading leads in background...');
-        const loadedLeads = await getLeadsAsync();
-        console.log('[Page] Loaded', loadedLeads.length, 'leads');
+        console.log('[Page] Loading map leads (viewport/capped)...');
+        const loadedLeads = await getMapLeadsAsync(initialBounds);
+        console.log('[Page] Loaded', loadedLeads.length, 'map leads');
         setLeads(loadedLeads);
       }, 100);
     }
     loadData();
   }, [router]);
 
-  // Refresh leads when they change
   const refreshLeads = useCallback(async () => {
-    const loadedLeads = await getLeadsAsync();
+    const loadedLeads = await getMapLeadsAsync(mapBoundsRef.current || undefined);
     setLeads(loadedLeads);
+  }, []);
+
+  const handleViewportLeads = useCallback((bounds: MapBounds) => {
+    mapBoundsRef.current = bounds;
+    if (mapFetchTimerRef.current) clearTimeout(mapFetchTimerRef.current);
+    mapFetchTimerRef.current = setTimeout(async () => {
+      const loadedLeads = await getMapLeadsAsync(bounds);
+      setLeads(loadedLeads);
+    }, 400);
   }, []);
 
   // Save session state when it changes (debounced)
@@ -274,8 +290,7 @@ export default function Home() {
   const handleUploadComplete = async (count: number) => {
     setShowUploadModal(false);
     // Refresh data from Firestore
-    const loadedLeads = await getLeadsAsync();
-    setLeads(loadedLeads);
+    await refreshLeads();
   };
 
   // Clear all leads (for testing)
@@ -666,9 +681,10 @@ export default function Home() {
               onLeadAdded={refreshLeads}
               center={mapCenter}
               zoom={mapZoom}
-              onMapMove={(center, zoom) => {
+              onMapMove={(center, zoom, bounds) => {
                 setMapCenter(center);
                 setMapZoom(zoom);
+                if (bounds) handleViewportLeads(bounds);
               }}
               onMapTypeChange={setMapType}
               viewMode={(viewMode === 'territory' ? 'territory' : 'map') as 'map' | 'assignments' | 'territory'}

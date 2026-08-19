@@ -32,7 +32,11 @@ interface LeadMapProps {
   userRoutes?: UserRoute[]; // Multiple routes (one per user) for activity tracking
   center?: [number, number];
   zoom?: number;
-  onMapMove?: (center: [number, number], zoom: number) => void; // Callback when map moves
+  onMapMove?: (
+    center: [number, number],
+    zoom: number,
+    bounds?: { south: number; north: number; west: number; east: number }
+  ) => void; // Callback when map moves
   onMapTypeChange?: (mapType: 'street' | 'satellite') => void; // Callback when map type changes
   assignmentMode?: 'none' | 'manual' | 'territory';
   selectedLeadIdsForAssignment?: string[];
@@ -266,7 +270,13 @@ export default function LeadMap({
       
       // Notify parent of map move
       if (onMapMove) {
-        onMapMove(newCenter, currentZoom);
+        const b = map.getBounds();
+        onMapMove(newCenter, currentZoom, {
+          south: b.getSouth(),
+          north: b.getNorth(),
+          west: b.getWest(),
+          east: b.getEast(),
+        });
       }
     });
 
@@ -278,7 +288,13 @@ export default function LeadMap({
       
       // Notify parent of map move
       if (onMapMove) {
-        onMapMove(newCenter, currentZoom);
+        const b = map.getBounds();
+        onMapMove(newCenter, currentZoom, {
+          south: b.getSouth(),
+          north: b.getNorth(),
+          west: b.getWest(),
+          east: b.getEast(),
+        });
       }
     });
 
@@ -638,7 +654,7 @@ export default function LeadMap({
     });
     // Only fit bounds once when leads first load, not on every render/pan/zoom
     // On /mobile/knocking we want to default to GPS location (not last knocked pin / small lead set).
-    const preferGpsCenter = currentUser?.role !== 'admin' && Boolean(userPosition);
+    const preferGpsCenter = currentUser?.role !== 'admin';
 
     if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current && !userInteractedRef.current && !preferGpsCenter) {
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
@@ -649,7 +665,7 @@ export default function LeadMap({
     // Performance: Log completion time
     const duration = Date.now() - startTime;
     console.log(`[LeadMap] Rendered ${visibleLeads.length} markers in ${duration}ms (zoom tier: ${zoomTier})`);
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey, userPosition]);
+  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey]);
   // Note: Using zoomTier instead of direct mapZoom - only re-renders when crossing zoom thresholds
   // This prevents constant re-renders on every zoom event (just 4 tiers: <12, 12-14, 14-16, >16)
 
@@ -913,13 +929,17 @@ export default function LeadMap({
       }
     }
 
+    // Do not remove the marker on every GPS tick — only move it via setLatLng.
+  }, [userPosition, isClient]);
+
+  useEffect(() => {
     return () => {
       if (userMarkerRef.current) {
         userMarkerRef.current.remove();
         userMarkerRef.current = null;
       }
     };
-  }, [userPosition, isClient]);
+  }, []);
 
   // Handle manual recenter when center prop changes
   const prevCenterRef = useRef<[number, number] | undefined>(undefined);
