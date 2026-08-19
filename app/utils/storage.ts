@@ -133,7 +133,8 @@ export type MapBounds = { south: number; north: number; west: number; east: numb
 
 /**
  * Map pin fetch: never dump the full assigned+claimed set onto the map.
- * Admin + bounds: lat-range query with a tight cap (single-field lat index exists).
+ * Admin + bounds: page the existing lat-index bounds query up to MAP_LEAD_CAP
+ * in-viewport pins (do not invent a Rochester box when bounds are missing).
  * Everyone else: tight limit on existing equality queries + thin fields.
  * Does not use claimedBy+lat / assignedTo+lat (those indexes are not on prod).
  */
@@ -144,8 +145,9 @@ export async function getMapLeadsAsync(bounds?: MapBounds): Promise<Lead[]> {
     if (!me) return [];
 
     if (me.role === 'admin') {
-      const b = bounds || { south: 42.90, north: 43.40, west: -77.95, east: -77.30 };
-      const leads = await firestoreGetLeadsInBounds(b.south, b.north, b.west, b.east, MAP_LEAD_CAP);
+      // No hardcoded Rochester fallback — that box can sit outside the real viewport.
+      if (!bounds) return [];
+      const leads = await firestoreGetLeadsInBounds(bounds.south, bounds.north, bounds.west, bounds.east, MAP_LEAD_CAP);
       return (leads || []).map(toThinMapLead);
     }
 
