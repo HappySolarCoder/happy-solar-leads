@@ -518,13 +518,20 @@ export async function getAllUsers(): Promise<User[]> {
   try {
     const usersRef = collection(db, USERS_COLLECTION);
     const snapshot = await getDocs(usersRef);
-    return snapshot.docs.map(doc => ({
-      ...doc.data(),
-      id: doc.id,
-      createdAt: doc.data().createdAt?.toDate() || new Date(),
-      lastLogin: doc.data().lastLogin?.toDate(),
-      approvalRequestedAt: doc.data().approvalRequestedAt?.toDate?.() || doc.data().approvalRequestedAt,
-    } as User));
+    return snapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        ...data,
+        id: docSnap.id,
+        createdAt: data.createdAt?.toDate
+          ? data.createdAt.toDate()
+          : (data.createdAt ? new Date(data.createdAt) : new Date()),
+        lastLogin: data.lastLogin?.toDate
+          ? data.lastLogin.toDate()
+          : (data.lastLogin ? new Date(data.lastLogin) : undefined),
+        approvalRequestedAt: data.approvalRequestedAt?.toDate?.() || data.approvalRequestedAt,
+      } as User;
+    });
   } catch (error) {
     console.error('[getAllUsers] Failed to load users collection:', error);
     throw error;
@@ -544,8 +551,12 @@ export async function getUser(id: string): Promise<User | null> {
       return {
         ...data,
         id: snapshot.id,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        lastLogin: data.lastLogin?.toDate(),
+        createdAt: data.createdAt?.toDate
+          ? data.createdAt.toDate()
+          : (data.createdAt ? new Date(data.createdAt) : new Date()),
+        lastLogin: data.lastLogin?.toDate
+          ? data.lastLogin.toDate()
+          : (data.lastLogin ? new Date(data.lastLogin) : undefined),
         approvalRequestedAt: data.approvalRequestedAt?.toDate?.() || data.approvalRequestedAt,
       } as User;
     }
