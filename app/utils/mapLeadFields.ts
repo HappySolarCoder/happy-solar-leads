@@ -152,10 +152,39 @@ async function loadUserTurfCached(uid: string): Promise<Lead[]> {
  * Tight cap per viewport is fine; this is not a hard 400 on the whole turf and
  * not an unbounded dump onto the map.
  */
+/** Just-saved pins. Refetch/turf TTL must not paint over these. */
+const pendingSavedLeads = new Map<string, Lead>();
+
 export function invalidateUserTurfCache(): void {
   userTurfEpoch += 1;
   userTurfCache = null;
   userTurfInflight = null;
+  pendingSavedLeads.clear();
+}
+
+export function rememberSavedLead(lead: Lead): void {
+  const thin = toThinMapLead(lead);
+  pendingSavedLeads.set(lead.id, thin);
+  if (!userTurfCache) return;
+  const idx = userTurfCache.leads.findIndex((l) => l.id === lead.id);
+  const leads = userTurfCache.leads.slice();
+  if (idx >= 0) leads[idx] = { ...leads[idx], ...thin };
+  else leads.push(thin);
+  userTurfCache = { ...userTurfCache, leads };
+}
+
+export function mergePendingSavedLeads(leads: Lead[], bounds?: MapBounds | null): Lead[] {
+  if (pendingSavedLeads.size === 0) return leads;
+  const byId = new Map(leads.map((l) => [l.id, l]));
+  for (const [id, lead] of pendingSavedLeads) {
+    if (byId.has(id)) {
+      pendingSavedLeads.delete(id);
+      continue;
+    }
+    if (bounds && !leadInBounds(lead, bounds)) continue;
+    byId.set(id, lead);
+  }
+  return Array.from(byId.values());
 }
 
 export async function getUserViewportLeads(

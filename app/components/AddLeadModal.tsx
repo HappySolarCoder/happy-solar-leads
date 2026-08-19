@@ -56,6 +56,14 @@ export default function AddLeadModal({
       .catch(() => setDispositions([]));
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setAddress((prev) => prev || initialAddress);
+    setCity((prev) => prev || initialCity);
+    setState((prev) => prev || initialState);
+    setZip((prev) => prev || initialZip);
+  }, [isOpen, initialAddress, initialCity, initialState, initialZip]);
+
   if (!isOpen) return null;
 
   const handleSave = async () => {
