@@ -173,8 +173,30 @@ export async function getLeadsInBounds(
   }
 }
 
-// Same as getLeadsInBounds but restricted for non-admin users under Firestore rules.
-// We must include assignedTo/claimedBy filters in the query; otherwise Firestore will reject the query.
+export function isMissingIndexError(error: unknown): boolean {
+  const err = error as { code?: string; message?: string } | undefined;
+  const code = String(err?.code || '');
+  const message = String(err?.message || '');
+  return (
+    code === 'failed-precondition' ||
+    /failed-precondition/i.test(code) ||
+    /FAILED_PRECONDITION/i.test(message) ||
+    /requires an index/i.test(message)
+  );
+}
+
+function leadInLngBox(lead: Lead, west: number, east: number): boolean {
+  if (lead.lng == null || !Number.isFinite(Number(lead.lng))) return false;
+  if (west > east) {
+    return lead.lng >= west || lead.lng <= east;
+  }
+  return lead.lng >= west && lead.lng <= east;
+}
+
+// Setter/closer viewport query. Needs claimedBy+lat / assignedTo+lat composite indexes
+// (defs in firestore.indexes.json; not necessarily built on prod yet).
+// Rethrows missing-index errors so callers can fall back without emptying the map.
+// Pages the lat band and keeps in-lng docs — do not take first N-by-lat then drop all on lng.
 export async function getLeadsInBoundsForUser(
   uid: string,
   south: number,
@@ -188,66 +210,64 @@ export async function getLeadsInBoundsForUser(
     return [];
   }
 
-  try {
-    const leadsRef = collection(db, LEADS_COLLECTION);
+  const leadsRef = collection(db, LEADS_COLLECTION);
+  const pageSize = Math.max(maxLeads, 400);
+  const maxScan = Math.min(8000, Math.max(4000, maxLeads * 8));
 
-    const claimedQ = query(
-      leadsRef,
-      where('claimedBy', '==', uid),
-      where('lat', '>=', south),
-      where('lat', '<=', north),
-      limit(maxLeads)
-    );
+  const pageOwnershipLat = async (field: 'claimedBy' | 'assignedTo'): Promise<Lead[]> => {
+    const inBounds: Lead[] = [];
+    let lastDoc: any = null;
+    let scanned = 0;
 
-    const assignedQ = query(
-      leadsRef,
-      where('assignedTo', '==', uid),
-      where('lat', '>=', south),
-      where('lat', '<=', north),
-      limit(maxLeads)
-    );
+    while (inBounds.length < maxLeads && scanned < maxScan) {
+      const take = Math.min(pageSize, maxScan - scanned);
+      const q = lastDoc
+        ? query(
+            leadsRef,
+            where(field, '==', uid),
+            where('lat', '>=', south),
+            where('lat', '<=', north),
+            orderBy('lat'),
+            startAfter(lastDoc),
+            limit(take)
+          )
+        : query(
+            leadsRef,
+            where(field, '==', uid),
+            where('lat', '>=', south),
+            where('lat', '<=', north),
+            orderBy('lat'),
+            limit(take)
+          );
 
-    const [claimedSnap, assignedSnap] = await Promise.all([getDocs(claimedQ), getDocs(assignedQ)]);
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) break;
+      scanned += snapshot.docs.length;
+      lastDoc = snapshot.docs[snapshot.docs.length - 1];
 
-    const mapDoc = (docSnap: any) => {
-      const data = docSnap.data();
-      return {
-        ...data,
-        id: docSnap.id,
-        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
-        claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
-        dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
-        assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
-        solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
-        objectionRecordedAt: data.objectionRecordedAt?.toDate ? data.objectionRecordedAt.toDate() : (data.objectionRecordedAt ? new Date(data.objectionRecordedAt) : undefined),
-        goBackScheduledDate: data.goBackScheduledDate?.toDate ? data.goBackScheduledDate.toDate() : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
-        dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
-          ...entry,
-          timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
-        })) || undefined,
-      } as Lead;
-    };
-
-    const byId = new Map<string, Lead>();
-    for (const d of claimedSnap.docs) byId.set(d.id, mapDoc(d));
-    for (const d of assignedSnap.docs) byId.set(d.id, mapDoc(d));
-
-    const all = Array.from(byId.values());
-
-    // Filter by longitude in memory (Firestore doesn't support multiple range queries)
-    const leadsInBounds = all.filter((lead) => {
-      if (!lead.lng) return false;
-      if (west > east) {
-        return lead.lng >= west || lead.lng <= east;
+      for (const d of snapshot.docs) {
+        const lead = mapLeadDoc(d);
+        if (leadInLngBox(lead, west, east)) {
+          inBounds.push(lead);
+          if (inBounds.length >= maxLeads) break;
+        }
       }
-      return lead.lng >= west && lead.lng <= east;
-    });
 
-    return leadsInBounds;
-  } catch (error) {
-    console.error('Error getting leads in bounds for user:', error);
-    return [];
-  }
+      if (snapshot.docs.length < take) break;
+    }
+
+    return inBounds;
+  };
+
+  const [claimed, assigned] = await Promise.all([
+    pageOwnershipLat('claimedBy'),
+    pageOwnershipLat('assignedTo'),
+  ]);
+
+  const byId = new Map<string, Lead>();
+  for (const lead of claimed) byId.set(lead.id, lead);
+  for (const lead of assigned) byId.set(lead.id, lead);
+  return Array.from(byId.values()).slice(0, maxLeads);
 }
 
 export async function getLead(id: string): Promise<Lead | null> {

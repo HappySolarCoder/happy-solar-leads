@@ -95,8 +95,8 @@ export default function KnockingPage() {
       saveCurrentUser(user);
       setIsLoading(false);
       setIsRefreshing(true);
-      // Admin map fetch needs a real box (no Rochester default inside getMapLeadsAsync).
-      // Setter/closer ignore bounds and still get up to 400 claimed+assigned.
+      // All roles: viewport-scoped map fetch. Setter/closer can have >400 pins;
+      // getMapLeadsAsync pages the visible box (lat-index or equality fallback).
       const startLat = 43.1566;
       const startLng = -77.6088;
       const initialBounds: MapBounds = {
@@ -111,7 +111,7 @@ export default function KnockingPage() {
         getMapLeadsAsync(initialBounds),
       ]);
       setLeads(loadedLeads);
-      setMapLeads(loadedMapLeads);
+      if (loadedMapLeads.length > 0) setMapLeads(loadedMapLeads);
       setIsRefreshing(false);
     }
     loadData();
@@ -129,7 +129,7 @@ export default function KnockingPage() {
         getMapLeadsAsync(mapBoundsRef.current || undefined),
       ]);
       setLeads(loadedLeads);
-      setMapLeads(loadedMapLeads);
+      if (loadedMapLeads.length > 0) setMapLeads(loadedMapLeads);
       setWriteError(null);
     } catch (error: any) {
       const code = error?.code || 'unknown';

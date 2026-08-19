@@ -4,6 +4,8 @@ import {
   getAllLeads as firestoreGetAllLeads,
   getLeadsForUser as firestoreGetLeadsForUser,
   getLeadsInBounds as firestoreGetLeadsInBounds,
+  getLeadsInBoundsForUser as firestoreGetLeadsInBoundsForUser,
+  isMissingIndexError,
   saveLead as firestoreSaveLead,
   batchSaveLeads as firestoreBatchSaveLeads,
   updateLead as firestoreUpdateLead,
@@ -13,7 +15,7 @@ import {
   updateUser as firestoreUpdateUser,
   getUser as firestoreGetUser
 } from './firestore';
-import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, toThinMapLead } from './mapLeadFields';
+import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, getUserLeadsInViewportFallback, toThinMapLead } from './mapLeadFields';
 
 // ============================================
 // LEADS
@@ -120,7 +122,6 @@ export async function getLeadsInBoundsAsync(
     const box: MapBounds = { south, north, west, east };
 
     // Admin + manager: all-leads lat-index (paged in getLeadsInBounds).
-    // Do NOT use claimedBy+lat / assignedTo+lat — those indexes are not on prod.
     if (me.role === 'admin' || me.role === 'manager') {
       const all = await firestoreGetLeadsInBounds(south, north, west, east, maxLeads);
       if (all.length > 0) return all;
@@ -131,9 +132,17 @@ export async function getLeadsInBoundsAsync(
       return [];
     }
 
+    // Setter/closer: viewport-scoped. Prefer claimedBy+lat / assignedTo+lat
+    // (index defs in firestore.indexes.json; not deployed from this PR).
+    // Missing index must not empty pins — page equality + filter to box.
     if (me.id) {
-      const mine = await firestoreGetLeadsForUserLimited(me.id, MAP_LEAD_CAP);
-      return filterLeadsToBounds(mine, box);
+      try {
+        return await firestoreGetLeadsInBoundsForUser(me.id, south, north, west, east, maxLeads);
+      } catch (error) {
+        if (!isMissingIndexError(error)) throw error;
+        console.warn('[getLeadsInBoundsAsync] claimedBy+lat/assignedTo+lat missing; equality+bounds fallback');
+        return await getUserLeadsInViewportFallback(me.id, box, maxLeads);
+      }
     }
     return [];
   } catch (error) {
@@ -146,27 +155,43 @@ export async function getLeadsInBoundsAsync(
  * Map pin fetch: never dump the full assigned+claimed set onto the map.
  * Admin + bounds: page the existing lat-index bounds query up to MAP_LEAD_CAP
  * in-viewport pins (do not invent a Rochester box when bounds are missing).
- * Everyone else: tight limit on existing equality queries + thin fields.
- * Does not use claimedBy+lat / assignedTo+lat (those indexes are not on prod).
+ * Setter/closer: viewport-scoped (claimedBy+lat / assignedTo+lat, or equality
+ * page + bounds filter if those indexes are not built). Tight cap per viewport.
+ * Do not use getLeadsForUserLimited(400) as the only field-map path.
  */
 export async function getMapLeadsAsync(bounds?: MapBounds): Promise<Lead[]> {
   try {
     const { getCurrentAuthUser } = await import('./auth');
     const me = await getCurrentAuthUser();
     if (!me) return [];
+    if (!bounds) return [];
 
     // Admin + manager: viewport all-leads, returned set still capped at MAP_LEAD_CAP (400).
-    // Setter/closer: equality claimedBy/assignedTo only (no new indexes).
     if (me.role === 'admin' || me.role === 'manager') {
-      if (!bounds) return [];
       const leads = await firestoreGetLeadsInBounds(bounds.south, bounds.north, bounds.west, bounds.east, MAP_LEAD_CAP);
       if ((leads || []).length > 0) return leads.map(toThinMapLead);
       if (me.id) return await firestoreGetLeadsForUserLimited(me.id, MAP_LEAD_CAP);
       return [];
     }
 
+    // Setter/closer field maps: visible box only. Pan/zoom refetch is the caller's job.
     if (me.id) {
-      return await firestoreGetLeadsForUserLimited(me.id, MAP_LEAD_CAP);
+      try {
+        const leads = await firestoreGetLeadsInBoundsForUser(
+          me.id,
+          bounds.south,
+          bounds.north,
+          bounds.west,
+          bounds.east,
+          MAP_LEAD_CAP
+        );
+        return (leads || []).map(toThinMapLead);
+      } catch (error) {
+        if (!isMissingIndexError(error)) throw error;
+        console.warn('[getMapLeadsAsync] claimedBy+lat/assignedTo+lat missing; equality+bounds fallback');
+        const fallback = await getUserLeadsInViewportFallback(me.id, bounds, MAP_LEAD_CAP);
+        return fallback.map(toThinMapLead);
+      }
     }
 
     return [];
