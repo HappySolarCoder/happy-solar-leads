@@ -4,9 +4,22 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, List, Navigation, Filter, MapPin, Settings, Search, X, Route, Clock, Footprints, Car } from 'lucide-react';
-import { getLeads, getLeadsAsync, getMapLeadsAsync, getUsersAsync, saveCurrentUser, type MapBounds } from '@/app/utils/storage';
+import {
+  getLeads,
+  getLeadsAsync,
+  getMapLeadsAsync,
+  getUsersAsync,
+  saveCurrentUser,
+  adoptLeadsCacheForUser,
+  getLastKnockingViewport,
+  saveLastKnockingViewport,
+  getLastKnockingMapLeads,
+  saveLastKnockingMapLeads,
+  type MapBounds,
+} from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
+import { boundsAround, boundsCenter, boundsNearlySame, seedPinsInBox } from '@/app/utils/knockingMapSeed';
 import LeadDetail from '@/app/components/LeadDetail';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
@@ -29,16 +42,25 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
 export default function KnockingPage() {
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>(() => getLeads());
-  const [mapLeads, setMapLeads] = useState<Lead[]>([]);
-  const mapBoundsRef = useRef<MapBounds | null>(null);
+  const [mapLeads, setMapLeads] = useState<Lead[]>(() =>
+    seedPinsInBox(getLastKnockingMapLeads(), getLeads(), getLastKnockingViewport())
+  );
+  const mapBoundsRef = useRef<MapBounds | null>(getLastKnockingViewport());
   const mapFetchTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const gpsPositionRef = useRef<{ lat: number; lng: number } | null>(null);
+  const mapLeadsRef = useRef<Lead[]>(mapLeads);
+  const hasInitializedMapRef = useRef(false);
+  const initialMapFetchStartedRef = useRef(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
+  const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(() => {
+    const last = getLastKnockingViewport();
+    return last ? boundsCenter(last) : undefined;
+  });
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
   const [mapZoom, setMapZoom] = useState(15);
   const [solarFilter, setSolarFilter] = useState<string[]>([]);
@@ -68,14 +90,32 @@ export default function KnockingPage() {
     watch: true,
     maximumAge: 20000,
   });
+  gpsPositionRef.current = gpsPosition;
+  mapLeadsRef.current = mapLeads;
+  hasInitializedMapRef.current = hasInitializedMap;
+
+  const applyMapLeads = useCallback((next: Lead[]) => {
+    setMapLeads(next);
+    mapLeadsRef.current = next;
+    if (next.length > 0) saveLastKnockingMapLeads(next);
+  }, []);
 
   useEffect(() => {
     if (!currentUser || hasInitializedMap) return;
-    if (currentUser.role === 'admin') {
-      setMapCenter([43.1566, -77.6088]);
-      setHasInitializedMap(true);
-    } else if (gpsPosition) {
+    if (gpsPosition) {
       setMapCenter([gpsPosition.lat, gpsPosition.lng]);
+      setHasInitializedMap(true);
+      return;
+    }
+    if (currentUser.role === 'admin') {
+      const last = mapBoundsRef.current;
+      setMapCenter(last ? boundsCenter(last) : [43.1566, -77.6088]);
+      setHasInitializedMap(true);
+      return;
+    }
+    const last = mapBoundsRef.current;
+    if (last) {
+      setMapCenter(boundsCenter(last));
       setHasInitializedMap(true);
     }
   }, [gpsPosition, currentUser, hasInitializedMap]);
@@ -93,29 +133,56 @@ export default function KnockingPage() {
       }
       setCurrentUser(user);
       saveCurrentUser(user);
+
+      const cachedLeads = getLeads();
+      if (cachedLeads.length > 0) {
+        setLeads(cachedLeads);
+        adoptLeadsCacheForUser(user);
+      }
+
+      const gps = gpsPositionRef.current;
+      const lastBox = mapBoundsRef.current;
+      const seedBox = gps ? boundsAround(gps.lat, gps.lng) : lastBox;
+      const seeded = seedPinsInBox(getLastKnockingMapLeads(), cachedLeads, seedBox);
+      if (seeded.length > 0) {
+        setMapLeads(seeded);
+        mapLeadsRef.current = seeded;
+      }
+      if (seedBox) mapBoundsRef.current = seedBox;
+
+      // First paint: never hold the Refreshing pill across turf scans.
       setIsLoading(false);
-      setIsRefreshing(true);
-      // All roles: viewport-scoped map fetch. Setter/closer can have >400 pins;
-      // getMapLeadsAsync pages the visible box (lat-index or equality fallback).
-      const startLat = 43.1566;
-      const startLng = -77.6088;
-      const initialBounds: MapBounds = {
-        south: startLat - 0.12,
-        north: startLat + 0.12,
-        west: startLng - 0.16,
-        east: startLng + 0.16,
-      };
-      mapBoundsRef.current = initialBounds;
-      const [loadedLeads, loadedMapLeads] = await Promise.all([
-        getLeadsAsync(),
-        getMapLeadsAsync(initialBounds),
-      ]);
-      setLeads(loadedLeads);
-      if (loadedMapLeads.length > 0) setMapLeads(loadedMapLeads);
       setIsRefreshing(false);
+
+      // List fetch is background-only. Cache key makes this a no-op when getLeads() filled.
+      getLeadsAsync().then((loadedLeads) => {
+        setLeads(loadedLeads);
+      }).catch((error) => {
+        console.error('Background getLeadsAsync failed', error);
+      });
     }
     loadData();
   }, [router]);
+
+  useEffect(() => {
+    if (!currentUser || initialMapFetchStartedRef.current) return;
+    const gps = gpsPosition;
+    if (!gps) return;
+    initialMapFetchStartedRef.current = true;
+    const gpsBounds = boundsAround(gps.lat, gps.lng);
+    mapBoundsRef.current = gpsBounds;
+    saveLastKnockingViewport(gpsBounds);
+    const seeded = seedPinsInBox(getLastKnockingMapLeads(), getLeads(), gpsBounds);
+    if (seeded.length > 0) {
+      setMapLeads(seeded);
+      mapLeadsRef.current = seeded;
+    }
+    getMapLeadsAsync(gpsBounds).then((loadedMapLeads) => {
+      if (loadedMapLeads.length > 0) applyMapLeads(loadedMapLeads);
+    }).catch((error) => {
+      console.error('Background getMapLeadsAsync failed', error);
+    });
+  }, [currentUser, gpsPosition, applyMapLeads]);
 
   useEffect(() => {
     getDispositionsAsync().then(setDispositions);
@@ -124,39 +191,58 @@ export default function KnockingPage() {
 
   const refreshLeads = useCallback(async () => {
     try {
-      const [loadedLeads, loadedMapLeads] = await Promise.all([
-        getLeadsAsync(),
-        getMapLeadsAsync(mapBoundsRef.current || undefined),
-      ]);
+      const loadedLeads = await getLeadsAsync();
       setLeads(loadedLeads);
-      if (loadedMapLeads.length > 0) setMapLeads(loadedMapLeads);
+      if (mapBoundsRef.current) {
+        const loadedMapLeads = await getMapLeadsAsync(mapBoundsRef.current);
+        if (loadedMapLeads.length > 0) applyMapLeads(loadedMapLeads);
+      }
       setWriteError(null);
     } catch (error: any) {
       const code = error?.code || 'unknown';
       const msg = error?.message || 'Failed to save changes.';
       setWriteError(`${code}: ${msg}`);
     }
-  }, []);
+  }, [applyMapLeads]);
 
   const handleViewportLeads = useCallback((bounds: MapBounds) => {
+    if (boundsNearlySame(mapBoundsRef.current, bounds)) return;
+    const midLat = (bounds.south + bounds.north) / 2;
+    const midLng = (bounds.west + bounds.east) / 2;
+    // LeadMap defaults to Rochester when center is unset — do not kick that scan.
+    if (
+      !hasInitializedMapRef.current &&
+      !gpsPositionRef.current &&
+      Math.abs(midLat - 43.1566) < 0.02 &&
+      Math.abs(midLng - -77.6088) < 0.02
+    ) {
+      return;
+    }
     mapBoundsRef.current = bounds;
+    saveLastKnockingViewport(bounds);
     if (mapFetchTimerRef.current) clearTimeout(mapFetchTimerRef.current);
     mapFetchTimerRef.current = setTimeout(async () => {
       try {
         const loadedMapLeads = await getMapLeadsAsync(bounds);
-        if (loadedMapLeads.length > 0 || mapLeads.length === 0) {
-          setMapLeads(loadedMapLeads);
+        if (loadedMapLeads.length > 0 || mapLeadsRef.current.length === 0) {
+          applyMapLeads(loadedMapLeads);
         }
       } catch (error) {
         console.error('Map viewport fetch failed; keeping existing pins', error);
       }
     }, 400);
-  }, [mapLeads]);
+  }, [applyMapLeads]);
 
-  const handleLeadSelect = (lead: Lead) => {
+  const handleLeadSelect = useCallback((lead: Lead) => {
     setSelectedLeadId(lead.id);
     setShowLeadDetail(true);
-  };
+  }, []);
+
+  const handleMapMove = useCallback((center: [number, number], zoom: number, bounds?: MapBounds) => {
+    if (center) setMapCenter(center);
+    if (typeof zoom === 'number') setMapZoom(zoom);
+    if (bounds) handleViewportLeads(bounds);
+  }, [handleViewportLeads]);
 
   const handleAddressSearch = async (query: string) => {
     setAddressSearch(query);
@@ -240,11 +326,13 @@ export default function KnockingPage() {
   const walkingTimeMinutes = Math.round(routeDistance / 0.05);
   const drivingTimeMinutes = Math.round(routeDistance / 0.42);
 
-  const roleFilteredLeads = currentUser
-    ? (currentUser.role === 'setter' || currentUser.role === 'closer')
-      ? leads.filter(l => (l.leadType === 'customer' || l.leadType === 'sale') || l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
-      : leads
-    : [];
+  const roleFilteredLeads = useMemo(() => {
+    if (!currentUser) return [];
+    if (currentUser.role === 'setter' || currentUser.role === 'closer') {
+      return leads.filter(l => (l.leadType === 'customer' || l.leadType === 'sale') || l.claimedBy === currentUser.id || l.assignedTo === currentUser.id);
+    }
+    return leads;
+  }, [currentUser, leads]);
 
   const handleGenerateRoute = useCallback(() => {
     const unknockedLeads = roleFilteredLeads.filter(lead => !lead.disposition || lead.status === 'assigned');
@@ -265,47 +353,57 @@ export default function KnockingPage() {
     return roleFilteredLeads;
   }, [roleFilteredLeads, leadTypeFilter, isCustomerLead]);
 
-  let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l) && l.solarCategory !== 'poor');
-  let customers = leadTypeFilteredLeads.filter(isCustomerLead);
+  const applyKnockingFilters = useCallback((source: Lead[]) => {
+    let prospects = source.filter(l => !isCustomerLead(l) && l.solarCategory !== 'poor');
+    let customers = source.filter(isCustomerLead);
 
-  if (setterFilter !== 'all') {
-    prospects = prospects.filter(l => l.claimedBy === setterFilter);
-  }
-  if (solarFilter.length > 0) {
-    prospects = prospects.filter(l => solarFilter.includes(l.solarCategory || ''));
-  }
-  if (dispositionFilter !== 'all') {
-    const normalize = (v: unknown) => String(v || '').trim().toLowerCase();
-    const dispositionsById = new Map(dispositions.map((d: any) => [String(d.id), d]));
-    const selectedId = String(dispositionFilter);
-    const selectedName = normalize(dispositionsById.get(selectedId)?.name);
-    const matchesDisposition = (l: Lead) => {
-      const statusNorm = normalize(l.status).replace(/\s+/g, '-');
-      const selectedNorm = normalize(selectedId).replace(/\s+/g, '-');
-      const latestHistoryName = normalize(l.dispositionHistory?.[0]?.disposition);
-      const byId = statusNorm === selectedNorm;
-      const byLegacyName = selectedName && normalize(l.disposition) === selectedName;
-      const byHistoryName = selectedName && latestHistoryName === selectedName;
-      return Boolean(byId || byLegacyName || byHistoryName);
-    };
-    prospects = prospects.filter(matchesDisposition);
-    customers = customers.filter(matchesDisposition);
-  }
-  if (freshPinsOnly) {
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    prospects = prospects.filter(l => {
-      const dt = l.dispositionedAt ? new Date(l.dispositionedAt).getTime() : null;
-      return !dt || dt < cutoff;
-    });
-  }
+    if (setterFilter !== 'all') {
+      prospects = prospects.filter(l => l.claimedBy === setterFilter);
+    }
+    if (solarFilter.length > 0) {
+      prospects = prospects.filter(l => solarFilter.includes(l.solarCategory || ''));
+    }
+    if (dispositionFilter !== 'all') {
+      const normalize = (v: unknown) => String(v || '').trim().toLowerCase();
+      const dispositionsById = new Map(dispositions.map((d: any) => [String(d.id), d]));
+      const selectedId = String(dispositionFilter);
+      const selectedName = normalize(dispositionsById.get(selectedId)?.name);
+      const matchesDisposition = (l: Lead) => {
+        const statusNorm = normalize(l.status).replace(/\s+/g, '-');
+        const selectedNorm = normalize(selectedId).replace(/\s+/g, '-');
+        const latestHistoryName = normalize(l.dispositionHistory?.[0]?.disposition);
+        const byId = statusNorm === selectedNorm;
+        const byLegacyName = selectedName && normalize(l.disposition) === selectedName;
+        const byHistoryName = selectedName && latestHistoryName === selectedName;
+        return Boolean(byId || byLegacyName || byHistoryName);
+      };
+      prospects = prospects.filter(matchesDisposition);
+      customers = customers.filter(matchesDisposition);
+    }
+    if (freshPinsOnly) {
+      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      prospects = prospects.filter(l => {
+        const dt = l.dispositionedAt ? new Date(l.dispositionedAt).getTime() : null;
+        return !dt || dt < cutoff;
+      });
+    }
 
-  const filteredLeads = leadTypeFilter === 'customers'
-    ? customers
-    : leadTypeFilter === 'prospects'
-      ? prospects
-      : [...customers, ...prospects];
+    if (leadTypeFilter === 'customers') return customers;
+    if (leadTypeFilter === 'prospects') return prospects;
+    return [...customers, ...prospects];
+  }, [isCustomerLead, setterFilter, solarFilter, dispositionFilter, freshPinsOnly, dispositions, leadTypeFilter]);
 
-  const leadsWithDistance = filteredLeads.map(lead => ({
+  const filteredLeads = useMemo(
+    () => applyKnockingFilters(leadTypeFilteredLeads),
+    [applyKnockingFilters, leadTypeFilteredLeads]
+  );
+
+  const filteredMapLeads = useMemo(
+    () => applyKnockingFilters(mapLeads),
+    [applyKnockingFilters, mapLeads]
+  );
+
+  const leadsWithDistance = useMemo(() => filteredLeads.map(lead => ({
     ...lead,
     distance: gpsPosition && lead.lat && lead.lng
       ? calculateDistance(gpsPosition.lat, gpsPosition.lng, lead.lat, lead.lng)
@@ -313,7 +411,7 @@ export default function KnockingPage() {
   })).sort((a, b) => {
     if (a.distance !== undefined && b.distance !== undefined) return a.distance - b.distance;
     return 0;
-  });
+  }), [filteredLeads, gpsPosition]);
 
   const selectedLead = leads.find(l => l.id === selectedLeadId);
 
@@ -412,17 +510,21 @@ export default function KnockingPage() {
     return picked;
   }, [showHeat, leads, currentUser]);
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const doorKnockStatusIds = dispositions.filter((d: any) => d.countsAsDoorKnock).map((d: any) => String(d.id).toLowerCase());
-  const todaysKnocks = leads.filter(l => {
-    if (!l.dispositionedAt || l.dispositionedAt < todayStart) return false;
-    const lastHistoryUserId = (l.dispositionHistory && l.dispositionHistory[0]?.userId) ? String(l.dispositionHistory[0].userId) : null;
-    const actedByMe = lastHistoryUserId === currentUser?.id || l.claimedBy === currentUser?.id;
-    if (!actedByMe) return false;
-    const disp = String(l.status || l.disposition || '').toLowerCase();
-    return doorKnockStatusIds.includes(disp);
-  }).length;
+  const todaysKnocks = useMemo(() => {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const doorKnockStatusIds = dispositions.filter((d: any) => d.countsAsDoorKnock).map((d: any) => String(d.id).toLowerCase());
+    return leads.filter(l => {
+      if (!l.dispositionedAt || l.dispositionedAt < todayStart) return false;
+      const lastHistoryUserId = (l.dispositionHistory && l.dispositionHistory[0]?.userId) ? String(l.dispositionHistory[0].userId) : null;
+      const actedByMe = lastHistoryUserId === currentUser?.id || l.claimedBy === currentUser?.id;
+      if (!actedByMe) return false;
+      const disp = String(l.status || l.disposition || '').toLowerCase();
+      return doorKnockStatusIds.includes(disp);
+    }).length;
+  }, [leads, dispositions, currentUser]);
+
+  const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
 
   const [dailyTarget, setDailyTarget] = useState<number | null>(null);
   useEffect(() => {
@@ -464,7 +566,7 @@ export default function KnockingPage() {
       <div className="h-screen flex flex-col bg-white overflow-hidden">
       {currentUser && <GoalsPaceModal currentUser={currentUser} openOverride={showGoalsModal} onCloseOverride={() => setShowGoalsModal(false)} />}
 
-      <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200 px-4 flex-shrink-0">
+      <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200 px-4 flex-shrink-0 relative">
         <div className="h-14 flex items-center gap-2">
           <button
             onClick={() => {
@@ -607,7 +709,7 @@ export default function KnockingPage() {
         )}
 
         {showFilters && (
-          <div className="px-4 py-3 border-t border-[#E2E8F0] bg-[#F7FAFC]">
+          <div className="absolute left-0 right-0 top-full z-50 px-4 py-3 border-t border-[#E2E8F0] bg-[#F7FAFC] shadow-lg max-h-[70vh] overflow-y-auto">
             <div className="mb-3">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-base">🙂</span>
@@ -683,10 +785,11 @@ export default function KnockingPage() {
 
       {viewMode === 'map' && (
         <main className="flex-1 relative overflow-hidden">
+          {mapCenter ? (
           <LeadMap
-            leads={mapLeads}
+            leads={filteredMapLeads}
             currentUser={currentUser}
-            users={ensureUserColors(users)}
+            users={coloredUsers}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
             assignmentMode="none"
@@ -694,16 +797,20 @@ export default function KnockingPage() {
             userPosition={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
             center={mapCenter}
             zoom={mapZoom}
-            onMapMove={(center, zoom, bounds) => {
-              if (center) setMapCenter(center);
-              if (typeof zoom === 'number') setMapZoom(zoom);
-              if (bounds) handleViewportLeads(bounds);
-            }}
+            onMapMove={handleMapMove}
             onLeadAdded={refreshLeads}
             searchLocation={searchLocation}
             heatCells={heatCells}
             heatCellRadiusMeters={805}
           />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-[#F7FAFC]">
+              <div className="text-center">
+                <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                <p className="text-sm text-[#718096]">Finding your location…</p>
+              </div>
+            </div>
+          )}
         </main>
       )}
 

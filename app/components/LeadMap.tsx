@@ -102,6 +102,9 @@ export default function LeadMap({
   const labelsTileLayerRef = useRef<L.TileLayer | null>(null);
   const hasFitLeadsBoundsRef = useRef(false); // Prevent constant re-fitting of bounds
   const hasFitTerritoryBoundsRef = useRef(false); // Track territory bounds fitting
+  const onLeadClickRef = useRef(onLeadClick);
+  onLeadClickRef.current = onLeadClick;
+  const lastMarkerSigRef = useRef<string>('');
 
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
@@ -456,6 +459,10 @@ export default function LeadMap({
   useEffect(() => {
     if (!mapInstanceRef.current || !markersLayerRef.current || !isClient) return;
 
+    const markerSig = `${leads.map((l) => l.id).join(',')}|${selectedLeadId || ''}|${zoomTier}|${viewportKey}|${routeWaypoints?.length || 0}`;
+    if (markerSig === lastMarkerSigRef.current) return;
+    lastMarkerSigRef.current = markerSig;
+
     const map = mapInstanceRef.current;
     const layer = markersLayerRef.current;
 
@@ -513,7 +520,7 @@ export default function LeadMap({
           const icon = createActivityMarkerIcon(index + 1, userRoute.userColor);
           const marker = L.marker([wp.lat, wp.lng], { icon });
           marker.bindPopup(createActivityPopupContent(wp, userRoute.userName), { maxWidth: 300 });
-          marker.on('click', () => onLeadClick(wp.lead));
+          marker.on('click', () => onLeadClickRef.current(wp.lead));
           marker.addTo(layer);
           
           // Add person icon showing where knocker was standing when dispositioning
@@ -576,7 +583,7 @@ export default function LeadMap({
         const icon = createRouteNumberIcon(index + 1);
         const marker = L.marker([wp.lat, wp.lng], { icon });
         marker.bindPopup(createRoutePopupContent(wp), { maxWidth: 300 });
-        marker.on('click', () => onLeadClick(wp.lead));
+        marker.on('click', () => onLeadClickRef.current(wp.lead));
         marker.addTo(layer);
       });
 
@@ -632,7 +639,7 @@ export default function LeadMap({
       const marker = L.marker([lead.lat!, lead.lng!], { icon });
       // Prevent Leaflet from auto-panning the map to keep popups in view (this causes "snap back" / lock feeling on mobile).
       marker.bindPopup(createPopupContent(lead), { maxWidth: 300, autoPan: false });
-      marker.on('click', () => onLeadClick(lead));
+      marker.on('click', () => onLeadClickRef.current(lead));
       // IMPORTANT: Do NOT call openPopup() inside the render loop.
       // LeadMap re-renders on pan/zoom (viewportKey) and would repeatedly open the popup,
       // which can force the map to re-center.
@@ -665,7 +672,7 @@ export default function LeadMap({
     // Performance: Log completion time
     const duration = Date.now() - startTime;
     console.log(`[LeadMap] Rendered ${visibleLeads.length} markers in ${duration}ms (zoom tier: ${zoomTier})`);
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey]);
+  }, [leads, selectedLeadId, currentUser, routeWaypoints, isClient, dispositions, zoomTier, viewportKey]);
   // Note: Using zoomTier instead of direct mapZoom - only re-renders when crossing zoom thresholds
   // This prevents constant re-renders on every zoom event (just 4 tiers: <12, 12-14, 14-16, >16)
 
