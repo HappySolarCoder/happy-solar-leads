@@ -1,16 +1,34 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
-import { getLeadsAsync, getLeadsInBoundsAsync, getUsersAsync, saveLeadAsync, type MapBounds } from '@/app/utils/storage';
+import { getLeadsInBoundsAsync, getUsersAsync, saveLeadAsync, type MapBounds } from '@/app/utils/storage';
+import { getAllUsers } from '@/app/utils/firestore';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
+import { buildAssignableUsersFromPageData } from '@/app/utils/assignableUsersFallback';
 import { getTerritoriesAsync, saveTerritory, deleteTerritoryAsync } from '@/app/utils/territories';
 import { Territory } from '@/app/types/territory';
 import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
+
+function viewportQuery(
+  mapCenter: [number, number],
+  mapZoom: number,
+  mapBounds: MapBounds | null,
+) {
+  const latPad = 0.15 * Math.pow(2, Math.max(0, 11 - mapZoom));
+  const lngPad = 0.25 * Math.pow(2, Math.max(0, 11 - mapZoom));
+  return {
+    south: mapBounds?.south ?? mapCenter[0] - latPad,
+    north: mapBounds?.north ?? mapCenter[0] + latPad,
+    west: mapBounds?.west ?? mapCenter[1] - lngPad,
+    east: mapBounds?.east ?? mapCenter[1] + lngPad,
+    maxLeads: mapZoom >= 15 ? 12000 : mapZoom >= 13 ? 7000 : mapZoom >= 11 ? 3500 : 2000,
+  };
+}
 
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   ssr: false,
@@ -26,7 +44,6 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
 
 export default function LeadManagementPage() {
   const router = useRouter();
-  const [leads, setLeads] = useState<Lead[]>([]);
   const [boundsLeads, setBoundsLeads] = useState<Lead[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -45,6 +62,19 @@ export default function LeadManagementPage() {
   const [mapZoom, setMapZoom] = useState(11);
   const [mapBounds, setMapBounds] = useState<MapBounds | null>(null);
   const [isPinsLoading, setIsPinsLoading] = useState(false);
+  const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
+  const boundsLeadsRef = useRef(boundsLeads);
+  boundsLeadsRef.current = boundsLeads;
+
+  // Pins already on the map — not an unloaded full-leads array.
+  const findLead = (leadId: string) =>
+    boundsLeadsRef.current.find(l => l.id === leadId);
+
+  const refreshViewportPins = async () => {
+    const { south, north, west, east, maxLeads } = viewportQuery(mapCenter, mapZoom, mapBounds);
+    const loaded = await getLeadsInBoundsAsync(south, north, west, east, maxLeads);
+    setBoundsLeads(prev => (loaded.length > 0 ? loaded : prev));
+  };
 
   // Debug logging
   useEffect(() => {
@@ -74,8 +104,35 @@ export default function LeadManagementPage() {
       // Users for Assign To / Filter. Do not restore storage.ts import-time
       // getUsersAsync/getLeadsAsync — that was the field-perf slowness.
       // Map pins stay viewport-scoped via getLeadsInBoundsAsync below.
-      const loadedUsers = await getUsersAsync();
+      let loadedUsers: User[] = [];
+      try {
+        loadedUsers = await getUsersAsync();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[Lead Management] getUsersAsync failed:', error);
+        setUsersLoadError(message);
+      }
+
+      if (loadedUsers.length === 0) {
+        try {
+          loadedUsers = await getAllUsers();
+          if (loadedUsers.length > 0) setUsersLoadError(null);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error('[Lead Management] getAllUsers retry failed:', error);
+          setUsersLoadError(message);
+        }
+      }
+
       const loadedTerritories = await getTerritoriesAsync();
+
+      if (loadedUsers.length === 0) {
+        const fallbackUsers = buildAssignableUsersFromPageData(user, loadedTerritories, []);
+        console.warn('[Lead Management] users collection empty; using on-page fallback', {
+          fallbackUsers: fallbackUsers.length,
+          territories: loadedTerritories.length,
+        });
+      }
 
       console.log('[Lead Management] Loaded data:', {
         users: loadedUsers.length,
@@ -92,17 +149,12 @@ export default function LeadManagementPage() {
   }, [router]);
 
   const handleUpdate = async () => {
-    // Keep selections in sync, but avoid reloading the entire lead dataset.
+    // Keep selections in sync. Refresh territories + viewport pins only —
+    // do not dump getLeadsAsync() / all leads onto this page.
     setSelectedLeads(new Set());
-
-    // Refresh cached "all leads" list used for bulk operations (assign/unclaim/delete)
-    // This is only used when performing operations, not for rendering pins.
-    const loadedLeads = await getLeadsAsync();
-    setLeads(loadedLeads);
-
-    // Load territories
     const loadedTerritories = await getTerritoriesAsync();
     setTerritories(loadedTerritories);
+    await refreshViewportPins();
   };
 
   const handleTerritoryDrawn = async (leadIds: string[], polygon: [number, number][]) => {
@@ -174,7 +226,19 @@ export default function LeadManagementPage() {
             }
           }
 
-          // 3. Reload territories and leads
+          // 3. Patch pins already in view, then refresh territories + viewport
+          const assignedIdSet = new Set(leadIds);
+          const assignedAt = new Date();
+          setBoundsLeads(prev => prev.map(lead => (
+            assignedIdSet.has(lead.id)
+              ? {
+                  ...lead,
+                  assignedTo: user.id,
+                  assignedAt,
+                  ...(lead.status === 'unclaimed' ? { status: 'assigned' } : {}),
+                }
+              : lead
+          )));
           const loadedTerritories = await getTerritoriesAsync();
           setTerritories(loadedTerritories);
           await handleUpdate();
@@ -200,14 +264,7 @@ export default function LeadManagementPage() {
     const t = setTimeout(async () => {
       try {
         setIsPinsLoading(true);
-        const latPad = 0.15 * Math.pow(2, Math.max(0, 11 - mapZoom));
-        const lngPad = 0.25 * Math.pow(2, Math.max(0, 11 - mapZoom));
-        const south = mapBounds?.south ?? mapCenter[0] - latPad;
-        const north = mapBounds?.north ?? mapCenter[0] + latPad;
-        const west = mapBounds?.west ?? mapCenter[1] - lngPad;
-        const east = mapBounds?.east ?? mapCenter[1] + lngPad;
-
-        const maxLeads = mapZoom >= 15 ? 12000 : mapZoom >= 13 ? 7000 : mapZoom >= 11 ? 3500 : 2000;
+        const { south, north, west, east, maxLeads } = viewportQuery(mapCenter, mapZoom, mapBounds);
         const loaded = await getLeadsInBoundsAsync(south, north, west, east, maxLeads);
         if (isCanceled) return;
         // Empty fetch must not wipe pins that already loaded (auth/query miss).
@@ -225,15 +282,16 @@ export default function LeadManagementPage() {
     };
   }, [currentUser, mapCenter, mapZoom, mapBounds]);
 
-  const activeAssignableUsers = users.filter(u => {
+  // If getAllUsers stayed empty, keep Assign To / Filter names from data
+  // already on the page (currentUser + visible territories + viewport pins).
+  const sourceUsers = users.length > 0
+    ? users
+    : buildAssignableUsersFromPageData(currentUser, territories, boundsLeads);
+
+  const activeAssignableUsers = sourceUsers.filter(u => {
     const ux = u as any;
     return !ux.deleted && ux.isActive !== false;
   });
-
-  // `leads` is only filled after a bulk op (handleUpdate). First paint / draw
-  // uses viewport pins from getLeadsInBoundsAsync.
-  const findLead = (leadId: string) =>
-    leads.find(l => l.id === leadId) || boundsLeads.find(l => l.id === leadId);
 
   // Filter pins currently loaded for the viewport (fast)
   const filteredLeads = userFilter === 'all'
@@ -612,6 +670,11 @@ export default function LeadManagementPage() {
             <Users className="w-4 h-4 text-[#718096]" />
             <label className="text-sm font-medium text-[#2D3748]">Filter by User</label>
           </div>
+          {usersLoadError && (
+            <p className="text-sm text-red-600" role="alert">
+              Could not load users: {usersLoadError}. Assign To / Filter are using names already on this page.
+            </p>
+          )}
           <select
             value={userFilter}
             onChange={(e) => {
@@ -629,7 +692,8 @@ export default function LeadManagementPage() {
               ))}
           </select>
 
-          {/* Assign To User (only in assign mode) */}
+          {/* Assign To lists sourceUsers as soon as Assign Territory is clicked.
+              Same names as Filter — no need to open Filter first. */}
           {mode === 'assign' && (
             <div className="mt-2">
               <label className="block text-sm font-medium text-[#2D3748] mb-2">
@@ -709,7 +773,7 @@ export default function LeadManagementPage() {
         <LeadMap
           leads={filteredLeads}
           currentUser={currentUser}
-          users={ensureUserColors(users)}
+          users={ensureUserColors(sourceUsers)}
           onLeadClick={(lead) => {}}
           center={mapCenter}
           zoom={mapZoom}

@@ -307,8 +307,8 @@ export async function getUsersAsync(): Promise<User[]> {
   }
 
   try {
-    // Wait for auth. getAllUsers() swallows permission-denied and returns [],
-    // and a pre-auth [] must not be cached for 90s (empties Assign To / Filter).
+    // Wait for auth. getAllUsers() now throws on failure (no silent []).
+    // A pre-auth [] must not be cached for 90s (empties Assign To / Filter).
     const { getCurrentAuthUser } = await import('./auth');
     const me = await getCurrentAuthUser();
     if (!me) return usersCache || [];
