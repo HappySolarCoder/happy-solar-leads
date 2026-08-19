@@ -91,6 +91,7 @@ const USER_TURF_TTL = 90_000;
 
 let userTurfCache: { uid: string; leads: Lead[]; ts: number } | null = null;
 let userTurfInflight: { uid: string; promise: Promise<Lead[]> } | null = null;
+let userTurfEpoch = 0;
 
 async function loadUserTurfCached(uid: string): Promise<Lead[]> {
   if (userTurfCache && userTurfCache.uid === uid && Date.now() - userTurfCache.ts < USER_TURF_TTL) {
@@ -100,6 +101,7 @@ async function loadUserTurfCached(uid: string): Promise<Lead[]> {
     return userTurfInflight.promise;
   }
 
+  const epoch = userTurfEpoch;
   const promise = (async () => {
     if (!db) {
       console.warn('Firestore not initialized');
@@ -129,8 +131,10 @@ async function loadUserTurfCached(uid: string): Promise<Lead[]> {
     for (const d of claimedSnap.docs) add(d);
     for (const d of assignedSnap.docs) add(d);
     const leads = Array.from(byId.values());
-    userTurfCache = { uid, leads, ts: Date.now() };
-    console.log(`[MapLeads] Cached ${leads.length} claimed+assigned for ${uid} (equality scan cap ${USER_TURF_SCAN_CAP}/field; no claimedBy+lat index)`);
+    if (epoch === userTurfEpoch) {
+      userTurfCache = { uid, leads, ts: Date.now() };
+      console.log(`[MapLeads] Cached ${leads.length} claimed+assigned for ${uid} (equality scan cap ${USER_TURF_SCAN_CAP}/field; no claimedBy+lat index)`);
+    }
     return leads;
   })();
 
@@ -148,6 +152,12 @@ async function loadUserTurfCached(uid: string): Promise<Lead[]> {
  * Tight cap per viewport is fine; this is not a hard 400 on the whole turf and
  * not an unbounded dump onto the map.
  */
+export function invalidateUserTurfCache(): void {
+  userTurfEpoch += 1;
+  userTurfCache = null;
+  userTurfInflight = null;
+}
+
 export async function getUserViewportLeads(
   uid: string,
   bounds: MapBounds,

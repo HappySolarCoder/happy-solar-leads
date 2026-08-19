@@ -15,12 +15,14 @@ import {
   saveLastKnockingViewport,
   getLastKnockingMapLeads,
   saveLastKnockingMapLeads,
+  resolveActingUser,
   type MapBounds,
 } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
 import { boundsAround, boundsCenter, boundsNearlySame, seedPinsInBox } from '@/app/utils/knockingMapSeed';
 import LeadDetail from '@/app/components/LeadDetail';
+import UserSwitcher from '@/app/components/UserSwitcher';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { ensureUserColors } from '@/app/utils/userColors';
@@ -52,6 +54,8 @@ export default function KnockingPage() {
   const hasInitializedMapRef = useRef(false);
   const initialMapFetchStartedRef = useRef(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const actingFetchGenRef = useRef(0);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
@@ -131,13 +135,20 @@ export default function KnockingPage() {
         router.push('/pending-approval');
         return;
       }
-      setCurrentUser(user);
-      saveCurrentUser(user);
+      setAuthUser(user);
+      const acting = (await resolveActingUser()) || user;
+      setCurrentUser(acting);
+      // Keep a prior View as selection. Do not stamp the admin id over it.
+      if (acting.id === user.id) {
+        saveCurrentUser(user);
+      }
 
       const cachedLeads = getLeads();
-      if (cachedLeads.length > 0) {
+      if (cachedLeads.length > 0 && acting.id === user.id) {
         setLeads(cachedLeads);
-        adoptLeadsCacheForUser(user);
+        adoptLeadsCacheForUser(acting);
+      } else if (acting.id !== user.id) {
+        setLeads([]);
       }
 
       const gps = gpsPositionRef.current;
@@ -205,6 +216,43 @@ export default function KnockingPage() {
     }
   }, [applyMapLeads]);
 
+  const handleActingUserChange = useCallback(async (user: User) => {
+    const gen = ++actingFetchGenRef.current;
+    setCurrentUser(user);
+    if (mapFetchTimerRef.current) {
+      clearTimeout(mapFetchTimerRef.current);
+      mapFetchTimerRef.current = null;
+    }
+    const gps = gpsPositionRef.current;
+    const bounds = mapBoundsRef.current
+      || (gps ? boundsAround(gps.lat, gps.lng) : getLastKnockingViewport());
+    if (bounds) {
+      mapBoundsRef.current = bounds;
+      saveLastKnockingViewport(bounds);
+    }
+    try {
+      const loadedLeads = await getLeadsAsync();
+      if (gen !== actingFetchGenRef.current) return;
+      setLeads(loadedLeads);
+
+      let loadedMapLeads: Lead[] = bounds ? await getMapLeadsAsync(bounds) : [];
+      if (gen !== actingFetchGenRef.current) return;
+      if (loadedMapLeads.length === 0 && gps) {
+        const gpsBounds = boundsAround(gps.lat, gps.lng);
+        mapBoundsRef.current = gpsBounds;
+        loadedMapLeads = await getMapLeadsAsync(gpsBounds);
+        if (gen !== actingFetchGenRef.current) return;
+      }
+      applyMapLeads(loadedMapLeads);
+      setWriteError(null);
+    } catch (error: any) {
+      if (gen !== actingFetchGenRef.current) return;
+      const code = error?.code || 'unknown';
+      const msg = error?.message || 'Failed to load setter pins.';
+      setWriteError(`${code}: ${msg}`);
+    }
+  }, [applyMapLeads]);
+
   const handleViewportLeads = useCallback((bounds: MapBounds) => {
     if (boundsNearlySame(mapBoundsRef.current, bounds)) return;
     const midLat = (bounds.south + bounds.north) / 2;
@@ -221,9 +269,11 @@ export default function KnockingPage() {
     mapBoundsRef.current = bounds;
     saveLastKnockingViewport(bounds);
     if (mapFetchTimerRef.current) clearTimeout(mapFetchTimerRef.current);
+    const gen = actingFetchGenRef.current;
     mapFetchTimerRef.current = setTimeout(async () => {
       try {
         const loadedMapLeads = await getMapLeadsAsync(bounds);
+        if (gen !== actingFetchGenRef.current) return;
         if (loadedMapLeads.length > 0 || mapLeadsRef.current.length === 0) {
           applyMapLeads(loadedMapLeads);
         }
@@ -606,6 +656,7 @@ export default function KnockingPage() {
         </div>
 
         <div className="pb-3 pt-2 -mt-1 flex items-center gap-2 overflow-x-auto pr-1 text-xs font-semibold tabular-nums [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <UserSwitcher compact onUserChange={handleActingUserChange} />
           {isRefreshing && (
             <div className="h-10 min-h-10 px-3 rounded-full bg-[#FFF7ED] border border-[#FDBA74] text-[#9A3412] inline-flex items-center gap-2 leading-none whitespace-nowrap">
               <span className="animate-pulse">↻</span>
@@ -860,7 +911,8 @@ export default function KnockingPage() {
       {selectedLead && showLeadDetail && (
         <LeadDetail
           lead={selectedLead}
-          currentUser={currentUser}
+          currentUser={authUser && currentUser && authUser.id !== currentUser.id ? authUser : currentUser}
+          preventOwnershipWrites={!!(authUser && currentUser && authUser.id !== currentUser.id)}
           onClose={() => { setShowLeadDetail(false); setSelectedLeadId(undefined); }}
           onUpdate={refreshLeads}
         />
