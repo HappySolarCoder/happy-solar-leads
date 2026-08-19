@@ -24,6 +24,17 @@ let leadsCacheKey: string | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL = 90000; // 90 seconds
 
+function leadsScopeKey(user: { id?: string; role?: string } | null | undefined): string {
+  return user?.role === 'admin' ? 'admin' : user?.id ? `user:${user.id}` : 'anon';
+}
+
+/** If getLeads() already filled the module cache, stamp the user scope so getLeadsAsync can no-op. */
+export function adoptLeadsCacheForUser(user: { id?: string; role?: string } | null | undefined): void {
+  if (!leadsCache) return;
+  leadsCacheKey = leadsScopeKey(user);
+  if (!cacheTimestamp) cacheTimestamp = Date.now();
+}
+
 // Helper: Convert date strings from JSON to Date objects
 function convertLeadDates(lead: any): Lead {
   return {
@@ -56,6 +67,9 @@ export function getLeads(): Lead[] {
       // Update cache
       leadsCache = leads;
       cacheTimestamp = Date.now();
+      if (!leadsCacheKey) {
+        leadsCacheKey = leadsScopeKey(getCurrentUser());
+      }
       return leads;
     }
   } catch (e) {
@@ -220,7 +234,63 @@ export async function saveLeadAsync(lead: Lead): Promise<void> {
 
 export function invalidateLeadsCache(): void {
   leadsCache = null;
+  leadsCacheKey = null;
   cacheTimestamp = 0;
+}
+
+const KNOCKING_VIEWPORT_KEY = 'raydar_knocking_viewport';
+const KNOCKING_MAP_LEADS_KEY = 'raydar_knocking_map_leads';
+
+export function getLastKnockingViewport(): MapBounds | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(KNOCKING_VIEWPORT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed?.south !== 'number' ||
+      typeof parsed?.north !== 'number' ||
+      typeof parsed?.west !== 'number' ||
+      typeof parsed?.east !== 'number'
+    ) {
+      return null;
+    }
+    return parsed as MapBounds;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastKnockingViewport(bounds: MapBounds): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(KNOCKING_VIEWPORT_KEY, JSON.stringify(bounds));
+  } catch {
+    // quota — keep going
+  }
+}
+
+export function getLastKnockingMapLeads(): Lead[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(KNOCKING_MAP_LEADS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(convertLeadDates);
+  } catch {
+    return [];
+  }
+}
+
+export function saveLastKnockingMapLeads(leads: Lead[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const thin = leads.slice(0, 400).map(toThinMapLead);
+    localStorage.setItem(KNOCKING_MAP_LEADS_KEY, JSON.stringify(thin));
+  } catch {
+    // quota — keep going
+  }
 }
 
 /**
@@ -235,6 +305,7 @@ export async function batchSaveLeadsAsync(
   await firestoreBatchSaveLeads(leads, onProgress);
   // Invalidate cache so next getLeadsAsync() fetches fresh data
   leadsCache = null;
+  leadsCacheKey = null;
   cacheTimestamp = 0;
 }
 
