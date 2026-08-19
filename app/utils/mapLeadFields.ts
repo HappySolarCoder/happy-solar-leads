@@ -148,6 +148,11 @@ async function loadUserTurfCached(uid: string): Promise<Lead[]> {
  * Tight cap per viewport is fine; this is not a hard 400 on the whole turf and
  * not an unbounded dump onto the map.
  */
+export function invalidateUserTurfCache(): void {
+  userTurfCache = null;
+  userTurfInflight = null;
+}
+
 export async function getUserViewportLeads(
   uid: string,
   bounds: MapBounds,

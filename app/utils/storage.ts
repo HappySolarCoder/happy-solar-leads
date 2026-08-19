@@ -1,5 +1,5 @@
 // Firestore-backed storage (replacing localStorage)
-import { Lead, User, LeadStatus } from '@/app/types';
+import { Lead, User, LeadStatus, canSeeAllLeads } from '@/app/types';
 import { 
   getAllLeads as firestoreGetAllLeads,
   getLeadsForUser as firestoreGetLeadsForUser,
@@ -13,7 +13,7 @@ import {
   updateUser as firestoreUpdateUser,
   getUser as firestoreGetUser
 } from './firestore';
-import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, getUserViewportLeads, toThinMapLead } from './mapLeadFields';
+import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, getUserViewportLeads, invalidateUserTurfCache, toThinMapLead } from './mapLeadFields';
 
 // ============================================
 // LEADS
@@ -82,18 +82,17 @@ export function getLeads(): Lead[] {
 
 export async function getLeadsAsync(): Promise<Lead[]> {
   try {
-    // Import here to avoid circular deps in some build paths
-    const { getCurrentAuthUser } = await import('./auth');
-    const me = await getCurrentAuthUser();
+    const me = await resolveActingUser();
 
-    const cacheKey = me?.role === 'admin' ? 'admin' : me?.id ? `user:${me.id}` : 'anon';
+    const cacheKey = leadsScopeKey(me);
 
     // Return fresh cache only when it matches the current user scope
     if (leadsCache && leadsCacheKey === cacheKey && Date.now() - cacheTimestamp < CACHE_TTL) {
       return leadsCache;
     }
 
-    // Admins can read everything; reps must only query their assigned/claimed leads
+    // Admins can read everything; reps must only query their assigned/claimed leads.
+    // Viewing-as a setter uses that setter's claimed+assigned set — not an all-leads dump.
     const leads = me?.role === 'admin'
       ? await firestoreGetAllLeads()
       : me?.id
@@ -123,8 +122,7 @@ export async function getLeadsInBoundsAsync(
   maxLeads: number = 2000
 ): Promise<Lead[]> {
   try {
-    const { getCurrentAuthUser } = await import('./auth');
-    const me = await getCurrentAuthUser();
+    const me = await resolveActingUser();
     if (!me) return [];
 
     const box: MapBounds = { south, north, west, east };
@@ -165,8 +163,7 @@ export type MapBounds = { south: number; north: number; west: number; east: numb
  */
 export async function getMapLeadsAsync(bounds?: MapBounds): Promise<Lead[]> {
   try {
-    const { getCurrentAuthUser } = await import('./auth');
-    const me = await getCurrentAuthUser();
+    const me = await resolveActingUser();
     if (!me) return [];
     if (!bounds) return [];
 
@@ -482,6 +479,39 @@ export async function getCurrentUserAsync(): Promise<User | null> {
 export function saveCurrentUser(user: User): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(CURRENT_USER_KEY, user.id);
+}
+
+/**
+ * Acting user for map/list queries. Firebase auth stays the signed-in admin;
+ * localStorage may point at a setter when an admin/manager is viewing as.
+ * Does not write claimedBy/assignedTo or the setter's user doc.
+ */
+export async function resolveActingUser(): Promise<User | null> {
+  const { getCurrentAuthUser } = await import('./auth');
+  const authUser = await getCurrentAuthUser();
+  if (!authUser) return null;
+  if (typeof window === 'undefined') return authUser;
+
+  const storedId = localStorage.getItem(CURRENT_USER_KEY);
+  if (!storedId || storedId === authUser.id) return authUser;
+  if (!canSeeAllLeads(authUser.role)) return authUser;
+
+  const acting = await firestoreGetUser(storedId);
+  return acting || authUser;
+}
+
+/** Swap the acting user id only. Never writes leads or the target user document. */
+export function persistActingUser(user: User): void {
+  saveCurrentUser(user);
+  invalidateLeadsCache();
+  invalidateUserTurfCache();
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem(KNOCKING_MAP_LEADS_KEY);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export async function saveCurrentUserAsync(user: User): Promise<void> {

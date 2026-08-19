@@ -31,6 +31,7 @@ interface LeadDetailProps {
   currentUser: User | null;
   onClose: () => void;
   onUpdate: () => void;
+  preventOwnershipWrites?: boolean;
 }
 
 // Icon map for dispositions
@@ -89,7 +90,7 @@ const ICON_MAP: Record<string, any> = {
   'arrow-left': ArrowLeft,
 };
 
-export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: LeadDetailProps) {
+export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preventOwnershipWrites = false }: LeadDetailProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
   const [notesSaving, setNotesSaving] = useState(false);
@@ -232,9 +233,17 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       }
       
       if (newStatus === 'claimed') {
+        if (preventOwnershipWrites) {
+          setIsUpdating(false);
+          return;
+        }
         // Handle claim
         claimLead(lead.id, currentUser.id);
       } else if (newStatus === 'unclaimed' && isClaimedByMe) {
+        if (preventOwnershipWrites) {
+          setIsUpdating(false);
+          return;
+        }
         // Handle unclaim
         unclaimLead(lead.id);
       } else {
