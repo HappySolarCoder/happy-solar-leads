@@ -45,7 +45,7 @@ interface LeadMapProps {
   viewMode?: 'map' | 'assignments' | 'territory'; // Show territories in assignments/territory view
   territories?: any[]; // Territory polygons to display
   onTerritoryDelete?: (territoryId: string) => void; // Callback when territory deleted
-  onLeadAdded?: () => void; // Callback when a new lead is added via map pin drop
+  onLeadAdded?: (lead: Lead) => void; // Saved lead — parent must insert locally, not refetch
   searchLocation?: { lat: number; lng: number } | null; // For address search marker
   heatCells?: { lat: number; lng: number; intensity: number; count: number }[]; // Optional heat overlay
   heatCellRadiusMeters?: number;
@@ -1308,6 +1308,9 @@ export default function LeadMap({
                 assignedAt: new Date(),
                 status: 'assigned',
               });
+              newLead.assignedTo = territory.userId;
+              newLead.assignedAt = new Date();
+              newLead.status = 'assigned';
               console.log('[LeadMap] Auto-assigned lead to territory user:', territory.userId);
             }
           }
@@ -1355,9 +1358,9 @@ export default function LeadMap({
       setShowAddLeadModal(false);
       setDropPinLocation(null);
 
-      // Call parent callback to refresh leads (keeps map position)
+      // Parent inserts this lead into map/list now. Do not await a refetch.
       if (onLeadAdded) {
-        onLeadAdded();
+        onLeadAdded(newLead);
       }
     } catch (error: any) {
       console.error('Error saving dropped lead:', error);

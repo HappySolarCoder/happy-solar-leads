@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
-import { getLeadsInBoundsAsync, getUsersAsync, saveLeadAsync, type MapBounds } from '@/app/utils/storage';
+import { getLeadsInBoundsAsync, getUsersAsync, rememberSavedLead, saveLeadAsync, upsertLeadInList, type MapBounds } from '@/app/utils/storage';
 import { getAllUsers } from '@/app/utils/firestore';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
@@ -155,6 +155,11 @@ export default function LeadManagementPage() {
     const loadedTerritories = await getTerritoriesAsync();
     setTerritories(loadedTerritories);
     await refreshViewportPins();
+  };
+
+  const handleLeadAdded = (lead: Lead) => {
+    rememberSavedLead(lead);
+    setBoundsLeads((prev) => upsertLeadInList(prev, lead));
   };
 
   const handleTerritoryDrawn = async (leadIds: string[], polygon: [number, number][]) => {
@@ -790,7 +795,7 @@ export default function LeadManagementPage() {
           viewMode={viewMode}
           territories={territories}
           onTerritoryDelete={handleTerritoryDelete}
-          onLeadAdded={handleUpdate}
+          onLeadAdded={handleLeadAdded}
         />
       </div>
 

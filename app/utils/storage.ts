@@ -13,7 +13,19 @@ import {
   updateUser as firestoreUpdateUser,
   getUser as firestoreGetUser
 } from './firestore';
-import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, getUserViewportLeads, invalidateUserTurfCache, toThinMapLead } from './mapLeadFields';
+import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, getUserViewportLeads, invalidateUserTurfCache, mergePendingSavedLeads, rememberSavedLead, toThinMapLead } from './mapLeadFields';
+
+export { rememberSavedLead, toThinMapLead };
+
+export function upsertLeadInList(leads: Lead[], lead: Lead): Lead[] {
+  const index = leads.findIndex((l) => l.id === lead.id);
+  if (index >= 0) {
+    const next = leads.slice();
+    next[index] = { ...next[index], ...lead };
+    return next;
+  }
+  return [...leads, lead];
+}
 
 // ============================================
 // LEADS
@@ -88,6 +100,7 @@ export async function getLeadsAsync(): Promise<Lead[]> {
 
     // Return fresh cache only when it matches the current user scope
     if (leadsCache && leadsCacheKey === cacheKey && Date.now() - cacheTimestamp < CACHE_TTL) {
+      leadsCache = mergePendingSavedLeads(leadsCache);
       return leadsCache;
     }
 
@@ -99,14 +112,14 @@ export async function getLeadsAsync(): Promise<Lead[]> {
         ? await firestoreGetLeadsForUser(me.id)
         : [];
 
-    leadsCache = leads || [];
+    leadsCache = mergePendingSavedLeads(leads || []);
     leadsCacheKey = cacheKey;
     cacheTimestamp = Date.now();
     return leadsCache;
   } catch (error) {
     console.error('Firestore getLeads failed:', error);
     // Stale-while-error fallback (only if cache exists)
-    return leadsCache || [];
+    return mergePendingSavedLeads(leadsCache || []);
   }
 }
 
@@ -130,22 +143,22 @@ export async function getLeadsInBoundsAsync(
     // Admin + manager: paged lat-index (all leads in view). Do not dump the collection.
     if (me.role === 'admin' || me.role === 'manager') {
       const all = await firestoreGetLeadsInBounds(south, north, west, east, maxLeads);
-      if (all.length > 0) return all;
+      if (all.length > 0) return mergePendingSavedLeads(all, box);
       if (me.id) {
         const mine = await firestoreGetLeadsForUserLimited(me.id, 2500);
-        return filterLeadsToBounds(mine, box).slice(0, maxLeads);
+        return mergePendingSavedLeads(filterLeadsToBounds(mine, box).slice(0, maxLeads), box);
       }
-      return [];
+      return mergePendingSavedLeads([], box);
     }
 
     // Setter/closer: viewport of claimed+assigned without claimedBy+lat indexes.
     if (me.id) {
-      return await getUserViewportLeads(me.id, box, maxLeads);
+      return mergePendingSavedLeads(await getUserViewportLeads(me.id, box, maxLeads), box);
     }
     return [];
   } catch (error) {
     console.error('Error getting leads in bounds:', error);
-    return [];
+    return mergePendingSavedLeads([], { south, north, west, east });
   }
 }
 
@@ -170,25 +183,25 @@ export async function getMapLeadsAsync(bounds?: MapBounds): Promise<Lead[]> {
     // Admin + manager: page lat-index until MAP_LEAD_CAP in-viewport pins.
     if (me.role === 'admin' || me.role === 'manager') {
       const leads = await firestoreGetLeadsInBounds(bounds.south, bounds.north, bounds.west, bounds.east, MAP_LEAD_CAP);
-      if ((leads || []).length > 0) return leads.map(toThinMapLead);
+      if ((leads || []).length > 0) return mergePendingSavedLeads(leads.map(toThinMapLead), bounds);
       if (me.id) {
         const mine = await firestoreGetLeadsForUserLimited(me.id, 2500);
-        return filterLeadsToBounds(mine, bounds).slice(0, MAP_LEAD_CAP).map(toThinMapLead);
+        return mergePendingSavedLeads(filterLeadsToBounds(mine, bounds).slice(0, MAP_LEAD_CAP).map(toThinMapLead), bounds);
       }
-      return [];
+      return mergePendingSavedLeads([], bounds);
     }
 
     // Setter/closer: viewport-scoped. Not a hard 400 on the whole turf.
     // Equality scan + in-memory box (indexes not on prod; do not firebase deploy).
     if (me.id) {
-      return await getUserViewportLeads(me.id, bounds, MAP_LEAD_CAP);
+      return mergePendingSavedLeads(await getUserViewportLeads(me.id, bounds, MAP_LEAD_CAP), bounds);
     }
 
     return [];
   } catch (error) {
     console.error('Error getting map leads:', error);
     // Keep last cache so an index/query miss does not empty the map forever
-    return (leadsCache || []).map(toThinMapLead);
+    return mergePendingSavedLeads((leadsCache || []).map(toThinMapLead), bounds);
   }
 }
 
@@ -227,6 +240,9 @@ export async function saveLeadAsync(lead: Lead): Promise<void> {
       leadsCache.push(lead);
     }
   }
+  // Do not null leadsCache / turf cache (that forces a full dump). Upsert so a
+  // later getLeadsAsync / getMapLeadsAsync hit cannot drop this id.
+  rememberSavedLead(lead);
 }
 
 export function invalidateLeadsCache(): void {

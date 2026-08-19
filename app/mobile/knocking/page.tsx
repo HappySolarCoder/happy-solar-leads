@@ -16,6 +16,9 @@ import {
   getLastKnockingMapLeads,
   saveLastKnockingMapLeads,
   resolveActingUser,
+  rememberSavedLead,
+  upsertLeadInList,
+  toThinMapLead,
   type MapBounds,
 } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
@@ -214,6 +217,15 @@ export default function KnockingPage() {
       const msg = error?.message || 'Failed to save changes.';
       setWriteError(`${code}: ${msg}`);
     }
+  }, [applyMapLeads]);
+
+  // Save already wrote Firestore. Do not await getLeadsAsync / getMapLeadsAsync
+  // (90s cache miss can dump turf; 90s turf cache omits the new id).
+  const handleLeadAdded = useCallback((lead: Lead) => {
+    rememberSavedLead(lead);
+    setLeads((prev) => upsertLeadInList(prev, lead));
+    applyMapLeads(upsertLeadInList(mapLeadsRef.current, toThinMapLead(lead)));
+    setWriteError(null);
   }, [applyMapLeads]);
 
   const handleActingUserChange = useCallback(async (user: User) => {
@@ -849,7 +861,7 @@ export default function KnockingPage() {
             center={mapCenter}
             zoom={mapZoom}
             onMapMove={handleMapMove}
-            onLeadAdded={refreshLeads}
+            onLeadAdded={handleLeadAdded}
             searchLocation={searchLocation}
             heatCells={heatCells}
             heatCellRadiusMeters={805}

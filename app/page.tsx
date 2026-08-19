@@ -13,7 +13,7 @@ import UserSwitcher from '@/app/components/UserSwitcher';
 import LeadAssignmentPanel from '@/app/components/LeadAssignmentPanel';
 import AppMenu from '@/app/components/AppMenu';
 import EasterEggInfoModal from '@/app/components/EasterEggInfoModal';
-import { getMapLeadsAsync, getUsersAsync, type MapBounds } from '@/app/utils/storage';
+import { getMapLeadsAsync, getUsersAsync, rememberSavedLead, upsertLeadInList, type MapBounds } from '@/app/utils/storage';
 import { getTerritoriesAsync } from '@/app/utils/territories';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
@@ -170,6 +170,11 @@ export default function Home() {
     } catch (error) {
       console.error('Map refresh failed; keeping existing pins', error);
     }
+  }, []);
+
+  const handleLeadAdded = useCallback((lead: Lead) => {
+    rememberSavedLead(lead);
+    setLeads((prev) => upsertLeadInList(prev, lead));
   }, []);
 
   const handleViewportLeads = useCallback((bounds: MapBounds) => {
@@ -691,7 +696,7 @@ export default function Home() {
               assignmentMode={assignmentMode}
               selectedLeadIdsForAssignment={selectedLeadIdsForAssignment}
               onTerritoryDrawn={handleTerritoryDrawn}
-              onLeadAdded={refreshLeads}
+              onLeadAdded={handleLeadAdded}
               center={mapCenter}
               zoom={mapZoom}
               onMapMove={(center, zoom, bounds) => {
