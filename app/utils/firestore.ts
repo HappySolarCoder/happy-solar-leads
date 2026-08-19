@@ -259,15 +259,27 @@ export async function getLeadsInBoundsForUser(
     return inBounds;
   };
 
-  const [claimed, assigned] = await Promise.all([
-    pageOwnershipLat('claimedBy'),
-    pageOwnershipLat('assignedTo'),
-  ]);
+  try {
+    const [claimed, assigned] = await Promise.all([
+      pageOwnershipLat('claimedBy'),
+      pageOwnershipLat('assignedTo'),
+    ]);
 
-  const byId = new Map<string, Lead>();
-  for (const lead of claimed) byId.set(lead.id, lead);
-  for (const lead of assigned) byId.set(lead.id, lead);
-  return Array.from(byId.values()).slice(0, maxLeads);
+    const byId = new Map<string, Lead>();
+    for (const lead of claimed) byId.set(lead.id, lead);
+    for (const lead of assigned) byId.set(lead.id, lead);
+    return Array.from(byId.values()).slice(0, maxLeads);
+  } catch (error) {
+    if (!isMissingIndexError(error)) {
+      console.error('Error getting leads in bounds for user:', error);
+      throw error;
+    }
+    // Indexes are in firestore.indexes.json but not on prod (do not firebase deploy).
+    // Equality scan + in-memory box must not empty the map.
+    console.warn('[getLeadsInBoundsForUser] claimedBy+lat/assignedTo+lat missing; equality+bounds fallback');
+    const { getUserViewportLeads } = await import('./mapLeadFields');
+    return getUserViewportLeads(uid, { south, north, west, east }, maxLeads);
+  }
 }
 
 export async function getLead(id: string): Promise<Lead | null> {
