@@ -1,17 +1,8 @@
-import { collection, query, where, limit, getDocs, startAfter } from 'firebase/firestore';
+import { collection, query, where, limit, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
 import { Lead } from '@/app/types';
 
-export type ViewportBox = { south: number; north: number; west: number; east: number };
-
-function leadInViewport(lead: Lead, bounds: ViewportBox): boolean {
-  if (lead.lat == null || lead.lng == null) return false;
-  if (lead.lat < bounds.south || lead.lat > bounds.north) return false;
-  if (bounds.west > bounds.east) {
-    return lead.lng >= bounds.west || lead.lng <= bounds.east;
-  }
-  return lead.lng >= bounds.west && lead.lng <= bounds.east;
-}
+export type MapBounds = { south: number; north: number; west: number; east: number };
 
 /** Pin-critical fields only — keep map state small without new Firestore indexes. */
 export function toThinMapLead(lead: Lead): Lead {
@@ -42,9 +33,20 @@ export function toThinMapLead(lead: Lead): Lead {
   } as Lead;
 }
 
+function leadInBounds(lead: Lead, bounds: MapBounds): boolean {
+  if (lead.lat == null || lead.lng == null) return false;
+  if (!Number.isFinite(Number(lead.lat)) || !Number.isFinite(Number(lead.lng))) return false;
+  if (lead.lat < bounds.south || lead.lat > bounds.north) return false;
+  if (bounds.west > bounds.east) {
+    return lead.lng >= bounds.west || lead.lng <= bounds.east;
+  }
+  return lead.lng >= bounds.west && lead.lng <= bounds.east;
+}
+
 /**
  * Tight cap on existing claimedBy / assignedTo equality queries.
  * Does NOT add lat range (those composite indexes are not on prod).
+ * Not the field-map path — maps use getUserViewportLeads.
  */
 export async function getLeadsForUserLimited(uid: string, maxLeads: number = 400): Promise<Lead[]> {
   if (!db) {
@@ -84,77 +86,78 @@ export async function getLeadsForUserLimited(uid: string, maxLeads: number = 400
   }
 }
 
-/**
- * Index-free fallback when claimedBy+lat / assignedTo+lat are not built.
- * Pages equality claimedBy/assignedTo (no lat range), keeps only the visible box,
- * up to maxInBounds. Scan cap avoids dumping the full assignment onto the map.
- */
-export async function getUserLeadsInViewportFallback(
-  uid: string,
-  bounds: ViewportBox,
-  maxInBounds: number = 400
-): Promise<Lead[]> {
-  if (!db) {
-    console.warn('Firestore not initialized');
-    return [];
+const USER_TURF_SCAN_CAP = 4000;
+const USER_TURF_TTL = 90_000;
+
+let userTurfCache: { uid: string; leads: Lead[]; ts: number } | null = null;
+let userTurfInflight: { uid: string; promise: Promise<Lead[]> } | null = null;
+
+async function loadUserTurfCached(uid: string): Promise<Lead[]> {
+  if (userTurfCache && userTurfCache.uid === uid && Date.now() - userTurfCache.ts < USER_TURF_TTL) {
+    return userTurfCache.leads;
+  }
+  if (userTurfInflight && userTurfInflight.uid === uid) {
+    return userTurfInflight.promise;
   }
 
-  const leadsRef = collection(db, 'leads');
-  const pageSize = Math.max(400, Math.min(maxInBounds, 800));
-  const maxScan = Math.min(8000, Math.max(2000, maxInBounds * 8));
-
-  const pageEquality = async (field: 'claimedBy' | 'assignedTo'): Promise<Lead[]> => {
-    const inBounds: Lead[] = [];
-    let lastDoc: any = null;
-    let scanned = 0;
-
-    while (inBounds.length < maxInBounds && scanned < maxScan) {
-      const take = Math.min(pageSize, maxScan - scanned);
-      const q = lastDoc
-        ? query(leadsRef, where(field, '==', uid), startAfter(lastDoc), limit(take))
-        : query(leadsRef, where(field, '==', uid), limit(take));
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) break;
-      scanned += snapshot.docs.length;
-      lastDoc = snapshot.docs[snapshot.docs.length - 1];
-
-      for (const d of snapshot.docs) {
-        const data = d.data();
-        const lead = toThinMapLead({
-          ...data,
-          id: d.id,
-          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
-          claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
-          dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
-          assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
-          dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
-            ...entry,
-            timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
-          })) || undefined,
-        } as Lead);
-        if (leadInViewport(lead, bounds)) {
-          inBounds.push(lead);
-          if (inBounds.length >= maxInBounds) break;
-        }
-      }
-
-      if (snapshot.docs.length < take) break;
+  const promise = (async () => {
+    if (!db) {
+      console.warn('Firestore not initialized');
+      return [];
     }
-
-    return inBounds;
-  };
-
-  try {
-    const [claimed, assigned] = await Promise.all([
-      pageEquality('claimedBy'),
-      pageEquality('assignedTo'),
-    ]);
+    const leadsRef = collection(db, 'leads');
+    const claimedQ = query(leadsRef, where('claimedBy', '==', uid), limit(USER_TURF_SCAN_CAP));
+    const assignedQ = query(leadsRef, where('assignedTo', '==', uid), limit(USER_TURF_SCAN_CAP));
+    const [claimedSnap, assignedSnap] = await Promise.all([getDocs(claimedQ), getDocs(assignedQ)]);
     const byId = new Map<string, Lead>();
-    for (const lead of claimed) byId.set(lead.id, lead);
-    for (const lead of assigned) byId.set(lead.id, lead);
-    return Array.from(byId.values()).slice(0, maxInBounds);
+    const add = (docSnap: any) => {
+      const data = docSnap.data();
+      const lead = {
+        ...data,
+        id: docSnap.id,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
+        claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
+        dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
+        assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
+        dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
+          ...entry,
+          timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
+        })) || undefined,
+      } as Lead;
+      byId.set(docSnap.id, toThinMapLead(lead));
+    };
+    for (const d of claimedSnap.docs) add(d);
+    for (const d of assignedSnap.docs) add(d);
+    const leads = Array.from(byId.values());
+    userTurfCache = { uid, leads, ts: Date.now() };
+    console.log(`[MapLeads] Cached ${leads.length} claimed+assigned for ${uid} (equality scan cap ${USER_TURF_SCAN_CAP}/field; no claimedBy+lat index)`);
+    return leads;
+  })();
+
+  userTurfInflight = { uid, promise };
+  promise.finally(() => {
+    if (userTurfInflight?.uid === uid) userTurfInflight = null;
+  });
+  return promise;
+}
+
+/**
+ * Viewport pins for setter/closer without claimedBy+lat / assignedTo+lat
+ * (those indexes are in firestore.indexes.json but not on prod; do not firebase deploy).
+ * Scan a capped slice of the user's turf once, cache it, filter to the visible box.
+ * Tight cap per viewport is fine; this is not a hard 400 on the whole turf and
+ * not an unbounded dump onto the map.
+ */
+export async function getUserViewportLeads(
+  uid: string,
+  bounds: MapBounds,
+  maxLeads: number = 400
+): Promise<Lead[]> {
+  try {
+    const turf = await loadUserTurfCached(uid);
+    return turf.filter((lead) => leadInBounds(lead, bounds)).slice(0, maxLeads);
   } catch (error) {
-    console.error('Error paging user leads in viewport (equality fallback):', error);
+    console.error('Error getting user viewport leads:', error);
     return [];
   }
 }
