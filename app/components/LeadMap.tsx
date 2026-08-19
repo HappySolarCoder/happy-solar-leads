@@ -1147,23 +1147,24 @@ export default function LeadMap({
       body: JSON.stringify({ level: 'info', message: 'Temp pin created, starting geocode', data: { lat: latlng.lat, lng: latlng.lng } })
     }).catch(() => {});
 
-    // Reverse geocode to get address
-    try {
-      const response = await fetch(
-        `/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`
-      );
-      const data = await response.json();
-      console.log('[LeadMap] Geocode result:', data);
+    setDropPinAddress({ address: '', city: '', state: '', zip: '' });
+    setDropPinLocation({ lat: latlng.lat, lng: latlng.lng });
+    setShowAddLeadModal(true);
+    console.log('[LeadMap] Modal should show now');
 
-      if (data.results && data.results[0]) {
-        const result = data.results[0];
-        const components = result.address_components || [];
-
+    // Reverse geocode in the background. A 500/hang must not block the sheet or Save.
+    fetch(`/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`)
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json();
+      })
+      .then((data) => {
+        if (!data?.results?.[0]) return;
+        const components = data.results[0].address_components || [];
         let street = '';
         let city = '';
         let state = '';
         let zip = '';
-
         components.forEach((component: any) => {
           if (component.types.includes('street_number')) {
             street = component.long_name + ' ' + street;
@@ -1181,17 +1182,11 @@ export default function LeadMap({
             zip = component.long_name;
           }
         });
-
         setDropPinAddress({ address: street.trim(), city, state, zip });
-      }
-    } catch (error) {
-      console.error('Reverse geocoding failed:', error);
-      setDropPinAddress({ address: '', city: '', state: '', zip: '' });
-    }
-
-    setDropPinLocation({ lat: latlng.lat, lng: latlng.lng });
-    setShowAddLeadModal(true);
-    console.log('[LeadMap] Modal should show now');
+      })
+      .catch((error) => {
+        console.error('Reverse geocoding failed:', error);
+      });
     
     // Send debug log - modal state set
     fetch('/api/debug-log', {
@@ -1215,13 +1210,18 @@ export default function LeadMap({
       const requiresProximity = currentUser?.role != null && ['setter', 'manager', 'sales'].includes(currentUser.role);
       if (requiresProximity && navigator.geolocation) {
         try {
-          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 5000,
-              maximumAge: 0,
-            });
-          });
+          const position = await Promise.race([
+            new Promise<GeolocationPosition>((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 0,
+              });
+            }),
+            new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('GPS proximity timed out')), 5000);
+            }),
+          ]);
 
           const pinLat = typeof leadData.lat === 'number' ? leadData.lat : dropPinLocation?.lat;
           const pinLng = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
@@ -1290,36 +1290,49 @@ export default function LeadMap({
         source: 'manually-added', // Mark as manually added via map pin drop
       } as Lead;
 
-      // Save to Firestore (create)
+      // Save to Firestore (create). rememberSavedLead runs inside saveLeadAsync.
       const { saveLeadAsync, updateLeadAsync } = await import('@/app/utils/storage');
       await saveLeadAsync(newLead);
 
-      // Auto-assign to territory user if within a territory
-      // NOTE: This requires write permissions to change assignedTo.
-      // Under our Firestore rules, only admins can reassign leads.
-      if (currentUser?.role === 'admin' && newLead.lat && newLead.lng) {
-        try {
-          const territories = await getTerritoriesAsync();
-          if (territories.length > 0) {
-            const territory = findLeadTerritory(newLead, territories);
-            if (territory?.userId) {
-              await updateLeadAsync(newLead.id, {
-                assignedTo: territory.userId,
-                assignedAt: new Date(),
-                status: 'assigned',
-              });
-              newLead.assignedTo = territory.userId;
-              newLead.assignedAt = new Date();
-              newLead.status = 'assigned';
-              console.log('[LeadMap] Auto-assigned lead to territory user:', territory.userId);
-            }
-          }
-        } catch (err) {
-          console.warn('[LeadMap] Territory auto-assignment failed:', err);
-        }
+      if (tempPinRef.current) {
+        tempPinRef.current.remove();
+        tempPinRef.current = null;
+      }
+      setShowAddLeadModal(false);
+      setDropPinLocation(null);
+      if (onLeadAdded) {
+        onLeadAdded(newLead);
       }
 
-      // Run Solar API in background
+      // Territory + solar stay off the Save promise. Geocode/solar 4xx/5xx must not reject it.
+      if (currentUser?.role === 'admin' && newLead.lat && newLead.lng) {
+        void getTerritoriesAsync()
+          .then((territories) => {
+            if (!territories.length) return;
+            const territory = findLeadTerritory(newLead, territories);
+            if (!territory?.userId) return;
+            const assignedAt = new Date();
+            return updateLeadAsync(newLead.id, {
+              assignedTo: territory.userId,
+              assignedAt,
+              status: 'assigned',
+            }).then(() => {
+              if (onLeadAdded) {
+                onLeadAdded({
+                  ...newLead,
+                  assignedTo: territory.userId,
+                  assignedAt,
+                  status: 'assigned',
+                });
+              }
+              console.log('[LeadMap] Auto-assigned lead to territory user:', territory.userId);
+            });
+          })
+          .catch((err) => {
+            console.warn('[LeadMap] Territory auto-assignment failed:', err);
+          });
+      }
+
       if (newLead.lat && newLead.lng) {
         fetch('/api/solar', {
           method: 'POST',
@@ -1330,37 +1343,24 @@ export default function LeadMap({
             lng: newLead.lng,
           }),
         })
-          .then((res) => res.json())
+          .then(async (res) => {
+            if (!res.ok) return null;
+            return res.json();
+          })
           .then((solarData) => {
-            if (solarData.solarScore) {
-              // Update lead with solar data (partial update; do not overwrite ownership fields)
-              updateLeadAsync(newLead.id, {
-                solarScore: solarData.solarScore,
-                solarCategory: solarData.solarCategory,
-                solarMaxPanels: solarData.maxPanels,
-                solarSunshineHours: solarData.sunshineHours,
-                hasSouthFacingRoof: solarData.hasSouthFacingRoof,
-                solarTestedAt: new Date(),
-              }).catch((err: any) => {
-                console.error('Solar enrichment update failed:', err);
-              });
-            }
+            if (!solarData?.solarScore) return;
+            updateLeadAsync(newLead.id, {
+              solarScore: solarData.solarScore,
+              solarCategory: solarData.solarCategory,
+              solarMaxPanels: solarData.maxPanels,
+              solarSunshineHours: solarData.sunshineHours,
+              hasSouthFacingRoof: solarData.hasSouthFacingRoof,
+              solarTestedAt: new Date(),
+            }).catch((err: any) => {
+              console.error('Solar enrichment update failed:', err);
+            });
           })
           .catch((err) => console.error('Solar API error:', err));
-      }
-
-      // Remove temp pin
-      if (tempPinRef.current) {
-        tempPinRef.current.remove();
-        tempPinRef.current = null;
-      }
-
-      setShowAddLeadModal(false);
-      setDropPinLocation(null);
-
-      // Parent inserts this lead into map/list now. Do not await a refetch.
-      if (onLeadAdded) {
-        onLeadAdded(newLead);
       }
     } catch (error: any) {
       console.error('Error saving dropped lead:', error);
