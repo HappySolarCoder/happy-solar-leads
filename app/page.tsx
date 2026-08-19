@@ -150,26 +150,39 @@ export default function Home() {
       };
       mapBoundsRef.current = initialBounds;
       setTimeout(async () => {
-        console.log('[Page] Loading map leads (viewport/capped)...');
-        const loadedLeads = await getMapLeadsAsync(initialBounds);
-        console.log('[Page] Loaded', loadedLeads.length, 'map leads');
-        setLeads(loadedLeads);
+        try {
+          console.log('[Page] Loading map leads (viewport/capped)...');
+          const loadedLeads = await getMapLeadsAsync(initialBounds);
+          console.log('[Page] Loaded', loadedLeads.length, 'map leads');
+          if (loadedLeads.length > 0) setLeads(loadedLeads);
+        } catch (error) {
+          console.error('Initial map fetch failed; keeping existing pins', error);
+        }
       }, 100);
     }
     loadData();
   }, [router]);
 
   const refreshLeads = useCallback(async () => {
-    const loadedLeads = await getMapLeadsAsync(mapBoundsRef.current || undefined);
-    setLeads(loadedLeads);
+    try {
+      const loadedLeads = await getMapLeadsAsync(mapBoundsRef.current || undefined);
+      if (loadedLeads.length > 0) setLeads(loadedLeads);
+    } catch (error) {
+      console.error('Map refresh failed; keeping existing pins', error);
+    }
   }, []);
 
   const handleViewportLeads = useCallback((bounds: MapBounds) => {
     mapBoundsRef.current = bounds;
     if (mapFetchTimerRef.current) clearTimeout(mapFetchTimerRef.current);
     mapFetchTimerRef.current = setTimeout(async () => {
-      const loadedLeads = await getMapLeadsAsync(bounds);
-      setLeads(loadedLeads);
+      try {
+        const loadedLeads = await getMapLeadsAsync(bounds);
+        // Empty/failed query must not blank the map (knocking already keeps old pins).
+        if (loadedLeads.length > 0) setLeads(loadedLeads);
+      } catch (error) {
+        console.error('Map viewport fetch failed; keeping existing pins', error);
+      }
     }, 400);
   }, []);
 
