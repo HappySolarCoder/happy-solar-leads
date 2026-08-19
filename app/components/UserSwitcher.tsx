@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useState, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Users, ChevronDown, X, RefreshCw, LogOut, Search } from 'lucide-react';
 import {
@@ -43,6 +43,8 @@ export default function UserSwitcher({ onUserChange, compact = false }: UserSwit
   const [newUserHome, setNewUserHome] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const openedAtRef = useRef(0);
 
   useEffect(() => {
     async function loadData() {
@@ -65,11 +67,37 @@ export default function UserSwitcher({ onUserChange, compact = false }: UserSwit
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [allUsers, userQuery]);
 
+  const closePicker = () => {
+    setIsOpen(false);
+    setUserQuery('');
+  };
+
+  const openPicker = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openedAtRef.current = Date.now();
+    setUserQuery('');
+    setIsOpen(true);
+  };
+
+  const closeFromBackdrop = (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Same-gesture pointerup/click lands on the new overlay after the pill's pointerdown.
+    if (Date.now() - openedAtRef.current < 500) return;
+    closePicker();
+  };
+
+  useEffect(() => {
+    if (!isOpen || !compact) return;
+    const t = window.setTimeout(() => searchInputRef.current?.focus(), 200);
+    return () => window.clearTimeout(t);
+  }, [isOpen, compact]);
+
   const handleSwitchUser = (user: UserType) => {
     persistActingUser(user);
     setCurrentUser(user);
-    setIsOpen(false);
-    setUserQuery('');
+    closePicker();
     onUserChange?.(user);
   };
 
@@ -77,8 +105,7 @@ export default function UserSwitcher({ onUserChange, compact = false }: UserSwit
     if (!authUser) return;
     persistActingUser(authUser);
     setCurrentUser(authUser);
-    setIsOpen(false);
-    setUserQuery('');
+    closePicker();
     onUserChange?.(authUser);
   };
 
@@ -131,11 +158,19 @@ export default function UserSwitcher({ onUserChange, compact = false }: UserSwit
         <div className="flex items-center gap-2 rounded-lg bg-gray-100 border border-gray-200 px-3 py-2">
           <Search className="w-4 h-4 text-gray-500 flex-none" />
           <input
-            type="search"
+            ref={compact ? searchInputRef : undefined}
+            type="text"
+            inputMode="search"
+            enterKeyHint="search"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
             value={userQuery}
             onChange={(e) => setUserQuery(e.target.value)}
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
             placeholder="Search setters…"
-            autoFocus={compact}
             className="w-full bg-transparent text-sm text-gray-900 placeholder:text-gray-500 outline-none"
             data-testid="view-as-search"
           />
@@ -227,8 +262,9 @@ export default function UserSwitcher({ onUserChange, compact = false }: UserSwit
       <div className="relative flex items-center gap-2">
         <button
           type="button"
-          onClick={() => setIsOpen(true)}
-          className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap hover:bg-gray-50"
+          onPointerDown={openPicker}
+          onClick={openPicker}
+          className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap hover:bg-gray-50 touch-manipulation"
           title="View as another user"
           data-testid="view-as-button"
         >
@@ -250,9 +286,20 @@ export default function UserSwitcher({ onUserChange, compact = false }: UserSwit
         )}
 
         {isOpen && mounted && createPortal(
-          <div className="fixed inset-0 z-[80]" data-testid="view-as-sheet">
-            <div className="absolute inset-0 bg-black/30" onClick={() => setIsOpen(false)} />
-            <div className="absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl shadow-2xl max-h-[80vh] flex flex-col overflow-hidden">
+          <div className="fixed inset-0 z-[80] pointer-events-none" data-testid="view-as-sheet">
+            <div
+              className="absolute inset-0 bg-black/30 pointer-events-auto"
+              onPointerDown={closeFromBackdrop}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            />
+            <div
+              className="absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl shadow-2xl h-[80dvh] max-h-[80vh] flex flex-col overflow-hidden pointer-events-auto"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-gray-500" />
@@ -260,7 +307,7 @@ export default function UserSwitcher({ onUserChange, compact = false }: UserSwit
                 </div>
                 <button
                   type="button"
-                  onClick={() => setIsOpen(false)}
+                  onClick={closePicker}
                   className="h-10 w-10 rounded-full hover:bg-gray-100 flex items-center justify-center"
                   title="Close"
                 >

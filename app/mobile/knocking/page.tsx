@@ -219,18 +219,31 @@ export default function KnockingPage() {
   const handleActingUserChange = useCallback(async (user: User) => {
     const gen = ++actingFetchGenRef.current;
     setCurrentUser(user);
-    setLeads([]);
-    setMapLeads([]);
-    mapLeadsRef.current = [];
+    if (mapFetchTimerRef.current) {
+      clearTimeout(mapFetchTimerRef.current);
+      mapFetchTimerRef.current = null;
+    }
+    const gps = gpsPositionRef.current;
+    const bounds = mapBoundsRef.current
+      || (gps ? boundsAround(gps.lat, gps.lng) : getLastKnockingViewport());
+    if (bounds) {
+      mapBoundsRef.current = bounds;
+      saveLastKnockingViewport(bounds);
+    }
     try {
       const loadedLeads = await getLeadsAsync();
       if (gen !== actingFetchGenRef.current) return;
       setLeads(loadedLeads);
-      if (mapBoundsRef.current) {
-        const loadedMapLeads = await getMapLeadsAsync(mapBoundsRef.current);
+
+      let loadedMapLeads: Lead[] = bounds ? await getMapLeadsAsync(bounds) : [];
+      if (gen !== actingFetchGenRef.current) return;
+      if (loadedMapLeads.length === 0 && gps) {
+        const gpsBounds = boundsAround(gps.lat, gps.lng);
+        mapBoundsRef.current = gpsBounds;
+        loadedMapLeads = await getMapLeadsAsync(gpsBounds);
         if (gen !== actingFetchGenRef.current) return;
-        if (loadedMapLeads.length > 0) applyMapLeads(loadedMapLeads);
       }
+      applyMapLeads(loadedMapLeads);
       setWriteError(null);
     } catch (error: any) {
       if (gen !== actingFetchGenRef.current) return;
@@ -256,9 +269,11 @@ export default function KnockingPage() {
     mapBoundsRef.current = bounds;
     saveLastKnockingViewport(bounds);
     if (mapFetchTimerRef.current) clearTimeout(mapFetchTimerRef.current);
+    const gen = actingFetchGenRef.current;
     mapFetchTimerRef.current = setTimeout(async () => {
       try {
         const loadedMapLeads = await getMapLeadsAsync(bounds);
+        if (gen !== actingFetchGenRef.current) return;
         if (loadedMapLeads.length > 0 || mapLeadsRef.current.length === 0) {
           applyMapLeads(loadedMapLeads);
         }
