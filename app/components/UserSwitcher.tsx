@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Users, ChevronDown, X, RefreshCw, LogOut, Search } from 'lucide-react';
 import {
@@ -29,6 +29,8 @@ function matchesUserQuery(user: UserType, query: string): boolean {
   );
 }
 
+const emptySubscribe = () => () => {};
+
 export default function UserSwitcher({ onUserChange, compact = false }: UserSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [authUser, setAuthUser] = useState<UserType | null>(null);
@@ -40,11 +42,7 @@ export default function UserSwitcher({ onUserChange, compact = false }: UserSwit
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserHome, setNewUserHome] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
 
   useEffect(() => {
     async function loadData() {
