@@ -511,8 +511,9 @@ export async function getLeadsByUser(userId: string): Promise<Lead[]> {
 
 export async function getAllUsers(): Promise<User[]> {
   if (!db) {
-    console.warn('Firestore not initialized');
-    return [];
+    const error = new Error('Firestore not initialized');
+    console.error('[getAllUsers] Failed to load users collection:', error);
+    throw error;
   }
   try {
     const usersRef = collection(db, USERS_COLLECTION);
@@ -525,8 +526,8 @@ export async function getAllUsers(): Promise<User[]> {
       approvalRequestedAt: doc.data().approvalRequestedAt?.toDate?.() || doc.data().approvalRequestedAt,
     } as User));
   } catch (error) {
-    console.error('Error getting users:', error);
-    return [];
+    console.error('[getAllUsers] Failed to load users collection:', error);
+    throw error;
   }
 }
 
