@@ -9,7 +9,7 @@ import { getAllUsers } from '@/app/utils/firestore';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
-import { buildAssignableUsersFromPageData } from '@/app/utils/assignableUsersFallback';
+import { buildAssignableUsersFromPageData, isAssignableUserId } from '@/app/utils/assignableUsersFallback';
 import { getTerritoriesAsync, saveTerritory, deleteTerritoryAsync } from '@/app/utils/territories';
 import { Territory } from '@/app/types/territory';
 import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
@@ -163,13 +163,15 @@ export default function LeadManagementPage() {
     setDrawingMode(false);
 
     // In assign mode, save the territory polygon and auto-assign leads
-    if (mode === 'assign' && assignToUser && polygon.length >= 3) {
+    if (mode === 'assign' && isAssignableUserId(assignToUser) && polygon.length >= 3) {
       const user = activeAssignableUsers.find(u => u.id === assignToUser);
       if (user) {
         setOperationType('assigning');
-        setIsDeleting(true);
-        
         try {
+          // Show progress while saveTerritory runs so a hang is not a silent grey button.
+          setProgress({ current: 0, total: leadIds.length });
+          setIsDeleting(true);
+
           // Convert polygon to Firestore-compatible format
           const polygonObjects = polygon.map(([lat, lng]) => ({ lat, lng }));
           
@@ -290,7 +292,7 @@ export default function LeadManagementPage() {
 
   const activeAssignableUsers = sourceUsers.filter(u => {
     const ux = u as any;
-    return !ux.deleted && ux.isActive !== false;
+    return isAssignableUserId(u.id) && !ux.deleted && ux.isActive !== false;
   });
 
   // Filter pins currently loaded for the viewport (fast)
@@ -467,7 +469,7 @@ export default function LeadManagementPage() {
   };
 
   const handleBulkAssign = async () => {
-    if (selectedLeads.size === 0 || !assignToUser) return;
+    if (selectedLeads.size === 0 || !isAssignableUserId(assignToUser)) return;
     
     const targetUser = activeAssignableUsers.find(u => u.id === assignToUser);
     if (!targetUser) return;
@@ -743,9 +745,9 @@ export default function LeadManagementPage() {
 
               <button
                 onClick={mode === 'assign' ? handleBulkAssign : handleBulkUnclaim}
-                disabled={isDeleting || (mode === 'assign' && !assignToUser)}
+                disabled={isDeleting || (mode === 'assign' && !isAssignableUserId(assignToUser))}
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                  isDeleting || (mode === 'assign' && !assignToUser)
+                  isDeleting || (mode === 'assign' && !isAssignableUserId(assignToUser))
                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                     : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
                 }`}
