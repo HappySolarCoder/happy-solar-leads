@@ -4,7 +4,6 @@ import {
   getAllLeads as firestoreGetAllLeads,
   getLeadsForUser as firestoreGetLeadsForUser,
   getLeadsInBounds as firestoreGetLeadsInBounds,
-  getLeadsInBoundsForUser as firestoreGetLeadsInBoundsForUser,
   saveLead as firestoreSaveLead,
   batchSaveLeads as firestoreBatchSaveLeads,
   updateLead as firestoreUpdateLead,
@@ -14,7 +13,7 @@ import {
   updateUser as firestoreUpdateUser,
   getUser as firestoreGetUser
 } from './firestore';
-import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, toThinMapLead } from './mapLeadFields';
+import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, getUserViewportLeads, toThinMapLead } from './mapLeadFields';
 
 // ============================================
 // LEADS
@@ -112,15 +111,26 @@ export async function getLeadsInBoundsAsync(
   try {
     const { getCurrentAuthUser } = await import('./auth');
     const me = await getCurrentAuthUser();
+    if (!me) return [];
 
-    // Admins can query all leads in bounds; reps must query only their assigned/claimed leads
-    const leads = me?.role === 'admin'
-      ? await firestoreGetLeadsInBounds(south, north, west, east, maxLeads)
-      : me?.id
-        ? await firestoreGetLeadsInBoundsForUser(me.id, south, north, west, east, maxLeads)
-        : [];
+    const box: MapBounds = { south, north, west, east };
 
-    return leads;
+    // Admin + manager: paged lat-index (all leads in view). Do not dump the collection.
+    if (me.role === 'admin' || me.role === 'manager') {
+      const all = await firestoreGetLeadsInBounds(south, north, west, east, maxLeads);
+      if (all.length > 0) return all;
+      if (me.id) {
+        const mine = await firestoreGetLeadsForUserLimited(me.id, 2500);
+        return filterLeadsToBounds(mine, box).slice(0, maxLeads);
+      }
+      return [];
+    }
+
+    // Setter/closer: viewport of claimed+assigned without claimedBy+lat indexes.
+    if (me.id) {
+      return await getUserViewportLeads(me.id, box, maxLeads);
+    }
+    return [];
   } catch (error) {
     console.error('Error getting leads in bounds:', error);
     return [];
@@ -133,24 +143,34 @@ export type MapBounds = { south: number; north: number; west: number; east: numb
 
 /**
  * Map pin fetch: never dump the full assigned+claimed set onto the map.
- * Admin + bounds: lat-range query with a tight cap (single-field lat index exists).
- * Everyone else: tight limit on existing equality queries + thin fields.
- * Does not use claimedBy+lat / assignedTo+lat (those indexes are not on prod).
+ * Field maps are viewport-scoped (tight cap per visible box is OK).
+ * Admin + bounds: page the existing lat-index until MAP_LEAD_CAP in-viewport pins.
+ * Setter/closer + bounds: equality claimedBy/assignedTo scan (capped) + in-memory
+ * viewport filter. claimedBy+lat / assignedTo+lat defs exist but are NOT on prod.
+ * No Rochester box when bounds are missing — return [] and let the viewport fetch.
  */
 export async function getMapLeadsAsync(bounds?: MapBounds): Promise<Lead[]> {
   try {
     const { getCurrentAuthUser } = await import('./auth');
     const me = await getCurrentAuthUser();
     if (!me) return [];
+    if (!bounds) return [];
 
-    if (me.role === 'admin') {
-      const b = bounds || { south: 42.90, north: 43.40, west: -77.95, east: -77.30 };
-      const leads = await firestoreGetLeadsInBounds(b.south, b.north, b.west, b.east, MAP_LEAD_CAP);
-      return (leads || []).map(toThinMapLead);
+    // Admin + manager: page lat-index until MAP_LEAD_CAP in-viewport pins.
+    if (me.role === 'admin' || me.role === 'manager') {
+      const leads = await firestoreGetLeadsInBounds(bounds.south, bounds.north, bounds.west, bounds.east, MAP_LEAD_CAP);
+      if ((leads || []).length > 0) return leads.map(toThinMapLead);
+      if (me.id) {
+        const mine = await firestoreGetLeadsForUserLimited(me.id, 2500);
+        return filterLeadsToBounds(mine, bounds).slice(0, MAP_LEAD_CAP).map(toThinMapLead);
+      }
+      return [];
     }
 
+    // Setter/closer: viewport-scoped. Not a hard 400 on the whole turf.
+    // Equality scan + in-memory box (indexes not on prod; do not firebase deploy).
     if (me.id) {
-      return await firestoreGetLeadsForUserLimited(me.id, MAP_LEAD_CAP);
+      return await getUserViewportLeads(me.id, bounds, MAP_LEAD_CAP);
     }
 
     return [];
@@ -282,14 +302,22 @@ export function getUsers(): User[] {
 }
 
 export async function getUsersAsync(): Promise<User[]> {
-  if (usersCache && Date.now() - usersCacheTimestamp < CACHE_TTL) {
+  if (usersCache && usersCache.length > 0 && Date.now() - usersCacheTimestamp < CACHE_TTL) {
     return usersCache;
   }
 
   try {
+    // Wait for auth. getAllUsers() swallows permission-denied and returns [],
+    // and a pre-auth [] must not be cached for 90s (empties Assign To / Filter).
+    const { getCurrentAuthUser } = await import('./auth');
+    const me = await getCurrentAuthUser();
+    if (!me) return usersCache || [];
+
     const users = await firestoreGetAllUsers();
-    usersCache = users;
-    usersCacheTimestamp = Date.now();
+    if (users.length > 0) {
+      usersCache = users;
+      usersCacheTimestamp = Date.now();
+    }
     return users;
   } catch (error) {
     console.error('Firestore getUsers failed:', error);

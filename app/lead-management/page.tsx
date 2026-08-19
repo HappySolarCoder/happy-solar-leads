@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
-import { getLeadsAsync, getLeadsInBoundsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
+import { getLeadsAsync, getLeadsInBoundsAsync, getUsersAsync, saveLeadAsync, type MapBounds } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
@@ -43,6 +43,7 @@ export default function LeadManagementPage() {
   const [operationType, setOperationType] = useState<'assigning' | 'unclaiming' | 'deleting'>('unclaiming');
   const [mapCenter, setMapCenter] = useState<[number, number]>([43.1566, -77.6088]);
   const [mapZoom, setMapZoom] = useState(11);
+  const [mapBounds, setMapBounds] = useState<MapBounds | null>(null);
   const [isPinsLoading, setIsPinsLoading] = useState(false);
 
   // Debug logging
@@ -70,8 +71,9 @@ export default function LeadManagementPage() {
 
       setCurrentUser(user);
 
-      // NOTE: Do not load all leads on this page (50k–200k pins).
-      // Leads are lazy-loaded by map viewport via getLeadsInBoundsAsync().
+      // Users for Assign To / Filter. Do not restore storage.ts import-time
+      // getUsersAsync/getLeadsAsync — that was the field-perf slowness.
+      // Map pins stay viewport-scoped via getLeadsInBoundsAsync below.
       const loadedUsers = await getUsersAsync();
       const loadedTerritories = await getTerritoriesAsync();
 
@@ -145,7 +147,7 @@ export default function LeadManagementPage() {
             await Promise.all(
               batch.map(async (leadId) => {
                 try {
-                  const lead = leads.find(l => l.id === leadId);
+                  const lead = findLead(leadId);
                   if (!lead) return;
                   
                   // Preserve existing status, only assign if not already claimed
@@ -189,26 +191,27 @@ export default function LeadManagementPage() {
     }
   };
 
-  // Lazy-load pins by viewport bounds (fast even at 200k total leads)
+  // Lazy-load pins by viewport bounds (fast even at 200k total leads).
+  // Wait for currentUser — getLeadsInBoundsAsync returns [] when auth is not ready,
+  // and a Leaflet moveend at the same default center/zoom will not refetch.
   useEffect(() => {
+    if (!currentUser) return;
     let isCanceled = false;
     const t = setTimeout(async () => {
       try {
         setIsPinsLoading(true);
-        // Approximate bounds based on center/zoom (Leaflet will refine internally, but this is good enough)
-        // We intentionally add padding so pins near edges are included.
         const latPad = 0.15 * Math.pow(2, Math.max(0, 11 - mapZoom));
         const lngPad = 0.25 * Math.pow(2, Math.max(0, 11 - mapZoom));
-        const south = mapCenter[0] - latPad;
-        const north = mapCenter[0] + latPad;
-        const west = mapCenter[1] - lngPad;
-        const east = mapCenter[1] + lngPad;
+        const south = mapBounds?.south ?? mapCenter[0] - latPad;
+        const north = mapBounds?.north ?? mapCenter[0] + latPad;
+        const west = mapBounds?.west ?? mapCenter[1] - lngPad;
+        const east = mapBounds?.east ?? mapCenter[1] + lngPad;
 
-        // Cap returned pins depending on zoom
         const maxLeads = mapZoom >= 15 ? 12000 : mapZoom >= 13 ? 7000 : mapZoom >= 11 ? 3500 : 2000;
         const loaded = await getLeadsInBoundsAsync(south, north, west, east, maxLeads);
         if (isCanceled) return;
-        setBoundsLeads(loaded);
+        // Empty fetch must not wipe pins that already loaded (auth/query miss).
+        setBoundsLeads(prev => (loaded.length > 0 ? loaded : prev));
       } catch (e) {
         console.error('[Lead Management] Failed loading pins in bounds', e);
       } finally {
@@ -220,22 +223,28 @@ export default function LeadManagementPage() {
       isCanceled = true;
       clearTimeout(t);
     };
-  }, [mapCenter, mapZoom]);
+  }, [currentUser, mapCenter, mapZoom, mapBounds]);
 
   const activeAssignableUsers = users.filter(u => {
     const ux = u as any;
     return !ux.deleted && ux.isActive !== false;
   });
 
+  // `leads` is only filled after a bulk op (handleUpdate). First paint / draw
+  // uses viewport pins from getLeadsInBoundsAsync.
+  const findLead = (leadId: string) =>
+    leads.find(l => l.id === leadId) || boundsLeads.find(l => l.id === leadId);
+
   // Filter pins currently loaded for the viewport (fast)
   const filteredLeads = userFilter === 'all'
     ? boundsLeads
     : boundsLeads.filter(lead => lead.assignedTo === userFilter || lead.claimedBy === userFilter);
 
-  // Get lead counts per user (active users only for assignment UX)
+  // Counts from viewport pins so Filter/Assign To do not depend on the empty
+  // module cache or an unfetched full-admin lead dump.
   const userLeadCounts = activeAssignableUsers.map(user => ({
     user,
-    count: leads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
+    count: boundsLeads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
   }));
 
   // Map center defaults to Rochester (for admin oversight or when GPS unavailable)
@@ -264,7 +273,7 @@ export default function LeadManagementPage() {
         await Promise.all(
           batch.map(async (leadId) => {
             try {
-              const lead = leads.find(l => l.id === leadId);
+              const lead = findLead(leadId);
               if (!lead) return;
               
               // Unassign but keep disposition, dispositionHistory, and all other data
@@ -338,7 +347,7 @@ export default function LeadManagementPage() {
         const results = await Promise.allSettled(
           batch.map(async (leadId) => {
             try {
-              const lead = leads.find(l => l.id === leadId);
+              const lead = findLead(leadId);
               if (!lead) throw new Error('Lead not found');
               
               // Preserve the last disposition status if lead was knocked
@@ -426,7 +435,7 @@ export default function LeadManagementPage() {
         const results = await Promise.allSettled(
           batch.map(async (leadId) => {
             try {
-              const lead = leads.find(l => l.id === leadId);
+              const lead = findLead(leadId);
               if (!lead) throw new Error('Lead not found');
               
               const updatedLead: Lead = {
@@ -611,9 +620,8 @@ export default function LeadManagementPage() {
             }}
             className="w-full px-4 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A] focus:border-transparent"
           >
-            <option value="all">All Users ({leads.length} leads)</option>
+            <option value="all">All Users ({boundsLeads.length} leads in view)</option>
             {userLeadCounts
-              .filter(({ count }) => count > 0)
               .map(({ user, count }) => (
                 <option key={user.id} value={user.id}>
                   {user.name} ({count} leads)
@@ -646,7 +654,7 @@ export default function LeadManagementPage() {
           {drawingMode && (
             <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <p className="text-sm text-blue-800 font-medium">
-                🖊️ Draw a polygon on the map to select leads
+                🖋️ Draw a polygon on the map to select leads
               </p>
               <p className="text-xs text-blue-600 mt-1">
                 Click to add points, double-click to finish
@@ -705,9 +713,10 @@ export default function LeadManagementPage() {
           onLeadClick={(lead) => {}}
           center={mapCenter}
           zoom={mapZoom}
-          onMapMove={(center, zoom) => {
+          onMapMove={(center, zoom, bounds) => {
             setMapCenter(center);
             setMapZoom(zoom);
+            if (bounds) setMapBounds(bounds);
           }}
           assignmentMode={drawingMode ? 'territory' : 'none'}
           selectedLeadIdsForAssignment={Array.from(selectedLeads)}
