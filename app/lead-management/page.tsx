@@ -70,8 +70,9 @@ export default function LeadManagementPage() {
 
       setCurrentUser(user);
 
-      // NOTE: Do not load all leads on this page (50k–200k pins).
-      // Leads are lazy-loaded by map viewport via getLeadsInBoundsAsync().
+      // Users for Assign To / Filter. Do not restore storage.ts import-time
+      // getUsersAsync/getLeadsAsync — that was the field-perf slowness.
+      // Map pins stay viewport-scoped via getLeadsInBoundsAsync below.
       const loadedUsers = await getUsersAsync();
       const loadedTerritories = await getTerritoriesAsync();
 
@@ -145,7 +146,7 @@ export default function LeadManagementPage() {
             await Promise.all(
               batch.map(async (leadId) => {
                 try {
-                  const lead = leads.find(l => l.id === leadId);
+                  const lead = findLead(leadId);
                   if (!lead) return;
                   
                   // Preserve existing status, only assign if not already claimed
@@ -227,15 +228,21 @@ export default function LeadManagementPage() {
     return !ux.deleted && ux.isActive !== false;
   });
 
+  // `leads` is only filled after a bulk op (handleUpdate). First paint / draw
+  // uses viewport pins from getLeadsInBoundsAsync.
+  const findLead = (leadId: string) =>
+    leads.find(l => l.id === leadId) || boundsLeads.find(l => l.id === leadId);
+
   // Filter pins currently loaded for the viewport (fast)
   const filteredLeads = userFilter === 'all'
     ? boundsLeads
     : boundsLeads.filter(lead => lead.assignedTo === userFilter || lead.claimedBy === userFilter);
 
-  // Get lead counts per user (active users only for assignment UX)
+  // Counts from viewport pins so Filter/Assign To do not depend on the empty
+  // module cache or an unfetched full-admin lead dump.
   const userLeadCounts = activeAssignableUsers.map(user => ({
     user,
-    count: leads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
+    count: boundsLeads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
   }));
 
   // Map center defaults to Rochester (for admin oversight or when GPS unavailable)
@@ -264,7 +271,7 @@ export default function LeadManagementPage() {
         await Promise.all(
           batch.map(async (leadId) => {
             try {
-              const lead = leads.find(l => l.id === leadId);
+              const lead = findLead(leadId);
               if (!lead) return;
               
               // Unassign but keep disposition, dispositionHistory, and all other data
@@ -338,7 +345,7 @@ export default function LeadManagementPage() {
         const results = await Promise.allSettled(
           batch.map(async (leadId) => {
             try {
-              const lead = leads.find(l => l.id === leadId);
+              const lead = findLead(leadId);
               if (!lead) throw new Error('Lead not found');
               
               // Preserve the last disposition status if lead was knocked
@@ -426,7 +433,7 @@ export default function LeadManagementPage() {
         const results = await Promise.allSettled(
           batch.map(async (leadId) => {
             try {
-              const lead = leads.find(l => l.id === leadId);
+              const lead = findLead(leadId);
               if (!lead) throw new Error('Lead not found');
               
               const updatedLead: Lead = {
@@ -611,9 +618,8 @@ export default function LeadManagementPage() {
             }}
             className="w-full px-4 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A] focus:border-transparent"
           >
-            <option value="all">All Users ({leads.length} leads)</option>
+            <option value="all">All Users ({boundsLeads.length} leads)</option>
             {userLeadCounts
-              .filter(({ count }) => count > 0)
               .map(({ user, count }) => (
                 <option key={user.id} value={user.id}>
                   {user.name} ({count} leads)
@@ -646,7 +652,7 @@ export default function LeadManagementPage() {
           {drawingMode && (
             <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <p className="text-sm text-blue-800 font-medium">
-                🖊️ Draw a polygon on the map to select leads
+                🖋️ Draw a polygon on the map to select leads
               </p>
               <p className="text-xs text-blue-600 mt-1">
                 Click to add points, double-click to finish
