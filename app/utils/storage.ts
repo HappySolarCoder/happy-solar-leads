@@ -4,7 +4,6 @@ import {
   getAllLeads as firestoreGetAllLeads,
   getLeadsForUser as firestoreGetLeadsForUser,
   getLeadsInBounds as firestoreGetLeadsInBounds,
-  getLeadsInBoundsForUser as firestoreGetLeadsInBoundsForUser,
   saveLead as firestoreSaveLead,
   batchSaveLeads as firestoreBatchSaveLeads,
   updateLead as firestoreUpdateLead,
@@ -102,6 +101,10 @@ export async function getLeadsAsync(): Promise<Lead[]> {
  * Get leads within geographic bounds (lazy loading for map)
  * Dramatically reduces read operations by only loading visible leads
  */
+const MAP_LEAD_CAP = 400;
+
+export type MapBounds = { south: number; north: number; west: number; east: number };
+
 export async function getLeadsInBoundsAsync(
   south: number,
   north: number,
@@ -112,24 +115,32 @@ export async function getLeadsInBoundsAsync(
   try {
     const { getCurrentAuthUser } = await import('./auth');
     const me = await getCurrentAuthUser();
+    if (!me) return [];
 
-    // Admins can query all leads in bounds; reps must query only their assigned/claimed leads
-    const leads = me?.role === 'admin'
-      ? await firestoreGetLeadsInBounds(south, north, west, east, maxLeads)
-      : me?.id
-        ? await firestoreGetLeadsInBoundsForUser(me.id, south, north, west, east, maxLeads)
-        : [];
+    const box: MapBounds = { south, north, west, east };
 
-    return leads;
+    // Admin + manager: all-leads lat-index (paged in getLeadsInBounds).
+    // Do NOT use claimedBy+lat / assignedTo+lat — those indexes are not on prod.
+    if (me.role === 'admin' || me.role === 'manager') {
+      const all = await firestoreGetLeadsInBounds(south, north, west, east, maxLeads);
+      if (all.length > 0) return all;
+      if (me.id) {
+        const mine = await firestoreGetLeadsForUserLimited(me.id, MAP_LEAD_CAP);
+        return filterLeadsToBounds(mine, box);
+      }
+      return [];
+    }
+
+    if (me.id) {
+      const mine = await firestoreGetLeadsForUserLimited(me.id, MAP_LEAD_CAP);
+      return filterLeadsToBounds(mine, box);
+    }
+    return [];
   } catch (error) {
     console.error('Error getting leads in bounds:', error);
     return [];
   }
 }
-
-const MAP_LEAD_CAP = 400;
-
-export type MapBounds = { south: number; north: number; west: number; east: number };
 
 /**
  * Map pin fetch: never dump the full assigned+claimed set onto the map.
@@ -144,11 +155,14 @@ export async function getMapLeadsAsync(bounds?: MapBounds): Promise<Lead[]> {
     const me = await getCurrentAuthUser();
     if (!me) return [];
 
-    if (me.role === 'admin') {
-      // No hardcoded Rochester fallback — that box can sit outside the real viewport.
+    // Admin + manager: viewport all-leads, returned set still capped at MAP_LEAD_CAP (400).
+    // Setter/closer: equality claimedBy/assignedTo only (no new indexes).
+    if (me.role === 'admin' || me.role === 'manager') {
       if (!bounds) return [];
       const leads = await firestoreGetLeadsInBounds(bounds.south, bounds.north, bounds.west, bounds.east, MAP_LEAD_CAP);
-      return (leads || []).map(toThinMapLead);
+      if ((leads || []).length > 0) return leads.map(toThinMapLead);
+      if (me.id) return await firestoreGetLeadsForUserLimited(me.id, MAP_LEAD_CAP);
+      return [];
     }
 
     if (me.id) {
@@ -284,14 +298,22 @@ export function getUsers(): User[] {
 }
 
 export async function getUsersAsync(): Promise<User[]> {
-  if (usersCache && Date.now() - usersCacheTimestamp < CACHE_TTL) {
+  if (usersCache && usersCache.length > 0 && Date.now() - usersCacheTimestamp < CACHE_TTL) {
     return usersCache;
   }
 
   try {
+    // Wait for auth. getAllUsers() swallows permission-denied and returns [],
+    // and a pre-auth [] must not be cached for 90s (empties Assign To / Filter).
+    const { getCurrentAuthUser } = await import('./auth');
+    const me = await getCurrentAuthUser();
+    if (!me) return usersCache || [];
+
     const users = await firestoreGetAllUsers();
-    usersCache = users;
-    usersCacheTimestamp = Date.now();
+    if (users.length > 0) {
+      usersCache = users;
+      usersCacheTimestamp = Date.now();
+    }
     return users;
   } catch (error) {
     console.error('Firestore getUsers failed:', error);

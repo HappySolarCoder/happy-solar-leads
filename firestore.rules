@@ -20,6 +20,10 @@ service cloud.firestore {
       return signedIn() && myUser().role == "admin";
     }
 
+    function isAdminOrManager() {
+      return signedIn() && (myUser().role == "admin" || myUser().role == "manager");
+    }
+
     // Helper: allows a field to be either unchanged OR completely omitted in the update
     function unchangedOrMissing(field) {
       return !(field in request.resource.data) ||
@@ -124,15 +128,15 @@ service cloud.firestore {
     // ====================== TERRITORIES ======================
     // Admins see everything; reps can only read their own assigned territory
     match /territories/{territoryId} {
-      allow read: if isAdmin() || (signedIn() && resource.data.userId == uid());
+      allow read: if isAdminOrManager() || (signedIn() && resource.data.userId == uid());
       allow create, update, delete: if isAdmin();
     }
 
     // ====================== LEADS ======================
     match /leads/{leadId} {
 
-      // READ: Admins = all; reps = only their claimed / assigned / manually-created leads
-      allow read: if isAdmin()
+      // READ: Admin + manager = all; reps = only their claimed / assigned / manually-created leads
+      allow read: if isAdminOrManager()
         || leadIsClaimedByMe()
         || leadIsAssignedToMe()
         || leadIsManualByMe();
