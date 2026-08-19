@@ -95,9 +95,20 @@ export default function KnockingPage() {
       saveCurrentUser(user);
       setIsLoading(false);
       setIsRefreshing(true);
+      // Admin map fetch needs a real box (no Rochester default inside getMapLeadsAsync).
+      // Setter/closer ignore bounds and still get up to 400 claimed+assigned.
+      const startLat = 43.1566;
+      const startLng = -77.6088;
+      const initialBounds: MapBounds = {
+        south: startLat - 0.12,
+        north: startLat + 0.12,
+        west: startLng - 0.16,
+        east: startLng + 0.16,
+      };
+      mapBoundsRef.current = initialBounds;
       const [loadedLeads, loadedMapLeads] = await Promise.all([
         getLeadsAsync(),
-        getMapLeadsAsync(),
+        getMapLeadsAsync(initialBounds),
       ]);
       setLeads(loadedLeads);
       setMapLeads(loadedMapLeads);
@@ -495,7 +506,7 @@ export default function KnockingPage() {
         <div className="pb-3 pt-2 -mt-1 flex items-center gap-2 overflow-x-auto pr-1 text-xs font-semibold tabular-nums [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {isRefreshing && (
             <div className="h-10 min-h-10 px-3 rounded-full bg-[#FFF7ED] border border-[#FDBA74] text-[#9A3412] inline-flex items-center gap-2 leading-none whitespace-nowrap">
-              <span className="animate-pulse">⟳</span>
+              <span className="animate-pulse">↻</span>
               <span>Refreshing…</span>
             </div>
           )}
