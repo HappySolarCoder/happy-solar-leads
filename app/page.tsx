@@ -39,6 +39,7 @@ export default function Home() {
   const [territories, setTerritories] = useState<any[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
+  const [selectedLeadSnapshot, setSelectedLeadSnapshot] = useState<Lead | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showUserOnboarding, setShowUserOnboarding] = useState(false);
@@ -177,6 +178,16 @@ export default function Home() {
     setLeads((prev) => upsertLeadInList(prev, lead));
   }, []);
 
+  // Knock/disposition already wrote Firestore. Paint pin + count now; do not
+  // wait on getLeadsAsync / getMapLeadsAsync / invalidateUserTurfCache.
+  const handleLeadUpdated = useCallback((lead?: Lead) => {
+    if (!lead) {
+      void refreshLeads();
+      return;
+    }
+    handleLeadAdded(lead);
+  }, [handleLeadAdded, refreshLeads]);
+
   const handleViewportLeads = useCallback((bounds: MapBounds) => {
     mapBoundsRef.current = bounds;
     if (mapFetchTimerRef.current) clearTimeout(mapFetchTimerRef.current);
@@ -231,6 +242,7 @@ export default function Home() {
     } else {
       // Normal mode - show lead detail
       setSelectedLeadId(lead.id);
+      setSelectedLeadSnapshot(lead);
       setShowLeadDetail(true);
     }
   };
@@ -410,7 +422,10 @@ export default function Home() {
   };
 
   // Get selected lead
-  const selectedLead = leads.find(l => l.id === selectedLeadId);
+  const selectedLead = (selectedLeadId && (
+    leads.find(l => l.id === selectedLeadId)
+    || (selectedLeadSnapshot?.id === selectedLeadId ? selectedLeadSnapshot : undefined)
+  )) || undefined;
 
   // Stats - based on good leads only
   const stats = {
@@ -454,8 +469,9 @@ export default function Home() {
           onClose={() => {
             setShowLeadDetail(false);
             setSelectedLeadId(undefined);
+            setSelectedLeadSnapshot(undefined);
           }}
-          onUpdate={refreshLeads}
+          onUpdate={handleLeadUpdated}
         />
       )}
 

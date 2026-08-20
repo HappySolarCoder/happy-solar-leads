@@ -28,6 +28,7 @@ import LeadDetail from '@/app/components/LeadDetail';
 import UserSwitcher from '@/app/components/UserSwitcher';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import GoalsPaceModal from '@/app/components/GoalsPaceModal';
@@ -60,6 +61,7 @@ export default function KnockingPage() {
   const [authUser, setAuthUser] = useState<User | null>(null);
   const actingFetchGenRef = useRef(0);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
+  const [selectedLeadSnapshot, setSelectedLeadSnapshot] = useState<Lead | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [isLoading, setIsLoading] = useState(true);
@@ -76,7 +78,7 @@ export default function KnockingPage() {
   const [freshPinsOnly, setFreshPinsOnly] = useState<boolean>(false);
   const [leadTypeFilter, setLeadTypeFilter] = useState<'all' | 'prospects' | 'customers'>('all');
   const [showFilters, setShowFilters] = useState(false);
-  const [dispositions, setDispositions] = useState<any[]>([]);
+  const [dispositions, setDispositions] = useState<any[]>(DEFAULT_DISPOSITIONS);
   const [users, setUsers] = useState<User[]>([]);
   const [addressSearch, setAddressSearch] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -228,6 +230,16 @@ export default function KnockingPage() {
     setWriteError(null);
   }, [applyMapLeads]);
 
+  // Knock paints first, then writes. Do not wait on getLeadsAsync.
+  const handleLeadUpdated = useCallback((lead?: Lead) => {
+    if (!lead) {
+      void refreshLeads();
+      return;
+    }
+    setSelectedLeadSnapshot(lead);
+    handleLeadAdded(lead);
+  }, [handleLeadAdded, refreshLeads]);
+
   const handleActingUserChange = useCallback(async (user: User) => {
     const gen = ++actingFetchGenRef.current;
     setCurrentUser(user);
@@ -297,6 +309,7 @@ export default function KnockingPage() {
 
   const handleLeadSelect = useCallback((lead: Lead) => {
     setSelectedLeadId(lead.id);
+    setSelectedLeadSnapshot(lead);
     setShowLeadDetail(true);
   }, []);
 
@@ -475,7 +488,11 @@ export default function KnockingPage() {
     return 0;
   }), [filteredLeads, gpsPosition]);
 
-  const selectedLead = leads.find(l => l.id === selectedLeadId);
+  const selectedLead = (selectedLeadId && (
+    leads.find(l => l.id === selectedLeadId)
+    || mapLeads.find(l => l.id === selectedLeadId)
+    || (selectedLeadSnapshot?.id === selectedLeadId ? selectedLeadSnapshot : undefined)
+  )) || undefined;
 
   function getDirection(userLat: number, userLng: number, leadLat: number, leadLng: number): string {
     const angle = Math.atan2(leadLng - userLng, leadLat - userLat) * 180 / Math.PI;
@@ -575,16 +592,55 @@ export default function KnockingPage() {
   const todaysKnocks = useMemo(() => {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const doorKnockStatusIds = dispositions.filter((d: any) => d.countsAsDoorKnock).map((d: any) => String(d.id).toLowerCase());
-    return leads.filter(l => {
-      if (!l.dispositionedAt || l.dispositionedAt < todayStart) return false;
-      const lastHistoryUserId = (l.dispositionHistory && l.dispositionHistory[0]?.userId) ? String(l.dispositionHistory[0].userId) : null;
-      const actedByMe = lastHistoryUserId === currentUser?.id || l.claimedBy === currentUser?.id;
-      if (!actedByMe) return false;
-      const disp = String(l.status || l.disposition || '').toLowerCase();
-      return doorKnockStatusIds.includes(disp);
-    }).length;
-  }, [leads, dispositions, currentUser]);
+    const knockKeys = new Set<string>();
+    for (const d of dispositions) {
+      if (!d?.countsAsDoorKnock) continue;
+      const id = String(d.id || '').trim().toLowerCase();
+      const name = String(d.name || '').trim().toLowerCase();
+      if (id) {
+        knockKeys.add(id);
+        knockKeys.add(id.replace(/\s+/g, '-'));
+      }
+      if (name) {
+        knockKeys.add(name);
+        knockKeys.add(name.replace(/\s+/g, '-'));
+      }
+    }
+    const isDoorKnockDisp = (value: unknown) => {
+      const raw = String(value || '').trim().toLowerCase();
+      if (!raw) return false;
+      return knockKeys.has(raw) || knockKeys.has(raw.replace(/\s+/g, '-'));
+    };
+    const actorIds = new Set(
+      [currentUser?.id, authUser?.id].filter(Boolean).map((id) => String(id))
+    );
+
+    let count = 0;
+    for (const l of leads) {
+      const history = Array.isArray(l.dispositionHistory) ? l.dispositionHistory : [];
+      let historyKnocks = 0;
+      for (const entry of history) {
+        const ts = entry?.timestamp ? new Date(entry.timestamp) : null;
+        if (!ts || Number.isNaN(ts.getTime()) || ts < todayStart) continue;
+        if (actorIds.size > 0 && entry.userId && !actorIds.has(String(entry.userId))) continue;
+        if (!isDoorKnockDisp(entry.disposition)) continue;
+        historyKnocks += 1;
+      }
+      if (historyKnocks > 0) {
+        count += historyKnocks;
+        continue;
+      }
+      const knockedAt = l.dispositionedAt ? new Date(l.dispositionedAt) : null;
+      if (!knockedAt || Number.isNaN(knockedAt.getTime()) || knockedAt < todayStart) continue;
+      const lastHistoryUserId = history[0]?.userId ? String(history[0].userId) : null;
+      const actedByMe =
+        (lastHistoryUserId && actorIds.has(lastHistoryUserId))
+        || (l.claimedBy != null && actorIds.has(String(l.claimedBy)));
+      if (!actedByMe) continue;
+      if (isDoorKnockDisp(l.status) || isDoorKnockDisp(l.disposition)) count += 1;
+    }
+    return count;
+  }, [leads, dispositions, currentUser, authUser]);
 
   const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
 
@@ -635,6 +691,7 @@ export default function KnockingPage() {
               if (showLeadDetail) {
                 setShowLeadDetail(false);
                 setSelectedLeadId(undefined);
+                setSelectedLeadSnapshot(undefined);
               } else {
                 router.push('/mobile');
               }
@@ -925,8 +982,9 @@ export default function KnockingPage() {
           lead={selectedLead}
           currentUser={authUser && currentUser && authUser.id !== currentUser.id ? authUser : currentUser}
           preventOwnershipWrites={!!(authUser && currentUser && authUser.id !== currentUser.id)}
-          onClose={() => { setShowLeadDetail(false); setSelectedLeadId(undefined); }}
-          onUpdate={refreshLeads}
+          onClose={() => { setShowLeadDetail(false); setSelectedLeadId(undefined); setSelectedLeadSnapshot(undefined); }}
+          onUpdate={handleLeadUpdated}
+          onWriteError={(msg) => setWriteError(msg)}
         />
       )}
       </div>

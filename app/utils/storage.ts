@@ -328,7 +328,9 @@ export async function updateLeadAsync(id: string, updates: Partial<Lead>): Promi
   if (leadsCache) {
     const index = leadsCache.findIndex(l => l.id === id);
     if (index >= 0) {
-      leadsCache[index] = { ...leadsCache[index], ...updates };
+      const merged = { ...leadsCache[index], ...updates };
+      leadsCache[index] = merged;
+      rememberSavedLead(merged);
     }
   }
 }

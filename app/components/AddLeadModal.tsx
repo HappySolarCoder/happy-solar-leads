@@ -18,6 +18,23 @@ interface AddLeadModalProps {
   lng: number;
 }
 
+const PLACEHOLDER_NAME = 'john smith';
+const PLACEHOLDER_STREET = '123 main st';
+
+function isBlankOrPlaceholder(value: string, placeholder: string): boolean {
+  const trimmed = value.trim();
+  return !trimmed || trimmed.toLowerCase() === placeholder;
+}
+
+function getSaveLeadValidationError(name: string, address: string): string | null {
+  const nameBad = isBlankOrPlaceholder(name, PLACEHOLDER_NAME);
+  const streetBad = isBlankOrPlaceholder(address, PLACEHOLDER_STREET);
+  if (nameBad || streetBad) {
+    return 'Enter a real name and street address. Placeholder text cannot be saved.';
+  }
+  return null;
+}
+
 export default function AddLeadModal({
   isOpen,
   onClose,
@@ -38,6 +55,7 @@ export default function AddLeadModal({
   const [email, setEmail] = useState('');
   const [estimatedBill, setEstimatedBill] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [selectedDisposition, setSelectedDisposition] = useState('');
 
@@ -62,25 +80,34 @@ export default function AddLeadModal({
     setCity((prev) => prev || initialCity);
     setState((prev) => prev || initialState);
     setZip((prev) => prev || initialZip);
+    setSaveError(null);
   }, [isOpen, initialAddress, initialCity, initialState, initialZip]);
 
   if (!isOpen) return null;
 
+  const saveValidationError = getSaveLeadValidationError(name, address);
+  const canSaveLead = !saveValidationError;
+
   const handleSave = async () => {
+    const validationError = getSaveLeadValidationError(name, address);
+    if (validationError) {
+      setSaveError(validationError);
+      return;
+    }
+    if (!selectedDisposition) {
+      setSaveError('Please select a disposition.');
+      return;
+    }
+
+    setSaveError(null);
     setIsSaving(true);
 
     try {
-      if (!selectedDisposition) {
-        alert('Please select a disposition.');
-        setIsSaving(false);
-        return;
-      }
-
       const selectedDispositionObj = dispositions.find(d => d.id === selectedDisposition);
       const dispositionedAt = selectedDisposition ? new Date() : undefined;
       const leadData: Partial<Lead> = {
-        name: name.trim() || undefined,
-        address: address.trim() || undefined,
+        name: name.trim(),
+        address: address.trim(),
         city: city.trim() || undefined,
         state: state.trim() || undefined,
         zip: zip.trim() || undefined,
@@ -107,10 +134,11 @@ export default function AddLeadModal({
       setPhone('');
       setEmail('');
       setEstimatedBill('');
+      setSaveError(null);
       setSelectedDisposition(dispositions[0]?.id || selectedDisposition);
     } catch (error) {
       console.error('Error saving lead:', error);
-      alert('Failed to save lead. Please try again.');
+      setSaveError('Failed to save lead. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -186,7 +214,10 @@ export default function AddLeadModal({
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (saveError) setSaveError(null);
+                  }}
                   placeholder="John Smith"
                   className="w-full pl-10 pr-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
                 />
@@ -201,7 +232,10 @@ export default function AddLeadModal({
               <input
                 type="text"
                 value={address}
-                onChange={(e) => setAddress(e.target.value)}
+                onChange={(e) => {
+                  setAddress(e.target.value);
+                  if (saveError) setSaveError(null);
+                }}
                 placeholder="123 Main St"
                 className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
               />
@@ -308,7 +342,13 @@ export default function AddLeadModal({
           </div>
 
           {/* Footer */}
-          <div className="sticky bottom-0 bg-white border-t border-[#E2E8F0] px-6 py-4 flex items-center gap-3">
+          <div className="sticky bottom-0 bg-white border-t border-[#E2E8F0] px-6 py-4 space-y-3">
+            {(saveError || !canSaveLead) && (
+              <p className="text-sm text-[#FF5F5A]" role="alert">
+                {saveError || saveValidationError}
+              </p>
+            )}
+            <div className="flex items-center gap-3">
             <button
               onClick={onClose}
               disabled={isSaving}
@@ -318,7 +358,7 @@ export default function AddLeadModal({
             </button>
             <button
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || !canSaveLead}
               className="flex-1 px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white font-semibold rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isSaving ? (
@@ -330,6 +370,7 @@ export default function AddLeadModal({
                 'Save Lead'
               )}
             </button>
+            </div>
           </div>
         </div>
       </div>
