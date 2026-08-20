@@ -32,6 +32,7 @@ interface LeadDetailProps {
   currentUser: User | null;
   onClose: () => void;
   onUpdate: (lead?: Lead) => void;
+  onWriteError?: (message: string) => void;
   preventOwnershipWrites?: boolean;
 }
 
@@ -91,7 +92,7 @@ const ICON_MAP: Record<string, any> = {
   'arrow-left': ArrowLeft,
 };
 
-export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preventOwnershipWrites = false }: LeadDetailProps) {
+export default function LeadDetail({ lead, currentUser, onClose, onUpdate, onWriteError, preventOwnershipWrites = false }: LeadDetailProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
   const [notesSaving, setNotesSaving] = useState(false);
@@ -145,7 +146,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
     d => d.id !== 'unclaimed' && d.id !== 'claimed' && d.countsAsDoorKnock
   );
 
-  const handleStatusChange = async (newStatus: string) => {
+  const handleStatusChange = (newStatus: string) => {
     if (!currentUser) return;
     
     // Check for special behavior dispositions
@@ -168,127 +169,107 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
       setShowObjectionTracker(true);
       return;
     }
-    
-    setIsUpdating(true);
-    
-    try {
-      // IMPORTANT: use partial update so we don't accidentally send ownership fields that could trip rules.
-      // Do not call claimLead/unclaimLead here — those await getLeadsAsync (admin = unbounded dump).
-      // Do not await GPS / easter egg / Solar Madness — those hung Save Lead and this knock path.
-      const { updateLeadAsync } = await import('@/app/utils/storage');
-      let updatedLead: Lead = { ...lead };
 
-      if (newStatus === 'claimed') {
-        if (preventOwnershipWrites) {
-          setIsUpdating(false);
-          return;
+    if (newStatus === 'claimed' && preventOwnershipWrites) return;
+    if (newStatus === 'unclaimed' && isClaimedByMe && preventOwnershipWrites) return;
+
+    // Paint first. Do not setIsUpdating — Firebase writes on this preview can take 26s+.
+    let updates: Partial<Lead>;
+    if (newStatus === 'claimed') {
+      const claimedAt = new Date();
+      updates = { status: 'claimed', claimedBy: currentUser.id, claimedAt };
+    } else if (newStatus === 'unclaimed' && isClaimedByMe) {
+      updates = { status: 'unclaimed', claimedBy: undefined, claimedAt: undefined };
+    } else {
+      const historyEntry: LeadDispositionHistoryEntry = {
+        disposition: disposition?.name || newStatus,
+        timestamp: new Date(),
+        userId: currentUser.id,
+        userName: currentUser.name,
+      };
+      updates = {
+        status: newStatus,
+        disposition: disposition?.name || newStatus,
+        dispositionedAt: new Date(),
+        dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
+      };
+    }
+    const updatedLead: Lead = { ...lead, ...updates };
+    onUpdate(updatedLead);
+
+    void import('@/app/utils/storage').then(({ updateLeadAsync }) =>
+      updateLeadAsync(lead.id, updates)
+    ).catch((error: any) => {
+      console.error('Disposition save failed:', error);
+      const msg = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error));
+      if (onWriteError) onWriteError(msg);
+      else alert(`Disposition failed to save.\n\n${msg}`);
+    });
+
+    if (disposition?.countsAsDoorKnock && typeof navigator !== 'undefined' && navigator.geolocation) {
+      void Promise.race([
+        new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 4000,
+            maximumAge: 20000,
+          });
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('GPS knock timed out')), 4000);
+        }),
+      ]).then((position) => {
+        let distanceFromAddress: number | undefined;
+        if (lead.lat && lead.lng) {
+          const R = 6371000;
+          const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
+          const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(position.coords.latitude * Math.PI / 180) *
+            Math.cos(lead.lat * Math.PI / 180) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          distanceFromAddress = R * c;
         }
-        const claimedAt = new Date();
-        await updateLeadAsync(lead.id, {
-          status: 'claimed',
-          claimedBy: currentUser.id,
-          claimedAt,
-        });
-        updatedLead = { ...lead, status: 'claimed', claimedBy: currentUser.id, claimedAt };
-      } else if (newStatus === 'unclaimed' && isClaimedByMe) {
-        if (preventOwnershipWrites) {
-          setIsUpdating(false);
-          return;
-        }
-        await updateLeadAsync(lead.id, {
-          status: 'unclaimed',
-          claimedBy: undefined,
-          claimedAt: undefined,
-        });
-        updatedLead = { ...lead, status: 'unclaimed', claimedBy: undefined, claimedAt: undefined };
-      } else {
-        const historyEntry: LeadDispositionHistoryEntry = {
-          disposition: disposition?.name || newStatus,
-          timestamp: new Date(),
-          userId: currentUser.id,
-          userName: currentUser.name,
-        };
-        const updates: Partial<Lead> = {
-          status: newStatus,
-          disposition: disposition?.name || newStatus,
-          dispositionedAt: new Date(),
-          dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-        };
-        await updateLeadAsync(lead.id, updates);
-        updatedLead = { ...lead, ...updates };
-      }
-
-      onUpdate(updatedLead);
-      setIsUpdating(false);
-
-      if (disposition?.countsAsDoorKnock && typeof navigator !== 'undefined' && navigator.geolocation) {
-        void Promise.race([
-          new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 4000,
-              maximumAge: 20000,
-            });
-          }),
-          new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('GPS knock timed out')), 4000);
-          }),
-        ]).then((position) => {
-          let distanceFromAddress: number | undefined;
-          if (lead.lat && lead.lng) {
-            const R = 6371000;
-            const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
-            const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
-            const a =
-              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(position.coords.latitude * Math.PI / 180) *
-              Math.cos(lead.lat * Math.PI / 180) *
-              Math.sin(dLng / 2) * Math.sin(dLng / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            distanceFromAddress = R * c;
-          }
-          return updateLeadAsync(lead.id, {
+        return import('@/app/utils/storage').then(({ updateLeadAsync }) =>
+          updateLeadAsync(lead.id, {
             knockGpsLat: position.coords.latitude,
             knockGpsLng: position.coords.longitude,
             knockGpsAccuracy: position.coords.accuracy,
             knockGpsTimestamp: new Date(),
             knockDistanceFromAddress: distanceFromAddress,
-          });
-        }).catch((err) => {
-          console.warn('GPS capture failed:', err);
-        });
-      }
-
-      void checkEasterEggTrigger(
-        lead.id,
-        currentUser.id,
-        currentUser.name,
-        lead.address
-      ).then((eggWon) => {
-        if (eggWon) setWonEasterEgg(eggWon);
+          })
+        );
       }).catch((err) => {
-        console.error('Easter egg check failed:', err);
+        console.warn('GPS capture failed:', err);
       });
-
-      void (async () => {
-        const token = await auth?.currentUser?.getIdToken();
-        if (!token) return;
-        const resp = await awardSolarMadnessAsync({
-          idToken: token,
-          leadId: lead.id,
-          dispositionId: disposition?.id,
-          dispositionName: disposition?.name || newStatus,
-        });
-        if (resp?.awarded) setSolarMadnessAward(resp);
-      })().catch((err) => {
-        console.error('Solar Madness award failed:', err);
-      });
-    } catch (error: any) {
-      console.error('Disposition save failed:', error);
-      const msg = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error));
-      alert(`Disposition failed to save.\n\n${msg}`);
-      setIsUpdating(false);
     }
+
+    void checkEasterEggTrigger(
+      lead.id,
+      currentUser.id,
+      currentUser.name,
+      lead.address
+    ).then((eggWon) => {
+      if (eggWon) setWonEasterEgg(eggWon);
+    }).catch((err) => {
+      console.error('Easter egg check failed:', err);
+    });
+
+    void (async () => {
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) return;
+      const resp = await awardSolarMadnessAsync({
+        idToken: token,
+        leadId: lead.id,
+        dispositionId: disposition?.id,
+        dispositionName: disposition?.name || newStatus,
+      });
+      if (resp?.awarded) setSolarMadnessAward(resp);
+    })().catch((err) => {
+      console.error('Solar Madness award failed:', err);
+    });
   };
 
   // Handle saving notes

@@ -230,13 +230,13 @@ export default function KnockingPage() {
     setWriteError(null);
   }, [applyMapLeads]);
 
-  // Knock/disposition already wrote Firestore. Paint pin + count now; do not
-  // wait on getLeadsAsync / getMapLeadsAsync / invalidateUserTurfCache.
+  // Knock paints first, then writes. Do not wait on getLeadsAsync.
   const handleLeadUpdated = useCallback((lead?: Lead) => {
     if (!lead) {
       void refreshLeads();
       return;
     }
+    setSelectedLeadSnapshot(lead);
     handleLeadAdded(lead);
   }, [handleLeadAdded, refreshLeads]);
 
@@ -946,6 +946,7 @@ export default function KnockingPage() {
           preventOwnershipWrites={!!(authUser && currentUser && authUser.id !== currentUser.id)}
           onClose={() => { setShowLeadDetail(false); setSelectedLeadId(undefined); setSelectedLeadSnapshot(undefined); }}
           onUpdate={handleLeadUpdated}
+          onWriteError={(msg) => setWriteError(msg)}
         />
       )}
       </div>
