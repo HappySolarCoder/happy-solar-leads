@@ -17,6 +17,7 @@ import { getUsersAsync } from '@/app/utils/storage';
 import ObjectionTracker from './ObjectionTracker';
 import LeadEditorModal from './LeadEditorModal';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
+import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { checkEasterEggTrigger } from '@/app/utils/easterEggs';
 import { awardSolarMadnessAsync } from '@/app/utils/solarMadness';
 import { auth } from '@/app/utils/firebase';
@@ -98,10 +99,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
-  const [dispositions, setDispositions] = useState<Disposition[]>([]);
+  const [dispositions, setDispositions] = useState<Disposition[]>(DEFAULT_DISPOSITIONS);
   const [users, setUsers] = useState<User[]>([]);
   const [adminAssignUser, setAdminAssignUser] = useState<string>('');
-  const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
   const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
   const [solarMadnessAward, setSolarMadnessAward] = useState<(SolarMadnessAwardResponse & { matchup?: any }) | null>(null);
   const [photos, setPhotos] = useState(lead.photos || []);
@@ -110,16 +110,14 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
   const canClaim = !lead.claimedBy || isClaimedByMe;
   const isClaimed = !!lead.claimedBy;
 
-  // Load dispositions on mount
+  // Dispositions are enough for first paint. Users (admin assign list) stay background.
   useEffect(() => {
-    async function loadData() {
-      const dispos = await getDispositionsAsync();
-      setDispositions(dispos);
-      const userList = await getUsersAsync();
-      setUsers(userList.filter(u => u.role !== 'admin')); // Exclude admins from assignment list
-      setIsLoadingDispositions(false);
-    }
-    loadData();
+    getDispositionsAsync()
+      .then(setDispositions)
+      .catch(() => {});
+    getUsersAsync()
+      .then((userList) => setUsers(userList.filter(u => u.role !== 'admin')))
+      .catch(() => {});
   }, []);
 
   // Lock background scroll while lead detail is open so the app header/page does not fight the panel
@@ -448,17 +446,6 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
       setIsUpdating(false);
     }
   };
-
-  if (isLoadingDispositions) {
-    return (
-      <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-          <p className="text-sm text-[#718096]">Loading...</p>
-        </div>
-      </div>
-    );
-  }
 
   const effectiveLeadType = lead.leadType === 'sale' ? 'customer' : (lead.leadType || 'prospect');
   const isCustomerLead = effectiveLeadType === 'customer';

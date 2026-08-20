@@ -60,6 +60,7 @@ export default function KnockingPage() {
   const [authUser, setAuthUser] = useState<User | null>(null);
   const actingFetchGenRef = useRef(0);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
+  const [selectedLeadSnapshot, setSelectedLeadSnapshot] = useState<Lead | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [isLoading, setIsLoading] = useState(true);
@@ -307,6 +308,7 @@ export default function KnockingPage() {
 
   const handleLeadSelect = useCallback((lead: Lead) => {
     setSelectedLeadId(lead.id);
+    setSelectedLeadSnapshot(lead);
     setShowLeadDetail(true);
   }, []);
 
@@ -485,7 +487,11 @@ export default function KnockingPage() {
     return 0;
   }), [filteredLeads, gpsPosition]);
 
-  const selectedLead = leads.find(l => l.id === selectedLeadId);
+  const selectedLead = (selectedLeadId && (
+    leads.find(l => l.id === selectedLeadId)
+    || mapLeads.find(l => l.id === selectedLeadId)
+    || (selectedLeadSnapshot?.id === selectedLeadId ? selectedLeadSnapshot : undefined)
+  )) || undefined;
 
   function getDirection(userLat: number, userLng: number, leadLat: number, leadLng: number): string {
     const angle = Math.atan2(leadLng - userLng, leadLat - userLat) * 180 / Math.PI;
@@ -645,6 +651,7 @@ export default function KnockingPage() {
               if (showLeadDetail) {
                 setShowLeadDetail(false);
                 setSelectedLeadId(undefined);
+                setSelectedLeadSnapshot(undefined);
               } else {
                 router.push('/mobile');
               }
@@ -935,7 +942,7 @@ export default function KnockingPage() {
           lead={selectedLead}
           currentUser={authUser && currentUser && authUser.id !== currentUser.id ? authUser : currentUser}
           preventOwnershipWrites={!!(authUser && currentUser && authUser.id !== currentUser.id)}
-          onClose={() => { setShowLeadDetail(false); setSelectedLeadId(undefined); }}
+          onClose={() => { setShowLeadDetail(false); setSelectedLeadId(undefined); setSelectedLeadSnapshot(undefined); }}
           onUpdate={handleLeadUpdated}
         />
       )}
