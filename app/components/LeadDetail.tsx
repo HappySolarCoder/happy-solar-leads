@@ -172,66 +172,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
     setIsUpdating(true);
     
     try {
-      // Capture GPS for knock verification (if disposition counts as door knock)
-      const disposition = dispositions.find(d => d.id === newStatus);
-      let gpsData = {};
-      
-      if (disposition?.countsAsDoorKnock && navigator.geolocation) {
-        try {
-          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 5000,
-              maximumAge: 0,
-            });
-          });
-          
-          // Calculate distance from lead address
-          let distanceFromAddress: number | undefined;
-          if (lead.lat && lead.lng) {
-            const R = 6371000; // Earth's radius in meters
-            const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
-            const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
-            const a = 
-              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(position.coords.latitude * Math.PI / 180) * 
-              Math.cos(lead.lat * Math.PI / 180) *
-              Math.sin(dLng / 2) * Math.sin(dLng / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            distanceFromAddress = R * c;
-          }
-          
-          // Distance verification for setter, manager, sales (not admin)
-          const MAX_DISTANCE_METERS = 50; // 50 meters (~164 feet) - close enough to verify, not too strict
-          const requiresProximity = ['setter', 'manager', 'sales'].includes(currentUser.role);
-          
-          if (requiresProximity && distanceFromAddress && distanceFromAddress > MAX_DISTANCE_METERS) {
-            setIsUpdating(false);
-            const distanceFeet = Math.round(distanceFromAddress * 3.281); // Convert to feet
-            alert(
-              `You are not close enough to this address to disposition it.\n\n` +
-              `Distance: ${distanceFeet} feet away\n` +
-              `Required: Within 100 feet\n\n` +
-              `Please move closer to the address and try again.`
-            );
-            return;
-          }
-          
-          gpsData = {
-            knockGpsLat: position.coords.latitude,
-            knockGpsLng: position.coords.longitude,
-            knockGpsAccuracy: position.coords.accuracy,
-            knockGpsTimestamp: new Date(),
-            knockDistanceFromAddress: distanceFromAddress,
-          };
-        } catch (err) {
-          console.warn('GPS capture failed:', err);
-          // Continue without GPS if it fails (allows indoor knocking where GPS might not work)
-        }
-      }
-      
       // IMPORTANT: use partial update so we don't accidentally send ownership fields that could trip rules.
       // Do not call claimLead/unclaimLead here — those await getLeadsAsync (admin = unbounded dump).
+      // Do not await GPS / easter egg / Solar Madness — those hung Save Lead and this knock path.
       const { updateLeadAsync } = await import('@/app/utils/storage');
       let updatedLead: Lead = { ...lead };
 
@@ -267,56 +210,83 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
         };
         const updates: Partial<Lead> = {
           status: newStatus,
+          disposition: disposition?.name || newStatus,
           dispositionedAt: new Date(),
           dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-          ...gpsData,
         };
         await updateLeadAsync(lead.id, updates);
         updatedLead = { ...lead, ...updates };
       }
-      
-      // Check for Easter Egg win!
-      try {
-        const eggWon = await checkEasterEggTrigger(
-          lead.id,
-          currentUser.id,
-          currentUser.name,
-          lead.address
-        );
-
-        if (eggWon) {
-          setWonEasterEgg(eggWon);
-        }
-      } catch (err) {
-        console.error('Easter egg check failed:', err);
-        // Don't block the disposition save if egg check fails
-      }
-
-      // Solar Madness (basket win)
-      try {
-        const token = await auth?.currentUser?.getIdToken();
-        if (token) {
-          const resp = await awardSolarMadnessAsync({
-            idToken: token,
-            leadId: lead.id,
-            dispositionId: disposition?.id,
-            dispositionName: disposition?.name || newStatus,
-          });
-          if (resp?.awarded) {
-            setSolarMadnessAward(resp);
-          }
-        }
-      } catch (err) {
-        console.error('Solar Madness award failed:', err);
-        // Don't block the disposition save if award fails
-      }
 
       onUpdate(updatedLead);
+      setIsUpdating(false);
+
+      if (disposition?.countsAsDoorKnock && typeof navigator !== 'undefined' && navigator.geolocation) {
+        void Promise.race([
+          new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 4000,
+              maximumAge: 20000,
+            });
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('GPS knock timed out')), 4000);
+          }),
+        ]).then((position) => {
+          let distanceFromAddress: number | undefined;
+          if (lead.lat && lead.lng) {
+            const R = 6371000;
+            const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
+            const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
+            const a =
+              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(position.coords.latitude * Math.PI / 180) *
+              Math.cos(lead.lat * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            distanceFromAddress = R * c;
+          }
+          return updateLeadAsync(lead.id, {
+            knockGpsLat: position.coords.latitude,
+            knockGpsLng: position.coords.longitude,
+            knockGpsAccuracy: position.coords.accuracy,
+            knockGpsTimestamp: new Date(),
+            knockDistanceFromAddress: distanceFromAddress,
+          });
+        }).catch((err) => {
+          console.warn('GPS capture failed:', err);
+        });
+      }
+
+      void checkEasterEggTrigger(
+        lead.id,
+        currentUser.id,
+        currentUser.name,
+        lead.address
+      ).then((eggWon) => {
+        if (eggWon) setWonEasterEgg(eggWon);
+      }).catch((err) => {
+        console.error('Easter egg check failed:', err);
+      });
+
+      void (async () => {
+        const token = await auth?.currentUser?.getIdToken();
+        if (!token) return;
+        const resp = await awardSolarMadnessAsync({
+          idToken: token,
+          leadId: lead.id,
+          dispositionId: disposition?.id,
+          dispositionName: disposition?.name || newStatus,
+        });
+        if (resp?.awarded) setSolarMadnessAward(resp);
+      })().catch((err) => {
+        console.error('Solar Madness award failed:', err);
+      });
     } catch (error: any) {
       console.error('Disposition save failed:', error);
       const msg = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error));
       alert(`Disposition failed to save.\n\n${msg}`);
-    } finally {
       setIsUpdating(false);
     }
   };

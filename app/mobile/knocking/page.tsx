@@ -28,6 +28,7 @@ import LeadDetail from '@/app/components/LeadDetail';
 import UserSwitcher from '@/app/components/UserSwitcher';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import GoalsPaceModal from '@/app/components/GoalsPaceModal';
@@ -77,7 +78,7 @@ export default function KnockingPage() {
   const [freshPinsOnly, setFreshPinsOnly] = useState<boolean>(false);
   const [leadTypeFilter, setLeadTypeFilter] = useState<'all' | 'prospects' | 'customers'>('all');
   const [showFilters, setShowFilters] = useState(false);
-  const [dispositions, setDispositions] = useState<any[]>([]);
+  const [dispositions, setDispositions] = useState<any[]>(DEFAULT_DISPOSITIONS);
   const [users, setUsers] = useState<User[]>([]);
   const [addressSearch, setAddressSearch] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -593,11 +594,12 @@ export default function KnockingPage() {
     todayStart.setHours(0, 0, 0, 0);
     const doorKnockStatusIds = dispositions.filter((d: any) => d.countsAsDoorKnock).map((d: any) => String(d.id).toLowerCase());
     return leads.filter(l => {
-      if (!l.dispositionedAt || l.dispositionedAt < todayStart) return false;
+      const knockedAt = l.dispositionedAt ? new Date(l.dispositionedAt) : null;
+      if (!knockedAt || Number.isNaN(knockedAt.getTime()) || knockedAt < todayStart) return false;
       const lastHistoryUserId = (l.dispositionHistory && l.dispositionHistory[0]?.userId) ? String(l.dispositionHistory[0].userId) : null;
       const actedByMe = lastHistoryUserId === currentUser?.id || l.claimedBy === currentUser?.id;
       if (!actedByMe) return false;
-      const disp = String(l.status || l.disposition || '').toLowerCase();
+      const disp = String(l.status || l.disposition || '').toLowerCase().replace(/\s+/g, '-');
       return doorKnockStatusIds.includes(disp);
     }).length;
   }, [leads, dispositions, currentUser]);
