@@ -177,6 +177,16 @@ export default function Home() {
     setLeads((prev) => upsertLeadInList(prev, lead));
   }, []);
 
+  // Knock/disposition already wrote Firestore. Paint pin + count now; do not
+  // wait on getLeadsAsync / getMapLeadsAsync / invalidateUserTurfCache.
+  const handleLeadUpdated = useCallback((lead?: Lead) => {
+    if (!lead) {
+      void refreshLeads();
+      return;
+    }
+    handleLeadAdded(lead);
+  }, [handleLeadAdded, refreshLeads]);
+
   const handleViewportLeads = useCallback((bounds: MapBounds) => {
     mapBoundsRef.current = bounds;
     if (mapFetchTimerRef.current) clearTimeout(mapFetchTimerRef.current);
@@ -455,7 +465,7 @@ export default function Home() {
             setShowLeadDetail(false);
             setSelectedLeadId(undefined);
           }}
-          onUpdate={refreshLeads}
+          onUpdate={handleLeadUpdated}
         />
       )}
 

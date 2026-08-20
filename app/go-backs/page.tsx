@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Calendar, List, MapPin, Clock, FileText, User as UserIcon, ArrowLeft, Settings, X, Route, Map, Filter, Users, BarChart3, Layers } from 'lucide-react';
-import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getLeadsAsync, getUsersAsync, rememberSavedLead, upsertLeadInList } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isToday, isPast, isFuture, startOfWeek, endOfWeek } from 'date-fns';
@@ -74,7 +74,23 @@ export default function GoBacksPage() {
     loadData();
   }, [router]);
 
-  const handleUpdate = async () => {
+  const handleUpdate = async (updatedLead?: Lead) => {
+    if (updatedLead) {
+      rememberSavedLead(updatedLead);
+      setLeads((prev) => {
+        const next = upsertLeadInList(prev, updatedLead);
+        return next.filter(lead => {
+          if (lead.status !== 'go-back' || !lead.goBackScheduledDate) {
+            return false;
+          }
+          if (currentUser && canSeeAllLeads(currentUser.role)) {
+            return true;
+          }
+          return lead.claimedBy === currentUser?.id || lead.goBackScheduledBy === currentUser?.id;
+        });
+      });
+      return;
+    }
     const loadedLeads = await getLeadsAsync();
     const goBackLeads = loadedLeads.filter(lead => {
       if (lead.status !== 'go-back' || !lead.goBackScheduledDate) {

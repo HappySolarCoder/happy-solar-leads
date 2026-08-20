@@ -228,6 +228,16 @@ export default function KnockingPage() {
     setWriteError(null);
   }, [applyMapLeads]);
 
+  // Knock/disposition already wrote Firestore. Paint pin + count now; do not
+  // wait on getLeadsAsync / getMapLeadsAsync / invalidateUserTurfCache.
+  const handleLeadUpdated = useCallback((lead?: Lead) => {
+    if (!lead) {
+      void refreshLeads();
+      return;
+    }
+    handleLeadAdded(lead);
+  }, [handleLeadAdded, refreshLeads]);
+
   const handleActingUserChange = useCallback(async (user: User) => {
     const gen = ++actingFetchGenRef.current;
     setCurrentUser(user);
@@ -926,7 +936,7 @@ export default function KnockingPage() {
           currentUser={authUser && currentUser && authUser.id !== currentUser.id ? authUser : currentUser}
           preventOwnershipWrites={!!(authUser && currentUser && authUser.id !== currentUser.id)}
           onClose={() => { setShowLeadDetail(false); setSelectedLeadId(undefined); }}
-          onUpdate={refreshLeads}
+          onUpdate={handleLeadUpdated}
         />
       )}
       </div>

@@ -13,7 +13,7 @@ import {
   Coffee, Gift, Shield, Lock, Unlock, Key, Trash, Archive,
   Ban, Slash, MinusCircle, PlusCircle, Info, ArrowRight, ArrowLeft
 } from 'lucide-react';
-import { updateLeadStatus, claimLead, unclaimLead, getUsersAsync } from '@/app/utils/storage';
+import { getUsersAsync } from '@/app/utils/storage';
 import ObjectionTracker from './ObjectionTracker';
 import LeadEditorModal from './LeadEditorModal';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
@@ -30,7 +30,7 @@ interface LeadDetailProps {
   lead: Lead;
   currentUser: User | null;
   onClose: () => void;
-  onUpdate: () => void;
+  onUpdate: (lead?: Lead) => void;
   preventOwnershipWrites?: boolean;
 }
 
@@ -232,39 +232,49 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
         }
       }
       
+      // IMPORTANT: use partial update so we don't accidentally send ownership fields that could trip rules.
+      // Do not call claimLead/unclaimLead here — those await getLeadsAsync (admin = unbounded dump).
+      const { updateLeadAsync } = await import('@/app/utils/storage');
+      let updatedLead: Lead = { ...lead };
+
       if (newStatus === 'claimed') {
         if (preventOwnershipWrites) {
           setIsUpdating(false);
           return;
         }
-        // Handle claim
-        claimLead(lead.id, currentUser.id);
+        const claimedAt = new Date();
+        await updateLeadAsync(lead.id, {
+          status: 'claimed',
+          claimedBy: currentUser.id,
+          claimedAt,
+        });
+        updatedLead = { ...lead, status: 'claimed', claimedBy: currentUser.id, claimedAt };
       } else if (newStatus === 'unclaimed' && isClaimedByMe) {
         if (preventOwnershipWrites) {
           setIsUpdating(false);
           return;
         }
-        // Handle unclaim
-        unclaimLead(lead.id);
+        await updateLeadAsync(lead.id, {
+          status: 'unclaimed',
+          claimedBy: undefined,
+          claimedAt: undefined,
+        });
+        updatedLead = { ...lead, status: 'unclaimed', claimedBy: undefined, claimedAt: undefined };
       } else {
-        // Handle status change with GPS data
-        // IMPORTANT: use partial update so we don't accidentally send ownership fields that could trip rules.
-        const { updateLeadAsync } = await import('@/app/utils/storage');
-
-        // Add to disposition history
         const historyEntry: LeadDispositionHistoryEntry = {
           disposition: disposition?.name || newStatus,
           timestamp: new Date(),
           userId: currentUser.id,
           userName: currentUser.name,
         };
-
-        await updateLeadAsync(lead.id, {
+        const updates: Partial<Lead> = {
           status: newStatus,
           dispositionedAt: new Date(),
           dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
           ...gpsData,
-        });
+        };
+        await updateLeadAsync(lead.id, updates);
+        updatedLead = { ...lead, ...updates };
       }
       
       // Check for Easter Egg win!
@@ -303,7 +313,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
         // Don't block the disposition save if award fails
       }
 
-      onUpdate();
+      onUpdate(updatedLead);
     } catch (error: any) {
       console.error('Disposition save failed:', error);
       const msg = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error));
@@ -325,7 +335,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
         notes,
       };
       await saveLeadAsync(updatedLead);
-      if (onUpdate) onUpdate();
+      if (onUpdate) onUpdate(updatedLead);
     } catch (error) {
       console.error('Error saving notes:', error);
     } finally {
@@ -355,7 +365,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
       photos: updatedPhotos,
     };
     await saveLeadAsync(updatedLead);
-    if (onUpdate) onUpdate();
+    if (onUpdate) onUpdate(updatedLead);
   };
 
   const handleObjectionSave = async (objectionType: ObjectionType, objectionNotes: string) => {
@@ -392,7 +402,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
       await saveLeadAsync(updatedLead);
       
       setShowObjectionTracker(false);
-      onUpdate();
+      onUpdate(updatedLead);
     } finally {
       setIsUpdating(false);
     }
@@ -433,7 +443,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
       await saveLeadAsync(updatedLead);
       
       setShowGoBackSchedule(false);
-      onUpdate();
+      onUpdate(updatedLead);
     } finally {
       setIsUpdating(false);
     }
@@ -917,9 +927,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, preve
         <LeadEditorModal
           lead={lead}
           onClose={() => setShowLeadEditor(false)}
-          onSave={() => {
+          onSave={(updated) => {
             setShowLeadEditor(false);
-            onUpdate();
+            onUpdate(updated);
           }}
         />
       )}
