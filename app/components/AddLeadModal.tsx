@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { X, MapPin, Loader, Home, Phone, Mail, DollarSign } from 'lucide-react';
 import { Lead } from '@/app/types';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
-import type { Disposition } from '@/app/types/disposition';
+import { DEFAULT_DISPOSITIONS, type Disposition } from '@/app/types/disposition';
 
 interface AddLeadModalProps {
   isOpen: boolean;
@@ -35,6 +35,14 @@ function getSaveLeadValidationError(name: string, address: string): string | nul
   return null;
 }
 
+function filterAddLeadDispositions(rows: Disposition[]): Disposition[] {
+  return rows
+    .filter((d) => d.id !== 'claimed' && d.id !== 'unclaimed')
+    .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+}
+
+const SEEDED_ADD_LEAD_DISPOSITIONS = filterAddLeadDispositions(DEFAULT_DISPOSITIONS);
+
 export default function AddLeadModal({
   isOpen,
   onClose,
@@ -56,22 +64,29 @@ export default function AddLeadModal({
   const [estimatedBill, setEstimatedBill] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [dispositions, setDispositions] = useState<Disposition[]>([]);
-  const [selectedDisposition, setSelectedDisposition] = useState('');
+  const [dispositions, setDispositions] = useState<Disposition[]>(SEEDED_ADD_LEAD_DISPOSITIONS);
+  const [selectedDisposition, setSelectedDisposition] = useState(SEEDED_ADD_LEAD_DISPOSITIONS[0]?.id ?? '');
 
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
     getDispositionsAsync()
       .then((rows) => {
-        const options = rows
-          .filter((d) => d.id !== 'claimed' && d.id !== 'unclaimed')
-          .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+        if (cancelled) return;
+        const options = filterAddLeadDispositions(rows);
+        // Empty filtered Firestore list must not wipe the seeded knock options.
+        if (options.length === 0) return;
         setDispositions(options);
-        if (!selectedDisposition && options.length > 0) {
-          setSelectedDisposition(options[0].id);
-        }
+        setSelectedDisposition((current) =>
+          current && options.some((d) => d.id === current) ? current : options[0].id
+        );
       })
-      .catch(() => setDispositions([]));
+      .catch(() => {
+        // Keep seeded defaults — never setDispositions([]).
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen]);
 
   useEffect(() => {
