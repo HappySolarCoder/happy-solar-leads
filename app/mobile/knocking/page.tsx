@@ -592,17 +592,55 @@ export default function KnockingPage() {
   const todaysKnocks = useMemo(() => {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const doorKnockStatusIds = dispositions.filter((d: any) => d.countsAsDoorKnock).map((d: any) => String(d.id).toLowerCase());
-    return leads.filter(l => {
+    const knockKeys = new Set<string>();
+    for (const d of dispositions) {
+      if (!d?.countsAsDoorKnock) continue;
+      const id = String(d.id || '').trim().toLowerCase();
+      const name = String(d.name || '').trim().toLowerCase();
+      if (id) {
+        knockKeys.add(id);
+        knockKeys.add(id.replace(/\s+/g, '-'));
+      }
+      if (name) {
+        knockKeys.add(name);
+        knockKeys.add(name.replace(/\s+/g, '-'));
+      }
+    }
+    const isDoorKnockDisp = (value: unknown) => {
+      const raw = String(value || '').trim().toLowerCase();
+      if (!raw) return false;
+      return knockKeys.has(raw) || knockKeys.has(raw.replace(/\s+/g, '-'));
+    };
+    const actorIds = new Set(
+      [currentUser?.id, authUser?.id].filter(Boolean).map((id) => String(id))
+    );
+
+    let count = 0;
+    for (const l of leads) {
+      const history = Array.isArray(l.dispositionHistory) ? l.dispositionHistory : [];
+      let historyKnocks = 0;
+      for (const entry of history) {
+        const ts = entry?.timestamp ? new Date(entry.timestamp) : null;
+        if (!ts || Number.isNaN(ts.getTime()) || ts < todayStart) continue;
+        if (actorIds.size > 0 && entry.userId && !actorIds.has(String(entry.userId))) continue;
+        if (!isDoorKnockDisp(entry.disposition)) continue;
+        historyKnocks += 1;
+      }
+      if (historyKnocks > 0) {
+        count += historyKnocks;
+        continue;
+      }
       const knockedAt = l.dispositionedAt ? new Date(l.dispositionedAt) : null;
-      if (!knockedAt || Number.isNaN(knockedAt.getTime()) || knockedAt < todayStart) return false;
-      const lastHistoryUserId = (l.dispositionHistory && l.dispositionHistory[0]?.userId) ? String(l.dispositionHistory[0].userId) : null;
-      const actedByMe = lastHistoryUserId === currentUser?.id || l.claimedBy === currentUser?.id;
-      if (!actedByMe) return false;
-      const disp = String(l.status || l.disposition || '').toLowerCase().replace(/\s+/g, '-');
-      return doorKnockStatusIds.includes(disp);
-    }).length;
-  }, [leads, dispositions, currentUser]);
+      if (!knockedAt || Number.isNaN(knockedAt.getTime()) || knockedAt < todayStart) continue;
+      const lastHistoryUserId = history[0]?.userId ? String(history[0].userId) : null;
+      const actedByMe =
+        (lastHistoryUserId && actorIds.has(lastHistoryUserId))
+        || (l.claimedBy != null && actorIds.has(String(l.claimedBy)));
+      if (!actedByMe) continue;
+      if (isDoorKnockDisp(l.status) || isDoorKnockDisp(l.disposition)) count += 1;
+    }
+    return count;
+  }, [leads, dispositions, currentUser, authUser]);
 
   const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
 
