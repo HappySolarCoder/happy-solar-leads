@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
 import { saveLeadAsync, getCurrentUserAsync } from '@/app/utils/storage';
-import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
+import { getAdminSettingsAsync, AdminSettings } from '@/app/utils/adminSettings';
+import { auth } from '@/app/utils/firebase';
 
 interface LeadEditorModalProps {
   lead: Lead;
@@ -28,14 +29,19 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
   const [isSending, setIsSending] = useState(false);
   const [infoSent, setInfoSent] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [prefetchedSettings, setPrefetchedSettings] = useState<AdminSettings | null>(null);
 
-  // Load current user when component mounts
+  // Prefetch user + admin settings on mount so Send does not wait on Firestore
   useEffect(() => {
-    async function loadUser() {
-      const user = await getCurrentUserAsync();
+    async function prefetch() {
+      const [user, settings] = await Promise.all([
+        getCurrentUserAsync(),
+        getAdminSettingsAsync(),
+      ]);
       setCurrentUser(user);
+      setPrefetchedSettings(settings);
     }
-    loadUser();
+    prefetch();
   }, []);
 
   const handleSave = async () => {
@@ -90,7 +96,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
         return;
       }
 
-      // 1. Get current user (fallback if state not loaded yet)
+      // 1. Use prefetched user (fallback once if mount fetch has not landed)
       const user = currentUser || await getCurrentUserAsync();
       
       console.log('=== USER DEBUG ===');
@@ -98,12 +104,15 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       console.log('User for message:', user);
       console.log('User name:', user?.name);
 
-      // 2. Get admin settings from Firestore (synced across devices)
-      const settings = await getAdminSettingsAsync();
+      // 2. Use prefetched settings (fallback once if mount fetch has not landed)
+      let settings = prefetchedSettings;
+      if (!settings?.notificationWebhook) {
+        settings = await getAdminSettingsAsync();
+        if (settings) setPrefetchedSettings(settings);
+      }
 
       console.log('=== SETTINGS DEBUG ===');
-      console.log('Settings loaded from Firestore:', settings);
-      console.log('Webhook URL:', settings?.notificationWebhook);
+      console.log('Settings loaded:', settings ? { notificationType: settings.notificationType, hasWebhook: !!settings.notificationWebhook } : null);
 
       if (!settings?.notificationWebhook) {
         console.error('Settings check failed:', { settings });
@@ -111,7 +120,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
         return;
       }
 
-      // 3. Build and send webhook notification
+      // 3. Build the same message; server posts it to the existing webhook (no browser Discord CORS)
       let solarSection = '';
       if (lead.solarScore) {
         solarSection = `\n**☀️ Solar Data:**
@@ -141,33 +150,36 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
 🎯 **Action Required:** Call customer to schedule appointment
       `.trim();
 
-      const payload = settings.notificationType === 'discord'
-        ? { content: leadInfo }
-        : settings.notificationType === 'googlechat'
-        ? { text: leadInfo }
-        : settings.notificationType === 'slack'
-        ? { text: leadInfo }
-        : { message: leadInfo };
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) {
+        alert('You must be signed in to send to the Scheduling Manager.');
+        return;
+      }
 
-      console.log('Sending webhook to:', settings.notificationWebhook);
-
-      // Send webhook
-      const response = await fetch(settings.notificationWebhook, {
+      const response = await fetch('/api/scheduling-manager/notify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ leadInfo }),
+        signal: AbortSignal.timeout(8000),
       });
 
       if (response.ok) {
         console.log('✅ Webhook sent successfully');
         setInfoSent(true);
       } else {
-        console.error('❌ Webhook failed:', response.status, response.statusText);
-        alert(`Failed to send notification: ${response.status} ${response.statusText}`);
+        const data = await response.json().catch(() => ({}));
+        console.error('❌ Webhook failed:', response.status, response.statusText, data);
+        alert(`Failed to send notification: ${data?.error || `${response.status} ${response.statusText}`}`);
       }
     } catch (err: any) {
       console.error('❌ Webhook error:', err);
-      alert(`Error sending notification: ${err.message}`);
+      const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+      alert(timedOut
+        ? 'Notification timed out after 8 seconds. Confirm in Discord before sending again.'
+        : `Error sending notification: ${err.message}`);
     } finally {
       setIsSending(false);
     }
