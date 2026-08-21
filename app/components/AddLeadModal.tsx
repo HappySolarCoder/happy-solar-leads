@@ -27,9 +27,10 @@ function isBlankOrPlaceholder(value: string, placeholder: string): boolean {
 }
 
 function getSaveLeadValidationError(name: string, address: string): string | null {
-  const nameBad = isBlankOrPlaceholder(name, PLACEHOLDER_NAME);
+  // Empty / whitespace-only name is allowed. Exact placeholder "John Smith" is still junk.
+  const nameIsPlaceholder = name.trim().toLowerCase() === PLACEHOLDER_NAME;
   const streetBad = isBlankOrPlaceholder(address, PLACEHOLDER_STREET);
-  if (nameBad || streetBad) {
+  if (nameIsPlaceholder || streetBad) {
     return 'Enter a real name and street address. Placeholder text cannot be saved.';
   }
   return null;
@@ -219,10 +220,10 @@ export default function AddLeadModal({
               </select>
             </div>
 
-            {/* Name (Required) */}
+            {/* Name */}
             <div>
               <label className="block text-sm font-semibold text-[#2D3748] mb-2">
-                Name <span className="text-[#FF5F5A]">*</span>
+                Name
               </label>
               <div className="relative">
                 <Home className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#718096]" />
