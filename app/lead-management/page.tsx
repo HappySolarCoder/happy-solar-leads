@@ -7,12 +7,41 @@ import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
 import { getLeadsInBoundsAsync, getUsersAsync, rememberSavedLead, saveLeadAsync, upsertLeadInList, type MapBounds } from '@/app/utils/storage';
 import { getAllUsers } from '@/app/utils/firestore';
 import { getCurrentAuthUser } from '@/app/utils/auth';
+import { auth } from '@/app/utils/firebase';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
 import { buildAssignableUsersFromPageData, isAssignableUserId } from '@/app/utils/assignableUsersFallback';
-import { getTerritoriesAsync, saveTerritory, deleteTerritoryAsync } from '@/app/utils/territories';
+import { getTerritoriesAsync, saveTerritory, deleteTerritoryAsync, normalizeTerritoryPolygon } from '@/app/utils/territories';
 import { Territory } from '@/app/types/territory';
 import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
+
+/** Firestore/client write errors: keep permission-denied vs other codes visible. */
+function formatWriteError(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const rec = error as { code?: unknown; message?: unknown };
+    const code = typeof rec.code === 'string' ? rec.code.trim() : '';
+    const message = typeof rec.message === 'string' ? rec.message.trim() : '';
+    if (code && message) return `${code}: ${message}`;
+    if (code) return code;
+    if (message) return message;
+  }
+  if (error instanceof Error && error.message) return error.message;
+  const fallback = String(error);
+  return fallback && fallback !== '[object Object]' ? fallback : 'Unknown error';
+}
+
+/** isAdmin() looks up users/{request.auth.uid}. Surface a session/doc mismatch. */
+function sessionVsUserDoc(currentUser: User | null): string | null {
+  const sessionUid = auth?.currentUser?.uid?.trim() || '';
+  const userDocId = currentUser?.id?.trim() || '';
+  if (sessionUid && userDocId && sessionUid === userDocId) return null;
+  return `session uid (${sessionUid || 'none'}) vs users/${userDocId || 'none'}`;
+}
+
+function withAssignError(message: string, currentUser: User | null): string {
+  const mismatch = sessionVsUserDoc(currentUser);
+  return mismatch ? `${message}\n\n${mismatch}` : message;
+}
 
 function viewportQuery(
   mapCenter: [number, number],
@@ -167,75 +196,98 @@ export default function LeadManagementPage() {
     setSelectedLeads(new Set(leadIds));
     setDrawingMode(false);
 
-    // In assign mode, save the territory polygon and auto-assign leads
-    if (mode === 'assign' && isAssignableUserId(assignToUser) && polygon.length >= 3) {
-      const user = activeAssignableUsers.find(u => u.id === assignToUser);
-      if (user) {
-        setOperationType('assigning');
-        try {
-          // Show progress while saveTerritory runs so a hang is not a silent grey button.
-          setProgress({ current: 0, total: leadIds.length });
-          setIsDeleting(true);
+    if (mode !== 'assign') return;
 
-          // Convert polygon to Firestore-compatible format
-          const polygonObjects = polygon.map(([lat, lng]) => ({ lat, lng }));
-          
-          // 1. Save the territory first
-          await saveTerritory({
-            userId: user.id,
-            userName: user.name,
-            userColor: user.color || '#6b7280',
-            polygon: polygonObjects,
-            leadIds,
-            createdAt: new Date(),
-            createdBy: currentUser?.id || 'unknown',
-          });
-          
-          console.log('Territory saved to Firestore');
+    if (!isAssignableUserId(assignToUser)) {
+      alert('Select a user in Assign To before finishing the territory.');
+      return;
+    }
 
-          // 2. Auto-assign all leads inside the territory
-          const leadsToAssign = leadIds.length;
-          setProgress({ current: 0, total: leadsToAssign });
+    const user = activeAssignableUsers.find(u => u.id === assignToUser);
+    if (!user) {
+      alert('Assign To is invalid. Select a user from the list before finishing the territory.');
+      return;
+    }
 
-          let processed = 0;
-          const batchSize = 30;
+    // Pairs or {lat,lng}. Do not .map(([lat,lng])) — objects throw "not iterable".
+    const polygonObjects = normalizeTerritoryPolygon(polygon);
+    if (polygonObjects.length < 3) {
+      alert(
+        `Could not read the drawn polygon (saveTerritory not called).\n\n` +
+        `Raw points: ${Array.isArray(polygon) ? polygon.length : 0}, valid lat/lng: ${polygonObjects.length}.`
+      );
+      return;
+    }
 
-          for (let i = 0; i < leadIds.length; i += batchSize) {
-            const batch = leadIds.slice(i, i + batchSize);
-            
-            await Promise.all(
-              batch.map(async (leadId) => {
-                try {
-                  const lead = findLead(leadId);
-                  if (!lead) return;
-                  
-                  // Preserve existing status, only assign if not already claimed
-                  const updatedLead: Lead = {
-                    ...lead,
-                    assignedTo: user.id,
-                    assignedAt: new Date(),
-                    // Only set status to 'assigned' if lead is unclaimed
-                    ...(lead.status === 'unclaimed' ? { status: 'assigned' } : {}),
-                  };
-                  
-                  await saveLeadAsync(updatedLead);
-                  processed++;
-                } catch (err) {
-                  console.error(`Failed to assign lead ${leadId}:`, err);
-                }
-              })
-            );
+    // Filter-by-user can be 0-in-view (leadIds []). Territory must still save.
+    const idsToAssign = (leadIds || []).filter((id) => typeof id === 'string' && id.trim().length > 0);
 
-            setProgress({ current: processed, total: leadsToAssign });
+    setOperationType('assigning');
+    setProgress({ current: 0, total: Math.max(idsToAssign.length, 1) });
+    setIsDeleting(true);
+    try {
+      try {
+        await saveTerritory({
+          userId: user.id,
+          userName: user.name || user.id,
+          userColor: user.color || '#6b7280',
+          polygon: polygonObjects,
+          leadIds: idsToAssign,
+          createdAt: new Date(),
+          createdBy: auth?.currentUser?.uid || currentUser?.id || 'unknown',
+        });
+      } catch (error) {
+        console.error('Failed at saveTerritory:', error);
+        alert(withAssignError(`Failed at saveTerritory.\n\n${formatWriteError(error)}`, currentUser));
+        return;
+      }
 
-            if (i + batchSize < leadIds.length) {
-              await new Promise(resolve => setTimeout(resolve, 200));
+      console.log('Territory saved to Firestore');
+
+      const leadsToAssign = idsToAssign.length;
+      setProgress({ current: 0, total: Math.max(leadsToAssign, 1) });
+
+      let processed = 0;
+      const batchSize = 30;
+      const leadErrors: string[] = [];
+
+      for (let i = 0; i < idsToAssign.length; i += batchSize) {
+        const batch = idsToAssign.slice(i, i + batchSize);
+
+        await Promise.all(
+          batch.map(async (leadId) => {
+            try {
+              const lead = findLead(leadId);
+              if (!lead) return;
+
+              const updatedLead: Lead = {
+                ...lead,
+                assignedTo: user.id,
+                assignedAt: new Date(),
+                ...(lead.status === 'unclaimed' ? { status: 'assigned' } : {}),
+              };
+
+              await saveLeadAsync(updatedLead);
+              processed++;
+            } catch (err) {
+              console.error(`Failed to assign lead ${leadId}:`, err);
+              const text = formatWriteError(err);
+              if (!leadErrors.includes(text)) leadErrors.push(text);
             }
-          }
+          })
+        );
 
-          // 3. Patch pins already in view, then refresh territories + viewport
-          const assignedIdSet = new Set(leadIds);
-          const assignedAt = new Date();
+        setProgress({ current: processed, total: Math.max(leadsToAssign, 1) });
+
+        if (i + batchSize < idsToAssign.length) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      try {
+        const assignedIdSet = new Set(idsToAssign);
+        const assignedAt = new Date();
+        if (idsToAssign.length > 0) {
           setBoundsLeads(prev => prev.map(lead => (
             assignedIdSet.has(lead.id)
               ? {
@@ -246,19 +298,31 @@ export default function LeadManagementPage() {
                 }
               : lead
           )));
-          const loadedTerritories = await getTerritoriesAsync();
-          setTerritories(loadedTerritories);
-          await handleUpdate();
-          
-          alert(`Territory created! Assigned ${processed} leads to ${user.name}.`);
-        } catch (error) {
-          console.error('Failed to save territory:', error);
-          alert('Failed to create territory. Please try again.');
-        } finally {
-          setIsDeleting(false);
-          setProgress({ current: 0, total: 0 });
         }
+        const loadedTerritories = await getTerritoriesAsync();
+        setTerritories(loadedTerritories);
+        await handleUpdate();
+      } catch (error) {
+        console.error('Failed at handleUpdate refresh:', error);
+        alert(withAssignError(
+          `Territory saved (saveTerritory ok). Failed at handleUpdate refresh.\n\n${formatWriteError(error)}`,
+          currentUser,
+        ));
+        return;
       }
+
+      if (leadErrors.length > 0) {
+        alert(withAssignError(
+          `Territory saved (saveTerritory ok). Failed at lead assign (saveLeadAsync).\n\n` +
+          `Assigned ${processed} of ${leadsToAssign} lead(s) to ${user.name}.\n${leadErrors.join('\n')}`,
+          currentUser,
+        ));
+      } else {
+        alert(`Territory created! Assigned ${processed} lead(s) to ${user.name}.`);
+      }
+    } finally {
+      setIsDeleting(false);
+      setProgress({ current: 0, total: 0 });
     }
   };
 
@@ -493,29 +557,25 @@ export default function LeadManagementPage() {
       const batchSize = 30;
       let processed = 0;
       let failed = 0;
+      const leadErrors: string[] = [];
 
       for (let i = 0; i < leadIds.length; i += batchSize) {
         const batch = leadIds.slice(i, i + batchSize);
-        
+
         const results = await Promise.allSettled(
           batch.map(async (leadId) => {
-            try {
-              const lead = findLead(leadId);
-              if (!lead) throw new Error('Lead not found');
-              
-              const updatedLead: Lead = {
-                ...lead,
-                assignedTo: assignToUser,
-                assignedAt: new Date(),
-                status: 'assigned',
-              };
-              
-              await saveLeadAsync(updatedLead);
-              return true;
-            } catch (err) {
-              console.error(`Failed to assign lead ${leadId}:`, err);
-              return false;
-            }
+            const lead = findLead(leadId);
+            if (!lead) throw new Error('Lead not found');
+
+            const updatedLead: Lead = {
+              ...lead,
+              assignedTo: assignToUser,
+              assignedAt: new Date(),
+              status: 'assigned',
+            };
+
+            await saveLeadAsync(updatedLead);
+            return true;
           })
         );
 
@@ -524,6 +584,10 @@ export default function LeadManagementPage() {
             processed++;
           } else {
             failed++;
+            const reason = result.status === 'rejected' ? result.reason : new Error('Assign failed');
+            const text = formatWriteError(reason);
+            if (!leadErrors.includes(text)) leadErrors.push(text);
+            console.error('Failed to assign lead:', reason);
           }
         });
 
@@ -534,16 +598,28 @@ export default function LeadManagementPage() {
         }
       }
 
-      await handleUpdate();
-      
+      try {
+        await handleUpdate();
+      } catch (error) {
+        console.error('Failed at handleUpdate refresh:', error);
+        alert(withAssignError(
+          `Lead writes finished. Failed at handleUpdate refresh.\n\n${formatWriteError(error)}`,
+          currentUser,
+        ));
+        return;
+      }
+
       if (failed > 0) {
-        alert(`Assigned ${processed} lead(s). ${failed} failed - please try those again.`);
+        alert(withAssignError(
+          `Failed at lead assign (saveLeadAsync). Assigned ${processed} lead(s). ${failed} failed.\n\n${leadErrors.join('\n')}`,
+          currentUser,
+        ));
       } else {
         alert(`Successfully assigned all ${processed} lead(s) to ${targetUser.name}!`);
       }
     } catch (error) {
       console.error('Error assigning leads:', error);
-      alert('Operation failed. Please try again.');
+      alert(withAssignError(`Failed at lead assign (saveLeadAsync).\n\n${formatWriteError(error)}`, currentUser));
     } finally {
       setIsDeleting(false);
       setDrawingMode(false);
