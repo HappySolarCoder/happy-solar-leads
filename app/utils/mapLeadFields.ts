@@ -1,6 +1,7 @@
-import { collection, query, where, limit, getDocs } from 'firebase/firestore';
+import { collection, query, where, limit, getDocs, orderBy, startAfter } from 'firebase/firestore';
 import { db } from './firebase';
 import { Lead } from '@/app/types';
+import { selectNewestInBounds } from './knockingPinVisibility';
 
 export type MapBounds = { south: number; north: number; west: number; east: number };
 
@@ -89,6 +90,79 @@ export async function getLeadsForUserLimited(uid: string, maxLeads: number = 400
 const USER_TURF_SCAN_CAP = 4000;
 const USER_TURF_TTL = 90_000;
 
+function isOrderByIndexError(error: unknown): boolean {
+  const err = error as { code?: string; message?: string } | undefined;
+  const code = String(err?.code || '');
+  const message = String(err?.message || error || '');
+  return (
+    code === 'failed-precondition' ||
+    /failed-precondition/i.test(code) ||
+    /FAILED_PRECONDITION/i.test(message) ||
+    /requires an index/i.test(message)
+  );
+}
+
+function mapThinLeadDoc(docSnap: { id: string; data: () => any }): Lead {
+  const data = docSnap.data();
+  const lead = {
+    ...data,
+    id: docSnap.id,
+    createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
+    claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
+    dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
+    assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
+    dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
+      ...entry,
+      timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
+    })) || undefined,
+  } as Lead;
+  return toThinMapLead(lead);
+}
+
+async function queryOwnedSlice(
+  leadsRef: ReturnType<typeof collection>,
+  field: 'claimedBy' | 'assignedTo',
+  uid: string,
+  preferCreatedAtDesc: boolean
+): Promise<{ docs: Array<{ id: string; data: () => any }>; usedCreatedAtOrder: boolean }> {
+  if (preferCreatedAtDesc) {
+    try {
+      const ordered = query(
+        leadsRef,
+        where(field, '==', uid),
+        orderBy('createdAt', 'desc'),
+        limit(USER_TURF_SCAN_CAP)
+      );
+      const snap = await getDocs(ordered);
+      return { docs: snap.docs, usedCreatedAtOrder: true };
+    } catch (error) {
+      // Missing claimedBy+createdAt on prod must not empty the map.
+      if (isOrderByIndexError(error)) {
+        console.warn(`[MapLeads] ${field}+createdAt index missing; unordered equality fallback`);
+      } else {
+        console.warn(`[MapLeads] ${field}+createdAt orderBy failed; unordered equality fallback`, error);
+      }
+    }
+  }
+
+  // Default equality order is __name__ asc. Date.now() ids mean this page is the
+  // oldest slice. If it fills the cap, the next page is the newer-id window
+  // (today's drops at 4173 claimed live past a 4000 oldest-only scan).
+  const first = await getDocs(query(leadsRef, where(field, '==', uid), limit(USER_TURF_SCAN_CAP)));
+  const docs = first.docs.slice();
+  if (first.docs.length === USER_TURF_SCAN_CAP) {
+    try {
+      const tail = await getDocs(
+        query(leadsRef, where(field, '==', uid), startAfter(first.docs[first.docs.length - 1]), limit(USER_TURF_SCAN_CAP))
+      );
+      docs.push(...tail.docs);
+    } catch (error) {
+      console.warn(`[MapLeads] ${field} newest-id tail page failed; keeping first page`, error);
+    }
+  }
+  return { docs, usedCreatedAtOrder: false };
+}
+
 let userTurfCache: { uid: string; leads: Lead[]; ts: number } | null = null;
 let userTurfInflight: { uid: string; promise: Promise<Lead[]> } | null = null;
 let userTurfEpoch = 0;
@@ -108,32 +182,22 @@ async function loadUserTurfCached(uid: string): Promise<Lead[]> {
       return [];
     }
     const leadsRef = collection(db, 'leads');
-    const claimedQ = query(leadsRef, where('claimedBy', '==', uid), limit(USER_TURF_SCAN_CAP));
-    const assignedQ = query(leadsRef, where('assignedTo', '==', uid), limit(USER_TURF_SCAN_CAP));
-    const [claimedSnap, assignedSnap] = await Promise.all([getDocs(claimedQ), getDocs(assignedQ)]);
+    // claimedBy+createdAt DESC is in firestore.indexes.json. Do not firebase deploy.
+    // assignedTo+createdAt is NOT in that file — do not orderBy assignedTo.
+    const [claimed, assigned] = await Promise.all([
+      queryOwnedSlice(leadsRef, 'claimedBy', uid, true),
+      queryOwnedSlice(leadsRef, 'assignedTo', uid, false),
+    ]);
     const byId = new Map<string, Lead>();
-    const add = (docSnap: any) => {
-      const data = docSnap.data();
-      const lead = {
-        ...data,
-        id: docSnap.id,
-        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
-        claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
-        dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
-        assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
-        dispositionHistory: data.dispositionHistory?.map((entry: any) => ({
-          ...entry,
-          timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
-        })) || undefined,
-      } as Lead;
-      byId.set(docSnap.id, toThinMapLead(lead));
-    };
-    for (const d of claimedSnap.docs) add(d);
-    for (const d of assignedSnap.docs) add(d);
+    for (const d of claimed.docs) byId.set(d.id, mapThinLeadDoc(d));
+    for (const d of assigned.docs) byId.set(d.id, mapThinLeadDoc(d));
     const leads = Array.from(byId.values());
     if (epoch === userTurfEpoch) {
       userTurfCache = { uid, leads, ts: Date.now() };
-      console.log(`[MapLeads] Cached ${leads.length} claimed+assigned for ${uid} (equality scan cap ${USER_TURF_SCAN_CAP}/field; no claimedBy+lat index)`);
+      console.log(
+        `[MapLeads] Cached ${leads.length} claimed+assigned for ${uid} ` +
+        `(equality scan cap ${USER_TURF_SCAN_CAP}/field; claimedBy createdAt desc=${claimed.usedCreatedAtOrder}; no claimedBy+lat index)`
+      );
     }
     return leads;
   })();
@@ -194,7 +258,7 @@ export async function getUserViewportLeads(
 ): Promise<Lead[]> {
   try {
     const turf = await loadUserTurfCached(uid);
-    return turf.filter((lead) => leadInBounds(lead, bounds)).slice(0, maxLeads);
+    return selectNewestInBounds(turf, bounds, maxLeads);
   } catch (error) {
     console.error('Error getting user viewport leads:', error);
     return [];

@@ -24,6 +24,7 @@ import {
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
 import { boundsAround, boundsCenter, boundsNearlySame, seedPinsInBox } from '@/app/utils/knockingMapSeed';
+import { shouldKeepKnockingProspect } from '@/app/utils/knockingPinVisibility';
 import LeadDetail from '@/app/components/LeadDetail';
 import UserSwitcher from '@/app/components/UserSwitcher';
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
@@ -429,7 +430,7 @@ export default function KnockingPage() {
   }, [roleFilteredLeads, leadTypeFilter, isCustomerLead]);
 
   const applyKnockingFilters = useCallback((source: Lead[]) => {
-    let prospects = source.filter(l => !isCustomerLead(l) && l.solarCategory !== 'poor');
+    let prospects = source.filter(l => !isCustomerLead(l) && shouldKeepKnockingProspect(l, currentUser?.id));
     let customers = source.filter(isCustomerLead);
 
     if (setterFilter !== 'all') {
@@ -466,7 +467,7 @@ export default function KnockingPage() {
     if (leadTypeFilter === 'customers') return customers;
     if (leadTypeFilter === 'prospects') return prospects;
     return [...customers, ...prospects];
-  }, [isCustomerLead, setterFilter, solarFilter, dispositionFilter, freshPinsOnly, dispositions, leadTypeFilter]);
+  }, [isCustomerLead, setterFilter, solarFilter, dispositionFilter, freshPinsOnly, dispositions, leadTypeFilter, currentUser?.id]);
 
   const filteredLeads = useMemo(
     () => applyKnockingFilters(leadTypeFilteredLeads),
