@@ -40,16 +40,19 @@ export const KNOCK_STATUSES = [
 ] as const;
 
 export function leadCreatedAtMs(lead: KnockingPin): number {
-  const created = lead.createdAt as { toDate?: () => Date } | Date | string | number | null | undefined;
+  const created = lead.createdAt;
   if (created instanceof Date && !Number.isNaN(created.getTime())) return created.getTime();
   if (typeof created === 'number' && Number.isFinite(created)) return created;
   if (typeof created === 'string') {
     const parsed = Date.parse(created);
     if (!Number.isNaN(parsed)) return parsed;
   }
-  if (created && typeof created.toDate === 'function') {
-    const date = created.toDate();
-    if (date instanceof Date && !Number.isNaN(date.getTime())) return date.getTime();
+  if (created && typeof created === 'object' && 'toDate' in created) {
+    const toDate = (created as { toDate?: () => Date }).toDate;
+    if (typeof toDate === 'function') {
+      const date = toDate();
+      if (date instanceof Date && !Number.isNaN(date.getTime())) return date.getTime();
+    }
   }
   // generateId() is `${Date.now()}-…`
   const idMs = parseInt(String(lead.id || '').split('-')[0], 10);
