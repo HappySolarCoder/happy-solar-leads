@@ -2,20 +2,76 @@ import { collection, addDoc, getDocs, query, orderBy, deleteDoc, doc } from 'fir
 import { db } from './firebase';
 import { Territory, TerritoryPoint } from '@/app/types/territory';
 
+function toIsoCreatedAt(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  if (value && typeof value === 'object' && typeof (value as { toDate?: unknown }).toDate === 'function') {
+    const parsed = (value as { toDate: () => Date }).toDate();
+    if (parsed instanceof Date && !Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  throw new Error('Territory createdAt is not a valid date');
+}
+
+function cleanTerritoryWrite(obj: Record<string, unknown>): Record<string, unknown> {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) cleaned[key] = value;
+  }
+  return cleaned;
+}
+
+/** Accept iPad/Leaflet [lat,lng] pairs or {lat,lng} objects. Drop undefined/NaN. */
+export function normalizeTerritoryPolygon(polygon: unknown): TerritoryPoint[] {
+  if (!Array.isArray(polygon)) return [];
+  const out: TerritoryPoint[] = [];
+  for (const point of polygon) {
+    let lat: number = NaN;
+    let lng: number = NaN;
+    if (Array.isArray(point) && point.length >= 2) {
+      lat = Number(point[0]);
+      lng = Number(point[1]);
+    } else if (point && typeof point === 'object') {
+      const rec = point as { lat?: unknown; lng?: unknown };
+      lat = Number(rec.lat);
+      lng = Number(rec.lng);
+    }
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      out.push({ lat, lng });
+    }
+  }
+  return out;
+}
+
 export async function saveTerritory(territory: Omit<Territory, 'id'>): Promise<string> {
   if (!db) throw new Error('Firestore not initialized');
-  
-  const territoriesRef = collection(db, 'territories');
-  
-  // Convert polygon to Firestore-compatible format (already objects)
-  const firestoreData = {
-    ...territory,
-    polygon: territory.polygon.map(p => ({ lat: p.lat, lng: p.lng })),
-    createdAt: territory.createdAt.toISOString(),
-  };
-  
-  const docRef = await addDoc(territoriesRef, firestoreData);
-  
+
+  const polygon = normalizeTerritoryPolygon(territory.polygon);
+  if (polygon.length < 3) {
+    throw new Error('Territory polygon must have at least 3 valid lat/lng points');
+  }
+
+  // Empty leadIds is valid — Filter-by-user can be 0-in-view while the polygon still saves.
+  const leadIds = (territory.leadIds || []).filter(
+    (id): id is string => typeof id === 'string' && id.trim().length > 0,
+  );
+
+  // Explicit fields only — do not spread Date/undefined extras (Firestore rejects both).
+  const firestoreData = cleanTerritoryWrite({
+    userId: territory.userId,
+    userName: territory.userName || territory.userId,
+    userColor: territory.userColor || '#6b7280',
+    polygon,
+    leadIds,
+    createdAt: toIsoCreatedAt(territory.createdAt),
+    createdBy: territory.createdBy || 'unknown',
+  });
+
+  const docRef = await addDoc(collection(db, 'territories'), firestoreData);
   return docRef.id;
 }
 
