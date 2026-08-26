@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
-import { getLeadsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
+import { getLeadsAsync, getLeadsInBoundsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
@@ -27,6 +27,7 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
 export default function LeadManagementPage() {
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [boundsLeads, setBoundsLeads] = useState<Lead[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
@@ -40,6 +41,9 @@ export default function LeadManagementPage() {
   const [viewMode, setViewMode] = useState<'map' | 'assignments'>('map');
   const [territories, setTerritories] = useState<Territory[]>([]);
   const [operationType, setOperationType] = useState<'assigning' | 'unclaiming' | 'deleting'>('unclaiming');
+  const [mapCenter, setMapCenter] = useState<[number, number]>([43.1566, -77.6088]);
+  const [mapZoom, setMapZoom] = useState(11);
+  const [isPinsLoading, setIsPinsLoading] = useState(false);
 
   // Debug logging
   useEffect(() => {
@@ -66,18 +70,17 @@ export default function LeadManagementPage() {
 
       setCurrentUser(user);
 
-      const loadedLeads = await getLeadsAsync();
+      // NOTE: Do not load all leads on this page (50k–200k pins).
+      // Leads are lazy-loaded by map viewport via getLeadsInBoundsAsync().
       const loadedUsers = await getUsersAsync();
       const loadedTerritories = await getTerritoriesAsync();
 
       console.log('[Lead Management] Loaded data:', {
-        leads: loadedLeads.length,
         users: loadedUsers.length,
         territories: loadedTerritories.length,
       });
       console.log('[Lead Management] Territories:', loadedTerritories);
 
-      setLeads(loadedLeads);
       setUsers(loadedUsers);
       setTerritories(loadedTerritories);
       setIsLoading(false);
@@ -87,10 +90,14 @@ export default function LeadManagementPage() {
   }, [router]);
 
   const handleUpdate = async () => {
+    // Keep selections in sync, but avoid reloading the entire lead dataset.
+    setSelectedLeads(new Set());
+
+    // Refresh cached "all leads" list used for bulk operations (assign/unclaim/delete)
+    // This is only used when performing operations, not for rendering pins.
     const loadedLeads = await getLeadsAsync();
     setLeads(loadedLeads);
-    setSelectedLeads(new Set());
-    
+
     // Load territories
     const loadedTerritories = await getTerritoriesAsync();
     setTerritories(loadedTerritories);
@@ -182,15 +189,48 @@ export default function LeadManagementPage() {
     }
   };
 
+  // Lazy-load pins by viewport bounds (fast even at 200k total leads)
+  useEffect(() => {
+    let isCanceled = false;
+    const t = setTimeout(async () => {
+      try {
+        setIsPinsLoading(true);
+        // Approximate bounds based on center/zoom (Leaflet will refine internally, but this is good enough)
+        // We intentionally add padding so pins near edges are included.
+        const latPad = 0.15 * Math.pow(2, Math.max(0, 11 - mapZoom));
+        const lngPad = 0.25 * Math.pow(2, Math.max(0, 11 - mapZoom));
+        const south = mapCenter[0] - latPad;
+        const north = mapCenter[0] + latPad;
+        const west = mapCenter[1] - lngPad;
+        const east = mapCenter[1] + lngPad;
+
+        // Cap returned pins depending on zoom
+        const maxLeads = mapZoom >= 15 ? 12000 : mapZoom >= 13 ? 7000 : mapZoom >= 11 ? 3500 : 2000;
+        const loaded = await getLeadsInBoundsAsync(south, north, west, east, maxLeads);
+        if (isCanceled) return;
+        setBoundsLeads(loaded);
+      } catch (e) {
+        console.error('[Lead Management] Failed loading pins in bounds', e);
+      } finally {
+        if (!isCanceled) setIsPinsLoading(false);
+      }
+    }, 450);
+
+    return () => {
+      isCanceled = true;
+      clearTimeout(t);
+    };
+  }, [mapCenter, mapZoom]);
+
   const activeAssignableUsers = users.filter(u => {
     const ux = u as any;
     return !ux.deleted && ux.isActive !== false;
   });
 
-  // Filter leads by selected user
-  const filteredLeads = userFilter === 'all' 
-    ? leads 
-    : leads.filter(lead => lead.assignedTo === userFilter || lead.claimedBy === userFilter);
+  // Filter pins currently loaded for the viewport (fast)
+  const filteredLeads = userFilter === 'all'
+    ? boundsLeads
+    : boundsLeads.filter(lead => lead.assignedTo === userFilter || lead.claimedBy === userFilter);
 
   // Get lead counts per user (active users only for assignment UX)
   const userLeadCounts = activeAssignableUsers.map(user => ({
@@ -200,7 +240,6 @@ export default function LeadManagementPage() {
 
   // Map center defaults to Rochester (for admin oversight or when GPS unavailable)
   // GPS location can be used via browser geolocation if needed in future
-  const mapCenter: [number, number] = [43.1566, -77.6088]; // Rochester, NY
 
   const deselectAll = () => {
     setSelectedLeads(new Set());
@@ -665,6 +704,11 @@ export default function LeadManagementPage() {
           users={ensureUserColors(users)}
           onLeadClick={(lead) => {}}
           center={mapCenter}
+          zoom={mapZoom}
+          onMapMove={(center, zoom) => {
+            setMapCenter(center);
+            setMapZoom(zoom);
+          }}
           assignmentMode={drawingMode ? 'territory' : 'none'}
           selectedLeadIdsForAssignment={Array.from(selectedLeads)}
           onTerritoryDrawn={handleTerritoryDrawn}
