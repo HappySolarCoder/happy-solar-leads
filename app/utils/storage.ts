@@ -444,8 +444,8 @@ export async function getLeadsByUserAsync(userId: string): Promise<Lead[]> {
 // INITIALIZATION
 // ============================================
 
-// Load initial data on client
+// Warm users only. Do not eager-fetch getLeadsAsync() — that dumps the whole
+// leads collection for admins and was the hung await on /lead-management.
 if (typeof window !== 'undefined') {
-  getLeadsAsync().catch(console.error);
   getUsersAsync().catch(console.error);
 }
