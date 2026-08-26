@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { Lead, User } from '@/app/types';
+import { mapUserDoc, mapUserDocs } from './mapUserDoc';
 
 // Collections
 const LEADS_COLLECTION = 'leads';
@@ -502,13 +503,9 @@ export async function getAllUsers(): Promise<User[]> {
   try {
     const usersRef = collection(db, USERS_COLLECTION);
     const snapshot = await getDocs(usersRef);
-    return snapshot.docs.map(doc => ({
-      ...doc.data(),
-      id: doc.id,
-      createdAt: doc.data().createdAt?.toDate() || new Date(),
-      lastLogin: doc.data().lastLogin?.toDate(),
-      approvalRequestedAt: doc.data().approvalRequestedAt?.toDate?.() || doc.data().approvalRequestedAt,
-    } as User));
+    // PR 125 parse: mixed Timestamp / Date / string createdAt must not throw.
+    // Per-doc wrap is in mapUserDocs — one bad field skips that field, not the roster.
+    return mapUserDocs(snapshot.docs);
   } catch (error) {
     console.error('[getAllUsers] Failed to load users collection:', error);
     throw error;
@@ -524,14 +521,7 @@ export async function getUser(id: string): Promise<User | null> {
     const userRef = doc(db, USERS_COLLECTION, id);
     const snapshot = await getDoc(userRef);
     if (snapshot.exists()) {
-      const data = snapshot.data();
-      return {
-        ...data,
-        id: snapshot.id,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        lastLogin: data.lastLogin?.toDate(),
-        approvalRequestedAt: data.approvalRequestedAt?.toDate?.() || data.approvalRequestedAt,
-      } as User;
+      return mapUserDoc(snapshot);
     }
     return null;
   } catch (error) {
