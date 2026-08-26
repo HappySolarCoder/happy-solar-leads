@@ -25,6 +25,7 @@ import SolarMadnessWinModal from './SolarMadnessWinModal';
 import { EasterEgg } from '@/app/types/easterEgg';
 import EasterEggWinModal from './EasterEggWinModal';
 import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
+import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 
 interface LeadDetailProps {
   lead: Lead;
@@ -760,7 +761,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
                     {lead.goBackScheduledDate
                       ? format(new Date(lead.goBackScheduledDate), 'MMM d, yyyy')
                       : 'Not set'}
-                    {lead.goBackScheduledTime ? ` • ${lead.goBackScheduledTime}` : ' • Anytime'}
+                    {lead.goBackScheduledTime ? ` • ${formatGoBackScheduledTime(lead.goBackScheduledTime)}` : ' • Anytime'}
                   </span>
                 </div>
 
