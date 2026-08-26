@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
 import { getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
-import { getLeadsInBounds, getLeadsInBoundsForUser, getLeadsForUserLimited } from '@/app/utils/firestore';
+import { getAllUsers, getLeadsInBounds, getLeadsInBoundsForUser, getLeadsForUserLimited } from '@/app/utils/firestore';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
+import { buildAssignableUsersFromPageData, loadUsersWithRosterRetry } from '@/app/utils/assignableUsersFallback';
 import { getTerritoriesAsync, saveTerritory, deleteTerritoryAsync } from '@/app/utils/territories';
 import { Territory } from '@/app/types/territory';
 import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
@@ -55,6 +56,7 @@ export default function LeadManagementPage() {
   const [territories, setTerritories] = useState<Territory[]>([]);
   const [operationType, setOperationType] = useState<'assigning' | 'unclaiming' | 'deleting'>('unclaiming');
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number]>(DEFAULT_LEAD_MANAGEMENT_CENTER);
   const [mapZoom, setMapZoom] = useState(DEFAULT_LEAD_MANAGEMENT_ZOOM);
 
@@ -98,10 +100,26 @@ export default function LeadManagementPage() {
 
         // Do not await getLeadsAsync() — that was the hung await (unbounded
         // getAllLeads for admin / unbounded getLeadsForUser for manager).
-        const [loadedUsers, loadedTerritories] = await withLoadTimeout(
-          Promise.all([getUsersAsync(), getTerritoriesAsync()]),
+        // Users: authenticated getUsersAsync, then one getAllUsers retry if
+        // empty. getAllUsers throws on failure so we can surface it.
+        const [roster, loadedTerritories] = await withLoadTimeout(
+          Promise.all([
+            loadUsersWithRosterRetry(getUsersAsync, getAllUsers),
+            getTerritoriesAsync(),
+          ]),
           'getUsersAsync/getTerritoriesAsync',
         );
+        const loadedUsers = roster.users;
+        setUsersLoadError(roster.error);
+
+        if (loadedUsers.length === 0) {
+          const fallbackUsers = buildAssignableUsersFromPageData(user, loadedTerritories, []);
+          console.warn('[Lead Management] users collection empty; using on-page fallback', {
+            fallbackUsers: fallbackUsers.length,
+            territories: loadedTerritories.length,
+          });
+        }
+
         setUsers(loadedUsers);
         setTerritories(loadedTerritories);
         console.log('[Lead Management] Loaded data:', {
@@ -245,7 +263,13 @@ export default function LeadManagementPage() {
     }
   };
 
-  const activeAssignableUsers = users.filter(u => {
+  // If getAllUsers stayed empty, keep Assign To / Filter names from data
+  // already on the page (currentUser + visible territories + viewport pins).
+  const sourceUsers = users.length > 0
+    ? users
+    : buildAssignableUsersFromPageData(currentUser, territories, leads);
+
+  const activeAssignableUsers = sourceUsers.filter(u => {
     const ux = u as any;
     return !ux.deleted && ux.isActive !== false;
   });
@@ -623,6 +647,11 @@ export default function LeadManagementPage() {
             <Users className="w-4 h-4 text-[#718096]" />
             <label className="text-sm font-medium text-[#2D3748]">Filter by User</label>
           </div>
+          {usersLoadError && (
+            <p className="text-sm text-red-600" role="alert">
+              Could not load users: {usersLoadError}. Assign To / Filter are using names already on this page.
+            </p>
+          )}
           <select
             value={userFilter}
             onChange={(e) => {
@@ -641,7 +670,8 @@ export default function LeadManagementPage() {
               ))}
           </select>
 
-          {/* Assign To User (only in assign mode) */}
+          {/* Assign To lists sourceUsers as soon as Assign Territory is clicked.
+              Same names as Filter — no need to open Filter first. */}
           {mode === 'assign' && (
             <div className="mt-2">
               <label className="block text-sm font-medium text-[#2D3748] mb-2">
@@ -743,7 +773,7 @@ export default function LeadManagementPage() {
         <LeadMap
           leads={filteredLeads}
           currentUser={currentUser}
-          users={ensureUserColors(users)}
+          users={ensureUserColors(sourceUsers)}
           onLeadClick={(lead) => {}}
           center={mapCenter}
           zoom={mapZoom}

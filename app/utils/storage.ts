@@ -236,14 +236,22 @@ export function getUsers(): User[] {
 }
 
 export async function getUsersAsync(): Promise<User[]> {
-  if (usersCache && Date.now() - usersCacheTimestamp < CACHE_TTL) {
+  if (usersCache && usersCache.length > 0 && Date.now() - usersCacheTimestamp < CACHE_TTL) {
     return usersCache;
   }
 
   try {
+    // Wait for auth. getAllUsers() now throws on failure (no silent []).
+    // A pre-auth [] must not be cached for 90s (empties Assign To / Filter).
+    const { getCurrentAuthUser } = await import('./auth');
+    const me = await getCurrentAuthUser();
+    if (!me) return usersCache || [];
+
     const users = await firestoreGetAllUsers();
-    usersCache = users;
-    usersCacheTimestamp = Date.now();
+    if (users.length > 0) {
+      usersCache = users;
+      usersCacheTimestamp = Date.now();
+    }
     return users;
   } catch (error) {
     console.error('Firestore getUsers failed:', error);
