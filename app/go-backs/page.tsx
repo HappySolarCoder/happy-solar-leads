@@ -8,6 +8,7 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isToday, isPast, isFuture, startOfWeek, endOfWeek } from 'date-fns';
 import LeadDetail from '@/app/components/LeadDetail';
+import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 
 export default function GoBacksPage() {
   const router = useRouter();
@@ -292,7 +293,7 @@ export default function GoBacksPage() {
                           <div className="flex-shrink-0">
                             <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#F7FAFC] border border-[#E2E8F0] text-xs font-semibold text-[#2D3748]">
                               <Clock className="w-3.5 h-3.5 text-[#718096]" />
-                              {lead.goBackScheduledTime || 'Anytime'}
+                              {formatGoBackScheduledTime(lead.goBackScheduledTime) || 'Anytime'}
                             </span>
                           </div>
                         </div>
@@ -390,7 +391,7 @@ export default function GoBacksPage() {
                             className="w-full text-left px-2 py-1 bg-[#FEF5E7] hover:bg-[#FDE7C5] rounded text-xs text-[#2D3748] truncate transition-colors"
                           >
                             {lead.goBackScheduledTime && (
-                              <span className="font-medium">{lead.goBackScheduledTime} </span>
+                              <span className="font-medium">{formatGoBackScheduledTime(lead.goBackScheduledTime)} </span>
                             )}
                             {lead.address.split(',')[0]}
                           </button>
@@ -448,7 +449,7 @@ export default function GoBacksPage() {
                         {lead.goBackScheduledTime && (
                           <div className="flex items-center gap-2 mb-1 text-sm text-[#718096]">
                             <Clock className="w-3 h-3" />
-                            {lead.goBackScheduledTime}
+                            {formatGoBackScheduledTime(lead.goBackScheduledTime)}
                           </div>
                         )}
                         {lead.goBackNotes && (
@@ -516,7 +517,7 @@ export default function GoBacksPage() {
                       </div>
                       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#F7FAFC] border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex-shrink-0">
                         <Clock className="w-3.5 h-3.5 text-[#718096]" />
-                        {lead.goBackScheduledTime || 'Anytime'}
+                        {formatGoBackScheduledTime(lead.goBackScheduledTime) || 'Anytime'}
                       </span>
                     </div>
                     {lead.goBackNotes && (
