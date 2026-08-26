@@ -1,5 +1,5 @@
-import { Lead, User } from '@/app/types';
-import { Territory } from '@/app/types/territory';
+import type { Lead, User } from '../types';
+import type { Territory } from '../types/territory';
 
 function stubUser(id: string, name: string, color?: string, extra?: Partial<User>): User {
   return {
