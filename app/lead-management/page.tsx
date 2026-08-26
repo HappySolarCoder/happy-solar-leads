@@ -1,16 +1,30 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
-import { getLeadsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
+import { getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
+import { getLeadsInBounds, getLeadsInBoundsForUser, getLeadsForUserLimited } from '@/app/utils/firestore';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
 import { getTerritoriesAsync, saveTerritory, deleteTerritoryAsync } from '@/app/utils/territories';
 import { Territory } from '@/app/types/territory';
 import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
+import {
+  DEFAULT_LEAD_MANAGEMENT_CENTER,
+  DEFAULT_LEAD_MANAGEMENT_ZOOM,
+  leadManagementBoundsFromView,
+  loadLeadManagementPins,
+  withLoadTimeout,
+} from '@/app/utils/leadManagementPins';
+
+const PIN_LOADERS = {
+  getLeadsInBounds,
+  getLeadsInBoundsForUser,
+  getLeadsForUserLimited,
+};
 
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   ssr: false,
@@ -40,6 +54,9 @@ export default function LeadManagementPage() {
   const [viewMode, setViewMode] = useState<'map' | 'assignments'>('map');
   const [territories, setTerritories] = useState<Territory[]>([]);
   const [operationType, setOperationType] = useState<'assigning' | 'unclaiming' | 'deleting'>('unclaiming');
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [mapCenter, setMapCenter] = useState<[number, number]>(DEFAULT_LEAD_MANAGEMENT_CENTER);
+  const [mapZoom, setMapZoom] = useState(DEFAULT_LEAD_MANAGEMENT_ZOOM);
 
   // Debug logging
   useEffect(() => {
@@ -50,50 +67,96 @@ export default function LeadManagementPage() {
     });
   }, [viewMode, territories]);
 
+  const refreshPins = useCallback(async (user: User, center: [number, number], zoom: number) => {
+    const bounds = leadManagementBoundsFromView(center, zoom);
+    const loaded = await withLoadTimeout(
+      loadLeadManagementPins(user, bounds, PIN_LOADERS),
+      'loadLeadManagementPins',
+    );
+    setLeads(prev => (loaded.length > 0 ? loaded : prev));
+    return loaded;
+  }, []);
+
   useEffect(() => {
     async function loadData() {
-      const user = await getCurrentAuthUser();
-      if (!user) {
-        router.push('/login');
-        return;
+      let stayOnPage = false;
+      try {
+        const user = await getCurrentAuthUser();
+        if (!user) {
+          router.push('/login');
+          return;
+        }
+
+        // Check permission - managers and admins only
+        if (!canSeeAllLeads(user.role)) {
+          router.push('/mobile/knocking');
+          return;
+        }
+
+        stayOnPage = true;
+        setCurrentUser(user);
+
+        // Do not await getLeadsAsync() — that was the hung await (unbounded
+        // getAllLeads for admin / unbounded getLeadsForUser for manager).
+        const [loadedUsers, loadedTerritories] = await withLoadTimeout(
+          Promise.all([getUsersAsync(), getTerritoriesAsync()]),
+          'getUsersAsync/getTerritoriesAsync',
+        );
+        setUsers(loadedUsers);
+        setTerritories(loadedTerritories);
+        console.log('[Lead Management] Loaded data:', {
+          users: loadedUsers.length,
+          territories: loadedTerritories.length,
+        });
+        console.log('[Lead Management] Territories:', loadedTerritories);
+      } catch (error) {
+        stayOnPage = true;
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[Lead Management] loadData failed:', error);
+        setLoadError(message);
+      } finally {
+        if (stayOnPage) setIsLoading(false);
       }
-
-      // Check permission - managers and admins only
-      if (!canSeeAllLeads(user.role)) {
-        router.push('/mobile/knocking');
-        return;
-      }
-
-      setCurrentUser(user);
-
-      const loadedLeads = await getLeadsAsync();
-      const loadedUsers = await getUsersAsync();
-      const loadedTerritories = await getTerritoriesAsync();
-
-      console.log('[Lead Management] Loaded data:', {
-        leads: loadedLeads.length,
-        users: loadedUsers.length,
-        territories: loadedTerritories.length,
-      });
-      console.log('[Lead Management] Territories:', loadedTerritories);
-
-      setLeads(loadedLeads);
-      setUsers(loadedUsers);
-      setTerritories(loadedTerritories);
-      setIsLoading(false);
     }
 
     loadData();
   }, [router]);
 
+  // Pins load after the page leaves Loading, so a pin-query hang cannot
+  // trap the isLoading shell. Empty fetches must not wipe pins already shown.
+  useEffect(() => {
+    if (!currentUser) return;
+    let canceled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const loaded = await refreshPins(currentUser, mapCenter, mapZoom);
+        if (!canceled && loaded.length > 0) setLoadError(null);
+      } catch (error) {
+        if (canceled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[Lead Management] Pin load failed:', error);
+        setLoadError(message);
+      }
+    }, 450);
+    return () => {
+      canceled = true;
+      clearTimeout(timer);
+    };
+  }, [currentUser, mapCenter, mapZoom, refreshPins]);
+
   const handleUpdate = async () => {
-    const loadedLeads = await getLeadsAsync();
-    setLeads(loadedLeads);
     setSelectedLeads(new Set());
-    
-    // Load territories
-    const loadedTerritories = await getTerritoriesAsync();
-    setTerritories(loadedTerritories);
+    try {
+      const loadedTerritories = await getTerritoriesAsync();
+      setTerritories(loadedTerritories);
+      if (currentUser) {
+        await refreshPins(currentUser, mapCenter, mapZoom);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[Lead Management] handleUpdate failed:', error);
+      setLoadError(message);
+    }
   };
 
   const handleTerritoryDrawn = async (leadIds: string[], polygon: [number, number][]) => {
@@ -197,10 +260,6 @@ export default function LeadManagementPage() {
     user,
     count: leads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
   }));
-
-  // Map center defaults to Rochester (for admin oversight or when GPS unavailable)
-  // GPS location can be used via browser geolocation if needed in future
-  const mapCenter: [number, number] = [43.1566, -77.6088]; // Rochester, NY
 
   const deselectAll = () => {
     setSelectedLeads(new Set());
@@ -657,6 +716,28 @@ export default function LeadManagementPage() {
         )}
       </header>
 
+      {loadError && (
+        <div className="px-3 py-2 bg-amber-50 border-b border-amber-200 text-sm text-amber-800 flex items-center justify-between gap-3 flex-shrink-0" role="alert">
+          <span>Could not finish loading leads: {loadError}. The page is usable — retry or pan the map.</span>
+          {currentUser && (
+            <button
+              type="button"
+              onClick={() => {
+                refreshPins(currentUser, mapCenter, mapZoom)
+                  .then((loaded) => { if (loaded.length > 0) setLoadError(null); })
+                  .catch((error) => {
+                    const message = error instanceof Error ? error.message : String(error);
+                    setLoadError(message);
+                  });
+              }}
+              className="shrink-0 px-2 py-1 rounded bg-white border border-amber-300 text-amber-900"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Map View */}
       <div className="flex-1 relative">
         <LeadMap
@@ -665,6 +746,11 @@ export default function LeadManagementPage() {
           users={ensureUserColors(users)}
           onLeadClick={(lead) => {}}
           center={mapCenter}
+          zoom={mapZoom}
+          onMapMove={(center, zoom) => {
+            setMapCenter(center);
+            setMapZoom(zoom);
+          }}
           assignmentMode={drawingMode ? 'territory' : 'none'}
           selectedLeadIdsForAssignment={Array.from(selectedLeads)}
           onTerritoryDrawn={handleTerritoryDrawn}

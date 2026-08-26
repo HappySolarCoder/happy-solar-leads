@@ -92,6 +92,33 @@ export async function getLeadsForUser(uid: string): Promise<Lead[]> {
 }
 
 /**
+ * Same claimedBy/assignedTo equality queries as getLeadsForUser, with a cap.
+ * Uses automatic single-field indexes only — do not add claimedBy+lat here.
+ */
+export async function getLeadsForUserLimited(uid: string, maxLeads: number = 2000): Promise<Lead[]> {
+  if (!db) {
+    console.warn('Firestore not initialized');
+    return [];
+  }
+
+  try {
+    const leadsRef = collection(db, LEADS_COLLECTION);
+    const claimedQ = query(leadsRef, where('claimedBy', '==', uid), limit(maxLeads));
+    const assignedQ = query(leadsRef, where('assignedTo', '==', uid), limit(maxLeads));
+    const [claimedSnap, assignedSnap] = await Promise.all([getDocs(claimedQ), getDocs(assignedQ)]);
+
+    const byId = new Map<string, Lead>();
+    for (const d of claimedSnap.docs) byId.set(d.id, mapLeadDoc(d));
+    for (const d of assignedSnap.docs) byId.set(d.id, mapLeadDoc(d));
+
+    return Array.from(byId.values());
+  } catch (error) {
+    console.error('Error getting limited leads for user:', error);
+    return [];
+  }
+}
+
+/**
  * Get leads within geographic bounds (for map viewport lazy loading)
  * This dramatically reduces read operations by only loading visible leads
  */
