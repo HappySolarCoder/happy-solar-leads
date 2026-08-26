@@ -4,12 +4,14 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { MapPin, BarChart3, Lightbulb, LogOut, Menu, Users, Settings } from 'lucide-react';
 import { getCurrentAuthUser, signOut } from '@/app/utils/auth';
-import { User, canManageUsers } from '@/app/types';
-import { getLeadsAsync } from '@/app/utils/storage';
+import { User, canManageUsers, canSeeAllLeads } from '@/app/types';
+import { getLeadsAsync, resolveActingUser } from '@/app/utils/storage';
+import UserSwitcher from '@/app/components/UserSwitcher';
 
 export default function MobilePage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authUser, setAuthUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [monthlyKnocks, setMonthlyKnocks] = useState(0);
   const [monthlyAppointments, setMonthlyAppointments] = useState(0);
@@ -22,7 +24,9 @@ export default function MobilePage() {
         // Not authenticated - redirect to login
         router.push('/login');
       } else {
-        setCurrentUser(user);
+        setAuthUser(user);
+        const acting = (await resolveActingUser()) || user;
+        setCurrentUser(acting);
       }
       setIsLoading(false);
     }
@@ -99,12 +103,17 @@ export default function MobilePage() {
             alt="Raydar"
             className="h-10 w-auto object-contain"
           />
-          <button
-            onClick={handleLogout}
-            className="p-2 text-[#718096] hover:text-[#FF5F5A] transition-colors"
-          >
-            <LogOut className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {authUser && canSeeAllLeads(authUser.role) && (
+              <UserSwitcher compact onUserChange={setCurrentUser} />
+            )}
+            <button
+              onClick={handleLogout}
+              className="p-2 text-[#718096] hover:text-[#FF5F5A] transition-colors"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -116,9 +125,11 @@ export default function MobilePage() {
             Welcome back, {currentUser?.name}
           </h1>
           <p className="text-[#718096]">
-            {currentUser?.role === 'setter' || currentUser?.role === 'closer' 
-              ? 'Ready to knock some doors?' 
-              : 'Manage your team'}
+            {authUser && currentUser && authUser.id !== currentUser.id
+              ? `Viewing as ${currentUser.name}`
+              : currentUser?.role === 'setter' || currentUser?.role === 'closer'
+                ? 'Ready to knock some doors?'
+                : 'Manage your team'}
           </p>
         </div>
 

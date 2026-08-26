@@ -13,10 +13,11 @@ import {
   Coffee, Gift, Shield, Lock, Unlock, Key, Trash, Archive,
   Ban, Slash, MinusCircle, PlusCircle, Info, ArrowRight, ArrowLeft
 } from 'lucide-react';
-import { updateLeadStatus, claimLead, unclaimLead, getUsersAsync } from '@/app/utils/storage';
+import { getUsersAsync } from '@/app/utils/storage';
 import ObjectionTracker from './ObjectionTracker';
 import LeadEditorModal from './LeadEditorModal';
 import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
+import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { checkEasterEggTrigger } from '@/app/utils/easterEggs';
 import { awardSolarMadnessAsync } from '@/app/utils/solarMadness';
 import { auth } from '@/app/utils/firebase';
@@ -25,12 +26,15 @@ import SolarMadnessWinModal from './SolarMadnessWinModal';
 import { EasterEgg } from '@/app/types/easterEgg';
 import EasterEggWinModal from './EasterEggWinModal';
 import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
+import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 
 interface LeadDetailProps {
   lead: Lead;
   currentUser: User | null;
   onClose: () => void;
-  onUpdate: () => void;
+  onUpdate: (lead?: Lead) => void;
+  onWriteError?: (message: string) => void;
+  preventOwnershipWrites?: boolean;
 }
 
 // Icon map for dispositions
@@ -89,7 +93,7 @@ const ICON_MAP: Record<string, any> = {
   'arrow-left': ArrowLeft,
 };
 
-export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: LeadDetailProps) {
+export default function LeadDetail({ lead, currentUser, onClose, onUpdate, onWriteError, preventOwnershipWrites = false }: LeadDetailProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
   const [notesSaving, setNotesSaving] = useState(false);
@@ -97,10 +101,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
-  const [dispositions, setDispositions] = useState<Disposition[]>([]);
+  const [dispositions, setDispositions] = useState<Disposition[]>(DEFAULT_DISPOSITIONS);
   const [users, setUsers] = useState<User[]>([]);
   const [adminAssignUser, setAdminAssignUser] = useState<string>('');
-  const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
   const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
   const [solarMadnessAward, setSolarMadnessAward] = useState<(SolarMadnessAwardResponse & { matchup?: any }) | null>(null);
   const [photos, setPhotos] = useState(lead.photos || []);
@@ -109,16 +112,14 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const canClaim = !lead.claimedBy || isClaimedByMe;
   const isClaimed = !!lead.claimedBy;
 
-  // Load dispositions on mount
+  // Dispositions are enough for first paint. Users (admin assign list) stay background.
   useEffect(() => {
-    async function loadData() {
-      const dispos = await getDispositionsAsync();
-      setDispositions(dispos);
-      const userList = await getUsersAsync();
-      setUsers(userList.filter(u => u.role !== 'admin')); // Exclude admins from assignment list
-      setIsLoadingDispositions(false);
-    }
-    loadData();
+    getDispositionsAsync()
+      .then(setDispositions)
+      .catch(() => {});
+    getUsersAsync()
+      .then((userList) => setUsers(userList.filter(u => u.role !== 'admin')))
+      .catch(() => {});
   }, []);
 
   // Lock background scroll while lead detail is open so the app header/page does not fight the panel
@@ -146,7 +147,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     d => d.id !== 'unclaimed' && d.id !== 'claimed' && d.countsAsDoorKnock
   );
 
-  const handleStatusChange = async (newStatus: string) => {
+  const handleStatusChange = (newStatus: string) => {
     if (!currentUser) return;
     
     // Check for special behavior dispositions
@@ -169,139 +170,107 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       setShowObjectionTracker(true);
       return;
     }
-    
-    setIsUpdating(true);
-    
-    try {
-      // Capture GPS for knock verification (if disposition counts as door knock)
-      const disposition = dispositions.find(d => d.id === newStatus);
-      let gpsData = {};
-      
-      if (disposition?.countsAsDoorKnock && navigator.geolocation) {
-        try {
-          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 5000,
-              maximumAge: 0,
-            });
+
+    if (newStatus === 'claimed' && preventOwnershipWrites) return;
+    if (newStatus === 'unclaimed' && isClaimedByMe && preventOwnershipWrites) return;
+
+    // Paint first. Do not setIsUpdating — Firebase writes on this preview can take 26s+.
+    let updates: Partial<Lead>;
+    if (newStatus === 'claimed') {
+      const claimedAt = new Date();
+      updates = { status: 'claimed', claimedBy: currentUser.id, claimedAt };
+    } else if (newStatus === 'unclaimed' && isClaimedByMe) {
+      updates = { status: 'unclaimed', claimedBy: undefined, claimedAt: undefined };
+    } else {
+      const historyEntry: LeadDispositionHistoryEntry = {
+        disposition: disposition?.name || newStatus,
+        timestamp: new Date(),
+        userId: currentUser.id,
+        userName: currentUser.name,
+      };
+      updates = {
+        status: newStatus,
+        disposition: disposition?.name || newStatus,
+        dispositionedAt: new Date(),
+        dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
+      };
+    }
+    const updatedLead: Lead = { ...lead, ...updates };
+    onUpdate(updatedLead);
+
+    void import('@/app/utils/storage').then(({ updateLeadAsync }) =>
+      updateLeadAsync(lead.id, updates)
+    ).catch((error: any) => {
+      console.error('Disposition save failed:', error);
+      const msg = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error));
+      if (onWriteError) onWriteError(msg);
+      else alert(`Disposition failed to save.\n\n${msg}`);
+    });
+
+    if (disposition?.countsAsDoorKnock && typeof navigator !== 'undefined' && navigator.geolocation) {
+      void Promise.race([
+        new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 4000,
+            maximumAge: 20000,
           });
-          
-          // Calculate distance from lead address
-          let distanceFromAddress: number | undefined;
-          if (lead.lat && lead.lng) {
-            const R = 6371000; // Earth's radius in meters
-            const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
-            const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
-            const a = 
-              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(position.coords.latitude * Math.PI / 180) * 
-              Math.cos(lead.lat * Math.PI / 180) *
-              Math.sin(dLng / 2) * Math.sin(dLng / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            distanceFromAddress = R * c;
-          }
-          
-          // Distance verification for setter, manager, sales (not admin)
-          const MAX_DISTANCE_METERS = 50; // 50 meters (~164 feet) - close enough to verify, not too strict
-          const requiresProximity = ['setter', 'manager', 'sales'].includes(currentUser.role);
-          
-          if (requiresProximity && distanceFromAddress && distanceFromAddress > MAX_DISTANCE_METERS) {
-            setIsUpdating(false);
-            const distanceFeet = Math.round(distanceFromAddress * 3.281); // Convert to feet
-            alert(
-              `You are not close enough to this address to disposition it.\n\n` +
-              `Distance: ${distanceFeet} feet away\n` +
-              `Required: Within 100 feet\n\n` +
-              `Please move closer to the address and try again.`
-            );
-            return;
-          }
-          
-          gpsData = {
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('GPS knock timed out')), 4000);
+        }),
+      ]).then((position) => {
+        let distanceFromAddress: number | undefined;
+        if (lead.lat && lead.lng) {
+          const R = 6371000;
+          const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
+          const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(position.coords.latitude * Math.PI / 180) *
+            Math.cos(lead.lat * Math.PI / 180) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          distanceFromAddress = R * c;
+        }
+        return import('@/app/utils/storage').then(({ updateLeadAsync }) =>
+          updateLeadAsync(lead.id, {
             knockGpsLat: position.coords.latitude,
             knockGpsLng: position.coords.longitude,
             knockGpsAccuracy: position.coords.accuracy,
             knockGpsTimestamp: new Date(),
             knockDistanceFromAddress: distanceFromAddress,
-          };
-        } catch (err) {
-          console.warn('GPS capture failed:', err);
-          // Continue without GPS if it fails (allows indoor knocking where GPS might not work)
-        }
-      }
-      
-      if (newStatus === 'claimed') {
-        // Handle claim
-        claimLead(lead.id, currentUser.id);
-      } else if (newStatus === 'unclaimed' && isClaimedByMe) {
-        // Handle unclaim
-        unclaimLead(lead.id);
-      } else {
-        // Handle status change with GPS data
-        // IMPORTANT: use partial update so we don't accidentally send ownership fields that could trip rules.
-        const { updateLeadAsync } = await import('@/app/utils/storage');
-
-        // Add to disposition history
-        const historyEntry: LeadDispositionHistoryEntry = {
-          disposition: disposition?.name || newStatus,
-          timestamp: new Date(),
-          userId: currentUser.id,
-          userName: currentUser.name,
-        };
-
-        await updateLeadAsync(lead.id, {
-          status: newStatus,
-          dispositionedAt: new Date(),
-          dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-          ...gpsData,
-        });
-      }
-      
-      // Check for Easter Egg win!
-      try {
-        const eggWon = await checkEasterEggTrigger(
-          lead.id,
-          currentUser.id,
-          currentUser.name,
-          lead.address
+          })
         );
-
-        if (eggWon) {
-          setWonEasterEgg(eggWon);
-        }
-      } catch (err) {
-        console.error('Easter egg check failed:', err);
-        // Don't block the disposition save if egg check fails
-      }
-
-      // Solar Madness (basket win)
-      try {
-        const token = await auth?.currentUser?.getIdToken();
-        if (token) {
-          const resp = await awardSolarMadnessAsync({
-            idToken: token,
-            leadId: lead.id,
-            dispositionId: disposition?.id,
-            dispositionName: disposition?.name || newStatus,
-          });
-          if (resp?.awarded) {
-            setSolarMadnessAward(resp);
-          }
-        }
-      } catch (err) {
-        console.error('Solar Madness award failed:', err);
-        // Don't block the disposition save if award fails
-      }
-
-      onUpdate();
-    } catch (error: any) {
-      console.error('Disposition save failed:', error);
-      const msg = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error));
-      alert(`Disposition failed to save.\n\n${msg}`);
-    } finally {
-      setIsUpdating(false);
+      }).catch((err) => {
+        console.warn('GPS capture failed:', err);
+      });
     }
+
+    void checkEasterEggTrigger(
+      lead.id,
+      currentUser.id,
+      currentUser.name,
+      lead.address
+    ).then((eggWon) => {
+      if (eggWon) setWonEasterEgg(eggWon);
+    }).catch((err) => {
+      console.error('Easter egg check failed:', err);
+    });
+
+    void (async () => {
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) return;
+      const resp = await awardSolarMadnessAsync({
+        idToken: token,
+        leadId: lead.id,
+        dispositionId: disposition?.id,
+        dispositionName: disposition?.name || newStatus,
+      });
+      if (resp?.awarded) setSolarMadnessAward(resp);
+    })().catch((err) => {
+      console.error('Solar Madness award failed:', err);
+    });
   };
 
   // Handle saving notes
@@ -316,7 +285,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         notes,
       };
       await saveLeadAsync(updatedLead);
-      if (onUpdate) onUpdate();
+      if (onUpdate) onUpdate(updatedLead);
     } catch (error) {
       console.error('Error saving notes:', error);
     } finally {
@@ -346,7 +315,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       photos: updatedPhotos,
     };
     await saveLeadAsync(updatedLead);
-    if (onUpdate) onUpdate();
+    if (onUpdate) onUpdate(updatedLead);
   };
 
   const handleObjectionSave = async (objectionType: ObjectionType, objectionNotes: string) => {
@@ -383,7 +352,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       await saveLeadAsync(updatedLead);
       
       setShowObjectionTracker(false);
-      onUpdate();
+      onUpdate(updatedLead);
     } finally {
       setIsUpdating(false);
     }
@@ -424,22 +393,11 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       await saveLeadAsync(updatedLead);
       
       setShowGoBackSchedule(false);
-      onUpdate();
+      onUpdate(updatedLead);
     } finally {
       setIsUpdating(false);
     }
   };
-
-  if (isLoadingDispositions) {
-    return (
-      <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-          <p className="text-sm text-[#718096]">Loading...</p>
-        </div>
-      </div>
-    );
-  }
 
   const effectiveLeadType = lead.leadType === 'sale' ? 'customer' : (lead.leadType || 'prospect');
   const isCustomerLead = effectiveLeadType === 'customer';
@@ -760,7 +718,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
                     {lead.goBackScheduledDate
                       ? format(new Date(lead.goBackScheduledDate), 'MMM d, yyyy')
                       : 'Not set'}
-                    {lead.goBackScheduledTime ? ` • ${lead.goBackScheduledTime}` : ' • Anytime'}
+                    {lead.goBackScheduledTime ? ` • ${formatGoBackScheduledTime(lead.goBackScheduledTime)}` : ' • Anytime'}
                   </span>
                 </div>
 
@@ -908,9 +866,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         <LeadEditorModal
           lead={lead}
           onClose={() => setShowLeadEditor(false)}
-          onSave={() => {
+          onSave={(updated) => {
             setShowLeadEditor(false);
-            onUpdate();
+            onUpdate(updated);
           }}
         />
       )}

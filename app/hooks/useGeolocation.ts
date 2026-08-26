@@ -26,7 +26,7 @@ export function useGeolocation(options?: {
   const defaultOptions = {
     enableHighAccuracy: true,
     timeout: 10000,
-    maximumAge: 0,
+    maximumAge: 20000, // 20s — one watcher, reuse a fresh-enough fix
     watch: true, // Default to continuous tracking
     ...options,
   };

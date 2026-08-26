@@ -1,16 +1,63 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
-import { getLeadsAsync, getLeadsInBoundsAsync, getUsersAsync, saveLeadAsync } from '@/app/utils/storage';
+import { getLeadsInBoundsAsync, getUsersAsync, rememberSavedLead, saveLeadAsync, upsertLeadInList, type MapBounds } from '@/app/utils/storage';
+import { getAllUsers } from '@/app/utils/firestore';
 import { getCurrentAuthUser } from '@/app/utils/auth';
+import { auth } from '@/app/utils/firebase';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
-import { getTerritoriesAsync, saveTerritory, deleteTerritoryAsync } from '@/app/utils/territories';
+import { buildAssignableUsersFromPageData, isAssignableUserId } from '@/app/utils/assignableUsersFallback';
+import { getTerritoriesAsync, saveTerritory, deleteTerritoryAsync, normalizeTerritoryPolygon } from '@/app/utils/territories';
 import { Territory } from '@/app/types/territory';
 import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
+
+/** Firestore/client write errors: keep permission-denied vs other codes visible. */
+function formatWriteError(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const rec = error as { code?: unknown; message?: unknown };
+    const code = typeof rec.code === 'string' ? rec.code.trim() : '';
+    const message = typeof rec.message === 'string' ? rec.message.trim() : '';
+    if (code && message) return `${code}: ${message}`;
+    if (code) return code;
+    if (message) return message;
+  }
+  if (error instanceof Error && error.message) return error.message;
+  const fallback = String(error);
+  return fallback && fallback !== '[object Object]' ? fallback : 'Unknown error';
+}
+
+/** isAdmin() looks up users/{request.auth.uid}. Surface a session/doc mismatch. */
+function sessionVsUserDoc(currentUser: User | null): string | null {
+  const sessionUid = auth?.currentUser?.uid?.trim() || '';
+  const userDocId = currentUser?.id?.trim() || '';
+  if (sessionUid && userDocId && sessionUid === userDocId) return null;
+  return `session uid (${sessionUid || 'none'}) vs users/${userDocId || 'none'}`;
+}
+
+function withAssignError(message: string, currentUser: User | null): string {
+  const mismatch = sessionVsUserDoc(currentUser);
+  return mismatch ? `${message}\n\n${mismatch}` : message;
+}
+
+function viewportQuery(
+  mapCenter: [number, number],
+  mapZoom: number,
+  mapBounds: MapBounds | null,
+) {
+  const latPad = 0.15 * Math.pow(2, Math.max(0, 11 - mapZoom));
+  const lngPad = 0.25 * Math.pow(2, Math.max(0, 11 - mapZoom));
+  return {
+    south: mapBounds?.south ?? mapCenter[0] - latPad,
+    north: mapBounds?.north ?? mapCenter[0] + latPad,
+    west: mapBounds?.west ?? mapCenter[1] - lngPad,
+    east: mapBounds?.east ?? mapCenter[1] + lngPad,
+    maxLeads: mapZoom >= 15 ? 12000 : mapZoom >= 13 ? 7000 : mapZoom >= 11 ? 3500 : 2000,
+  };
+}
 
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   ssr: false,
@@ -26,7 +73,6 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
 
 export default function LeadManagementPage() {
   const router = useRouter();
-  const [leads, setLeads] = useState<Lead[]>([]);
   const [boundsLeads, setBoundsLeads] = useState<Lead[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -43,7 +89,21 @@ export default function LeadManagementPage() {
   const [operationType, setOperationType] = useState<'assigning' | 'unclaiming' | 'deleting'>('unclaiming');
   const [mapCenter, setMapCenter] = useState<[number, number]>([43.1566, -77.6088]);
   const [mapZoom, setMapZoom] = useState(11);
+  const [mapBounds, setMapBounds] = useState<MapBounds | null>(null);
   const [isPinsLoading, setIsPinsLoading] = useState(false);
+  const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
+  const boundsLeadsRef = useRef(boundsLeads);
+  boundsLeadsRef.current = boundsLeads;
+
+  // Pins already on the map — not an unloaded full-leads array.
+  const findLead = (leadId: string) =>
+    boundsLeadsRef.current.find(l => l.id === leadId);
+
+  const refreshViewportPins = async () => {
+    const { south, north, west, east, maxLeads } = viewportQuery(mapCenter, mapZoom, mapBounds);
+    const loaded = await getLeadsInBoundsAsync(south, north, west, east, maxLeads);
+    setBoundsLeads(prev => (loaded.length > 0 ? loaded : prev));
+  };
 
   // Debug logging
   useEffect(() => {
@@ -70,10 +130,38 @@ export default function LeadManagementPage() {
 
       setCurrentUser(user);
 
-      // NOTE: Do not load all leads on this page (50k–200k pins).
-      // Leads are lazy-loaded by map viewport via getLeadsInBoundsAsync().
-      const loadedUsers = await getUsersAsync();
+      // Users for Assign To / Filter. Do not restore storage.ts import-time
+      // getUsersAsync/getLeadsAsync — that was the field-perf slowness.
+      // Map pins stay viewport-scoped via getLeadsInBoundsAsync below.
+      let loadedUsers: User[] = [];
+      try {
+        loadedUsers = await getUsersAsync();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[Lead Management] getUsersAsync failed:', error);
+        setUsersLoadError(message);
+      }
+
+      if (loadedUsers.length === 0) {
+        try {
+          loadedUsers = await getAllUsers();
+          if (loadedUsers.length > 0) setUsersLoadError(null);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error('[Lead Management] getAllUsers retry failed:', error);
+          setUsersLoadError(message);
+        }
+      }
+
       const loadedTerritories = await getTerritoriesAsync();
+
+      if (loadedUsers.length === 0) {
+        const fallbackUsers = buildAssignableUsersFromPageData(user, loadedTerritories, []);
+        console.warn('[Lead Management] users collection empty; using on-page fallback', {
+          fallbackUsers: fallbackUsers.length,
+          territories: loadedTerritories.length,
+        });
+      }
 
       console.log('[Lead Management] Loaded data:', {
         users: loadedUsers.length,
@@ -90,17 +178,17 @@ export default function LeadManagementPage() {
   }, [router]);
 
   const handleUpdate = async () => {
-    // Keep selections in sync, but avoid reloading the entire lead dataset.
+    // Keep selections in sync. Refresh territories + viewport pins only —
+    // do not dump getLeadsAsync() / all leads onto this page.
     setSelectedLeads(new Set());
-
-    // Refresh cached "all leads" list used for bulk operations (assign/unclaim/delete)
-    // This is only used when performing operations, not for rendering pins.
-    const loadedLeads = await getLeadsAsync();
-    setLeads(loadedLeads);
-
-    // Load territories
     const loadedTerritories = await getTerritoriesAsync();
     setTerritories(loadedTerritories);
+    await refreshViewportPins();
+  };
+
+  const handleLeadAdded = (lead: Lead) => {
+    rememberSavedLead(lead);
+    setBoundsLeads((prev) => upsertLeadInList(prev, lead));
   };
 
   const handleTerritoryDrawn = async (leadIds: string[], polygon: [number, number][]) => {
@@ -108,107 +196,150 @@ export default function LeadManagementPage() {
     setSelectedLeads(new Set(leadIds));
     setDrawingMode(false);
 
-    // In assign mode, save the territory polygon and auto-assign leads
-    if (mode === 'assign' && assignToUser && polygon.length >= 3) {
-      const user = activeAssignableUsers.find(u => u.id === assignToUser);
-      if (user) {
-        setOperationType('assigning');
-        setIsDeleting(true);
-        
-        try {
-          // Convert polygon to Firestore-compatible format
-          const polygonObjects = polygon.map(([lat, lng]) => ({ lat, lng }));
-          
-          // 1. Save the territory first
-          await saveTerritory({
-            userId: user.id,
-            userName: user.name,
-            userColor: user.color || '#6b7280',
-            polygon: polygonObjects,
-            leadIds,
-            createdAt: new Date(),
-            createdBy: currentUser?.id || 'unknown',
-          });
-          
-          console.log('Territory saved to Firestore');
+    if (mode !== 'assign') return;
 
-          // 2. Auto-assign all leads inside the territory
-          const leadsToAssign = leadIds.length;
-          setProgress({ current: 0, total: leadsToAssign });
+    if (!isAssignableUserId(assignToUser)) {
+      alert('Select a user in Assign To before finishing the territory.');
+      return;
+    }
 
-          let processed = 0;
-          const batchSize = 30;
+    const user = activeAssignableUsers.find(u => u.id === assignToUser);
+    if (!user) {
+      alert('Assign To is invalid. Select a user from the list before finishing the territory.');
+      return;
+    }
 
-          for (let i = 0; i < leadIds.length; i += batchSize) {
-            const batch = leadIds.slice(i, i + batchSize);
-            
-            await Promise.all(
-              batch.map(async (leadId) => {
-                try {
-                  const lead = leads.find(l => l.id === leadId);
-                  if (!lead) return;
-                  
-                  // Preserve existing status, only assign if not already claimed
-                  const updatedLead: Lead = {
-                    ...lead,
-                    assignedTo: user.id,
-                    assignedAt: new Date(),
-                    // Only set status to 'assigned' if lead is unclaimed
-                    ...(lead.status === 'unclaimed' ? { status: 'assigned' } : {}),
-                  };
-                  
-                  await saveLeadAsync(updatedLead);
-                  processed++;
-                } catch (err) {
-                  console.error(`Failed to assign lead ${leadId}:`, err);
-                }
-              })
-            );
+    // Pairs or {lat,lng}. Do not .map(([lat,lng])) — objects throw "not iterable".
+    const polygonObjects = normalizeTerritoryPolygon(polygon);
+    if (polygonObjects.length < 3) {
+      alert(
+        `Could not read the drawn polygon (saveTerritory not called).\n\n` +
+        `Raw points: ${Array.isArray(polygon) ? polygon.length : 0}, valid lat/lng: ${polygonObjects.length}.`
+      );
+      return;
+    }
 
-            setProgress({ current: processed, total: leadsToAssign });
+    // Filter-by-user can be 0-in-view (leadIds []). Territory must still save.
+    const idsToAssign = (leadIds || []).filter((id) => typeof id === 'string' && id.trim().length > 0);
 
-            if (i + batchSize < leadIds.length) {
-              await new Promise(resolve => setTimeout(resolve, 200));
+    setOperationType('assigning');
+    setProgress({ current: 0, total: Math.max(idsToAssign.length, 1) });
+    setIsDeleting(true);
+    try {
+      try {
+        await saveTerritory({
+          userId: user.id,
+          userName: user.name || user.id,
+          userColor: user.color || '#6b7280',
+          polygon: polygonObjects,
+          leadIds: idsToAssign,
+          createdAt: new Date(),
+          createdBy: auth?.currentUser?.uid || currentUser?.id || 'unknown',
+        });
+      } catch (error) {
+        console.error('Failed at saveTerritory:', error);
+        alert(withAssignError(`Failed at saveTerritory.\n\n${formatWriteError(error)}`, currentUser));
+        return;
+      }
+
+      console.log('Territory saved to Firestore');
+
+      const leadsToAssign = idsToAssign.length;
+      setProgress({ current: 0, total: Math.max(leadsToAssign, 1) });
+
+      let processed = 0;
+      const batchSize = 30;
+      const leadErrors: string[] = [];
+
+      for (let i = 0; i < idsToAssign.length; i += batchSize) {
+        const batch = idsToAssign.slice(i, i + batchSize);
+
+        await Promise.all(
+          batch.map(async (leadId) => {
+            try {
+              const lead = findLead(leadId);
+              if (!lead) return;
+
+              const updatedLead: Lead = {
+                ...lead,
+                assignedTo: user.id,
+                assignedAt: new Date(),
+                ...(lead.status === 'unclaimed' ? { status: 'assigned' } : {}),
+              };
+
+              await saveLeadAsync(updatedLead);
+              processed++;
+            } catch (err) {
+              console.error(`Failed to assign lead ${leadId}:`, err);
+              const text = formatWriteError(err);
+              if (!leadErrors.includes(text)) leadErrors.push(text);
             }
-          }
+          })
+        );
 
-          // 3. Reload territories and leads
-          const loadedTerritories = await getTerritoriesAsync();
-          setTerritories(loadedTerritories);
-          await handleUpdate();
-          
-          alert(`Territory created! Assigned ${processed} leads to ${user.name}.`);
-        } catch (error) {
-          console.error('Failed to save territory:', error);
-          alert('Failed to create territory. Please try again.');
-        } finally {
-          setIsDeleting(false);
-          setProgress({ current: 0, total: 0 });
+        setProgress({ current: processed, total: Math.max(leadsToAssign, 1) });
+
+        if (i + batchSize < idsToAssign.length) {
+          await new Promise(resolve => setTimeout(resolve, 200));
         }
       }
+
+      try {
+        const assignedIdSet = new Set(idsToAssign);
+        const assignedAt = new Date();
+        if (idsToAssign.length > 0) {
+          setBoundsLeads(prev => prev.map(lead => (
+            assignedIdSet.has(lead.id)
+              ? {
+                  ...lead,
+                  assignedTo: user.id,
+                  assignedAt,
+                  ...(lead.status === 'unclaimed' ? { status: 'assigned' } : {}),
+                }
+              : lead
+          )));
+        }
+        const loadedTerritories = await getTerritoriesAsync();
+        setTerritories(loadedTerritories);
+        await handleUpdate();
+      } catch (error) {
+        console.error('Failed at handleUpdate refresh:', error);
+        alert(withAssignError(
+          `Territory saved (saveTerritory ok). Failed at handleUpdate refresh.\n\n${formatWriteError(error)}`,
+          currentUser,
+        ));
+        return;
+      }
+
+      if (leadErrors.length > 0) {
+        alert(withAssignError(
+          `Territory saved (saveTerritory ok). Failed at lead assign (saveLeadAsync).\n\n` +
+          `Assigned ${processed} of ${leadsToAssign} lead(s) to ${user.name}.\n${leadErrors.join('\n')}`,
+          currentUser,
+        ));
+      } else {
+        alert(`Territory created! Assigned ${processed} lead(s) to ${user.name}.`);
+      }
+    } finally {
+      setIsDeleting(false);
+      setProgress({ current: 0, total: 0 });
     }
   };
 
-  // Lazy-load pins by viewport bounds (fast even at 200k total leads)
+  // Lazy-load pins by viewport bounds (fast even at 200k total leads).
+  // Wait for currentUser — getLeadsInBoundsAsync returns [] when auth is not ready,
+  // and a Leaflet moveend at the same default center/zoom will not refetch.
   useEffect(() => {
+    if (!currentUser) return;
     let isCanceled = false;
     const t = setTimeout(async () => {
       try {
         setIsPinsLoading(true);
-        // Approximate bounds based on center/zoom (Leaflet will refine internally, but this is good enough)
-        // We intentionally add padding so pins near edges are included.
-        const latPad = 0.15 * Math.pow(2, Math.max(0, 11 - mapZoom));
-        const lngPad = 0.25 * Math.pow(2, Math.max(0, 11 - mapZoom));
-        const south = mapCenter[0] - latPad;
-        const north = mapCenter[0] + latPad;
-        const west = mapCenter[1] - lngPad;
-        const east = mapCenter[1] + lngPad;
-
-        // Cap returned pins depending on zoom
-        const maxLeads = mapZoom >= 15 ? 12000 : mapZoom >= 13 ? 7000 : mapZoom >= 11 ? 3500 : 2000;
+        const { south, north, west, east, maxLeads } = viewportQuery(mapCenter, mapZoom, mapBounds);
         const loaded = await getLeadsInBoundsAsync(south, north, west, east, maxLeads);
         if (isCanceled) return;
-        setBoundsLeads(loaded);
+        // Empty fetch must not wipe pins that already loaded (auth/query miss).
+        setBoundsLeads(prev => (loaded.length > 0 ? loaded : prev));
       } catch (e) {
         console.error('[Lead Management] Failed loading pins in bounds', e);
       } finally {
@@ -220,11 +351,17 @@ export default function LeadManagementPage() {
       isCanceled = true;
       clearTimeout(t);
     };
-  }, [mapCenter, mapZoom]);
+  }, [currentUser, mapCenter, mapZoom, mapBounds]);
 
-  const activeAssignableUsers = users.filter(u => {
+  // If getAllUsers stayed empty, keep Assign To / Filter names from data
+  // already on the page (currentUser + visible territories + viewport pins).
+  const sourceUsers = users.length > 0
+    ? users
+    : buildAssignableUsersFromPageData(currentUser, territories, boundsLeads);
+
+  const activeAssignableUsers = sourceUsers.filter(u => {
     const ux = u as any;
-    return !ux.deleted && ux.isActive !== false;
+    return isAssignableUserId(u.id) && !ux.deleted && ux.isActive !== false;
   });
 
   // Filter pins currently loaded for the viewport (fast)
@@ -232,10 +369,11 @@ export default function LeadManagementPage() {
     ? boundsLeads
     : boundsLeads.filter(lead => lead.assignedTo === userFilter || lead.claimedBy === userFilter);
 
-  // Get lead counts per user (active users only for assignment UX)
+  // Counts from viewport pins so Filter/Assign To do not depend on the empty
+  // module cache or an unfetched full-admin lead dump.
   const userLeadCounts = activeAssignableUsers.map(user => ({
     user,
-    count: leads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
+    count: boundsLeads.filter(lead => lead.assignedTo === user.id || lead.claimedBy === user.id).length,
   }));
 
   // Map center defaults to Rochester (for admin oversight or when GPS unavailable)
@@ -264,7 +402,7 @@ export default function LeadManagementPage() {
         await Promise.all(
           batch.map(async (leadId) => {
             try {
-              const lead = leads.find(l => l.id === leadId);
+              const lead = findLead(leadId);
               if (!lead) return;
               
               // Unassign but keep disposition, dispositionHistory, and all other data
@@ -338,7 +476,7 @@ export default function LeadManagementPage() {
         const results = await Promise.allSettled(
           batch.map(async (leadId) => {
             try {
-              const lead = leads.find(l => l.id === leadId);
+              const lead = findLead(leadId);
               if (!lead) throw new Error('Lead not found');
               
               // Preserve the last disposition status if lead was knocked
@@ -400,7 +538,7 @@ export default function LeadManagementPage() {
   };
 
   const handleBulkAssign = async () => {
-    if (selectedLeads.size === 0 || !assignToUser) return;
+    if (selectedLeads.size === 0 || !isAssignableUserId(assignToUser)) return;
     
     const targetUser = activeAssignableUsers.find(u => u.id === assignToUser);
     if (!targetUser) return;
@@ -419,29 +557,25 @@ export default function LeadManagementPage() {
       const batchSize = 30;
       let processed = 0;
       let failed = 0;
+      const leadErrors: string[] = [];
 
       for (let i = 0; i < leadIds.length; i += batchSize) {
         const batch = leadIds.slice(i, i + batchSize);
-        
+
         const results = await Promise.allSettled(
           batch.map(async (leadId) => {
-            try {
-              const lead = leads.find(l => l.id === leadId);
-              if (!lead) throw new Error('Lead not found');
-              
-              const updatedLead: Lead = {
-                ...lead,
-                assignedTo: assignToUser,
-                assignedAt: new Date(),
-                status: 'assigned',
-              };
-              
-              await saveLeadAsync(updatedLead);
-              return true;
-            } catch (err) {
-              console.error(`Failed to assign lead ${leadId}:`, err);
-              return false;
-            }
+            const lead = findLead(leadId);
+            if (!lead) throw new Error('Lead not found');
+
+            const updatedLead: Lead = {
+              ...lead,
+              assignedTo: assignToUser,
+              assignedAt: new Date(),
+              status: 'assigned',
+            };
+
+            await saveLeadAsync(updatedLead);
+            return true;
           })
         );
 
@@ -450,6 +584,10 @@ export default function LeadManagementPage() {
             processed++;
           } else {
             failed++;
+            const reason = result.status === 'rejected' ? result.reason : new Error('Assign failed');
+            const text = formatWriteError(reason);
+            if (!leadErrors.includes(text)) leadErrors.push(text);
+            console.error('Failed to assign lead:', reason);
           }
         });
 
@@ -460,16 +598,28 @@ export default function LeadManagementPage() {
         }
       }
 
-      await handleUpdate();
-      
+      try {
+        await handleUpdate();
+      } catch (error) {
+        console.error('Failed at handleUpdate refresh:', error);
+        alert(withAssignError(
+          `Lead writes finished. Failed at handleUpdate refresh.\n\n${formatWriteError(error)}`,
+          currentUser,
+        ));
+        return;
+      }
+
       if (failed > 0) {
-        alert(`Assigned ${processed} lead(s). ${failed} failed - please try those again.`);
+        alert(withAssignError(
+          `Failed at lead assign (saveLeadAsync). Assigned ${processed} lead(s). ${failed} failed.\n\n${leadErrors.join('\n')}`,
+          currentUser,
+        ));
       } else {
         alert(`Successfully assigned all ${processed} lead(s) to ${targetUser.name}!`);
       }
     } catch (error) {
       console.error('Error assigning leads:', error);
-      alert('Operation failed. Please try again.');
+      alert(withAssignError(`Failed at lead assign (saveLeadAsync).\n\n${formatWriteError(error)}`, currentUser));
     } finally {
       setIsDeleting(false);
       setDrawingMode(false);
@@ -603,6 +753,11 @@ export default function LeadManagementPage() {
             <Users className="w-4 h-4 text-[#718096]" />
             <label className="text-sm font-medium text-[#2D3748]">Filter by User</label>
           </div>
+          {usersLoadError && (
+            <p className="text-sm text-red-600" role="alert">
+              Could not load users: {usersLoadError}. Assign To / Filter are using names already on this page.
+            </p>
+          )}
           <select
             value={userFilter}
             onChange={(e) => {
@@ -611,9 +766,8 @@ export default function LeadManagementPage() {
             }}
             className="w-full px-4 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A] focus:border-transparent"
           >
-            <option value="all">All Users ({leads.length} leads)</option>
+            <option value="all">All Users ({boundsLeads.length} leads in view)</option>
             {userLeadCounts
-              .filter(({ count }) => count > 0)
               .map(({ user, count }) => (
                 <option key={user.id} value={user.id}>
                   {user.name} ({count} leads)
@@ -621,7 +775,8 @@ export default function LeadManagementPage() {
               ))}
           </select>
 
-          {/* Assign To User (only in assign mode) */}
+          {/* Assign To lists sourceUsers as soon as Assign Territory is clicked.
+              Same names as Filter — no need to open Filter first. */}
           {mode === 'assign' && (
             <div className="mt-2">
               <label className="block text-sm font-medium text-[#2D3748] mb-2">
@@ -646,7 +801,7 @@ export default function LeadManagementPage() {
           {drawingMode && (
             <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <p className="text-sm text-blue-800 font-medium">
-                🖊️ Draw a polygon on the map to select leads
+                🖋️ Draw a polygon on the map to select leads
               </p>
               <p className="text-xs text-blue-600 mt-1">
                 Click to add points, double-click to finish
@@ -671,9 +826,9 @@ export default function LeadManagementPage() {
 
               <button
                 onClick={mode === 'assign' ? handleBulkAssign : handleBulkUnclaim}
-                disabled={isDeleting || (mode === 'assign' && !assignToUser)}
+                disabled={isDeleting || (mode === 'assign' && !isAssignableUserId(assignToUser))}
                 className={`w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                  isDeleting || (mode === 'assign' && !assignToUser)
+                  isDeleting || (mode === 'assign' && !isAssignableUserId(assignToUser))
                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                     : 'bg-[#FF5F5A] text-white hover:bg-[#E54E49]'
                 }`}
@@ -701,13 +856,14 @@ export default function LeadManagementPage() {
         <LeadMap
           leads={filteredLeads}
           currentUser={currentUser}
-          users={ensureUserColors(users)}
+          users={ensureUserColors(sourceUsers)}
           onLeadClick={(lead) => {}}
           center={mapCenter}
           zoom={mapZoom}
-          onMapMove={(center, zoom) => {
+          onMapMove={(center, zoom, bounds) => {
             setMapCenter(center);
             setMapZoom(zoom);
+            if (bounds) setMapBounds(bounds);
           }}
           assignmentMode={drawingMode ? 'territory' : 'none'}
           selectedLeadIdsForAssignment={Array.from(selectedLeads)}
@@ -715,7 +871,7 @@ export default function LeadManagementPage() {
           viewMode={viewMode}
           territories={territories}
           onTerritoryDelete={handleTerritoryDelete}
-          onLeadAdded={handleUpdate}
+          onLeadAdded={handleLeadAdded}
         />
       </div>
 

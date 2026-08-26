@@ -1,7 +1,20 @@
 // Firebase Configuration and Initialization
 import { initializeApp, getApps, getApp, FirebaseApp, deleteApp } from 'firebase/app';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, Firestore } from 'firebase/firestore';
 import { getAuth, Auth } from 'firebase/auth';
+
+function initClientFirestore(app: FirebaseApp): Firestore {
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch {
+    // Already initialized (HMR / second import) — reuse the existing instance
+    return getFirestore(app);
+  }
+}
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -20,7 +33,7 @@ let auth: Auth | null = null;
 
 if (typeof window !== 'undefined' && firebaseConfig.apiKey) {
   app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-  db = getFirestore(app);
+  db = initClientFirestore(app);
   auth = getAuth(app);
 }
 

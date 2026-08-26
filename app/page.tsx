@@ -13,7 +13,7 @@ import UserSwitcher from '@/app/components/UserSwitcher';
 import LeadAssignmentPanel from '@/app/components/LeadAssignmentPanel';
 import AppMenu from '@/app/components/AppMenu';
 import EasterEggInfoModal from '@/app/components/EasterEggInfoModal';
-import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getMapLeadsAsync, getUsersAsync, rememberSavedLead, upsertLeadInList, type MapBounds } from '@/app/utils/storage';
 import { getTerritoriesAsync } from '@/app/utils/territories';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
@@ -39,6 +39,7 @@ export default function Home() {
   const [territories, setTerritories] = useState<any[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
+  const [selectedLeadSnapshot, setSelectedLeadSnapshot] = useState<Lead | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showUserOnboarding, setShowUserOnboarding] = useState(false);
@@ -64,6 +65,8 @@ export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchLocation, setSearchLocation] = useState<{ lat: number; lng: number } | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const mapBoundsRef = useRef<MapBounds | null>(null);
+  const mapFetchTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   // Mobile detection - redirect to mobile view (but allow admin pages)
   useEffect(() => {
@@ -136,25 +139,67 @@ export default function Home() {
         if (session.mapType) setMapType(session.mapType);
       }
       
-      // Show map immediately with empty leads, then load in background
-      // This prevents white screen while loading 18K+ leads
+      // Map must not receive the full assigned/claimed (or all-admin) set
       setLeads([]);
-      
-      // Load leads in background (non-blocking)
+      const centerLat = session?.mapCenter?.lat ?? 43.1566;
+      const centerLng = session?.mapCenter?.lng ?? -77.6088;
+      const initialBounds: MapBounds = {
+        south: centerLat - 0.12,
+        north: centerLat + 0.12,
+        west: centerLng - 0.16,
+        east: centerLng + 0.16,
+      };
+      mapBoundsRef.current = initialBounds;
       setTimeout(async () => {
-        console.log('[Page] Loading leads in background...');
-        const loadedLeads = await getLeadsAsync();
-        console.log('[Page] Loaded', loadedLeads.length, 'leads');
-        setLeads(loadedLeads);
+        try {
+          console.log('[Page] Loading map leads (viewport/capped)...');
+          const loadedLeads = await getMapLeadsAsync(initialBounds);
+          console.log('[Page] Loaded', loadedLeads.length, 'map leads');
+          if (loadedLeads.length > 0) setLeads(loadedLeads);
+        } catch (error) {
+          console.error('Initial map fetch failed; keeping existing pins', error);
+        }
       }, 100);
     }
     loadData();
   }, [router]);
 
-  // Refresh leads when they change
   const refreshLeads = useCallback(async () => {
-    const loadedLeads = await getLeadsAsync();
-    setLeads(loadedLeads);
+    try {
+      const loadedLeads = await getMapLeadsAsync(mapBoundsRef.current || undefined);
+      if (loadedLeads.length > 0) setLeads(loadedLeads);
+    } catch (error) {
+      console.error('Map refresh failed; keeping existing pins', error);
+    }
+  }, []);
+
+  const handleLeadAdded = useCallback((lead: Lead) => {
+    rememberSavedLead(lead);
+    setLeads((prev) => upsertLeadInList(prev, lead));
+  }, []);
+
+  // Knock/disposition already wrote Firestore. Paint pin + count now; do not
+  // wait on getLeadsAsync / getMapLeadsAsync / invalidateUserTurfCache.
+  const handleLeadUpdated = useCallback((lead?: Lead) => {
+    if (!lead) {
+      void refreshLeads();
+      return;
+    }
+    handleLeadAdded(lead);
+  }, [handleLeadAdded, refreshLeads]);
+
+  const handleViewportLeads = useCallback((bounds: MapBounds) => {
+    mapBoundsRef.current = bounds;
+    if (mapFetchTimerRef.current) clearTimeout(mapFetchTimerRef.current);
+    mapFetchTimerRef.current = setTimeout(async () => {
+      try {
+        const loadedLeads = await getMapLeadsAsync(bounds);
+        // Empty/failed query must not blank the map (knocking already keeps old pins).
+        if (loadedLeads.length > 0) setLeads(loadedLeads);
+      } catch (error) {
+        console.error('Map viewport fetch failed; keeping existing pins', error);
+      }
+    }, 400);
   }, []);
 
   // Save session state when it changes (debounced)
@@ -197,6 +242,7 @@ export default function Home() {
     } else {
       // Normal mode - show lead detail
       setSelectedLeadId(lead.id);
+      setSelectedLeadSnapshot(lead);
       setShowLeadDetail(true);
     }
   };
@@ -274,8 +320,7 @@ export default function Home() {
   const handleUploadComplete = async (count: number) => {
     setShowUploadModal(false);
     // Refresh data from Firestore
-    const loadedLeads = await getLeadsAsync();
-    setLeads(loadedLeads);
+    await refreshLeads();
   };
 
   // Clear all leads (for testing)
@@ -377,7 +422,10 @@ export default function Home() {
   };
 
   // Get selected lead
-  const selectedLead = leads.find(l => l.id === selectedLeadId);
+  const selectedLead = (selectedLeadId && (
+    leads.find(l => l.id === selectedLeadId)
+    || (selectedLeadSnapshot?.id === selectedLeadId ? selectedLeadSnapshot : undefined)
+  )) || undefined;
 
   // Stats - based on good leads only
   const stats = {
@@ -421,8 +469,9 @@ export default function Home() {
           onClose={() => {
             setShowLeadDetail(false);
             setSelectedLeadId(undefined);
+            setSelectedLeadSnapshot(undefined);
           }}
-          onUpdate={refreshLeads}
+          onUpdate={handleLeadUpdated}
         />
       )}
 
@@ -663,12 +712,13 @@ export default function Home() {
               assignmentMode={assignmentMode}
               selectedLeadIdsForAssignment={selectedLeadIdsForAssignment}
               onTerritoryDrawn={handleTerritoryDrawn}
-              onLeadAdded={refreshLeads}
+              onLeadAdded={handleLeadAdded}
               center={mapCenter}
               zoom={mapZoom}
-              onMapMove={(center, zoom) => {
+              onMapMove={(center, zoom, bounds) => {
                 setMapCenter(center);
                 setMapZoom(zoom);
+                if (bounds) handleViewportLeads(bounds);
               }}
               onMapTypeChange={setMapType}
               viewMode={(viewMode === 'territory' ? 'territory' : 'map') as 'map' | 'assignments' | 'territory'}

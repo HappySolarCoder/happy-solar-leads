@@ -1,10 +1,9 @@
 // Firestore-backed storage (replacing localStorage)
-import { Lead, User, LeadStatus } from '@/app/types';
+import { Lead, User, LeadStatus, canSeeAllLeads } from '@/app/types';
 import { 
   getAllLeads as firestoreGetAllLeads,
   getLeadsForUser as firestoreGetLeadsForUser,
   getLeadsInBounds as firestoreGetLeadsInBounds,
-  getLeadsInBoundsForUser as firestoreGetLeadsInBoundsForUser,
   saveLead as firestoreSaveLead,
   batchSaveLeads as firestoreBatchSaveLeads,
   updateLead as firestoreUpdateLead,
@@ -14,6 +13,19 @@ import {
   updateUser as firestoreUpdateUser,
   getUser as firestoreGetUser
 } from './firestore';
+import { getLeadsForUserLimited as firestoreGetLeadsForUserLimited, getUserViewportLeads, invalidateUserTurfCache, mergePendingSavedLeads, rememberSavedLead, toThinMapLead } from './mapLeadFields';
+
+export { rememberSavedLead, toThinMapLead };
+
+export function upsertLeadInList(leads: Lead[], lead: Lead): Lead[] {
+  const index = leads.findIndex((l) => l.id === lead.id);
+  if (index >= 0) {
+    const next = leads.slice();
+    next[index] = { ...next[index], ...lead };
+    return next;
+  }
+  return [...leads, lead];
+}
 
 // ============================================
 // LEADS
@@ -23,6 +35,17 @@ let leadsCache: Lead[] | null = null;
 let leadsCacheKey: string | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL = 90000; // 90 seconds
+
+function leadsScopeKey(user: { id?: string; role?: string } | null | undefined): string {
+  return user?.role === 'admin' ? 'admin' : user?.id ? `user:${user.id}` : 'anon';
+}
+
+/** If getLeads() already filled the module cache, stamp the user scope so getLeadsAsync can no-op. */
+export function adoptLeadsCacheForUser(user: { id?: string; role?: string } | null | undefined): void {
+  if (!leadsCache) return;
+  leadsCacheKey = leadsScopeKey(user);
+  if (!cacheTimestamp) cacheTimestamp = Date.now();
+}
 
 // Helper: Convert date strings from JSON to Date objects
 function convertLeadDates(lead: any): Lead {
@@ -56,6 +79,9 @@ export function getLeads(): Lead[] {
       // Update cache
       leadsCache = leads;
       cacheTimestamp = Date.now();
+      if (!leadsCacheKey) {
+        leadsCacheKey = leadsScopeKey(getCurrentUser());
+      }
       return leads;
     }
   } catch (e) {
@@ -68,32 +94,32 @@ export function getLeads(): Lead[] {
 
 export async function getLeadsAsync(): Promise<Lead[]> {
   try {
-    // Import here to avoid circular deps in some build paths
-    const { getCurrentAuthUser } = await import('./auth');
-    const me = await getCurrentAuthUser();
+    const me = await resolveActingUser();
 
-    const cacheKey = me?.role === 'admin' ? 'admin' : me?.id ? `user:${me.id}` : 'anon';
+    const cacheKey = leadsScopeKey(me);
 
     // Return fresh cache only when it matches the current user scope
     if (leadsCache && leadsCacheKey === cacheKey && Date.now() - cacheTimestamp < CACHE_TTL) {
+      leadsCache = mergePendingSavedLeads(leadsCache);
       return leadsCache;
     }
 
-    // Admins can read everything; reps must only query their assigned/claimed leads
+    // Admins can read everything; reps must only query their assigned/claimed leads.
+    // Viewing-as a setter uses that setter's claimed+assigned set — not an all-leads dump.
     const leads = me?.role === 'admin'
       ? await firestoreGetAllLeads()
       : me?.id
         ? await firestoreGetLeadsForUser(me.id)
         : [];
 
-    leadsCache = leads || [];
+    leadsCache = mergePendingSavedLeads(leads || []);
     leadsCacheKey = cacheKey;
     cacheTimestamp = Date.now();
     return leadsCache;
   } catch (error) {
     console.error('Firestore getLeads failed:', error);
     // Stale-while-error fallback (only if cache exists)
-    return leadsCache || [];
+    return mergePendingSavedLeads(leadsCache || []);
   }
 }
 
@@ -109,21 +135,85 @@ export async function getLeadsInBoundsAsync(
   maxLeads: number = 2000
 ): Promise<Lead[]> {
   try {
-    const { getCurrentAuthUser } = await import('./auth');
-    const me = await getCurrentAuthUser();
+    const me = await resolveActingUser();
+    if (!me) return [];
 
-    // Admins can query all leads in bounds; reps must query only their assigned/claimed leads
-    const leads = me?.role === 'admin'
-      ? await firestoreGetLeadsInBounds(south, north, west, east, maxLeads)
-      : me?.id
-        ? await firestoreGetLeadsInBoundsForUser(me.id, south, north, west, east, maxLeads)
-        : [];
+    const box: MapBounds = { south, north, west, east };
 
-    return leads;
+    // Admin + manager: paged lat-index (all leads in view). Do not dump the collection.
+    if (me.role === 'admin' || me.role === 'manager') {
+      const all = await firestoreGetLeadsInBounds(south, north, west, east, maxLeads);
+      if (all.length > 0) return mergePendingSavedLeads(all, box);
+      if (me.id) {
+        const mine = await firestoreGetLeadsForUserLimited(me.id, 2500);
+        return mergePendingSavedLeads(filterLeadsToBounds(mine, box).slice(0, maxLeads), box);
+      }
+      return mergePendingSavedLeads([], box);
+    }
+
+    // Setter/closer: viewport of claimed+assigned without claimedBy+lat indexes.
+    if (me.id) {
+      return mergePendingSavedLeads(await getUserViewportLeads(me.id, box, maxLeads), box);
+    }
+    return [];
   } catch (error) {
     console.error('Error getting leads in bounds:', error);
-    return [];
+    return mergePendingSavedLeads([], { south, north, west, east });
   }
+}
+
+const MAP_LEAD_CAP = 400;
+
+export type MapBounds = { south: number; north: number; west: number; east: number };
+
+/**
+ * Map pin fetch: never dump the full assigned+claimed set onto the map.
+ * Field maps are viewport-scoped (tight cap per visible box is OK).
+ * Admin + bounds: page the existing lat-index until MAP_LEAD_CAP in-viewport pins.
+ * Setter/closer + bounds: equality claimedBy/assignedTo scan (capped) + in-memory
+ * viewport filter. claimedBy+lat / assignedTo+lat defs exist but are NOT on prod.
+ * No Rochester box when bounds are missing — return [] and let the viewport fetch.
+ */
+export async function getMapLeadsAsync(bounds?: MapBounds): Promise<Lead[]> {
+  try {
+    const me = await resolveActingUser();
+    if (!me) return [];
+    if (!bounds) return [];
+
+    // Admin + manager: page lat-index until MAP_LEAD_CAP in-viewport pins.
+    if (me.role === 'admin' || me.role === 'manager') {
+      const leads = await firestoreGetLeadsInBounds(bounds.south, bounds.north, bounds.west, bounds.east, MAP_LEAD_CAP);
+      if ((leads || []).length > 0) return mergePendingSavedLeads(leads.map(toThinMapLead), bounds);
+      if (me.id) {
+        const mine = await firestoreGetLeadsForUserLimited(me.id, 2500);
+        return mergePendingSavedLeads(filterLeadsToBounds(mine, bounds).slice(0, MAP_LEAD_CAP).map(toThinMapLead), bounds);
+      }
+      return mergePendingSavedLeads([], bounds);
+    }
+
+    // Setter/closer: viewport-scoped. Not a hard 400 on the whole turf.
+    // Equality scan + in-memory box (indexes not on prod; do not firebase deploy).
+    if (me.id) {
+      return mergePendingSavedLeads(await getUserViewportLeads(me.id, bounds, MAP_LEAD_CAP), bounds);
+    }
+
+    return [];
+  } catch (error) {
+    console.error('Error getting map leads:', error);
+    // Keep last cache so an index/query miss does not empty the map forever
+    return mergePendingSavedLeads((leadsCache || []).map(toThinMapLead), bounds);
+  }
+}
+
+export function filterLeadsToBounds(leads: Lead[], bounds: MapBounds): Lead[] {
+  return leads.filter((lead) => {
+    if (lead.lat == null || lead.lng == null) return false;
+    if (lead.lat < bounds.south || lead.lat > bounds.north) return false;
+    if (bounds.west > bounds.east) {
+      return lead.lng >= bounds.west || lead.lng <= bounds.east;
+    }
+    return lead.lng >= bounds.west && lead.lng <= bounds.east;
+  });
 }
 
 export function saveLeads(leads: Lead[]): void {
@@ -150,11 +240,70 @@ export async function saveLeadAsync(lead: Lead): Promise<void> {
       leadsCache.push(lead);
     }
   }
+  // Do not null leadsCache / turf cache (that forces a full dump). Upsert so a
+  // later getLeadsAsync / getMapLeadsAsync hit cannot drop this id.
+  rememberSavedLead(lead);
 }
 
 export function invalidateLeadsCache(): void {
   leadsCache = null;
+  leadsCacheKey = null;
   cacheTimestamp = 0;
+}
+
+const KNOCKING_VIEWPORT_KEY = 'raydar_knocking_viewport';
+const KNOCKING_MAP_LEADS_KEY = 'raydar_knocking_map_leads';
+
+export function getLastKnockingViewport(): MapBounds | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(KNOCKING_VIEWPORT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed?.south !== 'number' ||
+      typeof parsed?.north !== 'number' ||
+      typeof parsed?.west !== 'number' ||
+      typeof parsed?.east !== 'number'
+    ) {
+      return null;
+    }
+    return parsed as MapBounds;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastKnockingViewport(bounds: MapBounds): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(KNOCKING_VIEWPORT_KEY, JSON.stringify(bounds));
+  } catch {
+    // quota — keep going
+  }
+}
+
+export function getLastKnockingMapLeads(): Lead[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(KNOCKING_MAP_LEADS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(convertLeadDates);
+  } catch {
+    return [];
+  }
+}
+
+export function saveLastKnockingMapLeads(leads: Lead[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const thin = leads.slice(0, 400).map(toThinMapLead);
+    localStorage.setItem(KNOCKING_MAP_LEADS_KEY, JSON.stringify(thin));
+  } catch {
+    // quota — keep going
+  }
 }
 
 /**
@@ -169,6 +318,7 @@ export async function batchSaveLeadsAsync(
   await firestoreBatchSaveLeads(leads, onProgress);
   // Invalidate cache so next getLeadsAsync() fetches fresh data
   leadsCache = null;
+  leadsCacheKey = null;
   cacheTimestamp = 0;
 }
 
@@ -178,7 +328,9 @@ export async function updateLeadAsync(id: string, updates: Partial<Lead>): Promi
   if (leadsCache) {
     const index = leadsCache.findIndex(l => l.id === id);
     if (index >= 0) {
-      leadsCache[index] = { ...leadsCache[index], ...updates };
+      const merged = { ...leadsCache[index], ...updates };
+      leadsCache[index] = merged;
+      rememberSavedLead(merged);
     }
   }
 }
@@ -236,14 +388,22 @@ export function getUsers(): User[] {
 }
 
 export async function getUsersAsync(): Promise<User[]> {
-  if (usersCache && Date.now() - usersCacheTimestamp < CACHE_TTL) {
+  if (usersCache && usersCache.length > 0 && Date.now() - usersCacheTimestamp < CACHE_TTL) {
     return usersCache;
   }
 
   try {
+    // Wait for auth. getAllUsers() now throws on failure (no silent []).
+    // A pre-auth [] must not be cached for 90s (empties Assign To / Filter).
+    const { getCurrentAuthUser } = await import('./auth');
+    const me = await getCurrentAuthUser();
+    if (!me) return usersCache || [];
+
     const users = await firestoreGetAllUsers();
-    usersCache = users;
-    usersCacheTimestamp = Date.now();
+    if (users.length > 0) {
+      usersCache = users;
+      usersCacheTimestamp = Date.now();
+    }
     return users;
   } catch (error) {
     console.error('Firestore getUsers failed:', error);
@@ -337,6 +497,39 @@ export async function getCurrentUserAsync(): Promise<User | null> {
 export function saveCurrentUser(user: User): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(CURRENT_USER_KEY, user.id);
+}
+
+/**
+ * Acting user for map/list queries. Firebase auth stays the signed-in admin;
+ * localStorage may point at a setter when an admin/manager is viewing as.
+ * Does not write claimedBy/assignedTo or the setter's user doc.
+ */
+export async function resolveActingUser(): Promise<User | null> {
+  const { getCurrentAuthUser } = await import('./auth');
+  const authUser = await getCurrentAuthUser();
+  if (!authUser) return null;
+  if (typeof window === 'undefined') return authUser;
+
+  const storedId = localStorage.getItem(CURRENT_USER_KEY);
+  if (!storedId || storedId === authUser.id) return authUser;
+  if (!canSeeAllLeads(authUser.role)) return authUser;
+
+  const acting = await firestoreGetUser(storedId);
+  return acting || authUser;
+}
+
+/** Swap the acting user id only. Never writes leads or the target user document. */
+export function persistActingUser(user: User): void {
+  saveCurrentUser(user);
+  invalidateLeadsCache();
+  invalidateUserTurfCache();
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem(KNOCKING_MAP_LEADS_KEY);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export async function saveCurrentUserAsync(user: User): Promise<void> {
@@ -444,8 +637,4 @@ export async function getLeadsByUserAsync(userId: string): Promise<Lead[]> {
 // INITIALIZATION
 // ============================================
 
-// Load initial data on client
-if (typeof window !== 'undefined') {
-  getLeadsAsync().catch(console.error);
-  getUsersAsync().catch(console.error);
-}
+// Do not eager-fetch all leads/users on import — maps and lists load scoped data themselves.

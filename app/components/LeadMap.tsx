@@ -32,7 +32,11 @@ interface LeadMapProps {
   userRoutes?: UserRoute[]; // Multiple routes (one per user) for activity tracking
   center?: [number, number];
   zoom?: number;
-  onMapMove?: (center: [number, number], zoom: number) => void; // Callback when map moves
+  onMapMove?: (
+    center: [number, number],
+    zoom: number,
+    bounds?: { south: number; north: number; west: number; east: number }
+  ) => void; // Callback when map moves
   onMapTypeChange?: (mapType: 'street' | 'satellite') => void; // Callback when map type changes
   assignmentMode?: 'none' | 'manual' | 'territory';
   selectedLeadIdsForAssignment?: string[];
@@ -41,7 +45,7 @@ interface LeadMapProps {
   viewMode?: 'map' | 'assignments' | 'territory'; // Show territories in assignments/territory view
   territories?: any[]; // Territory polygons to display
   onTerritoryDelete?: (territoryId: string) => void; // Callback when territory deleted
-  onLeadAdded?: () => void; // Callback when a new lead is added via map pin drop
+  onLeadAdded?: (lead: Lead) => void; // Saved lead — parent must insert locally, not refetch
   searchLocation?: { lat: number; lng: number } | null; // For address search marker
   heatCells?: { lat: number; lng: number; intensity: number; count: number }[]; // Optional heat overlay
   heatCellRadiusMeters?: number;
@@ -98,6 +102,9 @@ export default function LeadMap({
   const labelsTileLayerRef = useRef<L.TileLayer | null>(null);
   const hasFitLeadsBoundsRef = useRef(false); // Prevent constant re-fitting of bounds
   const hasFitTerritoryBoundsRef = useRef(false); // Track territory bounds fitting
+  const onLeadClickRef = useRef(onLeadClick);
+  onLeadClickRef.current = onLeadClick;
+  const lastMarkerSigRef = useRef<string>('');
 
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
@@ -266,7 +273,13 @@ export default function LeadMap({
       
       // Notify parent of map move
       if (onMapMove) {
-        onMapMove(newCenter, currentZoom);
+        const b = map.getBounds();
+        onMapMove(newCenter, currentZoom, {
+          south: b.getSouth(),
+          north: b.getNorth(),
+          west: b.getWest(),
+          east: b.getEast(),
+        });
       }
     });
 
@@ -278,7 +291,13 @@ export default function LeadMap({
       
       // Notify parent of map move
       if (onMapMove) {
-        onMapMove(newCenter, currentZoom);
+        const b = map.getBounds();
+        onMapMove(newCenter, currentZoom, {
+          south: b.getSouth(),
+          north: b.getNorth(),
+          west: b.getWest(),
+          east: b.getEast(),
+        });
       }
     });
 
@@ -440,6 +459,10 @@ export default function LeadMap({
   useEffect(() => {
     if (!mapInstanceRef.current || !markersLayerRef.current || !isClient) return;
 
+    const markerSig = `${leads.map((l) => l.id).join(',')}|${selectedLeadId || ''}|${zoomTier}|${viewportKey}|${routeWaypoints?.length || 0}`;
+    if (markerSig === lastMarkerSigRef.current) return;
+    lastMarkerSigRef.current = markerSig;
+
     const map = mapInstanceRef.current;
     const layer = markersLayerRef.current;
 
@@ -497,7 +520,7 @@ export default function LeadMap({
           const icon = createActivityMarkerIcon(index + 1, userRoute.userColor);
           const marker = L.marker([wp.lat, wp.lng], { icon });
           marker.bindPopup(createActivityPopupContent(wp, userRoute.userName), { maxWidth: 300 });
-          marker.on('click', () => onLeadClick(wp.lead));
+          marker.on('click', () => onLeadClickRef.current(wp.lead));
           marker.addTo(layer);
           
           // Add person icon showing where knocker was standing when dispositioning
@@ -560,7 +583,7 @@ export default function LeadMap({
         const icon = createRouteNumberIcon(index + 1);
         const marker = L.marker([wp.lat, wp.lng], { icon });
         marker.bindPopup(createRoutePopupContent(wp), { maxWidth: 300 });
-        marker.on('click', () => onLeadClick(wp.lead));
+        marker.on('click', () => onLeadClickRef.current(wp.lead));
         marker.addTo(layer);
       });
 
@@ -616,7 +639,7 @@ export default function LeadMap({
       const marker = L.marker([lead.lat!, lead.lng!], { icon });
       // Prevent Leaflet from auto-panning the map to keep popups in view (this causes "snap back" / lock feeling on mobile).
       marker.bindPopup(createPopupContent(lead), { maxWidth: 300, autoPan: false });
-      marker.on('click', () => onLeadClick(lead));
+      marker.on('click', () => onLeadClickRef.current(lead));
       // IMPORTANT: Do NOT call openPopup() inside the render loop.
       // LeadMap re-renders on pan/zoom (viewportKey) and would repeatedly open the popup,
       // which can force the map to re-center.
@@ -638,7 +661,7 @@ export default function LeadMap({
     });
     // Only fit bounds once when leads first load, not on every render/pan/zoom
     // On /mobile/knocking we want to default to GPS location (not last knocked pin / small lead set).
-    const preferGpsCenter = currentUser?.role !== 'admin' && Boolean(userPosition);
+    const preferGpsCenter = currentUser?.role !== 'admin';
 
     if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current && !userInteractedRef.current && !preferGpsCenter) {
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
@@ -649,7 +672,7 @@ export default function LeadMap({
     // Performance: Log completion time
     const duration = Date.now() - startTime;
     console.log(`[LeadMap] Rendered ${visibleLeads.length} markers in ${duration}ms (zoom tier: ${zoomTier})`);
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey, userPosition]);
+  }, [leads, selectedLeadId, currentUser, routeWaypoints, isClient, dispositions, zoomTier, viewportKey]);
   // Note: Using zoomTier instead of direct mapZoom - only re-renders when crossing zoom thresholds
   // This prevents constant re-renders on every zoom event (just 4 tiers: <12, 12-14, 14-16, >16)
 
@@ -913,13 +936,17 @@ export default function LeadMap({
       }
     }
 
+    // Do not remove the marker on every GPS tick — only move it via setLatLng.
+  }, [userPosition, isClient]);
+
+  useEffect(() => {
     return () => {
       if (userMarkerRef.current) {
         userMarkerRef.current.remove();
         userMarkerRef.current = null;
       }
     };
-  }, [userPosition, isClient]);
+  }, []);
 
   // Handle manual recenter when center prop changes
   const prevCenterRef = useRef<[number, number] | undefined>(undefined);
@@ -1120,23 +1147,24 @@ export default function LeadMap({
       body: JSON.stringify({ level: 'info', message: 'Temp pin created, starting geocode', data: { lat: latlng.lat, lng: latlng.lng } })
     }).catch(() => {});
 
-    // Reverse geocode to get address
-    try {
-      const response = await fetch(
-        `/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`
-      );
-      const data = await response.json();
-      console.log('[LeadMap] Geocode result:', data);
+    setDropPinAddress({ address: '', city: '', state: '', zip: '' });
+    setDropPinLocation({ lat: latlng.lat, lng: latlng.lng });
+    setShowAddLeadModal(true);
+    console.log('[LeadMap] Modal should show now');
 
-      if (data.results && data.results[0]) {
-        const result = data.results[0];
-        const components = result.address_components || [];
-
+    // Reverse geocode in the background. A 500/hang must not block the sheet or Save.
+    fetch(`/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`)
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json();
+      })
+      .then((data) => {
+        if (!data?.results?.[0]) return;
+        const components = data.results[0].address_components || [];
         let street = '';
         let city = '';
         let state = '';
         let zip = '';
-
         components.forEach((component: any) => {
           if (component.types.includes('street_number')) {
             street = component.long_name + ' ' + street;
@@ -1154,17 +1182,11 @@ export default function LeadMap({
             zip = component.long_name;
           }
         });
-
         setDropPinAddress({ address: street.trim(), city, state, zip });
-      }
-    } catch (error) {
-      console.error('Reverse geocoding failed:', error);
-      setDropPinAddress({ address: '', city: '', state: '', zip: '' });
-    }
-
-    setDropPinLocation({ lat: latlng.lat, lng: latlng.lng });
-    setShowAddLeadModal(true);
-    console.log('[LeadMap] Modal should show now');
+      })
+      .catch((error) => {
+        console.error('Reverse geocoding failed:', error);
+      });
     
     // Send debug log - modal state set
     fetch('/api/debug-log', {
@@ -1188,13 +1210,18 @@ export default function LeadMap({
       const requiresProximity = currentUser?.role != null && ['setter', 'manager', 'sales'].includes(currentUser.role);
       if (requiresProximity && navigator.geolocation) {
         try {
-          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 5000,
-              maximumAge: 0,
-            });
-          });
+          const position = await Promise.race([
+            new Promise<GeolocationPosition>((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 0,
+              });
+            }),
+            new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('GPS proximity timed out')), 5000);
+            }),
+          ]);
 
           const pinLat = typeof leadData.lat === 'number' ? leadData.lat : dropPinLocation?.lat;
           const pinLng = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
@@ -1263,33 +1290,49 @@ export default function LeadMap({
         source: 'manually-added', // Mark as manually added via map pin drop
       } as Lead;
 
-      // Save to Firestore (create)
+      // Save to Firestore (create). rememberSavedLead runs inside saveLeadAsync.
       const { saveLeadAsync, updateLeadAsync } = await import('@/app/utils/storage');
       await saveLeadAsync(newLead);
 
-      // Auto-assign to territory user if within a territory
-      // NOTE: This requires write permissions to change assignedTo.
-      // Under our Firestore rules, only admins can reassign leads.
-      if (currentUser?.role === 'admin' && newLead.lat && newLead.lng) {
-        try {
-          const territories = await getTerritoriesAsync();
-          if (territories.length > 0) {
-            const territory = findLeadTerritory(newLead, territories);
-            if (territory?.userId) {
-              await updateLeadAsync(newLead.id, {
-                assignedTo: territory.userId,
-                assignedAt: new Date(),
-                status: 'assigned',
-              });
-              console.log('[LeadMap] Auto-assigned lead to territory user:', territory.userId);
-            }
-          }
-        } catch (err) {
-          console.warn('[LeadMap] Territory auto-assignment failed:', err);
-        }
+      if (tempPinRef.current) {
+        tempPinRef.current.remove();
+        tempPinRef.current = null;
+      }
+      setShowAddLeadModal(false);
+      setDropPinLocation(null);
+      if (onLeadAdded) {
+        onLeadAdded(newLead);
       }
 
-      // Run Solar API in background
+      // Territory + solar stay off the Save promise. Geocode/solar 4xx/5xx must not reject it.
+      if (currentUser?.role === 'admin' && newLead.lat && newLead.lng) {
+        void getTerritoriesAsync()
+          .then((territories) => {
+            if (!territories.length) return;
+            const territory = findLeadTerritory(newLead, territories);
+            if (!territory?.userId) return;
+            const assignedAt = new Date();
+            return updateLeadAsync(newLead.id, {
+              assignedTo: territory.userId,
+              assignedAt,
+              status: 'assigned',
+            }).then(() => {
+              if (onLeadAdded) {
+                onLeadAdded({
+                  ...newLead,
+                  assignedTo: territory.userId,
+                  assignedAt,
+                  status: 'assigned',
+                });
+              }
+              console.log('[LeadMap] Auto-assigned lead to territory user:', territory.userId);
+            });
+          })
+          .catch((err) => {
+            console.warn('[LeadMap] Territory auto-assignment failed:', err);
+          });
+      }
+
       if (newLead.lat && newLead.lng) {
         fetch('/api/solar', {
           method: 'POST',
@@ -1300,37 +1343,24 @@ export default function LeadMap({
             lng: newLead.lng,
           }),
         })
-          .then((res) => res.json())
+          .then(async (res) => {
+            if (!res.ok) return null;
+            return res.json();
+          })
           .then((solarData) => {
-            if (solarData.solarScore) {
-              // Update lead with solar data (partial update; do not overwrite ownership fields)
-              updateLeadAsync(newLead.id, {
-                solarScore: solarData.solarScore,
-                solarCategory: solarData.solarCategory,
-                solarMaxPanels: solarData.maxPanels,
-                solarSunshineHours: solarData.sunshineHours,
-                hasSouthFacingRoof: solarData.hasSouthFacingRoof,
-                solarTestedAt: new Date(),
-              }).catch((err: any) => {
-                console.error('Solar enrichment update failed:', err);
-              });
-            }
+            if (!solarData?.solarScore) return;
+            updateLeadAsync(newLead.id, {
+              solarScore: solarData.solarScore,
+              solarCategory: solarData.solarCategory,
+              solarMaxPanels: solarData.maxPanels,
+              solarSunshineHours: solarData.sunshineHours,
+              hasSouthFacingRoof: solarData.hasSouthFacingRoof,
+              solarTestedAt: new Date(),
+            }).catch((err: any) => {
+              console.error('Solar enrichment update failed:', err);
+            });
           })
           .catch((err) => console.error('Solar API error:', err));
-      }
-
-      // Remove temp pin
-      if (tempPinRef.current) {
-        tempPinRef.current.remove();
-        tempPinRef.current = null;
-      }
-
-      setShowAddLeadModal(false);
-      setDropPinLocation(null);
-
-      // Call parent callback to refresh leads (keeps map position)
-      if (onLeadAdded) {
-        onLeadAdded();
       }
     } catch (error: any) {
       console.error('Error saving dropped lead:', error);
