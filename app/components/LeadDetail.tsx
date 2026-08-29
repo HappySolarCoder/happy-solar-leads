@@ -791,20 +791,6 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               </div>
             )}
           </div>
-
-          {/* Book Appointment Manually */}
-          <div className="mt-4 pt-4 border-t border-[#E2E8F0]">
-            <a
-              href="https://api.leadconnectorhq.com/widget/groups/happy-solar-booking-hub"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-[#38A169] hover:bg-[#2F855A] text-white text-sm font-medium rounded-lg transition-colors"
-            >
-              <Calendar className="w-4 h-4" />
-              Book Appointment Manually
-            </a>
-          </div>
-
           {/* Notes Section */}
           <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Notes</h3>
@@ -891,6 +877,19 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               </div>
             </div>
           )}
+
+          {/* Book Manually */}
+          <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
+            <a
+              href="https://api.leadconnectorhq.com/widget/groups/happy-solar-booking-hub"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-[#38A169] hover:bg-[#2F855A] text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              <Calendar className="w-4 h-4" />
+              Book Manually
+            </a>
+          </div>
         </div>
       </div>
 
