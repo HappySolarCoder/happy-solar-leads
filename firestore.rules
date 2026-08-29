@@ -168,6 +168,12 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // ====================== APTITUDE TEST SUBMISSIONS ======================
+    match /aptitudeTestSubmissions/{submissionId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
     // ====================== DEFAULT DENY (critical security rule) ======================
     match /{document=**} {
       allow read, write: if false;
