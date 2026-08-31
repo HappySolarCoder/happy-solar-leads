@@ -14,6 +14,7 @@ import AddLeadModal from './AddLeadModal';
 import { getTerritoriesAsync } from '@/app/utils/territories';
 import { findLeadTerritory } from '@/app/utils/territoryAssignment';
 import { formatTimeEST } from '@/app/utils/timezone';
+import { shouldRenderTerritoryOverlay, type TeamAreaMember } from '@/app/utils/teamAreas';
 
 interface UserRoute {
   userId: string;
@@ -45,6 +46,9 @@ interface LeadMapProps {
   searchLocation?: { lat: number; lng: number } | null; // For address search marker
   heatCells?: { lat: number; lng: number; intensity: number; count: number }[]; // Optional heat overlay
   heatCellRadiusMeters?: number;
+  showTeamAreas?: boolean; // User toggle: overlay FMA territories + teammate pins
+  teamMembers?: TeamAreaMember[];
+  onToggleTeamAreas?: (next: boolean) => void;
 }
 
 export default function LeadMap({ 
@@ -70,6 +74,9 @@ export default function LeadMap({
   searchLocation,
   heatCells = [],
   heatCellRadiusMeters = 180,
+  showTeamAreas = false,
+  teamMembers = [],
+  onToggleTeamAreas,
 }: LeadMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -953,16 +960,17 @@ export default function LeadMap({
       territoriesLayerRef.current = L.layerGroup().addTo(map);
     }
 
-    // Only render territories in assignments view or territory view
-    console.log('[LeadMap] Territory rendering check:', { viewMode, territoriesCount: territories.length, currentUserRole: currentUser?.role });
-    if (viewMode !== 'assignments' && viewMode !== 'territory') {
-      console.log('[LeadMap] Not in assignments/territory view, skipping territories');
+    // Assignments/territory views keep their existing overlay. Field map uses showTeamAreas.
+    console.log('[LeadMap] Territory rendering check:', { viewMode, showTeamAreas, territoriesCount: territories.length, currentUserRole: currentUser?.role });
+    if (!shouldRenderTerritoryOverlay(viewMode, showTeamAreas)) {
+      console.log('[LeadMap] Territory overlay off, skipping territories');
       return;
     }
 
-    // Filter territories: in territory view, show only current user's territory (unless admin/manager)
+    // Filter territories: in territory view, show only current user's territory (unless admin/manager).
+    // The field toggle shows every assigned FMA area so teammates can see each other.
     let territoriesToRender = territories;
-    if (viewMode === 'territory' && currentUser && currentUser.role !== 'admin' && currentUser.role !== 'manager') {
+    if (!showTeamAreas && viewMode === 'territory' && currentUser && currentUser.role !== 'admin' && currentUser.role !== 'manager') {
       territoriesToRender = territories.filter(t => t.userId === currentUser.id);
       console.log('[LeadMap] Filtering to user territory:', territoriesToRender.length);
     }
@@ -985,6 +993,7 @@ export default function LeadMap({
         fillOpacity: 0.2, // More visible fill
         weight: 4, // Thicker border
         opacity: 1, // Full opacity on border
+        interactive: !showTeamAreas, // Field overlay must not steal lead-pin clicks
       });
 
       // Add permanent label in center of territory
@@ -1005,62 +1014,68 @@ export default function LeadMap({
               white-space: nowrap;
               box-shadow: 0 2px 8px rgba(0,0,0,0.3);
               border: 2px solid white;
+              pointer-events: none;
             ">
               ${territory.userName}
             </div>
           `,
           iconSize: [0, 0],
         }),
+        interactive: false,
+        keyboard: false,
       });
 
-      const popupContent = `
-        <div style="padding:12px;font-family:system-ui,-apple-system,sans-serif;">
-          <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:${territory.userColor};">${territory.userName}</h3>
-          <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${territory.leadIds.length} leads assigned</p>
-          <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">Created: ${new Date(territory.createdAt).toLocaleDateString()}</p>
-          <button 
-            id="delete-territory-${territory.id}"
-            style="
-              width:100%;
-              padding:8px 16px;
-              background:#EF4444;
-              color:white;
-              border:none;
-              border-radius:6px;
-              font-size:14px;
-              font-weight:600;
-              cursor:pointer;
-              transition:background 0.2s;
-            "
-            onmouseover="this.style.background='#DC2626'"
-            onmouseout="this.style.background='#EF4444'"
-          >
-            Delete Territory
-          </button>
-        </div>
-      `;
+      if (!showTeamAreas) {
+        const popupContent = `
+          <div style="padding:12px;font-family:system-ui,-apple-system,sans-serif;">
+            <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:${territory.userColor};">${territory.userName}</h3>
+            <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${territory.leadIds.length} leads assigned</p>
+            <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">Created: ${new Date(territory.createdAt).toLocaleDateString()}</p>
+            <button 
+              id="delete-territory-${territory.id}"
+              style="
+                width:100%;
+                padding:8px 16px;
+                background:#EF4444;
+                color:white;
+                border:none;
+                border-radius:6px;
+                font-size:14px;
+                font-weight:600;
+                cursor:pointer;
+                transition:background 0.2s;
+              "
+              onmouseover="this.style.background='#DC2626'"
+              onmouseout="this.style.background='#EF4444'"
+            >
+              Delete Territory
+            </button>
+          </div>
+        `;
 
-      polygon.bindPopup(popupContent);
-      
-      // Add delete button handler when popup opens
-      polygon.on('popupopen', () => {
-        const deleteBtn = document.getElementById(`delete-territory-${territory.id}`);
-        if (deleteBtn && onTerritoryDelete) {
-          deleteBtn.addEventListener('click', () => {
-            if (confirm(`Delete territory for ${territory.userName}?\n\nThis will unassign all ${territory.leadIds.length} leads but preserve their history.`)) {
-              onTerritoryDelete(territory.id);
-              map.closePopup();
-            }
-          });
-        }
-      });
+        polygon.bindPopup(popupContent);
+        
+        // Add delete button handler when popup opens
+        polygon.on('popupopen', () => {
+          const deleteBtn = document.getElementById(`delete-territory-${territory.id}`);
+          if (deleteBtn && onTerritoryDelete) {
+            deleteBtn.addEventListener('click', () => {
+              if (confirm(`Delete territory for ${territory.userName}?\n\nThis will unassign all ${territory.leadIds.length} leads but preserve their history.`)) {
+                onTerritoryDelete(territory.id);
+                map.closePopup();
+              }
+            });
+          }
+        });
+      }
 
       polygon.addTo(territoriesLayerRef.current!);
       label.addTo(territoriesLayerRef.current!);
     });
 
-    // Auto-fit bounds to show territory in territory view mode (only once)
-    if (viewMode === 'territory' && territories.length > 0 && !hasFitTerritoryBoundsRef.current) {
+    // Auto-fit bounds to show territory in territory view mode (only once).
+    // Field toggle must not yank the knocker's current map position.
+    if (!showTeamAreas && viewMode === 'territory' && territories.length > 0 && !hasFitTerritoryBoundsRef.current) {
       const allTerritoryCoords: [number, number][] = [];
       territories.forEach(t => {
         if (t.polygon) {
@@ -1081,7 +1096,65 @@ export default function LeadMap({
         territoriesLayerRef.current.clearLayers();
       }
     };
-  }, [territories, viewMode, isClient]);
+  }, [territories, viewMode, showTeamAreas, isClient]);
+
+  // Named FMA location pins — only while the field toggle is on
+  const teamMembersLayerRef = useRef<L.LayerGroup | null>(null);
+  useEffect(() => {
+    if (!mapInstanceRef.current || !isClient) return;
+
+    const map = mapInstanceRef.current;
+    if (teamMembersLayerRef.current) {
+      teamMembersLayerRef.current.clearLayers();
+    } else {
+      teamMembersLayerRef.current = L.layerGroup().addTo(map);
+    }
+
+    if (!showTeamAreas || teamMembers.length === 0) return;
+
+    teamMembers.forEach((member) => {
+      if (!Number.isFinite(member.lat) || !Number.isFinite(member.lng)) return;
+
+      const marker = L.marker([member.lat, member.lng], {
+        icon: L.divIcon({
+          className: 'team-area-member-marker',
+          html: `
+            <div style="position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none;">
+              <div style="
+                width:22px;
+                height:22px;
+                background:${member.color || '#FF5F5A'};
+                border:3px solid #ffffff;
+                border-radius:50%;
+                box-shadow:0 2px 8px rgba(0,0,0,0.35);
+              "></div>
+              <div style="
+                margin-top:4px;
+                color:#ffffff;
+                font-size:12px;
+                font-weight:700;
+                text-shadow:0 1px 3px rgba(0,0,0,0.85);
+                white-space:nowrap;
+              ">${member.name}</div>
+            </div>
+          `,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+        interactive: false,
+        keyboard: false,
+        zIndexOffset: 800,
+      });
+
+      marker.addTo(teamMembersLayerRef.current!);
+    });
+
+    return () => {
+      if (teamMembersLayerRef.current) {
+        teamMembersLayerRef.current.clearLayers();
+      }
+    };
+  }, [teamMembers, showTeamAreas, isClient]);
 
   // Handle dropping a pin
   const handleDropPin = async (latlng: L.LatLng) => {
@@ -1395,6 +1468,28 @@ export default function LeadMap({
           </>
         )}
       </button>
+
+      {onToggleTeamAreas && (
+        <button
+          type="button"
+          onClick={() => onToggleTeamAreas(!showTeamAreas)}
+          className={`absolute top-20 right-6 px-4 py-2 border-2 rounded-lg shadow-lg flex items-center gap-2 font-medium text-sm z-20 transition-all duration-200 hover:scale-105 active:scale-95 ${
+            showTeamAreas
+              ? 'bg-[#FF5F5A] border-[#FF5F5A] text-white'
+              : 'bg-white border-[#E2E8F0] text-[#2D3748] hover:bg-[#FF5F5A] hover:text-white'
+          }`}
+          title={showTeamAreas ? 'Hide team areas' : 'Show team areas'}
+          aria-pressed={showTeamAreas}
+          style={{ boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z" />
+            <path d="M9 3v15" />
+            <path d="M15 6v15" />
+          </svg>
+          {showTeamAreas ? 'Hide areas' : 'Show team areas'}
+        </button>
+      )}
 
       {/* GPS Locate Button */}
       {userPosition && (

@@ -13,6 +13,8 @@ import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import GoalsPaceModal from '@/app/components/GoalsPaceModal';
+import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
+import { membersFromUserRecords } from '@/app/utils/teamAreas';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -57,6 +59,7 @@ export default function KnockingPage() {
   const [writeError, setWriteError] = useState<string | null>(null);
   const [showGoalsModal, setShowGoalsModal] = useState(false);
   const [showHeat, setShowHeat] = useState(false);
+  const [showTeamAreas, setShowTeamAreas] = useState(false);
   
   // Route optimization state
   const [showRoute, setShowRoute] = useState(false);
@@ -73,6 +76,18 @@ export default function KnockingPage() {
     enableHighAccuracy: true,
     watch: true, // Continuous tracking
   });
+  const { territories: teamAreaTerritories, members: teamAreaMembers } = useTeamAreasOverlay(
+    showTeamAreas,
+    gpsPosition
+  );
+  const teamMembersForMap = useMemo(() => {
+    if (!showTeamAreas) return [];
+    const byId = new Map(teamAreaMembers.map((member) => [member.id, member]));
+    for (const member of membersFromUserRecords(users)) {
+      if (!byId.has(member.id)) byId.set(member.id, member);
+    }
+    return Array.from(byId.values());
+  }, [showTeamAreas, teamAreaMembers, users]);
 
   // Set map center based on user role
   useEffect(() => {
@@ -1040,6 +1055,10 @@ export default function KnockingPage() {
             searchLocation={searchLocation}
             heatCells={heatCells}
             heatCellRadiusMeters={805}
+            showTeamAreas={showTeamAreas}
+            territories={showTeamAreas ? teamAreaTerritories : []}
+            teamMembers={teamMembersForMap}
+            onToggleTeamAreas={setShowTeamAreas}
           />
           {/* GPS Locate button is now built into LeadMap component */}
         </main>

@@ -19,6 +19,7 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
 import { loadUserSession, saveUserSession, getDefaultSession } from '@/app/utils/userSession';
+import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -57,6 +58,8 @@ export default function Home() {
   const [mapCenter, setMapCenter] = useState<[number, number]>([43.1566, -77.6088]);
   const [mapZoom, setMapZoom] = useState(11);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite');
+  const [showTeamAreas, setShowTeamAreas] = useState(false);
+  const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
   
   // Address search state
   const [addressSearch, setAddressSearch] = useState('');
@@ -655,7 +658,6 @@ export default function Home() {
           <main className={`flex-1 relative ${viewMode === 'map' || viewMode === 'territory' ? 'w-full' : ''}`}>
             <LeadMap
               leads={viewMode === 'territory' ? [] : (leads?.length > 0 ? leads : [])}
-              territories={territories}
               currentUser={currentUser}
               users={ensureUserColors(users)}
               onLeadClick={handleLeadSelect}
@@ -673,6 +675,10 @@ export default function Home() {
               onMapTypeChange={setMapType}
               viewMode={(viewMode === 'territory' ? 'territory' : 'map') as 'map' | 'assignments' | 'territory'}
               searchLocation={searchLocation}
+              showTeamAreas={showTeamAreas}
+              territories={showTeamAreas && overlayTerritories.length > 0 ? overlayTerritories : territories}
+              teamMembers={showTeamAreas ? overlayMembers : []}
+              onToggleTeamAreas={setShowTeamAreas}
             />
 
             {/* Mobile Floating Action Button */}

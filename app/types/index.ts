@@ -35,6 +35,12 @@ export interface User {
   territory?: string;
   // Team (for user organization - e.g., Rochester, Buffalo)
   team?: string;
+  // Last published field GPS (users.currentLocation) — used by team map / area overlay
+  currentLocation?: {
+    lat: number;
+    lng: number;
+    timestamp?: Date;
+  };
 }
 
 export type LeadTag = 'solar-data' | 'homeowner' | 'home-data';
