@@ -17,7 +17,7 @@ export function shouldRenderTerritoryOverlay(
 
 export function polygonCentroid(polygon: TerritoryPoint[] | undefined): { lat: number; lng: number } | null {
   if (!polygon || polygon.length < 3) return null;
-  const sum = polygon.reduce(
+  const sum = polygon.reduce<{ lat: number; lng: number; n: number }>(
     (acc, point) => {
       const lat = Number(point.lat);
       const lng = Number(point.lng);
