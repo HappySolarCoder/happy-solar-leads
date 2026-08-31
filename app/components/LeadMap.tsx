@@ -14,7 +14,7 @@ import AddLeadModal from './AddLeadModal';
 import { getTerritoriesAsync } from '@/app/utils/territories';
 import { findLeadTerritory } from '@/app/utils/territoryAssignment';
 import { formatTimeEST } from '@/app/utils/timezone';
-import { shouldRenderTerritoryOverlay, type TeamAreaMember } from '@/app/utils/teamAreas';
+import { colorForTerritory, shouldRenderTerritoryOverlay, type TeamAreaMember } from '@/app/utils/teamAreas';
 
 interface UserRoute {
   userId: string;
@@ -987,9 +987,10 @@ export default function LeadMap({
       // Convert TerritoryPoint objects to Leaflet format [lat, lng]
       const leafletCoords: [number, number][] = territory.polygon.map((p: any) => [p.lat, p.lng]);
 
+      const areaColor = colorForTerritory(territory, users);
       const polygon = L.polygon(leafletCoords, {
-        color: territory.userColor,
-        fillColor: territory.userColor,
+        color: areaColor,
+        fillColor: areaColor,
         fillOpacity: 0.2, // More visible fill
         weight: 4, // Thicker border
         opacity: 1, // Full opacity on border
@@ -1005,7 +1006,7 @@ export default function LeadMap({
           className: 'territory-label',
           html: `
             <div style="
-              background: ${territory.userColor};
+              background: ${areaColor};
               color: white;
               padding: 8px 16px;
               border-radius: 20px;
@@ -1028,7 +1029,7 @@ export default function LeadMap({
       if (!showTeamAreas) {
         const popupContent = `
           <div style="padding:12px;font-family:system-ui,-apple-system,sans-serif;">
-            <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:${territory.userColor};">${territory.userName}</h3>
+            <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:${areaColor};">${territory.userName}</h3>
             <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${territory.leadIds.length} leads assigned</p>
             <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">Created: ${new Date(territory.createdAt).toLocaleDateString()}</p>
             <button 
@@ -1096,7 +1097,7 @@ export default function LeadMap({
         territoriesLayerRef.current.clearLayers();
       }
     };
-  }, [territories, viewMode, showTeamAreas, isClient]);
+  }, [territories, users, viewMode, showTeamAreas, isClient]);
 
   // Named FMA location pins — only while the field toggle is on
   const teamMembersLayerRef = useRef<L.LayerGroup | null>(null);

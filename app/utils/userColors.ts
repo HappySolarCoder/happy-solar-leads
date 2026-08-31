@@ -43,6 +43,21 @@ export function getDefaultUserColor(index: number): string {
 }
 
 /**
+ * Color for a territory owner from the existing user.color / TERRITORY_COLORS palette.
+ */
+export function colorForUserId(
+  userId: string,
+  users: Array<{ id: string; color?: string }>,
+  fallback?: string
+): string {
+  const index = users.findIndex((user) => user.id === userId);
+  const userColor = index >= 0 ? users[index].color : undefined;
+  if (userColor) return userColor;
+  if (fallback) return fallback;
+  return getDefaultUserColor(Math.max(index, 0));
+}
+
+/**
  * Ensure all users have colors assigned
  * Auto-fixes colors not in the bright palette
  */

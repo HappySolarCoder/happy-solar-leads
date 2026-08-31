@@ -14,7 +14,7 @@ import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import GoalsPaceModal from '@/app/components/GoalsPaceModal';
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
-import { membersFromUserRecords } from '@/app/utils/teamAreas';
+import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -76,18 +76,16 @@ export default function KnockingPage() {
     enableHighAccuracy: true,
     watch: true, // Continuous tracking
   });
-  const { territories: teamAreaTerritories, members: teamAreaMembers } = useTeamAreasOverlay(
-    showTeamAreas,
-    gpsPosition
+  const overlayTerritories = useTeamAreasOverlay(showTeamAreas);
+  const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
+  const teamAreaTerritories = useMemo(
+    () => (showTeamAreas ? colorTerritories(overlayTerritories, coloredUsers) : []),
+    [showTeamAreas, overlayTerritories, coloredUsers]
   );
-  const teamMembersForMap = useMemo(() => {
-    if (!showTeamAreas) return [];
-    const byId = new Map(teamAreaMembers.map((member) => [member.id, member]));
-    for (const member of membersFromUserRecords(users)) {
-      if (!byId.has(member.id)) byId.set(member.id, member);
-    }
-    return Array.from(byId.values());
-  }, [showTeamAreas, teamAreaMembers, users]);
+  const teamMembersForMap = useMemo(
+    () => (showTeamAreas ? membersFromTerritories(overlayTerritories, coloredUsers) : []),
+    [showTeamAreas, overlayTerritories, coloredUsers]
+  );
 
   // Set map center based on user role
   useEffect(() => {
@@ -1043,7 +1041,7 @@ export default function KnockingPage() {
           <LeadMap
             leads={[...leadsWithDistance, ...leads.filter(l => l.leadType === 'customer' || l.leadType === 'sale')]}
             currentUser={currentUser}
-            users={ensureUserColors(users)}
+            users={coloredUsers}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
             assignmentMode="none"

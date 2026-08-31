@@ -1,13 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isRecentTeamLocation,
-  membersFromUserRecords,
-  parseCurrentLocation,
-  shouldPublishTeamLocation,
+  colorForTerritory,
+  colorTerritories,
+  membersFromTerritories,
+  polygonCentroid,
   shouldRenderTerritoryOverlay,
-  TEAM_LOCATION_STALE_MS,
 } from '../app/utils/teamAreas.ts';
+import { colorForUserId, getDefaultUserColor } from '../app/utils/userColors.ts';
+import type { Territory } from '../app/types/territory.ts';
 
 describe('shouldRenderTerritoryOverlay', () => {
   it('is off on the regular map unless the user toggle is on', () => {
@@ -21,87 +22,84 @@ describe('shouldRenderTerritoryOverlay', () => {
   });
 });
 
-describe('parseCurrentLocation / isRecentTeamLocation', () => {
-  const now = Date.parse('2026-08-31T15:00:00.000Z');
-
-  it('accepts a recent ISO timestamp', () => {
-    const loc = parseCurrentLocation(
-      { lat: 42.91, lng: -78.75, timestamp: '2026-08-31T14:50:00.000Z' },
-      now
-    );
-    assert.ok(loc);
-    assert.equal(loc?.lat, 42.91);
-    assert.equal(loc?.lng, -78.75);
+describe('colorForUserId / colorForTerritory', () => {
+  it('uses existing user.color, not a hardcoded name map', () => {
+    const users = [
+      { id: 'u1', color: '#FF0000' },
+      { id: 'u2', color: '#00FF00' },
+    ];
+    assert.equal(colorForUserId('u1', users), '#FF0000');
+    assert.equal(colorForTerritory({ userId: 'u2', userColor: '#999999' }, users), '#00FF00');
   });
 
-  it('rejects stale locations', () => {
+  it('falls back to territory.userColor, then TERRITORY_COLORS', () => {
     assert.equal(
-      isRecentTeamLocation('2026-08-31T14:00:00.000Z', now, TEAM_LOCATION_STALE_MS),
-      false
+      colorForTerritory({ userId: 'missing', userColor: '#FF6600' }, []),
+      '#FF6600'
     );
-    assert.equal(
-      parseCurrentLocation(
-        { lat: 42.91, lng: -78.75, timestamp: '2026-08-31T14:00:00.000Z' },
-        now
-      ),
-      null
-    );
+    assert.equal(colorForUserId('unknown', []), getDefaultUserColor(0));
   });
 
-  it('rejects invalid coordinates', () => {
-    assert.equal(parseCurrentLocation({ lat: 999, lng: -78.75, timestamp: now }, now), null);
-    assert.equal(parseCurrentLocation({ lat: 42.91, lng: 'east' }, now), null);
-  });
-
-  it('parses Firestore-like {seconds} timestamps', () => {
-    const loc = parseCurrentLocation(
-      { lat: 42.9, lng: -78.7, timestamp: { seconds: now / 1000 } },
-      now
-    );
-    assert.ok(loc);
-    assert.equal(loc?.lat, 42.9);
+  it('paints territories from the user roster', () => {
+    const territories = [
+      {
+        id: 't1',
+        userId: 'u1',
+        userName: 'Owner One',
+        userColor: '#111111',
+        polygon: [
+          { lat: 42.9, lng: -78.8 },
+          { lat: 42.91, lng: -78.8 },
+          { lat: 42.91, lng: -78.79 },
+        ],
+        leadIds: [],
+        createdAt: new Date('2026-01-01'),
+        createdBy: 'admin',
+      },
+    ] as Territory[];
+    const colored = colorTerritories(territories, [{ id: 'u1', color: '#00FFFF' }]);
+    assert.equal(colored[0].userColor, '#00FFFF');
+    assert.equal(colored[0].userName, 'Owner One');
   });
 });
 
-describe('membersFromUserRecords', () => {
-  const now = Date.parse('2026-08-31T15:00:00.000Z');
-
-  it('keeps only users with a recent currentLocation', () => {
-    const members = membersFromUserRecords(
-      [
-        {
-          id: 'sawyer',
-          name: 'Sawyer Vermeesch',
-          color: '#FF0000',
-          currentLocation: { lat: 42.91, lng: -78.75, timestamp: '2026-08-31T14:55:00.000Z' },
-        },
-        {
-          id: 'stale',
-          name: 'Old Pin',
-          color: '#00FF00',
-          currentLocation: { lat: 42.9, lng: -78.7, timestamp: '2026-08-31T13:00:00.000Z' },
-        },
-        { id: 'none', name: 'No GPS', color: '#0000FF' },
+describe('membersFromTerritories', () => {
+  const territories = [
+    {
+      id: 't1',
+      userId: 'u1',
+      userName: 'Owner One',
+      userColor: '#111111',
+      polygon: [
+        { lat: 42.9, lng: -78.8 },
+        { lat: 42.92, lng: -78.8 },
+        { lat: 42.92, lng: -78.78 },
+        { lat: 42.9, lng: -78.78 },
       ],
-      now
-    );
-    assert.deepEqual(members.map((m) => m.id), ['sawyer']);
-    assert.equal(members[0].name, 'Sawyer Vermeesch');
-    assert.equal(members[0].color, '#FF0000');
-  });
-});
+      leadIds: [],
+      createdAt: new Date('2026-01-01'),
+      createdBy: 'admin',
+    },
+  ] as Territory[];
 
-describe('shouldPublishTeamLocation', () => {
-  it('publishes the first point and ignores tiny GPS jitter', () => {
-    const first = { lat: 42.91, lng: -78.75 };
-    assert.equal(shouldPublishTeamLocation(null, first), true);
-    assert.equal(
-      shouldPublishTeamLocation(first, { lat: 42.91001, lng: -78.75001 }),
-      false
-    );
-    assert.equal(
-      shouldPublishTeamLocation(first, { lat: 42.911, lng: -78.751 }),
-      true
-    );
+  it('places one named pin at the polygon centroid in user.color', () => {
+    const members = membersFromTerritories(territories, [{ id: 'u1', color: '#FF0000' }]);
+    assert.equal(members.length, 1);
+    assert.equal(members[0].id, 'u1');
+    assert.equal(members[0].name, 'Owner One');
+    assert.equal(members[0].color, '#FF0000');
+    const center = polygonCentroid(territories[0].polygon);
+    assert.ok(center);
+    assert.equal(members[0].lat, center?.lat);
+    assert.equal(members[0].lng, center?.lng);
+  });
+
+  it('prefers an existing users.currentLocation when present', () => {
+    const members = membersFromTerritories(territories, [
+      { id: 'u1', name: 'Owner One', color: '#FF0000', currentLocation: { lat: 42.95, lng: -78.7 } },
+    ]);
+    assert.equal(members[0].lat, 42.95);
+    assert.equal(members[0].lng, -78.7);
+    assert.equal(members[0].color, '#FF0000');
   });
 });

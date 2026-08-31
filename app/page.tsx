@@ -19,7 +19,7 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
 import { loadUserSession, saveUserSession, getDefaultSession } from '@/app/utils/userSession';
-import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
+import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -59,7 +59,6 @@ export default function Home() {
   const [mapZoom, setMapZoom] = useState(11);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite');
   const [showTeamAreas, setShowTeamAreas] = useState(false);
-  const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
   
   // Address search state
   const [addressSearch, setAddressSearch] = useState('');
@@ -309,6 +308,16 @@ export default function Home() {
     }
     loadTerritories();
   }, []);
+
+  const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
+  const mapTerritories = useMemo(
+    () => (showTeamAreas ? colorTerritories(territories, coloredUsers) : territories),
+    [showTeamAreas, territories, coloredUsers]
+  );
+  const teamAreaMembers = useMemo(
+    () => (showTeamAreas ? membersFromTerritories(territories, coloredUsers) : []),
+    [showTeamAreas, territories, coloredUsers]
+  );
 
   // Role-based lead visibility
   // For setters/closers: show leads they claimed OR leads assigned to them (via territory)
@@ -659,7 +668,7 @@ export default function Home() {
             <LeadMap
               leads={viewMode === 'territory' ? [] : (leads?.length > 0 ? leads : [])}
               currentUser={currentUser}
-              users={ensureUserColors(users)}
+              users={coloredUsers}
               onLeadClick={handleLeadSelect}
               selectedLeadId={selectedLeadId}
               assignmentMode={assignmentMode}
@@ -676,8 +685,8 @@ export default function Home() {
               viewMode={(viewMode === 'territory' ? 'territory' : 'map') as 'map' | 'assignments' | 'territory'}
               searchLocation={searchLocation}
               showTeamAreas={showTeamAreas}
-              territories={showTeamAreas && overlayTerritories.length > 0 ? overlayTerritories : territories}
-              teamMembers={showTeamAreas ? overlayMembers : []}
+              territories={mapTerritories}
+              teamMembers={teamAreaMembers}
               onToggleTeamAreas={setShowTeamAreas}
             />
 
