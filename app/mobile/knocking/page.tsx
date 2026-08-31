@@ -13,6 +13,8 @@ import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import GoalsPaceModal from '@/app/components/GoalsPaceModal';
+import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
+import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -57,6 +59,7 @@ export default function KnockingPage() {
   const [writeError, setWriteError] = useState<string | null>(null);
   const [showGoalsModal, setShowGoalsModal] = useState(false);
   const [showHeat, setShowHeat] = useState(false);
+  const [showTeamAreas, setShowTeamAreas] = useState(false);
   
   // Route optimization state
   const [showRoute, setShowRoute] = useState(false);
@@ -73,6 +76,22 @@ export default function KnockingPage() {
     enableHighAccuracy: true,
     watch: true, // Continuous tracking
   });
+  const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
+  const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
+  const teamAreaTerritories = useMemo(
+    () => (showTeamAreas ? colorTerritories(overlayTerritories, coloredUsers) : []),
+    [showTeamAreas, overlayTerritories, coloredUsers]
+  );
+  const teamMembersForMap = useMemo(() => {
+    if (!showTeamAreas) return [];
+    if (overlayMembers.length > 0) {
+      return overlayMembers.map((member) => ({
+        ...member,
+        color: coloredUsers.find((user) => user.id === member.id)?.color || member.color,
+      }));
+    }
+    return membersFromTerritories(overlayTerritories, coloredUsers);
+  }, [showTeamAreas, overlayTerritories, overlayMembers, coloredUsers]);
 
   // Set map center based on user role
   useEffect(() => {
@@ -1028,7 +1047,7 @@ export default function KnockingPage() {
           <LeadMap
             leads={[...leadsWithDistance, ...leads.filter(l => l.leadType === 'customer' || l.leadType === 'sale')]}
             currentUser={currentUser}
-            users={ensureUserColors(users)}
+            users={coloredUsers}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
             assignmentMode="none"
@@ -1040,6 +1059,10 @@ export default function KnockingPage() {
             searchLocation={searchLocation}
             heatCells={heatCells}
             heatCellRadiusMeters={805}
+            showTeamAreas={showTeamAreas}
+            territories={showTeamAreas ? teamAreaTerritories : []}
+            teamMembers={teamMembersForMap}
+            onToggleTeamAreas={setShowTeamAreas}
           />
           {/* GPS Locate button is now built into LeadMap component */}
         </main>

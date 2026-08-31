@@ -19,6 +19,8 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
 import { loadUserSession, saveUserSession, getDefaultSession } from '@/app/utils/userSession';
+import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
+import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -57,6 +59,8 @@ export default function Home() {
   const [mapCenter, setMapCenter] = useState<[number, number]>([43.1566, -77.6088]);
   const [mapZoom, setMapZoom] = useState(11);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite');
+  const [showTeamAreas, setShowTeamAreas] = useState(false);
+  const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
   
   // Address search state
   const [addressSearch, setAddressSearch] = useState('');
@@ -306,6 +310,22 @@ export default function Home() {
     }
     loadTerritories();
   }, []);
+
+  const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
+  const mapTerritories = useMemo(
+    () => (showTeamAreas ? colorTerritories(overlayTerritories, coloredUsers) : territories),
+    [showTeamAreas, overlayTerritories, territories, coloredUsers]
+  );
+  const teamAreaMembers = useMemo(() => {
+    if (!showTeamAreas) return [];
+    if (overlayMembers.length > 0) {
+      return overlayMembers.map((member) => ({
+        ...member,
+        color: coloredUsers.find((user) => user.id === member.id)?.color || member.color,
+      }));
+    }
+    return membersFromTerritories(overlayTerritories, coloredUsers);
+  }, [showTeamAreas, overlayTerritories, overlayMembers, coloredUsers]);
 
   // Role-based lead visibility
   // For setters/closers: show leads they claimed OR leads assigned to them (via territory)
@@ -655,9 +675,8 @@ export default function Home() {
           <main className={`flex-1 relative ${viewMode === 'map' || viewMode === 'territory' ? 'w-full' : ''}`}>
             <LeadMap
               leads={viewMode === 'territory' ? [] : (leads?.length > 0 ? leads : [])}
-              territories={territories}
               currentUser={currentUser}
-              users={ensureUserColors(users)}
+              users={coloredUsers}
               onLeadClick={handleLeadSelect}
               selectedLeadId={selectedLeadId}
               assignmentMode={assignmentMode}
@@ -673,6 +692,10 @@ export default function Home() {
               onMapTypeChange={setMapType}
               viewMode={(viewMode === 'territory' ? 'territory' : 'map') as 'map' | 'assignments' | 'territory'}
               searchLocation={searchLocation}
+              showTeamAreas={showTeamAreas}
+              territories={mapTerritories}
+              teamMembers={teamAreaMembers}
+              onToggleTeamAreas={setShowTeamAreas}
             />
 
             {/* Mobile Floating Action Button */}
