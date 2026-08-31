@@ -122,10 +122,9 @@ service cloud.firestore {
     }
 
     // ====================== TERRITORIES ======================
-    // Signed-in users can read assigned turf outlines (field "Show team areas").
-    // Only admins can draw / edit / delete.
+    // Admins see everything; reps can only read their own assigned territory
     match /territories/{territoryId} {
-      allow read: if signedIn();
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == uid());
       allow create, update, delete: if isAdmin();
     }
 

@@ -20,6 +20,7 @@ import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, c
 import { ensureUserColors } from '@/app/utils/userColors';
 import { loadUserSession, saveUserSession, getDefaultSession } from '@/app/utils/userSession';
 import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
+import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -59,6 +60,7 @@ export default function Home() {
   const [mapZoom, setMapZoom] = useState(11);
   const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite');
   const [showTeamAreas, setShowTeamAreas] = useState(false);
+  const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
   
   // Address search state
   const [addressSearch, setAddressSearch] = useState('');
@@ -311,13 +313,19 @@ export default function Home() {
 
   const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
   const mapTerritories = useMemo(
-    () => (showTeamAreas ? colorTerritories(territories, coloredUsers) : territories),
-    [showTeamAreas, territories, coloredUsers]
+    () => (showTeamAreas ? colorTerritories(overlayTerritories, coloredUsers) : territories),
+    [showTeamAreas, overlayTerritories, territories, coloredUsers]
   );
-  const teamAreaMembers = useMemo(
-    () => (showTeamAreas ? membersFromTerritories(territories, coloredUsers) : []),
-    [showTeamAreas, territories, coloredUsers]
-  );
+  const teamAreaMembers = useMemo(() => {
+    if (!showTeamAreas) return [];
+    if (overlayMembers.length > 0) {
+      return overlayMembers.map((member) => ({
+        ...member,
+        color: coloredUsers.find((user) => user.id === member.id)?.color || member.color,
+      }));
+    }
+    return membersFromTerritories(overlayTerritories, coloredUsers);
+  }, [showTeamAreas, overlayTerritories, overlayMembers, coloredUsers]);
 
   // Role-based lead visibility
   // For setters/closers: show leads they claimed OR leads assigned to them (via territory)

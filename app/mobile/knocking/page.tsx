@@ -76,16 +76,22 @@ export default function KnockingPage() {
     enableHighAccuracy: true,
     watch: true, // Continuous tracking
   });
-  const overlayTerritories = useTeamAreasOverlay(showTeamAreas);
+  const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
   const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
   const teamAreaTerritories = useMemo(
     () => (showTeamAreas ? colorTerritories(overlayTerritories, coloredUsers) : []),
     [showTeamAreas, overlayTerritories, coloredUsers]
   );
-  const teamMembersForMap = useMemo(
-    () => (showTeamAreas ? membersFromTerritories(overlayTerritories, coloredUsers) : []),
-    [showTeamAreas, overlayTerritories, coloredUsers]
-  );
+  const teamMembersForMap = useMemo(() => {
+    if (!showTeamAreas) return [];
+    if (overlayMembers.length > 0) {
+      return overlayMembers.map((member) => ({
+        ...member,
+        color: coloredUsers.find((user) => user.id === member.id)?.color || member.color,
+      }));
+    }
+    return membersFromTerritories(overlayTerritories, coloredUsers);
+  }, [showTeamAreas, overlayTerritories, overlayMembers, coloredUsers]);
 
   // Set map center based on user role
   useEffect(() => {
