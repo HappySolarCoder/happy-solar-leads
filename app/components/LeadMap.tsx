@@ -15,6 +15,7 @@ import { getTerritoriesAsync } from '@/app/utils/territories';
 import { findLeadTerritory } from '@/app/utils/territoryAssignment';
 import { formatTimeEST } from '@/app/utils/timezone';
 import { colorForTerritory, shouldRenderTerritoryOverlay, type TeamAreaMember } from '@/app/utils/teamAreas';
+import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 
 interface UserRoute {
   userId: string;
@@ -1259,8 +1260,7 @@ export default function LeadMap({
   // Handle saving new lead from dropped pin
   const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
     try {
-      const requiresProximity = currentUser?.role != null && ['setter', 'manager', 'sales'].includes(currentUser.role);
-      if (requiresProximity && navigator.geolocation) {
+      if (isProximityRequired(currentUser) && navigator.geolocation) {
         try {
           const position = await new Promise<GeolocationPosition>((resolve, reject) => {
             navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -1284,9 +1284,8 @@ export default function LeadMap({
               Math.sin(dLng / 2) * Math.sin(dLng / 2);
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
             const distanceFromPin = R * c;
-            const MAX_DISTANCE_METERS = 50;
 
-            if (distanceFromPin > MAX_DISTANCE_METERS) {
+            if (distanceFromPin > PROXIMITY_MAX_DISTANCE_METERS) {
               const distanceFeet = Math.round(distanceFromPin * 3.281);
               alert(
                 `You are not close enough to this pin to create it.\n\n` +

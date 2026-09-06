@@ -84,6 +84,16 @@ describe('mapUserDoc', () => {
     assert.equal(user.createdAt.toISOString(), when.toISOString());
   });
 
+  it('preserves features.proximityEnforcement from the Firestore doc', () => {
+    const user = mapUserDoc(docSnap('u-features', {
+      name: 'Flag User',
+      role: 'setter',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      features: { proximityEnforcement: false },
+    }));
+    assert.equal(user.features?.proximityEnforcement, false);
+  });
+
   it('parses lastLogin and approvalRequestedAt the same way', () => {
     const last = new Date('2026-08-10T00:00:00.000Z');
     const approval = new Date('2026-08-11T00:00:00.000Z');

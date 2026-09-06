@@ -14,6 +14,15 @@ export type UserRole =
 
 export type ApprovalStatus = 'approved' | 'pending';
 
+/**
+ * Optional per-user feature flags on the Firestore `users/{uid}` doc.
+ * Missing keys keep the historical default (proximity ON).
+ */
+export interface UserFeatures {
+  /** When explicitly false, skip the ~50m GPS proximity gate. Default ON. */
+  proximityEnforcement?: boolean;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -25,6 +34,7 @@ export interface User {
   approvalStatus?: ApprovalStatus;
   approvalRequestedAt?: Date;
   createdAt: Date;
+  features?: UserFeatures;
   // Auto-assignment fields
   assignedLeadCount?: number;
   isActive?: boolean; // Can receive auto-assigned leads
