@@ -96,6 +96,39 @@ app/
 - **Manager:** Setter + assign leads + view all team data
 - **Admin:** Full access (upload, manage users, permissions)
 
+## GPS Proximity Enforcement
+
+Door-knock dispositions and manual map pins require the setter/manager to be within **~50 meters** of the address. Admins and closers are not gated.
+
+A per-user override lives on the Firestore user doc:
+
+```
+users/{uid}.features.proximityEnforcement
+```
+
+- **Missing or `true` (default):** keep the 50m check
+- **`false`:** skip the distance gate for that user only
+
+### Toggle from Admin
+
+1. Sign in as an admin and open **Admin → Users** (`/admin/users`).
+2. In the **Proximity** column, click **Required** / **Waived**, or Edit the user and uncheck **Require 50m**.
+3. The user must refresh / re-login so their session reloads the flag.
+
+### Toggle from Firestore
+
+1. Open the Firebase console → Firestore → `users`.
+2. Find the person by `name` or `email` (the document ID is their Firebase Auth UID).
+3. Set `features.proximityEnforcement` to `false` (or delete the field / set `true` to restore the gate).
+
+**William Breen:** after this ships, waive proximity for his user (search Admin → Users or Firestore `users` for `William Breen`). This environment could not write his Firestore doc without admin credentials.
+
+### Test plan
+
+1. **Exempt user:** as William Breen (or any user with `features.proximityEnforcement: false`), open a lead far from your GPS and mark a door-knock disposition / drop a pin. It should save — no “not close enough” alert.
+2. **Gated user:** as a normal setter/manager with the flag missing or `true`, do the same from far away. Disposition / pin create should be blocked with the existing distance alert.
+3. Confirm other setters are unchanged after toggling only Breen.
+
 ## Brand Assets
 
 All logo files and brand guidelines are documented in:

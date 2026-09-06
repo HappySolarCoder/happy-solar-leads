@@ -16,6 +16,7 @@ import { auth, createSecondaryAuth } from '@/app/utils/firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { getTeams, addTeam, updateTeam, deleteTeam, Team } from '@/app/utils/teams';
 import { getTerritoriesAsync, deleteTerritoryAsync } from '@/app/utils/territories';
+import { isProximityEnforcementEnabled } from '@/app/utils/proximityEnforcement';
 
 export default function UsersManagementPage() {
   const router = useRouter();
@@ -153,6 +154,10 @@ export default function UsersManagementPage() {
       isActive: user.isActive,
       territory: user.territory,
       team: user.team,
+      features: {
+        ...user.features,
+        proximityEnforcement: user.features?.proximityEnforcement !== false,
+      },
     });
   };
 
@@ -184,6 +189,11 @@ export default function UsersManagementPage() {
         requestedRole: editForm.role || user.requestedRole || user.role,
         approved: true,
         approvalStatus: 'approved',
+        features: {
+          ...(cleanUser.features || {}),
+          ...(editForm.features || {}),
+          proximityEnforcement: editForm.features?.proximityEnforcement !== false,
+        },
       };
 
       console.log('Saving user:', updatedUser);
@@ -269,6 +279,26 @@ export default function UsersManagementPage() {
     }
     
     // Refresh users list
+    const allUsers = await getUsersAsync();
+    setUsers(allUsers);
+  };
+
+  const handleToggleProximity = async (userId: string) => {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+
+    const { homeAddress, homeLat, homeLng, ...cleanUser } = user as any;
+    const nextEnforced = !isProximityEnforcementEnabled(user);
+
+    const updatedUser: User = {
+      ...cleanUser,
+      features: {
+        ...(user.features || {}),
+        proximityEnforcement: nextEnforced,
+      },
+    };
+
+    await saveUserAsync(updatedUser);
     const allUsers = await getUsersAsync();
     setUsers(allUsers);
   };
@@ -514,6 +544,9 @@ export default function UsersManagementPage() {
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
+                    Proximity
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-[#718096] uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -583,6 +616,23 @@ export default function UsersManagementPage() {
                               className="w-4 h-4 text-[#FF5F5A] border-[#E2E8F0] rounded focus:ring-[#FF5F5A]"
                             />
                             <span className="text-sm text-[#2D3748]">Active</span>
+                          </label>
+                        </td>
+                        <td className="px-6 py-4">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editForm.features?.proximityEnforcement !== false}
+                              onChange={(e) => setEditForm({
+                                ...editForm,
+                                features: {
+                                  ...editForm.features,
+                                  proximityEnforcement: e.target.checked,
+                                },
+                              })}
+                              className="w-4 h-4 text-[#FF5F5A] border-[#E2E8F0] rounded focus:ring-[#FF5F5A]"
+                            />
+                            <span className="text-sm text-[#2D3748]">Require 50m</span>
                           </label>
                         </td>
                         <td className="px-6 py-4">
@@ -657,6 +707,23 @@ export default function UsersManagementPage() {
                             }`}
                           >
                             {user.isActive ? 'Active' : 'Inactive'}
+                          </button>
+                        </td>
+                        <td className="px-6 py-4">
+                          <button
+                            onClick={() => handleToggleProximity(user.id)}
+                            className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                              isProximityEnforcementEnabled(user)
+                                ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                                : 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                            }`}
+                            title={
+                              isProximityEnforcementEnabled(user)
+                                ? 'GPS proximity required (~50m). Click to exempt this user.'
+                                : 'Proximity waived. Click to require the ~50m check again.'
+                            }
+                          >
+                            {isProximityEnforcementEnabled(user) ? 'Required' : 'Waived'}
                           </button>
                         </td>
                         <td className="px-6 py-4">

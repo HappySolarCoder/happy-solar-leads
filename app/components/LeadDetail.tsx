@@ -26,6 +26,7 @@ import { EasterEgg } from '@/app/types/easterEgg';
 import EasterEggWinModal from './EasterEggWinModal';
 import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
+import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 
 interface LeadDetailProps {
   lead: Lead;
@@ -203,11 +204,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             distanceFromAddress = R * c;
           }
           
-          // Distance verification for setter, manager, sales (not admin)
-          const MAX_DISTANCE_METERS = 50; // 50 meters (~164 feet) - close enough to verify, not too strict
-          const requiresProximity = ['setter', 'manager', 'sales'].includes(currentUser.role);
-          
-          if (requiresProximity && distanceFromAddress && distanceFromAddress > MAX_DISTANCE_METERS) {
+          // Distance verification for setter, manager, sales (not admin).
+          // Per-user opt-out: users.features.proximityEnforcement === false
+          if (isProximityRequired(currentUser) && distanceFromAddress && distanceFromAddress > PROXIMITY_MAX_DISTANCE_METERS) {
             setIsUpdating(false);
             const distanceFeet = Math.round(distanceFromAddress * 3.281); // Convert to feet
             alert(
