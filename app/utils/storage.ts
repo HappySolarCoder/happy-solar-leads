@@ -1,5 +1,6 @@
 // Firestore-backed storage (replacing localStorage)
 import { Lead, User, LeadStatus } from '@/app/types';
+import { isKnockStatus } from '@/app/types/disposition';
 import { 
   getAllLeads as firestoreGetAllLeads,
   getLeadsForUser as firestoreGetLeadsForUser,
@@ -391,9 +392,7 @@ export async function addLead(lead: Lead): Promise<void> {
 export async function updateLeadStatus(leadId: string, status: LeadStatus, userId?: string): Promise<void> {
   const updates: Partial<Lead> = {
     status,
-    dispositionedAt: ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(status) 
-      ? new Date() 
-      : undefined,
+    dispositionedAt: isKnockStatus(status) ? new Date() : undefined,
   };
   
   if (userId) {

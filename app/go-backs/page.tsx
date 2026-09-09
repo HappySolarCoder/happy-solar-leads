@@ -9,6 +9,8 @@ import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isToday, isPast, isFuture, startOfWeek, endOfWeek } from 'date-fns';
 import LeadDetail from '@/app/components/LeadDetail';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
+import { isScheduledGoBackLead } from '@/app/utils/dispositions';
+import { getDefaultDispositionColor, getDefaultDispositionLabel } from '@/app/types/disposition';
 
 export default function GoBacksPage() {
   const router = useRouter();
@@ -51,10 +53,9 @@ export default function GoBacksPage() {
       const loadedLeads = await getLeadsAsync();
       const loadedUsers = await getUsersAsync();
       
-      // Filter for go-back leads only
+      // Filter for scheduled go-backs (Go Back + House for Sale)
       const goBackLeads = loadedLeads.filter(lead => {
-        // Show go backs that have a scheduled date
-        if (lead.status !== 'go-back' || !lead.goBackScheduledDate) {
+        if (!isScheduledGoBackLead(lead)) {
           return false;
         }
         
@@ -78,7 +79,7 @@ export default function GoBacksPage() {
   const handleUpdate = async () => {
     const loadedLeads = await getLeadsAsync();
     const goBackLeads = loadedLeads.filter(lead => {
-      if (lead.status !== 'go-back' || !lead.goBackScheduledDate) {
+      if (!isScheduledGoBackLead(lead)) {
         return false;
       }
       if (currentUser && canSeeAllLeads(currentUser.role)) {
@@ -90,6 +91,11 @@ export default function GoBacksPage() {
   };
 
   const getUserById = (id: string) => users.find(u => u.id === id);
+
+  const goBackTypeLabel = (lead: Lead) =>
+    getDefaultDispositionLabel(lead.status) || lead.disposition || 'Go Back';
+  const goBackTypeColor = (lead: Lead) =>
+    getDefaultDispositionColor(lead.status);
 
   // Calendar view helpers
   const monthStart = startOfMonth(selectedDate);
@@ -248,7 +254,7 @@ export default function GoBacksPage() {
             <Calendar className="w-16 h-16 text-[#CBD5E0] mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-[#2D3748] mb-2">No Go Backs Scheduled</h3>
             <p className="text-[#718096]">
-              When you mark leads as "Go Back" and schedule a date, they'll appear here.
+              When you mark leads as Go Back or House for Sale and schedule a date, they'll appear here.
             </p>
           </div>
         ) : viewMode === 'upcoming' ? (
@@ -271,7 +277,18 @@ export default function GoBacksPage() {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold text-[#2D3748] truncate">{lead.name || 'Unknown'}</div>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="text-sm font-semibold text-[#2D3748] truncate">{lead.name || 'Unknown'}</div>
+                              <span
+                                className="flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                style={{
+                                  backgroundColor: `${goBackTypeColor(lead)}20`,
+                                  color: goBackTypeColor(lead),
+                                }}
+                              >
+                                {goBackTypeLabel(lead)}
+                              </span>
+                            </div>
                             <div className="mt-0.5 text-xs text-[#718096] truncate">{lead.address}</div>
                           </div>
                           <div className="flex-shrink-0">
@@ -429,6 +446,15 @@ export default function GoBacksPage() {
                         <div className="flex items-center gap-2 mb-1">
                           <MapPin className="w-4 h-4 text-[#718096] flex-shrink-0" />
                           <span className="font-medium text-[#2D3748] truncate">{lead.address}</span>
+                          <span
+                            className="flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                            style={{
+                              backgroundColor: `${goBackTypeColor(lead)}20`,
+                              color: goBackTypeColor(lead),
+                            }}
+                          >
+                            {goBackTypeLabel(lead)}
+                          </span>
                         </div>
                         {lead.goBackScheduledTime && (
                           <div className="flex items-center gap-2 mb-1 text-sm text-[#718096]">
@@ -496,7 +522,18 @@ export default function GoBacksPage() {
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-[#2D3748] truncate">{lead.name || 'Unknown'}</div>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="text-sm font-semibold text-[#2D3748] truncate">{lead.name || 'Unknown'}</div>
+                          <span
+                            className="flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                            style={{
+                              backgroundColor: `${goBackTypeColor(lead)}20`,
+                              color: goBackTypeColor(lead),
+                            }}
+                          >
+                            {goBackTypeLabel(lead)}
+                          </span>
+                        </div>
                         <div className="mt-0.5 text-xs text-[#718096] truncate">{lead.address}</div>
                       </div>
                       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-[#F7FAFC] border border-[#E2E8F0] text-xs font-semibold text-[#2D3748] flex-shrink-0">

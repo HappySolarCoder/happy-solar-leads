@@ -6,6 +6,7 @@ import { ArrowLeft, Calendar, Map, Users, BarChart3, Settings, ShieldCheck, Laye
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { User } from '@/app/types';
 import { getLeadsAsync } from '@/app/utils/storage';
+import { isScheduledGoBackLead } from '@/app/utils/dispositions';
 
 export default function ToolsPage() {
   const router = useRouter();
@@ -30,8 +31,7 @@ export default function ToolsPage() {
       // Get go back count for current user
       const leads = await getLeadsAsync();
       const userGoBacks = leads.filter(lead => 
-        lead.status === 'go-back' && 
-        lead.goBackScheduledDate &&
+        isScheduledGoBackLead(lead) &&
         (lead.claimedBy === user.id || lead.goBackScheduledBy === user.id)
       );
       setGoBackCount(userGoBacks.length);

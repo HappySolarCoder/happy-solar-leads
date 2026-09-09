@@ -17,6 +17,7 @@ const RECOMMENDED_TIMING: Record<string, { days: number; reason: string }> = {
   'not-home': { days: 1, reason: 'Catch them at home' },
   'interested': { days: 2, reason: 'Strike while iron is hot' },
   'not-interested': { days: 7, reason: 'Let them cool off' },
+  'house-for-sale': { days: 7, reason: 'Recheck listing / new occupants' },
   'default': { days: 2, reason: 'Follow up soon' },
 };
 
@@ -79,7 +80,9 @@ export default function GoBackScheduleModal({
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-[#2D3748]">Schedule Go Back</h2>
+          <h2 className="text-xl font-semibold text-[#2D3748]">
+            {currentDisposition === 'house-for-sale' ? 'Schedule House for Sale' : 'Schedule Go Back'}
+          </h2>
           <button
             onClick={handleClose}
             className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
@@ -178,7 +181,7 @@ export default function GoBackScheduleModal({
             onClick={handleSave}
             className="flex-1 px-4 py-2 bg-[#FF5F5A] text-white rounded-lg hover:bg-[#E54E49] transition-colors font-medium"
           >
-            Schedule Go Back
+            {currentDisposition === 'house-for-sale' ? 'Schedule House for Sale' : 'Schedule Go Back'}
           </button>
         </div>
       </div>

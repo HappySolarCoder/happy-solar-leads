@@ -17,6 +17,7 @@ import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getTerritoriesAsync } from '@/app/utils/territories';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, LeadStatus, STATUS_LABELS, STATUS_COLORS, canUploadLeads, canSeeAllLeads, canAssignLeads, canManageUsers } from '@/app/types';
+import { isKnockStatus } from '@/app/types/disposition';
 import { ensureUserColors } from '@/app/utils/userColors';
 import { loadUserSession, saveUserSession, getDefaultSession } from '@/app/utils/userSession';
 import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
@@ -337,9 +338,8 @@ export default function Home() {
 
   // Filter leads for main display
   // Always include leads with dispositions (already knocked doors)
-  const KNOCK_STATUSES = ['not-home', 'interested', 'not-interested', 'appointment', 'sale', 'dq-credit', 'shade-dq', 'follow-up-later', 'renter'];
-  const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor' || (l.status && KNOCK_STATUSES.includes(l.status)));
-  const poorLeads = roleFilteredLeads.filter(l => l.solarCategory === 'poor' && (!l.status || !KNOCK_STATUSES.includes(l.status)));
+  const goodLeads = roleFilteredLeads.filter(l => l.solarCategory !== 'poor' || isKnockStatus(l.status));
+  const poorLeads = roleFilteredLeads.filter(l => l.solarCategory === 'poor' && !isKnockStatus(l.status));
   
   const filteredLeads = useMemo(() => {
     // Filter by setter if selected

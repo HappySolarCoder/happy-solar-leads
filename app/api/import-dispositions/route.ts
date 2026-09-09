@@ -29,12 +29,14 @@ const DISPOSITION_MAP: Record<string, string> = {
   'Shade DQ': 'shade-dq',
   'Callback Scheduled': 'follow-up-later',
   'Go Back': 'go-back',
+  'House for Sale': 'house-for-sale',
   'Renter': 'renter',
   // Also handle lowercase versions
   'not home': 'not-home',
   'not interested': 'not-interested',
   'callback scheduled': 'follow-up-later',
   'go back': 'go-back',
+  'house for sale': 'house-for-sale',
   'dq credit': 'dq-credit',
   'shade dq': 'shade-dq',
 };

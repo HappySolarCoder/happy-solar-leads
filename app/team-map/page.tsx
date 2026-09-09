@@ -6,6 +6,7 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/app/utils/firebase';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync } from '@/app/utils/storage';
+import { isKnockStatus } from '@/app/types/disposition';
 import Image from 'next/image';
 import { startOfToday, startOfWeek, startOfMonth, isAfter, format } from 'date-fns';
 
@@ -107,7 +108,7 @@ export default function TeamMapPage() {
     
     // Count doors (any disposition that counts as knock)
     const doorsKnocked = filteredLeads.filter(l => 
-      ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(l.status)
+      isKnockStatus(l.status)
     ).length;
     
     // Count appointments
