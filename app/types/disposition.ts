@@ -103,7 +103,72 @@ export const DEFAULT_DISPOSITIONS: Disposition[] = [
     createdAt: new Date(),
     updatedAt: new Date(),
   },
+  {
+    id: 'house-for-sale',
+    name: 'House for Sale',
+    color: '#0ea5e9', // Sky — distinct from Go Back amber
+    icon: 'dollar-sign',
+    countsAsDoorKnock: true,
+    order: 8,
+    isDefault: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  },
 ];
+
+export const GO_BACK_DISPOSITION_ID = 'go-back';
+export const HOUSE_FOR_SALE_DISPOSITION_ID = 'house-for-sale';
+
+/** Knock statuses that should remain visible even without strong solar data. */
+export const KNOCK_STATUS_IDS = [
+  'not-home',
+  'interested',
+  'not-interested',
+  'appointment',
+  'sale',
+  'dq-credit',
+  'shade-dq',
+  'follow-up-later',
+  'renter',
+  GO_BACK_DISPOSITION_ID,
+  HOUSE_FOR_SALE_DISPOSITION_ID,
+] as const;
+
+/** Dispositions that schedule a return visit and appear on Go Backs. */
+export const SCHEDULED_GO_BACK_STATUS_IDS = [
+  GO_BACK_DISPOSITION_ID,
+  HOUSE_FOR_SALE_DISPOSITION_ID,
+] as const;
+
+export function isScheduledGoBackStatus(status?: string | null): boolean {
+  return !!status && (SCHEDULED_GO_BACK_STATUS_IDS as readonly string[]).includes(status);
+}
+
+export function isScheduledGoBackLead(lead: {
+  status?: string;
+  goBackScheduledDate?: Date | string | null;
+}): boolean {
+  return isScheduledGoBackStatus(lead.status) && !!lead.goBackScheduledDate;
+}
+
+/** Add any missing built-in defaults (by id or display name) without overwriting custom ones. */
+export function mergeMissingDefaultDispositions(existing: Disposition[]): Disposition[] {
+  const ids = new Set(existing.map((d) => d.id));
+  const names = new Set(existing.map((d) => d.name.toLowerCase()));
+  const missing = DEFAULT_DISPOSITIONS.filter(
+    (d) => !ids.has(d.id) && !names.has(d.name.toLowerCase())
+  );
+  if (missing.length === 0) return existing;
+  return [...existing, ...missing].sort((a, b) => a.order - b.order);
+}
+
+export function findMissingDefaultDispositions(existing: Disposition[]): Disposition[] {
+  const ids = new Set(existing.map((d) => d.id));
+  const names = new Set(existing.map((d) => d.name.toLowerCase()));
+  return DEFAULT_DISPOSITIONS.filter(
+    (d) => !ids.has(d.id) && !names.has(d.name.toLowerCase())
+  );
+}
 
 // Available Lucide icons for dispositions
 export const AVAILABLE_ICONS = [

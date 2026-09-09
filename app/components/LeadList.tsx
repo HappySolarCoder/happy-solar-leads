@@ -20,6 +20,8 @@ const STATUS_GROUPS: LeadStatus[] = [
   'not-interested',
   'appointment',
   'sale',
+  'go-back',
+  'house-for-sale',
 ];
 
 export default function LeadList({ 

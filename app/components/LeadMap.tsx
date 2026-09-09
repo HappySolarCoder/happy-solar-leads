@@ -9,7 +9,7 @@ import 'leaflet.markercluster';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
 import { auth } from '@/app/utils/firebase';
 import { RouteWaypoint } from './RouteBuilder';
-import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
+import { Disposition, getDispositionsAsync, KNOCK_STATUS_IDS } from '@/app/utils/dispositions';
 import AddLeadModal from './AddLeadModal';
 import { getTerritoriesAsync } from '@/app/utils/territories';
 import { findLeadTerritory } from '@/app/utils/territoryAssignment';
@@ -582,9 +582,8 @@ export default function LeadMap({
 
     // Regular lead display - using visible leads only
     // Always show leads with dispositions (they've been knocked)
-    const KNOCK_STATUSES = ['not-home', 'interested', 'not-interested', 'appointment', 'sale', 'dq-credit', 'shade-dq', 'follow-up-later', 'renter'];
     visibleLeads.forEach(lead => {
-      const hasDisposition = lead.status && KNOCK_STATUSES.includes(lead.status);
+      const hasDisposition = !!(lead.status && (KNOCK_STATUS_IDS as readonly string[]).includes(lead.status));
       if (!lead.lat || !lead.lng) return;
 
       const isAssignedToMe = currentUser != null && lead.assignedTo != null && lead.assignedTo === currentUser.id;
@@ -632,8 +631,7 @@ export default function LeadMap({
     });
 
     // Include leads with dispositions when calculating map bounds (they may not have solar data)
-    // KNOCK_STATUSES is defined above
-    const hasDisposition = (l: any) => l.status && KNOCK_STATUSES.includes(l.status);
+    const hasDisposition = (l: any) => l.status && (KNOCK_STATUS_IDS as readonly string[]).includes(l.status);
     
     // Include: good solar leads OR leads with dispositions
     const goodLeads = leads.filter(l => {
@@ -1752,8 +1750,11 @@ function createCustomIcon(
       territoryColor = assignedUser?.color || claimedUser?.color;
     }
     
-    // Solar data leads (or no tags): colorful pins as before
+    // Solar data leads (or no tags): colorful pins as before.
+    // House for Sale keeps its sky pin so it stays distinct from Go Back / solar colors.
+    const preferDispositionColor = disposition?.id === 'house-for-sale';
     color = territoryColor
+      || (preferDispositionColor ? disposition?.color : undefined)
       || (solarCategory ? solarColors[solarCategory] : undefined)
       || disposition?.color 
       || (STATUS_COLORS as Record<string, string>)[status] 
@@ -1815,8 +1816,8 @@ function createPopupContent(lead: Lead): string {
     `;
   }
 
-  const statusColor = STATUS_COLORS[lead.status];
-  const statusLabel = STATUS_LABELS[lead.status];
+  const statusColor = STATUS_COLORS[lead.status] || '#6b7280';
+  const statusLabel = STATUS_LABELS[lead.status] || lead.disposition || lead.status;
   
   return `
     <div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">

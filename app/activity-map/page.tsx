@@ -195,7 +195,7 @@ export default function ActivityMapPage() {
       // Quality mix: Interested / Appointment / Go Back as % of knocks
       const productive = sortedKnocks.filter((k) => {
         const s = String(k.status || k.disposition || '').toLowerCase();
-        return s.includes('interested') || s.includes('appointment') || s.includes('go-back') || s.includes('go back');
+        return s.includes('interested') || s.includes('appointment') || s.includes('go-back') || s.includes('go back') || s.includes('house-for-sale') || s.includes('house for sale');
       }).length;
       const qualityPct = sortedKnocks.length > 0 ? (productive / sortedKnocks.length) * 100 : 0;
 

@@ -1,10 +1,25 @@
 // Disposition Storage (Firestore)
 import { db } from './firebase';
 import { collection, getDocs, doc, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
-import { Disposition, DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
+import {
+  Disposition,
+  DEFAULT_DISPOSITIONS,
+  findMissingDefaultDispositions,
+  mergeMissingDefaultDispositions,
+} from '@/app/types/disposition';
 
-// Re-export Disposition type for convenience
+// Re-export for convenience
 export type { Disposition } from '@/app/types/disposition';
+export {
+  GO_BACK_DISPOSITION_ID,
+  HOUSE_FOR_SALE_DISPOSITION_ID,
+  KNOCK_STATUS_IDS,
+  SCHEDULED_GO_BACK_STATUS_IDS,
+  isScheduledGoBackStatus,
+  isScheduledGoBackLead,
+  mergeMissingDefaultDispositions,
+  findMissingDefaultDispositions,
+} from '@/app/types/disposition';
 
 const DISPOSITIONS_COLLECTION = 'dispositions';
 let dispositionsCache: Disposition[] | null = null;
@@ -33,11 +48,18 @@ export async function getDispositionsAsync(): Promise<Disposition[]> {
       return DEFAULT_DISPOSITIONS;
     }
     
-    const dispositions = snapshot.docs.map(doc => ({
+    const loaded = snapshot.docs.map(doc => ({
       ...doc.data(),
       createdAt: doc.data().createdAt?.toDate?.() || new Date(),
       updatedAt: doc.data().updatedAt?.toDate?.() || new Date(),
     })) as Disposition[];
+
+    const missing = findMissingDefaultDispositions(loaded);
+    if (missing.length > 0) {
+      // Best-effort persist (admins only per rules). UI still merges in-memory.
+      persistMissingDefaults(missing);
+    }
+    const dispositions = mergeMissingDefaultDispositions(loaded);
 
     dispositionsCache = dispositions;
     dispositionsCacheTimestamp = Date.now();
@@ -46,6 +68,23 @@ export async function getDispositionsAsync(): Promise<Disposition[]> {
     console.error('Error loading dispositions:', error);
     return dispositionsCache || DEFAULT_DISPOSITIONS;
   }
+}
+
+function persistMissingDefaults(missing: Disposition[]): void {
+  const firestore = db;
+  if (!firestore || missing.length === 0) return;
+  Promise.all(
+    missing.map((dispo) =>
+      setDoc(doc(firestore, DISPOSITIONS_COLLECTION, dispo.id), {
+        ...dispo,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    )
+  ).catch((error) => {
+    // Setters cannot write dispositions; in-memory merge still shows the option.
+    console.warn('Could not persist missing default dispositions:', error);
+  });
 }
 
 // Initialize default dispositions in Firestore

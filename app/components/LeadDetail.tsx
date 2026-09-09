@@ -16,7 +16,7 @@ import {
 import { updateLeadStatus, claimLead, unclaimLead, getUsersAsync } from '@/app/utils/storage';
 import ObjectionTracker from './ObjectionTracker';
 import LeadEditorModal from './LeadEditorModal';
-import { Disposition, getDispositionsAsync } from '@/app/utils/dispositions';
+import { Disposition, getDispositionsAsync, isScheduledGoBackStatus } from '@/app/utils/dispositions';
 import { checkEasterEggTrigger } from '@/app/utils/easterEggs';
 import { awardSolarMadnessAsync } from '@/app/utils/solarMadness';
 import { auth } from '@/app/utils/firebase';
@@ -99,6 +99,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
+  const [pendingGoBackStatus, setPendingGoBackStatus] = useState('go-back');
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [adminAssignUser, setAdminAssignUser] = useState<string>('');
@@ -154,8 +155,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     // Check for special behavior dispositions
     const disposition = dispositions.find(d => d.id === newStatus);
     
-    // If go-back disposition, show scheduling modal
-    if (newStatus === 'go-back') {
+    // Go Back / House for Sale: schedule a return visit, keep the chosen pin status
+    if (isScheduledGoBackStatus(newStatus)) {
+      setPendingGoBackStatus(newStatus);
       setShowGoBackSchedule(true);
       return;
     }
@@ -398,9 +400,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       // Update lead with go back schedule data using async Firestore
       const { saveLeadAsync } = await import('@/app/utils/storage');
       
+      const scheduledDisposition = dispositions.find((d) => d.id === pendingGoBackStatus);
+      const statusId = pendingGoBackStatus || 'go-back';
+      const statusName = scheduledDisposition?.name || (statusId === 'house-for-sale' ? 'House for Sale' : 'Go Back');
+
       // Add to disposition history
       const historyEntry: LeadDispositionHistoryEntry = {
-        disposition: 'Go Back',
+        disposition: statusName,
         timestamp: new Date(),
         userId: currentUser.id,
         userName: currentUser.name,
@@ -408,8 +414,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       
       const updatedLead: Lead = {
         ...lead,
-        status: 'go-back',
-        disposition: 'Go Back',
+        status: statusId,
+        disposition: statusName,
         dispositionedAt: new Date(),
         // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
         claimedBy: lead.claimedBy,
@@ -749,9 +755,11 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           </button>
 
           {/* Go Back Section */}
-          {(lead.status === 'go-back' || !!lead.goBackScheduledDate) && (
+          {(isScheduledGoBackStatus(lead.status) || !!lead.goBackScheduledDate) && (
             <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
-              <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Go Back</h3>
+              <h3 className="text-sm font-semibold text-[#2D3748] mb-3">
+                {lead.status === 'house-for-sale' ? 'House for Sale' : 'Go Back'}
+              </h3>
               <div className="space-y-2 text-sm">
                 <div className="flex items-center gap-2 text-[#2D3748]">
                   <Calendar className="w-4 h-4 text-[#FF5F5A]" />
@@ -921,7 +929,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           onClose={() => setShowGoBackSchedule(false)}
           onSave={handleGoBackSave}
           leadAddress={lead.address}
-          currentDisposition={lead.status}
+          currentDisposition={pendingGoBackStatus || lead.status}
         />
       )}
       

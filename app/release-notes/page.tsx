@@ -18,6 +18,22 @@ interface ReleaseNote {
 }
 
 const releaseNotes: ReleaseNote[] = [
+  {
+    id: 'house-for-sale-disposition',
+    date: '2026-09-09',
+    title: 'House for Sale pin',
+    description: 'Setters can mark a door House for Sale instead of stuffing that note on a Go Back. It gets its own sky-blue pin and still shows up on Go Backs after you schedule a return.',
+    icon: MapPin,
+    category: 'new',
+    permissions: 'all',
+    howTo: [
+      'Tap a door on the knocking map',
+      'Choose House for Sale from the disposition buttons',
+      'Schedule the return date like a Go Back',
+      'Find it on Tools → Go Backs with a House for Sale badge',
+    ],
+  },
+
   // Mar 15, 2026 - Customer uploads (smiley pins)
   {
     id: 'customer-upload-smiley-pins',

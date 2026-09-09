@@ -194,6 +194,8 @@ export const STATUS_LABELS: Record<string, string> = {
   'not-interested': 'Not Interested',
   'appointment': 'Appointment Set',
   'sale': 'Sale!',
+  'go-back': 'Go Back',
+  'house-for-sale': 'House for Sale',
 };
 
 // DEPRECATED: Use getDispositionByIdAsync() from utils/dispositions instead
@@ -205,6 +207,8 @@ export const STATUS_COLORS: Record<string, string> = {
   'not-interested': '#ef4444', // Red
   'appointment': '#8b5cf6',    // Purple
   'sale': '#10b981',           // Emerald
+  'go-back': '#f59e0b',        // Amber
+  'house-for-sale': '#0ea5e9', // Sky
 };
 
 // Get status label based on user role (for managers/admins who see all leads)
