@@ -15,6 +15,7 @@ export {
   HOUSE_FOR_SALE_DISPOSITION_ID,
   KNOCK_STATUS_IDS,
   SCHEDULED_GO_BACK_STATUS_IDS,
+  isKnockStatus,
   isScheduledGoBackStatus,
   isScheduledGoBackLead,
   mergeMissingDefaultDispositions,

@@ -140,8 +140,22 @@ export const SCHEDULED_GO_BACK_STATUS_IDS = [
   HOUSE_FOR_SALE_DISPOSITION_ID,
 ] as const;
 
+export function isKnockStatus(status?: string | null): boolean {
+  return !!status && (KNOCK_STATUS_IDS as readonly string[]).includes(status);
+}
+
 export function isScheduledGoBackStatus(status?: string | null): boolean {
   return !!status && (SCHEDULED_GO_BACK_STATUS_IDS as readonly string[]).includes(status);
+}
+
+export function getDefaultDispositionLabel(id?: string | null): string {
+  if (!id) return '';
+  return DEFAULT_DISPOSITIONS.find((d) => d.id === id)?.name || id;
+}
+
+export function getDefaultDispositionColor(id?: string | null): string {
+  if (!id) return '#6b7280';
+  return DEFAULT_DISPOSITIONS.find((d) => d.id === id)?.color || '#6b7280';
 }
 
 export function isScheduledGoBackLead(lead: {

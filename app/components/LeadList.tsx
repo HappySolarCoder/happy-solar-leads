@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Lead, LeadStatus, STATUS_LABELS, STATUS_COLORS } from '@/app/types';
+import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { Search, Filter, MapPin, User, Clock, TrendingUp } from 'lucide-react';
 import { calculateKnockabilityScore, getKnockabilityColor, getKnockabilityLabel } from '@/app/utils/knockability';
 
@@ -12,17 +13,7 @@ interface LeadListProps {
   currentUserId?: string;
 }
 
-const STATUS_GROUPS: LeadStatus[] = [
-  'unclaimed',
-  'claimed',
-  'not-home',
-  'interested',
-  'not-interested',
-  'appointment',
-  'sale',
-  'go-back',
-  'house-for-sale',
-];
+const STATUS_GROUPS: LeadStatus[] = DEFAULT_DISPOSITIONS.map((d) => d.id);
 
 export default function LeadList({ 
   leads, 

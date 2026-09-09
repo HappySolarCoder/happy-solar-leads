@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isKnockStatus } from '@/app/types/disposition';
 import { getFirestore, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { initializeApp, getApps } from 'firebase/app';
 
@@ -44,7 +45,7 @@ export async function GET() {
         claimedBy: data.claimedBy,
         address: data.address,
       };
-    }).filter(l => l.status && ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(l.status));
+    }).filter(l => isKnockStatus(l.status));
     
     return NextResponse.json({ 
       dispositionHistory: history,

@@ -6,6 +6,7 @@ import { ArrowLeft, TrendingUp, Target, Award, Trophy, Calendar, Zap, BarChart2 
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User } from '@/app/types';
+import { isKnockStatus } from '@/app/types/disposition';
 import { startOfToday, startOfWeek, startOfMonth, subDays, isAfter, format, isSameDay } from 'date-fns';
 
 interface DayMetrics {
@@ -56,7 +57,7 @@ export default function MobileStatsPage() {
     let knocks = 0, conversations = 0, appointments = 0, sales = 0;
 
     filteredLeads.forEach(lead => {
-      if (lead.status && ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(lead.status)) {
+      if (isKnockStatus(lead.status)) {
         knocks++;
       }
 
@@ -96,7 +97,7 @@ export default function MobileStatsPage() {
 
     let knocks = 0, conversations = 0, appointments = 0, sales = 0;
     dayLeads.forEach(lead => {
-      if (lead.status && ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(lead.status)) {
+      if (isKnockStatus(lead.status)) {
         knocks++;
       }
       if (['interested', 'appointment', 'sale'].includes(lead.status!)) conversations++;
@@ -112,7 +113,7 @@ export default function MobileStatsPage() {
     const userLeads = leads.filter(l => l.claimedBy === user.id && l.dispositionedAt && isAfter(new Date(l.dispositionedAt), startOfWeek(new Date())));
     let knocks = 0;
     userLeads.forEach(l => {
-      if (l.status && ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(l.status)) knocks++;
+      if (isKnockStatus(l.status)) knocks++;
     });
     return acc + knocks;
   }, 0);

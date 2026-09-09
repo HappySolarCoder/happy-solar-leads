@@ -10,7 +10,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isToday
 import LeadDetail from '@/app/components/LeadDetail';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 import { isScheduledGoBackLead } from '@/app/utils/dispositions';
-import { STATUS_COLORS, STATUS_LABELS } from '@/app/types';
+import { getDefaultDispositionColor, getDefaultDispositionLabel } from '@/app/types/disposition';
 
 export default function GoBacksPage() {
   const router = useRouter();
@@ -93,9 +93,9 @@ export default function GoBacksPage() {
   const getUserById = (id: string) => users.find(u => u.id === id);
 
   const goBackTypeLabel = (lead: Lead) =>
-    STATUS_LABELS[lead.status] || lead.disposition || 'Go Back';
+    getDefaultDispositionLabel(lead.status) || lead.disposition || 'Go Back';
   const goBackTypeColor = (lead: Lead) =>
-    STATUS_COLORS[lead.status] || '#f59e0b';
+    getDefaultDispositionColor(lead.status);
 
   // Calendar view helpers
   const monthStart = startOfMonth(selectedDate);

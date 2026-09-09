@@ -1,4 +1,5 @@
 // Lead and User Types
+import { DEFAULT_DISPOSITIONS } from './disposition';
 
 // LeadStatus is now dynamic - can be any disposition ID from Firestore
 export type LeadStatus = string;
@@ -184,32 +185,14 @@ export interface CSVRow {
   soldDate?: string; // raw date string from CSV
 }
 
-// DEPRECATED: Use getDispositionsAsync() from utils/dispositions instead
-// These are kept for backwards compatibility during migration
-export const STATUS_LABELS: Record<string, string> = {
-  'unclaimed': 'Available',
-  'claimed': 'My Targets',
-  'not-home': 'Not Home',
-  'interested': 'Interested',
-  'not-interested': 'Not Interested',
-  'appointment': 'Appointment Set',
-  'sale': 'Sale!',
-  'go-back': 'Go Back',
-  'house-for-sale': 'House for Sale',
-};
+// Derived from DEFAULT_DISPOSITIONS so new pins (e.g. House for Sale) stay in sync
+export const STATUS_LABELS: Record<string, string> = Object.fromEntries(
+  DEFAULT_DISPOSITIONS.map((d) => [d.id, d.name])
+);
 
-// DEPRECATED: Use getDispositionByIdAsync() from utils/dispositions instead
-export const STATUS_COLORS: Record<string, string> = {
-  'unclaimed': '#22c55e',      // Green
-  'claimed': '#f59e0b',        // Orange
-  'not-home': '#6b7280',       // Gray
-  'interested': '#3b82f6',     // Blue
-  'not-interested': '#ef4444', // Red
-  'appointment': '#8b5cf6',    // Purple
-  'sale': '#10b981',           // Emerald
-  'go-back': '#f59e0b',        // Amber
-  'house-for-sale': '#0ea5e9', // Sky
-};
+export const STATUS_COLORS: Record<string, string> = Object.fromEntries(
+  DEFAULT_DISPOSITIONS.map((d) => [d.id, d.color])
+);
 
 // Get status label based on user role (for managers/admins who see all leads)
 // DEPRECATED: Use getDispositionByIdAsync() from utils/dispositions instead

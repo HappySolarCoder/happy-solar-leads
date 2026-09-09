@@ -2,6 +2,7 @@
 // Later: upgrade to Supabase or Vercel Postgres for multi-user sync
 
 import { Lead, User, LeadStatus } from '@/app/types';
+import { isKnockStatus } from '@/app/types/disposition';
 
 const STORAGE_KEYS = {
   LEADS: 'happysolar_leads',
@@ -92,9 +93,7 @@ export function updateLeadStatus(leadId: string, status: LeadStatus, userId: str
     lead.status = status;
     lead.claimedBy = userId;
     lead.claimedAt = new Date();
-    lead.dispositionedAt = ['not-home', 'interested', 'not-interested', 'appointment', 'sale'].includes(status) 
-      ? new Date() 
-      : undefined;
+    lead.dispositionedAt = isKnockStatus(status) ? new Date() : undefined;
     
     saveLeads(leads);
   }

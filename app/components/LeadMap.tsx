@@ -9,7 +9,7 @@ import 'leaflet.markercluster';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
 import { auth } from '@/app/utils/firebase';
 import { RouteWaypoint } from './RouteBuilder';
-import { Disposition, getDispositionsAsync, KNOCK_STATUS_IDS } from '@/app/utils/dispositions';
+import { Disposition, getDispositionsAsync, isKnockStatus } from '@/app/utils/dispositions';
 import AddLeadModal from './AddLeadModal';
 import { getTerritoriesAsync } from '@/app/utils/territories';
 import { findLeadTerritory } from '@/app/utils/territoryAssignment';
@@ -583,7 +583,7 @@ export default function LeadMap({
     // Regular lead display - using visible leads only
     // Always show leads with dispositions (they've been knocked)
     visibleLeads.forEach(lead => {
-      const hasDisposition = !!(lead.status && (KNOCK_STATUS_IDS as readonly string[]).includes(lead.status));
+      const hasDisposition = isKnockStatus(lead.status);
       if (!lead.lat || !lead.lng) return;
 
       const isAssignedToMe = currentUser != null && lead.assignedTo != null && lead.assignedTo === currentUser.id;
@@ -631,7 +631,7 @@ export default function LeadMap({
     });
 
     // Include leads with dispositions when calculating map bounds (they may not have solar data)
-    const hasDisposition = (l: any) => l.status && (KNOCK_STATUS_IDS as readonly string[]).includes(l.status);
+    const hasDisposition = (l: any) => isKnockStatus(l.status);
     
     // Include: good solar leads OR leads with dispositions
     const goodLeads = leads.filter(l => {

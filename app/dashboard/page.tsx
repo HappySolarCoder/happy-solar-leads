@@ -72,7 +72,11 @@ export default function DashboardPage() {
   // Get statuses that count as door knocks from dispositions
   const doorKnockStatuses = dispositions
     .filter(d => d.countsAsDoorKnock)
-    .map(d => d.name.toLowerCase());
+    .flatMap(d => [
+      d.id.toLowerCase(),
+      d.name.toLowerCase(),
+      d.name.toLowerCase().replace(/\s+/g, '-'),
+    ]);
 
   // Calculate daily stats
   const todayLeads = visibleLeads.filter(l => {
@@ -85,7 +89,9 @@ export default function DashboardPage() {
   // Count by disposition for today - using dynamic door knock statuses
   const todayKnocks = todayLeads.filter(l => {
     if (!l.status) return false;
-    return doorKnockStatuses.includes(l.status.toLowerCase());
+    const status = l.status.toLowerCase();
+    const disposition = String(l.disposition || '').toLowerCase();
+    return doorKnockStatuses.includes(status) || doorKnockStatuses.includes(disposition);
   }).length;
 
   // Conversations = all dispositions (not unclaimed/claimed)

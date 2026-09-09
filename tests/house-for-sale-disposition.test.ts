@@ -7,10 +7,12 @@ import {
   KNOCK_STATUS_IDS,
   isScheduledGoBackStatus,
   isScheduledGoBackLead,
+  isKnockStatus,
+  getDefaultDispositionLabel,
   mergeMissingDefaultDispositions,
   findMissingDefaultDispositions,
+  getDefaultDispositionColor,
 } from '../app/types/disposition.ts';
-import { STATUS_COLORS, STATUS_LABELS } from '../app/types/index.ts';
 
 describe('House for Sale disposition', () => {
   it('is a default disposition with a distinct sky pin from Go Back', () => {
@@ -68,9 +70,12 @@ describe('House for Sale disposition', () => {
     assert.equal(findMissingDefaultDispositions(alreadyNamed).length, 0);
   });
 
-  it('exposes label and pin color on the legacy status maps', () => {
-    assert.equal(STATUS_LABELS['house-for-sale'], 'House for Sale');
-    assert.equal(STATUS_COLORS['house-for-sale'], '#0ea5e9');
-    assert.notEqual(STATUS_COLORS['house-for-sale'], STATUS_COLORS['go-back']);
+  it('exposes the user-facing House for Sale label and sky pin color', () => {
+    assert.equal(getDefaultDispositionLabel('house-for-sale'), 'House for Sale');
+    assert.equal(getDefaultDispositionColor('house-for-sale'), '#0ea5e9');
+    assert.notEqual(getDefaultDispositionColor('house-for-sale'), getDefaultDispositionColor('go-back'));
+    assert.equal(isKnockStatus('house-for-sale'), true);
+    assert.equal(isKnockStatus('go-back'), true);
+    assert.equal(isKnockStatus('unclaimed'), false);
   });
 });
