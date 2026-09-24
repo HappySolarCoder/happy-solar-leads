@@ -88,6 +88,17 @@ function mapTerritory(id: string, data: Record<string, unknown>): Territory {
   };
 }
 
+/** Firestore `in` accepts at most 10 values. */
+const HISTORICAL_STATUS_IN_CHUNK = 10;
+
+/**
+ * Max leads per status chunk. Ordering by dispositionedAt or createdAt would
+ * need a composite index on `status` plus that field. Existing leads indexes
+ * are lat, status+solarCategory, and claimedBy+createdAt — none match this
+ * query — so the read stays unordered and only capped.
+ */
+const HISTORICAL_LEADS_PER_CHUNK = 500;
+
 function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -138,9 +149,13 @@ export async function GET(request: NextRequest) {
     const extraStatusIds = new Set(statusIds);
 
     const byId = new Map<string, Lead>();
-    // Firestore `in` is capped. Status-only queries use the automatic single-field index.
-    for (const ids of chunk(statusIds, 10)) {
-      const snap = await db.collection('leads').where('status', 'in', ids).get();
+    // Status-only `in` queries use the automatic single-field index.
+    for (const ids of chunk(statusIds, HISTORICAL_STATUS_IN_CHUNK)) {
+      const snap = await db
+        .collection('leads')
+        .where('status', 'in', ids)
+        .limit(HISTORICAL_LEADS_PER_CHUNK)
+        .get();
       for (const doc of snap.docs) {
         byId.set(doc.id, mapLead(doc.id, asRecord(doc.data())));
       }

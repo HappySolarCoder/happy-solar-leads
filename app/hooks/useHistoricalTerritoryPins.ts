@@ -15,12 +15,18 @@ type HistoricalPinPayload = {
   lng?: number;
   status?: string;
   disposition?: string;
-  claimedBy?: string;
-  assignedTo?: string;
   createdAt?: string;
   dispositionedAt?: string;
+  appointmentSetAt?: string;
   historicalSetByName?: string;
 };
+
+function parseOptionalDate(value?: string): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || date.getTime() === 0) return undefined;
+  return date;
+}
 
 function toLead(raw: HistoricalPinPayload): Lead {
   return {
@@ -33,13 +39,12 @@ function toLead(raw: HistoricalPinPayload): Lead {
     lat: raw.lat,
     lng: raw.lng,
     status: raw.status || '',
-    disposition: raw.disposition,
-    claimedBy: raw.claimedBy,
-    assignedTo: raw.assignedTo,
-    createdAt: raw.createdAt ? new Date(raw.createdAt) : new Date(0),
-    dispositionedAt: raw.dispositionedAt ? new Date(raw.dispositionedAt) : undefined,
+    disposition: raw.disposition?.trim() || undefined,
+    createdAt: parseOptionalDate(raw.createdAt) || new Date(0),
+    dispositionedAt: parseOptionalDate(raw.dispositionedAt),
+    appointmentSetAt: parseOptionalDate(raw.appointmentSetAt),
     historicalTerritoryPin: true,
-    historicalSetByName: raw.historicalSetByName,
+    historicalSetByName: raw.historicalSetByName?.trim() || undefined,
   };
 }
 

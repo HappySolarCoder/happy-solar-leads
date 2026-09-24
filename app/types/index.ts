@@ -145,8 +145,36 @@ export interface Lead {
    * inside the viewer's territory. Never written to Firestore.
    */
   historicalTerritoryPin?: boolean;
-  /** Client-only label for who set a historical territory pin. */
+  /** Client-only setter display name for a past pin. Never a user id. */
   historicalSetByName?: string;
+  /**
+   * When the appointment was set. Taken from the appointment-set history
+   * entry, otherwise dispositionedAt. A date only — not a user id.
+   */
+  appointmentSetAt?: Date;
+}
+
+/**
+ * Public map payload for another rep's past Appointment Set / Sold pin.
+ * Setter is a display name. Other reps' user ids and customer contact
+ * fields are not included.
+ */
+export interface HistoricalTerritoryPin {
+  id: string;
+  name: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  lat?: number;
+  lng?: number;
+  status: string;
+  createdAt: Date;
+  disposition?: string;
+  dispositionedAt?: Date;
+  appointmentSetAt?: Date;
+  historicalSetByName?: string;
+  historicalTerritoryPin: true;
 }
 
 export interface LeadPhoto {
