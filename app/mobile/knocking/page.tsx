@@ -14,6 +14,8 @@ import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import GoalsPaceModal from '@/app/components/GoalsPaceModal';
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
+import { useHistoricalTerritoryPins } from '@/app/hooks/useHistoricalTerritoryPins';
+import { mergeHistoricalTerritoryPins } from '@/app/utils/historicalTerritoryPins';
 import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
 
 // Dynamic import for map (client-side only)
@@ -77,6 +79,7 @@ export default function KnockingPage() {
     watch: true, // Continuous tracking
   });
   const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
+  const historicalPins = useHistoricalTerritoryPins(currentUser?.id);
   const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
   const teamAreaTerritories = useMemo(
     () => (showTeamAreas ? colorTerritories(overlayTerritories, coloredUsers) : []),
@@ -397,6 +400,13 @@ export default function KnockingPage() {
     }
     return 0;
   });
+
+  // Map-only. The knock list and route stay on the rep's own doors.
+  const mapLeads = mergeHistoricalTerritoryPins(
+    [...leadsWithDistance, ...leads.filter(l => l.leadType === 'customer' || l.leadType === 'sale')],
+    historicalPins,
+    currentUser?.id,
+  );
 
   // Get selected lead
   const selectedLead = leads.find(l => l.id === selectedLeadId);
@@ -1045,7 +1055,7 @@ export default function KnockingPage() {
       {viewMode === 'map' && (
         <main className="flex-1 relative overflow-hidden">
           <LeadMap
-            leads={[...leadsWithDistance, ...leads.filter(l => l.leadType === 'customer' || l.leadType === 'sale')]}
+            leads={mapLeads}
             currentUser={currentUser}
             users={coloredUsers}
             onLeadClick={handleLeadSelect}

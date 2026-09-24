@@ -1,5 +1,5 @@
-import { Territory, TerritoryPoint } from '@/app/types/territory';
-import { Lead } from '@/app/types';
+import type { Territory, TerritoryPoint } from '@/app/types/territory';
+import type { Lead } from '@/app/types';
 import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
 import { point, polygon } from '@turf/helpers';
 

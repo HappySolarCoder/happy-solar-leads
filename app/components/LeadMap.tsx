@@ -586,13 +586,15 @@ export default function LeadMap({
       const hasDisposition = isKnockStatus(lead.status);
       if (!lead.lat || !lead.lng) return;
 
+      const isHistorical = lead.historicalTerritoryPin === true;
       const isAssignedToMe = currentUser != null && lead.assignedTo != null && lead.assignedTo === currentUser.id;
       const isClaimedByMe = currentUser != null && lead.claimedBy != null && lead.claimedBy === currentUser.id;
 
       // Skip poor solar leads UNLESS:
       // - they have a disposition (already knocked), OR
       // - they are assigned/claimed by the current user (they still need to see their turf)
-      if (lead.solarCategory === 'poor' && !hasDisposition && !isAssignedToMe && !isClaimedByMe) return;
+      // Past Appointment Set / Sold pins from other reps stay visible even on poor roofs.
+      if (!isHistorical && lead.solarCategory === 'poor' && !hasDisposition && !isAssignedToMe && !isClaimedByMe) return;
 
       const isSelected = lead.id === selectedLeadId;
       // isClaimedByMe already computed above
@@ -620,10 +622,19 @@ export default function LeadMap({
         lead.tags // Pass tags for special styling
       );
 
-      const marker = L.marker([lead.lat!, lead.lng!], { icon });
+      const marker = L.marker([lead.lat!, lead.lng!], {
+        icon,
+        // Keep past pins under the viewer's own active markers.
+        zIndexOffset: isHistorical ? -300 : 0,
+      });
       // Prevent Leaflet from auto-panning the map to keep popups in view (this causes "snap back" / lock feeling on mobile).
       marker.bindPopup(createPopupContent(lead), { maxWidth: 300, autoPan: false });
-      marker.on('click', () => onLeadClick(lead));
+      marker.on('click', () => {
+        // Popup only. Opening the disposition panel would let a rep overwrite
+        // another user's Appointment Set / Sold outcome.
+        if (isHistorical) return;
+        onLeadClick(lead);
+      });
       // IMPORTANT: Do NOT call openPopup() inside the render loop.
       // LeadMap re-renders on pan/zoom (viewportKey) and would repeatedly open the popup,
       // which can force the map to re-center.
@@ -636,6 +647,8 @@ export default function LeadMap({
     // Include: good solar leads OR leads with dispositions
     const goodLeads = leads.filter(l => {
       if (!l.lat || !l.lng) return false;
+      // Past pins must not pull the camera away from the rep's own doors.
+      if (l.historicalTerritoryPin) return false;
       const assignedToMe = currentUser != null && (l as any).assignedTo != null && (l as any).assignedTo === currentUser.id;
       const claimedByMe = currentUser != null && (l as any).claimedBy != null && (l as any).claimedBy === currentUser.id;
 
@@ -1626,6 +1639,56 @@ const ICON_TO_UNICODE: Record<string, string> = {
   'arrow-left': '←',
 };
 
+function createMutedHistoricalIcon(disposition: Disposition | undefined, zoom: number): L.DivIcon {
+  let size = 30;
+  let showIcon = true;
+  if (zoom < 12) {
+    size = 7;
+    showIcon = false;
+  } else if (zoom < 14) {
+    size = 13;
+    showIcon = false;
+  } else if (zoom < 16) {
+    size = 20;
+  }
+
+  const color = '#9CA3AF';
+  const icon = disposition ? (ICON_TO_UNICODE[disposition.icon] || '●') : '●';
+
+  if (zoom < 14) {
+    const html = `<div style="width:${size}px;height:${size}px;background:${color};border:1px solid #6B7280;border-radius:50%;opacity:0.8;box-shadow:0 1px 2px rgba(0,0,0,0.2);"></div>`;
+    return L.divIcon({
+      html,
+      className: 'custom-marker historical-pin',
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+      popupAnchor: [0, -size / 2],
+    });
+  }
+
+  const fontSize = showIcon ? size * 0.45 : 0;
+  const html = `
+    <div style="width:${size}px;height:${size}px;background:${color};border:2px solid #6B7280;border-radius:50% 50% 50% 0;transform:rotate(-45deg);opacity:0.82;box-shadow:0 2px 4px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;">
+      ${showIcon ? `<span style="transform:rotate(45deg);color:#F9FAFB;font-size:${fontSize}px;font-weight:bold;">${icon}</span>` : ''}
+    </div>
+  `;
+  return L.divIcon({
+    html,
+    className: 'custom-marker historical-pin',
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size],
+    popupAnchor: [0, -size],
+  });
+}
+
+function escapePopupText(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function createCustomIcon(
   lead: Lead,
   users: User[],
@@ -1641,6 +1704,11 @@ function createCustomIcon(
   zoom: number = 12,
   tags?: string[]
 ): L.DivIcon {
+  // Other reps' past Appointment Set / Sold pins. Own pins never take this path.
+  if (lead.historicalTerritoryPin) {
+    return createMutedHistoricalIcon(disposition, zoom);
+  }
+
   // Customer pins (installed sales/customers)
   const leadType = (lead.leadType === 'sale' ? 'customer' : lead.leadType) || 'prospect';
   const isCustomerPin = leadType === 'customer';
@@ -1796,6 +1864,24 @@ function createCustomIcon(
 }
 
 function createPopupContent(lead: Lead): string {
+  if (lead.historicalTerritoryPin) {
+    const statusLabel = STATUS_LABELS[lead.status] || lead.disposition || lead.status || 'Past pin';
+    const setBy = lead.historicalSetByName
+      ? `<p style="margin:8px 0 0 0;font-size:12px;color:#4b5563;">Set by ${escapePopupText(lead.historicalSetByName)}</p>`
+      : '';
+    return `
+      <div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
+        <div style="display:inline-block;margin:0 0 8px 0;padding:2px 8px;background:#F3F4F6;color:#4B5563;border-radius:9999px;font-size:11px;font-weight:700;letter-spacing:0.02em;">PAST PIN</div>
+        <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:#374151;">${escapePopupText(lead.name)}</h3>
+        <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${escapePopupText(lead.address)}</p>
+        <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${escapePopupText(lead.city)}, ${escapePopupText(lead.state)} ${escapePopupText(lead.zip)}</p>
+        <div style="display:inline-block;padding:4px 10px;background:#E5E7EB;color:#4B5563;border-radius:9999px;font-size:12px;font-weight:600;">${escapePopupText(statusLabel)}</div>
+        ${setBy}
+        <p style="margin:8px 0 0 0;font-size:11px;color:#6b7280;">Another rep already set or sold this door. Shown because it is inside your territory.</p>
+      </div>
+    `;
+  }
+
   const leadType = (lead.leadType === 'sale' ? 'customer' : lead.leadType) || 'prospect';
   if (leadType === 'customer') {
     const name = (lead.customerFirstName || lead.customerLastName)
