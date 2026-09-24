@@ -7,6 +7,7 @@ import {
   isAppointmentSetOrSoldLead,
   mergeHistoricalTerritoryPins,
   selectHistoricalTerritoryPins,
+  pastPinPopupLines,
   toPublicHistoricalPin,
 } from '../app/utils/historicalTerritoryPins.ts';
 
@@ -154,26 +155,113 @@ describe('mergeHistoricalTerritoryPins', () => {
 });
 
 describe('toPublicHistoricalPin', () => {
-  it('keeps the door and who set it, and omits contact fields', () => {
+  it('keeps the door and who set it, and omits contact fields and user ids', () => {
     const pin = toPublicHistoricalPin(lead({
       id: 'past',
       status: 'appointment',
       phone: '555-0100',
       email: 'a@b.com',
       notes: 'secret',
+      claimedBy: 'other-rep',
+      assignedTo: 'other-rep',
+      disposition: 'Appointment Set',
       dispositionHistory: [{
         disposition: 'Appointment Set',
-        timestamp: new Date(0),
+        timestamp: new Date('2026-09-03T16:00:00Z'),
         userId: 'other-rep',
         userName: 'Alex Setter',
       }],
     }));
     assert.equal(pin.historicalTerritoryPin, true);
     assert.equal(pin.historicalSetByName, 'Alex Setter');
+    assert.equal(pin.appointmentSetAt?.toISOString(), '2026-09-03T16:00:00.000Z');
+    assert.equal(pin.disposition, 'Appointment Set');
     assert.equal(pin.address, '1 Main St');
     assert.equal((pin as Lead & { phone?: string }).phone, undefined);
     assert.equal((pin as Lead & { email?: string }).email, undefined);
-    assert.equal(pin.notes, undefined);
-    assert.equal(pin.dispositionHistory, undefined);
+    assert.equal((pin as Lead & { notes?: string }).notes, undefined);
+    assert.equal((pin as Lead & { claimedBy?: string }).claimedBy, undefined);
+    assert.equal((pin as Lead & { assignedTo?: string }).assignedTo, undefined);
+    assert.equal((pin as Lead & { dispositionHistory?: unknown }).dispositionHistory, undefined);
+    assert.equal(JSON.stringify(pin).includes('other-rep'), false);
+  });
+
+  it('uses the appointment-set history entry, not a later outcome', () => {
+    const pin = toPublicHistoricalPin(lead({
+      id: 'past',
+      status: 'sale',
+      disposition: 'Sold',
+      dispositionedAt: new Date('2026-09-10T16:00:00Z'),
+      dispositionHistory: [
+        {
+          disposition: 'Sold',
+          timestamp: new Date('2026-09-10T16:00:00Z'),
+          userId: 'rep-2',
+          userName: 'Later Person',
+        },
+        {
+          disposition: 'Appointment Set',
+          timestamp: new Date('2026-09-03T16:00:00Z'),
+          userId: 'rep-1',
+          userName: 'Alex Setter',
+        },
+      ],
+    }));
+    assert.equal(pin.appointmentSetAt?.toISOString(), '2026-09-03T16:00:00.000Z');
+    assert.equal(pin.historicalSetByName, 'Alex Setter');
+    assert.equal(pin.disposition, 'Sold');
+    assert.deepEqual(pastPinPopupLines(pin), [
+      'Appt set Sep 3, 2026',
+      'Set by Alex Setter',
+      'Sold',
+    ]);
+    assert.equal(JSON.stringify(pin).includes('rep-1'), false);
+    assert.equal(JSON.stringify(pin).includes('rep-2'), false);
+  });
+
+  it('falls back to dispositionedAt and omits missing setter, disposition, and invalid dates', () => {
+    const fallback = toPublicHistoricalPin(lead({
+      id: 'fallback',
+      status: 'appointment',
+      dispositionedAt: new Date('2026-09-03T16:00:00Z'),
+      dispositionHistory: [{
+        disposition: 'Not Home',
+        timestamp: new Date('2026-08-01T16:00:00Z'),
+        userId: 'secret-id',
+        userName: 'Wrong Person',
+      }],
+    }));
+    assert.equal(fallback.appointmentSetAt?.toISOString(), '2026-09-03T16:00:00.000Z');
+    assert.equal(fallback.historicalSetByName, undefined);
+    assert.equal(fallback.disposition, undefined);
+    assert.deepEqual(pastPinPopupLines(fallback), ['Appt set Sep 3, 2026']);
+    assert.equal(JSON.stringify(fallback).includes('secret-id'), false);
+    assert.equal(JSON.stringify(fallback).includes('Wrong Person'), false);
+
+    const missing = toPublicHistoricalPin(lead({
+      id: 'missing',
+      status: 'sale',
+      disposition: '   ',
+      dispositionedAt: new Date('not-a-date'),
+      dispositionHistory: [{
+        disposition: 'Appointment Set',
+        timestamp: new Date(0),
+        userId: 'rep-1',
+        userName: '   ',
+      }],
+    }));
+    assert.equal(missing.appointmentSetAt, undefined);
+    assert.equal(missing.historicalSetByName, undefined);
+    assert.equal(missing.disposition, undefined);
+    const lines = pastPinPopupLines(missing);
+    assert.deepEqual(lines, []);
+    assert.equal(lines.some((line) => line.includes('Invalid')), false);
+
+    const blankName = pastPinPopupLines({
+      disposition: 'Appointment Set',
+      appointmentSetAt: new Date('2026-09-03T16:00:00Z'),
+      historicalSetByName: '  ',
+    });
+    assert.deepEqual(blankName, ['Appt set Sep 3, 2026', 'Appointment Set']);
   });
 });

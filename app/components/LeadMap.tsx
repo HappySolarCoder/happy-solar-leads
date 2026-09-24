@@ -16,6 +16,7 @@ import { findLeadTerritory } from '@/app/utils/territoryAssignment';
 import { formatTimeEST } from '@/app/utils/timezone';
 import { colorForTerritory, shouldRenderTerritoryOverlay, type TeamAreaMember } from '@/app/utils/teamAreas';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
+import { isAppointmentSetOrSoldLead, pastPinPopupLines } from '@/app/utils/historicalTerritoryPins';
 
 interface UserRoute {
   userId: string;
@@ -106,6 +107,40 @@ export default function LeadMap({
   const labelsTileLayerRef = useRef<L.TileLayer | null>(null);
   const hasFitLeadsBoundsRef = useRef(false); // Prevent constant re-fitting of bounds
   const hasFitTerritoryBoundsRef = useRef(false); // Track territory bounds fitting
+  // Past / historical pin popup. One Leaflet popup, keyed by lead id, so a
+  // marker rebuild (pan, zoom, idle refetch) updates it instead of closing it.
+  const persistentPopupIdRef = useRef<string | null>(null);
+  const persistentPopupRef = useRef<L.Popup | null>(null);
+
+  const ensurePersistentPopup = () => {
+    if (!persistentPopupRef.current) {
+      const popup = L.popup({
+        autoPan: false,
+        closeButton: true,
+        // Map pans, zooms, and marker rebuilds must not dismiss this.
+        // A tap on the map (below) or the X button closes it.
+        closeOnClick: false,
+        autoClose: false,
+        maxWidth: 300,
+        offset: L.point(0, -20),
+        className: 'past-pin-popup',
+      });
+      popup.on('remove', () => {
+        persistentPopupIdRef.current = null;
+      });
+      persistentPopupRef.current = popup;
+    }
+    return persistentPopupRef.current;
+  };
+
+  const showPersistentPopup = (map: L.Map, lead: Lead) => {
+    if (lead.lat == null || lead.lng == null) return;
+    const popup = ensurePersistentPopup();
+    popup.setLatLng([lead.lat, lead.lng]);
+    popup.setContent(createPopupContent(lead));
+    if (!popup.isOpen()) popup.openOn(map);
+    persistentPopupIdRef.current = lead.id;
+  };
 
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
@@ -333,6 +368,16 @@ export default function LeadMap({
       longPressStartPos = null;
     });
 
+    // Close the past-pin popup only when the tap is on the map itself.
+    // Marker taps, the popup (including X), and zoom controls do not count.
+    map.on('click', (event: L.LeafletMouseEvent) => {
+      const target = event.originalEvent?.target;
+      if (target instanceof Element && target.closest('.leaflet-popup, .leaflet-marker-icon, .marker-cluster, .leaflet-control')) {
+        return;
+      }
+      persistentPopupRef.current?.close();
+    });
+
     return () => {
       if (routeLineRef.current) routeLineRef.current.remove();
       map.remove();
@@ -454,6 +499,8 @@ export default function LeadMap({
     // Performance: Log start time
     const startTime = Date.now();
     console.log(`[LeadMap] Updating ${leads.length} markers...`);
+
+    const pinnedIdAtStart = persistentPopupIdRef.current;
 
     // Clear existing markers
     layer.clearLayers();
@@ -627,19 +674,40 @@ export default function LeadMap({
         // Keep past pins under the viewer's own active markers.
         zIndexOffset: isHistorical ? -300 : 0,
       });
-      // Prevent Leaflet from auto-panning the map to keep popups in view (this causes "snap back" / lock feeling on mobile).
-      marker.bindPopup(createPopupContent(lead), { maxWidth: 300, autoPan: false });
-      marker.on('click', () => {
-        // Popup only. Opening the disposition panel would let a rep overwrite
-        // another user's Appointment Set / Sold outcome.
-        if (isHistorical) return;
-        onLeadClick(lead);
-      });
+      const keepPopupOpen = isPersistentPinPopup(lead);
+      if (keepPopupOpen) {
+        // Popup lives on the map, keyed by lead id, so clearing this marker
+        // layer on pan/zoom/refetch does not unmount it.
+        marker.on('click', () => {
+          showPersistentPopup(map, lead);
+          // Other reps' past pins stay popup-only. Own pins still open the
+          // detail sheet; the map popup remains until X or a map tap.
+          if (isHistorical) return;
+          onLeadClick(lead);
+        });
+      } else {
+        // Prevent Leaflet from auto-panning the map to keep popups in view (this causes "snap back" / lock feeling on mobile).
+        marker.bindPopup(createPopupContent(lead), { maxWidth: 300, autoPan: false });
+        marker.on('click', () => {
+          if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
+          onLeadClick(lead);
+        });
+      }
       // IMPORTANT: Do NOT call openPopup() inside the render loop.
       // LeadMap re-renders on pan/zoom (viewportKey) and would repeatedly open the popup,
       // which can force the map to re-center.
       marker.addTo(layer);
     });
+
+    if (pinnedIdAtStart) {
+      const pinned = leads.find((item) => item.id === pinnedIdAtStart);
+      if (pinned && isPersistentPinPopup(pinned) && pinned.lat != null && pinned.lng != null) {
+        showPersistentPopup(map, pinned);
+      } else if (persistentPopupRef.current && !persistentPopupRef.current.isOpen()) {
+        persistentPopupRef.current.openOn(map);
+        persistentPopupIdRef.current = pinnedIdAtStart;
+      }
+    }
 
     // Include leads with dispositions when calculating map bounds (they may not have solar data)
     const hasDisposition = (l: any) => isKnockStatus(l.status);
@@ -1863,20 +1931,31 @@ function createCustomIcon(
   return L.divIcon({ html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size], popupAnchor: [0, -size] });
 }
 
+function isPersistentPinPopup(lead: Lead): boolean {
+  return lead.historicalTerritoryPin === true || isAppointmentSetOrSoldLead(lead);
+}
+
+function pastPinDetailHtml(lead: Lead, alreadyShown?: string): string {
+  if (!isPersistentPinPopup(lead)) return '';
+  // The status badge already shows this label. Skip a second copy of it.
+  const shown = alreadyShown?.trim();
+  return pastPinPopupLines(lead)
+    .filter((line) => line !== shown)
+    .map((line) => `<p style="margin:8px 0 0 0;font-size:12px;color:#4b5563;">${escapePopupText(line)}</p>`)
+    .join('');
+}
+
 function createPopupContent(lead: Lead): string {
   if (lead.historicalTerritoryPin) {
     const statusLabel = STATUS_LABELS[lead.status] || lead.disposition || lead.status || 'Past pin';
-    const setBy = lead.historicalSetByName
-      ? `<p style="margin:8px 0 0 0;font-size:12px;color:#4b5563;">Set by ${escapePopupText(lead.historicalSetByName)}</p>`
-      : '';
     return `
-      <div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
+      <div data-pin-id="${escapePopupText(lead.id)}" style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
         <div style="display:inline-block;margin:0 0 8px 0;padding:2px 8px;background:#F3F4F6;color:#4B5563;border-radius:9999px;font-size:11px;font-weight:700;letter-spacing:0.02em;">PAST PIN</div>
         <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:#374151;">${escapePopupText(lead.name)}</h3>
         <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${escapePopupText(lead.address)}</p>
         <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${escapePopupText(lead.city)}, ${escapePopupText(lead.state)} ${escapePopupText(lead.zip)}</p>
         <div style="display:inline-block;padding:4px 10px;background:#E5E7EB;color:#4B5563;border-radius:9999px;font-size:12px;font-weight:600;">${escapePopupText(statusLabel)}</div>
-        ${setBy}
+        ${pastPinDetailHtml(lead, statusLabel)}
         <p style="margin:8px 0 0 0;font-size:11px;color:#6b7280;">Another rep already set or sold this door. Shown because it is inside your territory.</p>
       </div>
     `;
@@ -1906,12 +1985,13 @@ function createPopupContent(lead: Lead): string {
   const statusLabel = STATUS_LABELS[lead.status] || lead.disposition || lead.status;
   
   return `
-    <div style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
-      <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:#1f2937;">${lead.name}</h3>
-      <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${lead.address}</p>
-      <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${lead.city}, ${lead.state} ${lead.zip}</p>
-      <div style="display:inline-block;padding:4px 10px;background:${statusColor}20;color:${statusColor};border-radius:9999px;font-size:12px;font-weight:500;">${statusLabel}</div>
-      ${lead.phone ? `<p style="margin:8px 0 0 0;font-size:13px;color:#4b5563;">📞 ${lead.phone}</p>` : ''}
+    <div data-pin-id="${escapePopupText(lead.id)}" style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
+      <h3 style="margin:0 0 8px 0;font-size:16px;font-weight:600;color:#1f2937;">${escapePopupText(lead.name)}</h3>
+      <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${escapePopupText(lead.address)}</p>
+      <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${escapePopupText(lead.city)}, ${escapePopupText(lead.state)} ${escapePopupText(lead.zip)}</p>
+      <div style="display:inline-block;padding:4px 10px;background:${statusColor}20;color:${statusColor};border-radius:9999px;font-size:12px;font-weight:500;">${escapePopupText(statusLabel)}</div>
+      ${pastPinDetailHtml(lead, statusLabel)}
+      ${lead.phone ? `<p style="margin:8px 0 0 0;font-size:13px;color:#4b5563;">📞 ${escapePopupText(lead.phone)}</p>` : ''}
     </div>
   `;
 }
