@@ -22,6 +22,8 @@ import { ensureUserColors } from '@/app/utils/userColors';
 import { loadUserSession, saveUserSession, getDefaultSession } from '@/app/utils/userSession';
 import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
+import { useHistoricalTerritoryPins } from '@/app/hooks/useHistoricalTerritoryPins';
+import { mergeHistoricalTerritoryPins } from '@/app/utils/historicalTerritoryPins';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -62,6 +64,7 @@ export default function Home() {
   const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite');
   const [showTeamAreas, setShowTeamAreas] = useState(false);
   const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
+  const historicalPins = useHistoricalTerritoryPins(currentUser?.id);
   
   // Address search state
   const [addressSearch, setAddressSearch] = useState('');
@@ -327,6 +330,13 @@ export default function Home() {
     }
     return membersFromTerritories(overlayTerritories, coloredUsers);
   }, [showTeamAreas, overlayTerritories, overlayMembers, coloredUsers]);
+
+  // Other reps' Appointment Set / Sold pins inside this user's territory.
+  // Own pins stay in `leads` and keep their existing colors.
+  const mapLeads = useMemo(
+    () => mergeHistoricalTerritoryPins(leads, historicalPins, currentUser?.id),
+    [leads, historicalPins, currentUser?.id],
+  );
 
   // Role-based lead visibility
   // For setters/closers: show leads they claimed OR leads assigned to them (via territory)
@@ -674,7 +684,7 @@ export default function Home() {
         {(viewMode === 'split' || viewMode === 'map' || viewMode === 'territory') && (
           <main className={`flex-1 relative ${viewMode === 'map' || viewMode === 'territory' ? 'w-full' : ''}`}>
             <LeadMap
-              leads={viewMode === 'territory' ? [] : (leads?.length > 0 ? leads : [])}
+              leads={viewMode === 'territory' ? [] : mapLeads}
               currentUser={currentUser}
               users={coloredUsers}
               onLeadClick={handleLeadSelect}

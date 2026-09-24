@@ -139,6 +139,14 @@ export interface Lead {
 
   // Photos & Attachments
   photos?: LeadPhoto[];  // Photos attached to this lead
+
+  /**
+   * Client-only. Past Appointment Set / Sold pin from another user, drawn
+   * inside the viewer's territory. Never written to Firestore.
+   */
+  historicalTerritoryPin?: boolean;
+  /** Client-only label for who set a historical territory pin. */
+  historicalSetByName?: string;
 }
 
 export interface LeadPhoto {
