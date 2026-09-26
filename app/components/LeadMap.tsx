@@ -223,9 +223,9 @@ export default function LeadMap({
         maxZoom: 19,
       }).addTo(map);
 
-      // Labels overlay
-      labelsTileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}.png', {
-        attribution: '&copy; CARTO',
+      // Labels overlay (Esri reference tiles; no API key)
+      labelsTileLayerRef.current = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Labels &copy; Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS user community',
         maxZoom: 19,
         pane: 'shadowPane',
       }).addTo(map);
@@ -258,9 +258,9 @@ export default function LeadMap({
       maxZoom: 19,
     }).addTo(map);
 
-    // Add labels overlay for satellite view
-    labelsTileLayerRef.current = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}.png', {
-      attribution: '&copy; CARTO',
+    // Add labels overlay for satellite view (Esri reference tiles; no API key)
+    labelsTileLayerRef.current = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Labels &copy; Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS user community',
       maxZoom: 19,
       pane: 'shadowPane', // Put labels above satellite but below markers
     }).addTo(map);
