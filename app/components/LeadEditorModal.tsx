@@ -5,6 +5,10 @@ import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
+import {
+  FALLBACK_SCHEDULING_MANAGER_PHONE,
+  schedulingManagerTelDigits,
+} from '@/app/utils/schedulingManagerTel';
 
 interface LeadEditorModalProps {
   lead: Lead;
@@ -28,14 +32,30 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
   const [isSending, setIsSending] = useState(false);
   const [infoSent, setInfoSent] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  // Cached before the call tap. Reading this during the click must not await.
+  const [schedulingManagerPhone, setSchedulingManagerPhone] = useState(FALLBACK_SCHEDULING_MANAGER_PHONE);
 
-  // Load current user when component mounts
+  // Load current user and scheduling-manager phone when the modal mounts.
   useEffect(() => {
+    let cancelled = false;
+
     async function loadUser() {
       const user = await getCurrentUserAsync();
-      setCurrentUser(user);
+      if (!cancelled) setCurrentUser(user);
     }
+
+    async function loadSchedulingManagerPhone() {
+      const settings = await getAdminSettingsAsync();
+      const phone = settings?.schedulingManagerPhone?.trim();
+      if (!cancelled && phone) setSchedulingManagerPhone(phone);
+    }
+
     loadUser();
+    loadSchedulingManagerPhone();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleSave = async () => {
@@ -174,19 +194,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     }
   };
 
-  const handleCall = async () => {
-    const settings = await getAdminSettingsAsync();
-    
-    const phoneNumber = settings?.schedulingManagerPhone || '(716) 272-9889';
-    const cleanPhone = phoneNumber.replace(/\D/g, '');
-    console.log('Opening dialer:', cleanPhone);
-    window.location.href = `tel:${cleanPhone}`;
-
-    // Close modal after short delay
-    setTimeout(() => {
-      onClose();
-    }, 500);
-  };
+  const schedulingManagerTel = `tel:${schedulingManagerTelDigits(schedulingManagerPhone)}`;
 
   return (
     <>
@@ -392,14 +400,20 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
                   <div className="text-sm text-green-600 mt-1">Scheduling manager has been notified</div>
                 </div>
 
-                {/* Step 2: Call Button (only shows after send) */}
-                <button
-                  onClick={handleCall}
-                  className="w-full px-4 py-3 bg-[#48BB78] hover:bg-[#38A169] text-white rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
+                {/* Step 2: Call link (only shows after send).
+                    Native tel: keeps the iOS user gesture; do not await before navigation. */}
+                <a
+                  href={schedulingManagerTel}
+                  onClick={() => {
+                    setTimeout(() => {
+                      onClose();
+                    }, 500);
+                  }}
+                  className="w-full px-4 py-3 bg-[#48BB78] hover:bg-[#38A169] text-white rounded-lg font-semibold no-underline transition-colors flex items-center justify-center gap-2"
                 >
                   <Phone className="w-5 h-5" />
                   Call Scheduling Manager
-                </button>
+                </a>
               </>
             )}
           </div>
