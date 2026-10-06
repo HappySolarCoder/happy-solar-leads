@@ -44,6 +44,8 @@ export interface User {
   lastLogin?: Date;
   // Territory (for lead assignment - DO NOT confuse with Team)
   territory?: string;
+  // Set when Bloom provisions a temporary password. The signed-in user may set this to false only.
+  mustChangePassword?: boolean;
   // Team (for user organization - e.g., Rochester, Buffalo)
   team?: string;
   // Last published field GPS (users.currentLocation) — used by team map / area overlay

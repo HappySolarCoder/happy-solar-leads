@@ -5,9 +5,12 @@ import { getFirestore } from 'firebase-admin/firestore';
 let adminApp: App | null = null;
 
 function getServiceAccount() {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  // User-admin routes read FIREBASE_SERVICE_ACCOUNT. FIREBASE_SERVICE_ACCOUNT_JSON
+  // is the same credential shape (also used by the GHL client). Prefer the admin
+  // name, and fall back only when that one is unset.
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (!raw) {
-    throw new Error('Missing FIREBASE_SERVICE_ACCOUNT env variable');
+    throw new Error('Missing FIREBASE_SERVICE_ACCOUNT or FIREBASE_SERVICE_ACCOUNT_JSON env variable');
   }
   const parsed = JSON.parse(raw);
   if (parsed.private_key) {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { MapPin, BarChart3, Lightbulb, LogOut, Menu, Users, Settings } from 'lucide-react';
+import { MapPin, BarChart3, Lightbulb, LogOut, Menu, Users, Settings, KeyRound } from 'lucide-react';
 import { getCurrentAuthUser, signOut } from '@/app/utils/auth';
 import { User, canManageUsers } from '@/app/types';
 import { getLeadsAsync } from '@/app/utils/storage';
@@ -246,6 +246,21 @@ export default function MobilePage() {
               </div>
             </button>
           )}
+
+          <button
+            onClick={() => router.push('/change-password')}
+            className="w-full bg-white border-2 border-[#E2E8F0] rounded-2xl p-6 shadow-md hover:shadow-lg transition-all duration-200 active:scale-98 hover:border-[#FF5F5A]"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-[#F7FAFC] rounded-full flex items-center justify-center flex-shrink-0">
+                <KeyRound className="w-6 h-6 text-[#718096]" />
+              </div>
+              <div className="flex-1 text-left">
+                <div className="text-lg font-bold text-[#2D3748]">Change password</div>
+                <div className="text-sm text-[#718096]">Update your sign-in password</div>
+              </div>
+            </div>
+          </button>
 
           {/* AI Tips - Coming Soon */}
           <button

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
-  Menu, X, Shield, Map, Users, Filter, LogOut, ChevronRight, BarChart3, Calendar, Layers
+  Menu, X, Shield, Map, Users, Filter, LogOut, ChevronRight, BarChart3, Calendar, Layers, KeyRound
 } from 'lucide-react';
 import { User, canManageUsers, canAssignLeads, canSeeAllLeads } from '@/app/types';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
@@ -327,8 +327,25 @@ export default function AppMenu({
             ))}
           </div>
 
-          {/* Logout Section */}
-          <div className="p-4 border-t border-[#E2E8F0]">
+          {/* Account */}
+          <div className="p-4 border-t border-[#E2E8F0] space-y-2">
+            <button
+              type="button"
+              onClick={() => {
+                router.push('/change-password');
+                setIsOpen(false);
+              }}
+              className="w-full flex items-center gap-3 p-4 hover:bg-[#F7FAFC] border border-transparent hover:border-[#E2E8F0] rounded-lg transition-all duration-150"
+            >
+              <div className="p-2.5 bg-[#F7FAFC] rounded-lg">
+                <KeyRound className="w-5 h-5 text-[#718096]" />
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="font-semibold text-[#2D3748] truncate">Change password</div>
+                <div className="text-xs text-[#718096] truncate">Update your sign-in password</div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-[#E2E8F0] flex-shrink-0" />
+            </button>
             <button
               type="button"
               onClick={async () => {
