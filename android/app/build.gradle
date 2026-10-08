@@ -4,7 +4,7 @@ android {
     namespace = "com.happyslr.raydar"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.happyslr.raydar"
+        applicationId "com.happyslr.raydar.next"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

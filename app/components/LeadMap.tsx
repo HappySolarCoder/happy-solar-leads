@@ -1,5 +1,6 @@
 'use client';
 
+import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { getLocation } from '@/app/utils/geolocation';
 
 import { apiFetch } from '@/app/utils/apiFetch';
@@ -1781,6 +1782,17 @@ function createCustomIcon(
     return createMutedHistoricalIcon(disposition, zoom);
   }
 
+  const outcome = getAppointmentOutcome(lead);
+  if (outcome && viewMode === 'map') {
+    const size = zoom < 12 ? 14 : zoom < 15 ? 25 : 34;
+    const border = isSelected ? '#203b35' : '#ffffff';
+    return L.divIcon({
+      className: 'appointment-outcome-marker',
+      html: `<div title="${escapePopupText(`GHL: ${outcome.label}`)}" style="width:${size}px;height:${size}px;background:${outcome.color};border:3px solid ${border};border-radius:11px;box-shadow:0 2px 8px #203b3540;display:flex;align-items:center;justify-content:center;color:white;font:700 ${Math.max(9, size * .48)}px system-ui;">${escapePopupText(outcome.symbol)}</div>`,
+      iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2],
+    });
+  }
+
   // Customer pins (installed sales/customers)
   const leadType = (lead.leadType === 'sale' ? 'customer' : lead.leadType) || 'prospect';
   const isCustomerPin = leadType === 'customer';
@@ -1950,6 +1962,9 @@ function pastPinDetailHtml(lead: Lead, alreadyShown?: string): string {
 }
 
 function createPopupContent(lead: Lead): string {
+  const outcome = getAppointmentOutcome(lead);
+  const outcomeHtml = outcome ? `<p style="margin:9px 0;padding:7px 9px;background:${outcome.background};color:${outcome.color};border-radius:7px;font-size:12px;font-weight:600;">GHL: ${escapePopupText(outcome.label)}</p>` : '';
+
   if (lead.historicalTerritoryPin) {
     const statusLabel = STATUS_LABELS[lead.status] || lead.disposition || lead.status || 'Past pin';
     return `
@@ -1959,7 +1974,7 @@ function createPopupContent(lead: Lead): string {
         <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${escapePopupText(lead.address)}</p>
         <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${escapePopupText(lead.city)}, ${escapePopupText(lead.state)} ${escapePopupText(lead.zip)}</p>
         <div style="display:inline-block;padding:4px 10px;background:#E5E7EB;color:#4B5563;border-radius:9999px;font-size:12px;font-weight:600;">${escapePopupText(statusLabel)}</div>
-        ${pastPinDetailHtml(lead, statusLabel)}
+        ${outcomeHtml}${pastPinDetailHtml(lead, statusLabel)}
         <p style="margin:8px 0 0 0;font-size:11px;color:#6b7280;">Another rep already set or sold this door. Shown because it is inside your territory.</p>
       </div>
     `;
@@ -1980,6 +1995,7 @@ function createPopupContent(lead: Lead): string {
           ${lead.soldByName ? `<div><strong>Sales Rep:</strong> ${lead.soldByName}</div>` : ''}
           ${lead.setByName ? `<div><strong>FMA:</strong> ${lead.setByName}</div>` : ''}
         </div>
+        ${outcomeHtml}
         ${lead.phone ? `<p style="margin:8px 0 0 0;font-size:13px;color:#4b5563;">📞 ${lead.phone}</p>` : ''}
       </div>
     `;
@@ -1994,7 +2010,7 @@ function createPopupContent(lead: Lead): string {
       <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${escapePopupText(lead.address)}</p>
       <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${escapePopupText(lead.city)}, ${escapePopupText(lead.state)} ${escapePopupText(lead.zip)}</p>
       <div style="display:inline-block;padding:4px 10px;background:${statusColor}20;color:${statusColor};border-radius:9999px;font-size:12px;font-weight:500;">${escapePopupText(statusLabel)}</div>
-      ${pastPinDetailHtml(lead, statusLabel)}
+      ${outcomeHtml}${pastPinDetailHtml(lead, statusLabel)}
       ${lead.phone ? `<p style="margin:8px 0 0 0;font-size:13px;color:#4b5563;">📞 ${escapePopupText(lead.phone)}</p>` : ''}
     </div>
   `;

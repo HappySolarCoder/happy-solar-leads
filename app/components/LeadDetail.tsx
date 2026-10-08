@@ -1,5 +1,7 @@
 'use client';
 
+import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
+
 import { getLocation } from '@/app/utils/geolocation';
 
 import { useState, useEffect } from 'react';
@@ -441,7 +443,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
   if (isLoadingDispositions) {
     return (
-      <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] flex items-center justify-center">
+      <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
           <p className="text-sm text-[#718096]">Loading...</p>
@@ -460,13 +462,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
     return (
       <>
-        <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
+        <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
           <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
             <div className="flex items-center gap-2">
               <span className="text-lg">🙂</span>
               <span className="font-semibold text-[#2D3748]">Customer</span>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-white rounded-lg transition-colors">
+            <button onClick={onClose} aria-label="Close lead details" className="p-2 hover:bg-white rounded-lg transition-colors">
               <X className="w-5 h-5 text-[#718096]" />
             </button>
           </div>
@@ -527,6 +529,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               })()}
             </div>
 
+            <AppointmentOutcomeCard lead={lead} />
+
             {lead.notes && (
               <div className="bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg p-4">
                 <div className="text-sm font-semibold text-[#2D3748] mb-1">Notes</div>
@@ -541,7 +545,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
   return (
     <>
-      <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
+      <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
         {/* Header */}
         <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
           <div className="flex items-center gap-3">
@@ -555,6 +559,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           </div>
           <button
             onClick={onClose}
+            aria-label="Close lead details"
             className="p-2 hover:bg-white rounded-lg transition-colors"
           >
             <X className="w-5 h-5 text-[#718096]" />
@@ -620,6 +625,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               )}
             </div>
           )}
+
+          <AppointmentOutcomeCard lead={lead} />
 
           {/* Solar Score */}
           {lead.solarScore && (

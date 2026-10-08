@@ -26,7 +26,7 @@ const USERS_COLLECTION = 'users';
 // LEADS
 // ============================================
 
-function mapLeadDoc(docSnap: any): Lead {
+export function mapLeadDoc(docSnap: any): Lead {
   const data = docSnap.data();
   return {
     ...data,
@@ -42,6 +42,8 @@ function mapLeadDoc(docSnap: any): Lead {
     goBackScheduledDate: data.goBackScheduledDate?.toDate
       ? data.goBackScheduledDate.toDate()
       : (data.goBackScheduledDate ? new Date(data.goBackScheduledDate) : undefined),
+    appointmentDateTime: data.appointmentDateTime?.toDate ? data.appointmentDateTime.toDate() : (data.appointmentDateTime ? new Date(data.appointmentDateTime) : undefined),
+    ghlLastUpdatedAt: data.ghlLastUpdatedAt?.toDate ? data.ghlLastUpdatedAt.toDate() : (data.ghlLastUpdatedAt ? new Date(data.ghlLastUpdatedAt) : undefined),
     dispositionHistory:
       data.dispositionHistory?.map((entry: any) => ({
         ...entry,

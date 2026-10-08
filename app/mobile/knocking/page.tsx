@@ -1,5 +1,9 @@
 'use client';
 
+import { FieldToolbar, MobileNav, MobileNotice } from '../_components/MobileShell';
+import { useLiveLeads } from '@/app/hooks/useLiveLeads';
+import { AppointmentOutcomeBadge } from '@/app/components/AppointmentOutcomeBadge';
+import { appointmentOutcomeLegend, getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { apiFetch } from '@/app/utils/apiFetch';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
@@ -35,8 +39,11 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
 
 export default function KnockingPage() {
   const router = useRouter();
-  const [leads, setLeads] = useState<Lead[]>(() => getLeads());
+  const [loadedLeads, setLeads] = useState<Lead[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const live = useLiveLeads(currentUser);
+  const leads = live ? live.leads : loadedLeads;
+  const [outcomesOnly, setOutcomesOnly] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
@@ -57,6 +64,7 @@ export default function KnockingPage() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchLocation, setSearchLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const searchSequence = useRef(0);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [showSearchSheet, setShowSearchSheet] = useState(false);
@@ -126,7 +134,7 @@ export default function KnockingPage() {
       try {
         const response = await apiFetch(`/api/weather?lat=${lat}&lng=${lng}`);
         const data = await response.json();
-        if (data.temperature) {
+        if (data.temperature !== undefined) {
           setWeather({
             temperature: data.temperature,
             condition: data.condition,
@@ -146,7 +154,7 @@ export default function KnockingPage() {
     // Refresh weather every 30 minutes
     const interval = setInterval(fetchWeather, 30 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [gpsPosition]);
+  }, [gpsPosition ? Math.round(gpsPosition.lat * 100) : null, gpsPosition ? Math.round(gpsPosition.lng * 100) : null]);
 
   // Load data
   useEffect(() => {
@@ -201,12 +209,15 @@ export default function KnockingPage() {
   // Handle address search
   const handleAddressSearch = async (query: string) => {
     setAddressSearch(query);
+    const sequence = ++searchSequence.current;
+    setSearchResults([]);
     
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
     
     if (query.length < 3) {
+      setIsSearching(false);
       setSearchResults([]);
       return;
     }
@@ -217,6 +228,7 @@ export default function KnockingPage() {
       try {
         const response = await apiFetch(`/api/geocode?address=${encodeURIComponent(query)}`);
         const data = await response.json();
+        if (sequence !== searchSequence.current) return;
         
         if (data.results && data.results.length > 0) {
           setSearchResults(data.results.slice(0, 5));
@@ -224,10 +236,11 @@ export default function KnockingPage() {
           setSearchResults([]);
         }
       } catch (error) {
+        if (sequence !== searchSequence.current) return;
         console.error('Address search error:', error);
         setSearchResults([]);
       } finally {
-        setIsSearching(false);
+        if (sequence === searchSequence.current) setIsSearching(false);
       }
     }, 300);
   };
@@ -340,7 +353,7 @@ export default function KnockingPage() {
   }, [roleFilteredLeads, leadTypeFilter, isCustomerLead]);
 
   // Prospects baseline (exclude poor solar leads). Customers are unaffected by solar filters.
-  let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l) && l.solarCategory !== 'poor');
+  let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l) && (l.solarCategory !== 'poor' || !!getAppointmentOutcome(l)));
   let customers = leadTypeFilteredLeads.filter(isCustomerLead);
 
   // Filter by setter if selected (Admin/Manager only) — prospects only
@@ -384,11 +397,13 @@ export default function KnockingPage() {
     });
   }
 
-  const filteredLeads = leadTypeFilter === 'customers'
+  const typeFilteredLeads = leadTypeFilter === 'customers'
     ? customers
     : leadTypeFilter === 'prospects'
       ? prospects
       : [...customers, ...prospects];
+
+  const filteredLeads = outcomesOnly ? typeFilteredLeads.filter(l => getAppointmentOutcome(l)) : typeFilteredLeads;
 
   // Calculate distances and sort by nearest if GPS available
   const leadsWithDistance = filteredLeads.map(lead => ({
@@ -405,8 +420,8 @@ export default function KnockingPage() {
 
   // Map-only. The knock list and route stay on the rep's own doors.
   const mapLeads = mergeHistoricalTerritoryPins(
-    [...leadsWithDistance, ...leads.filter(l => l.leadType === 'customer' || l.leadType === 'sale')],
-    historicalPins,
+    leadsWithDistance,
+    outcomesOnly ? [] : historicalPins,
     currentUser?.id,
   );
 
@@ -549,11 +564,11 @@ export default function KnockingPage() {
     .map((d: any) => String(d.id).toLowerCase());
 
   const todaysKnocks = leads.filter(l => {
-    if (!l.dispositionedAt || l.dispositionedAt < todayStart) return false;
+    if (!l.dispositionedAt || new Date(l.dispositionedAt) < todayStart) return false;
 
     // Count by actor (who actually dispositioned), fallback to claimedBy for legacy rows.
     const lastHistoryUserId = (l.dispositionHistory && l.dispositionHistory[0]?.userId) ? String(l.dispositionHistory[0].userId) : null;
-    const actedByMe = lastHistoryUserId === currentUser?.id || l.claimedBy === currentUser?.id;
+    const actedByMe = (lastHistoryUserId || l.claimedBy || l.assignedTo) === currentUser?.id;
     if (!actedByMe) return false;
 
     const disp = String(l.status || l.disposition || '').toLowerCase();
@@ -598,111 +613,22 @@ export default function KnockingPage() {
   }
 
   return (
-    <LocationPermissionGuard requireLocation={true}>
-      <div className="h-screen flex flex-col bg-white overflow-hidden">
+    <LocationPermissionGuard requireLocation={false}>
+      <div className="rm-field-shell">
       {currentUser && <GoalsPaceModal currentUser={currentUser} openOverride={showGoalsModal} onCloseOverride={() => setShowGoalsModal(false)} />}
 
-      {/* Mobile Header - Clean App Bar (icon-first) */}
-      <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200 px-4 flex-shrink-0">
-        <div className="h-14 flex items-center gap-2">
-          {/* Back / Close detail */}
-          <button
-            onClick={() => {
-              if (showLeadDetail) {
-                setShowLeadDetail(false);
-                setSelectedLeadId(undefined);
-              } else {
-                router.push('/mobile');
-              }
-            }}
-            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all flex-none"
-            title={showLeadDetail ? 'Close' : 'Back'}
-          >
-            {showLeadDetail ? (
-              <X className="w-5 h-5 text-[#718096]" />
-            ) : (
-              <ArrowLeft className="w-5 h-5 text-[#718096]" />
-            )}
-          </button>
-
-          {/* Search pill (button) */}
-          <button
-            onClick={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
-            className="h-11 flex-1 min-w-0 rounded-full bg-gray-100 border border-gray-200 px-4 inline-flex items-center gap-2 text-left hover:bg-gray-200/60 transition-colors"
-            title="Search address"
-          >
-            <Search className="w-4 h-4 text-gray-500 flex-none" />
-            <span className="text-sm text-gray-500 truncate">Search address…</span>
-          </button>
-
-          {/* Tools */}
-          <button
-            onClick={() => router.push('/tools')}
-            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all flex-none"
-            title="Tools"
-          >
-            <Settings className="w-5 h-5 text-[#718096]" />
-          </button>
-        </div>
-
-        {/* Row 2: Chips (icon + number only) */}
-        <div className="pb-3 pt-2 -mt-1 flex items-center gap-2 overflow-x-auto pr-1 text-xs font-semibold tabular-nums [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {isRefreshing && (
-            <div className="h-10 min-h-10 px-3 rounded-full bg-[#FFF7ED] border border-[#FDBA74] text-[#9A3412] inline-flex items-center gap-2 leading-none whitespace-nowrap">
-              <span className="animate-pulse">⟳</span>
-              <span>Refreshing…</span>
-            </div>
-          )}
-          {/* Standard chip class: consistent height + rhythm */}
-          <div className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap">
-            <span className="text-sm leading-none">🚪</span>
-            <span className="text-sm font-semibold leading-none tabular-nums">{todaysKnocks}</span>
-          </div>
-
-          {dailyTarget !== null && (
-            <button
-              onClick={() => setShowGoalsModal(true)}
-              className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap hover:bg-gray-50"
-              title="Goal details"
-            >
-              <span className="text-sm leading-none">🎯</span>
-              <span className="text-sm font-semibold leading-none tabular-nums">{dailyTarget}</span>
-            </button>
-          )}
-
-          <button
-            onClick={() => { if (nextBest) handleLeadSelect(nextBest); }}
-            disabled={!nextBest}
-            className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap disabled:opacity-50"
-            title="Nearest 3⭐"
-          >
-            <span className="text-sm leading-none">⭐</span>
-            <span className="text-sm font-semibold leading-none truncate max-w-[140px]">
-              {nextBest ? (nextBestIsFar ? 'Far' : `${nextBestDistance}${nextBestDirection ? ` ${nextBestDirection}` : ''}`) : '—'}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setShowHeat(!showHeat)}
-            className={`h-10 w-10 min-h-10 rounded-full border inline-flex items-center justify-center leading-none ${
-              showHeat ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-gray-200 text-[#2D3748] bg-white'
-            }`}
-            title="Heat map"
-          >
-            <span className="text-sm leading-none">🔥</span>
-          </button>
-
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`h-10 w-10 min-h-10 rounded-full border inline-flex items-center justify-center leading-none ${
-              showFilters ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-gray-200 text-[#2D3748] bg-white'
-            }`}
-            title="Filters"
-          >
-            <Filter className="w-4 h-4" />
-          </button>
-        </div>
-
+      <header className={`relative flex-shrink-0 ${showSearchSheet ? 'z-[70]' : 'z-50'}`}>
+        <FieldToolbar mode={viewMode} onMode={setViewMode}
+          onSearch={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+          onFilter={() => setShowFilters(!showFilters)}
+          filterCount={solarFilter.length + Number(dispositionFilter !== 'all') + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly)}
+          accuracy={gpsPosition?.accuracy} gpsError={!!gpsError} gpsLoading={gpsLoading} knocks={todaysKnocks}
+          onLocate={() => { if (gpsPosition) { setMapCenter([gpsPosition.lat, gpsPosition.lng]); setMapZoom(17); } }} />
+        <div className="rm-map-shortcuts"><button disabled={!nextBest} onClick={() => { if (nextBest) handleLeadSelect(nextBest); }}>Nearest great roof{nextBest ? ` · ${nextBestIsFar ? 'farther away' : nextBestDistance}` : ' · none nearby'}</button>{dailyTarget !== null && <button onClick={() => setShowGoalsModal(true)}>Daily pace · {dailyTarget}</button>}</div>
+        <div className="rm-map-summary"><span>{filteredLeads.length} pins{isRefreshing ? ' · Updating…' : ''}</span><button aria-pressed={outcomesOnly} onClick={() => setOutcomesOnly(!outcomesOnly)}>GHL outcomes{outcomesOnly ? ' ✓' : ''}</button><button aria-pressed={showHeat} onClick={() => setShowHeat(!showHeat)}>Heat map</button></div>
+        {outcomesOnly && <div className="rm-pin-legend" aria-label="Appointment outcome colors">{appointmentOutcomeLegend.map(outcome => <span key={outcome.key}><i style={{ background: outcome.color }} />{outcome.label}</span>)}</div>}
+        {live?.error && <MobileNotice>{live.error}</MobileNotice>}
+        {live?.cached && !live.error && <MobileNotice>Showing cached leads. Outcomes update when you reconnect.</MobileNotice>}
         {writeError && (
           <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
             Save failed: {writeError}
@@ -731,13 +657,14 @@ export default function KnockingPage() {
                     ref={searchInputRef}
                     type="text"
                     placeholder="Search address..."
+                    aria-label="Search address"
                     value={addressSearch}
                     onChange={(e) => handleAddressSearch(e.target.value)}
                     className="bg-transparent w-full text-sm text-gray-900 placeholder:text-gray-500 outline-none"
                   />
                   {addressSearch && (
                     <button
-                      onClick={() => { setAddressSearch(''); setSearchResults([]); }}
+                      onClick={() => handleAddressSearch('')}
                       className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-gray-200"
                       title="Clear"
                     >
@@ -753,6 +680,7 @@ export default function KnockingPage() {
                     Searching...
                   </div>
                 )}
+                {!isSearching && addressSearch.length >= 3 && searchResults.length === 0 && <p className="p-3 text-sm text-gray-500">No addresses found. Try adding the city or ZIP code.</p>}
                 {searchResults.map((result, index) => (
                   <button
                     key={index}
@@ -769,7 +697,7 @@ export default function KnockingPage() {
 
         {/* Filters Panel */}
         {showFilters && (
-          <div className="px-4 py-3 border-t border-[#E2E8F0] bg-[#F7FAFC]">
+          <div className="rm-mobile-filters px-4 py-3 border-t border-[#E2E8F0] bg-[#F7FAFC]">
             {/* Lead Type Filter (mobile) */}
             <div className="mb-3">
               <div className="flex items-center gap-2 mb-2">
@@ -928,6 +856,7 @@ export default function KnockingPage() {
               </select>
             </div>
             
+            <button className="w-full mt-3 py-3 text-sm text-[#245648]" onClick={() => { setSolarFilter([]); setDispositionFilter('all'); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); }}>Reset all filters</button>
             {/* Apply Button - Closes filter panel */}
             <button
               onClick={() => setShowFilters(false)}
@@ -1082,7 +1011,7 @@ export default function KnockingPage() {
 
       {/* List View */}
       {viewMode === 'list' && (
-        <main className="flex-1 overflow-y-auto px-4 py-4">
+        <main className="rm-field-list flex-1 overflow-y-auto px-4 py-4">
           {/* GPS Status */}
           {gpsLoading && (
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800 flex items-center gap-2">
@@ -1099,7 +1028,7 @@ export default function KnockingPage() {
           <div className="space-y-3">
             {leadsWithDistance.length === 0 ? (
               <div className="text-center py-12 text-[#718096]">
-                <p>No leads available</p>
+                <p>No pins match these filters.</p><button className="rm-primary mt-4" onClick={() => setShowFilters(true)}>Review filters</button>
               </div>
             ) : (
               leadsWithDistance.map(lead => (
@@ -1118,7 +1047,7 @@ export default function KnockingPage() {
                           </span>
                         )}
                       </div>
-                      <div className="text-sm text-[#718096] truncate">{lead.address}</div>
+                      <div className="text-sm text-[#718096] truncate">{lead.address}</div><div className="mt-2"><AppointmentOutcomeBadge lead={lead} /></div>
                       <div className="text-xs text-[#718096] mt-1">{lead.city}, {lead.state}</div>
                     </div>
                     <div className="flex-shrink-0">
@@ -1135,6 +1064,8 @@ export default function KnockingPage() {
           </div>
         </main>
       )}
+
+      <MobileNav />
 
       {/* Lead Detail Panel */}
       {selectedLead && showLeadDetail && (

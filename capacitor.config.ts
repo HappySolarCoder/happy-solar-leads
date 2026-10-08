@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.happyslr.raydar',
-  appName: 'Raydar',
+  appId: 'com.happyslr.raydar.next',
+  appName: 'Raydar Next',
   webDir: 'out',
   loggingBehavior: 'debug',
   // Ship the compiled screens in the app. Never load a hosted site with server.url.
