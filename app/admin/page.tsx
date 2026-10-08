@@ -398,6 +398,29 @@ export default function AdminPage() {
           </div>
         </section>
 
+        {/* Section 5: Recruiting */}
+        <section className="mt-8 mb-8">
+          <h2 className="text-xl font-bold text-[#2D3748] mb-4 flex items-center gap-2">
+            <FileText className="w-6 h-6 text-[#FF5F5A]" />
+            Recruiting
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button
+              onClick={() => router.push('/admin/recruiting/aptitude-test')}
+              className="bg-white border border-[#E2E8F0] rounded-lg p-6 hover:border-[#FF5F5A] hover:shadow-md transition-all text-left group"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-3 bg-[#FF5F5A]/10 rounded-lg">
+                  <FileText className="w-6 h-6 text-[#FF5F5A]" />
+                </div>
+                <ArrowRight className="w-5 h-5 text-[#718096] group-hover:text-[#FF5F5A] group-hover:translate-x-1 transition-all" />
+              </div>
+              <h3 className="font-semibold text-[#2D3748] mb-1">Aptitude Test</h3>
+              <p className="text-sm text-[#718096]">Review recruiting submissions, fit scores, flags, and notes.</p>
+            </button>
+          </div>
+        </section>
+
         {/* Section 5: Gamification & Motivation */}
         <section className="mt-8">
           <h2 className="text-xl font-bold text-[#2D3748] mb-4 flex items-center gap-2">
