@@ -64,6 +64,13 @@ npm run build
 npm start
 ```
 
+## iPhone and Android apps
+
+Native Capacitor projects now live in `ios/` and `android/`. See
+[MOBILE-APP.md](MOBILE-APP.md) for configuration, local builds, device testing and
+private team distribution. Build with `npm run mobile:build` and then
+`npm run mobile:sync`; the web app retains its normal build/deployment process.
+
 ## Deployment
 
 Automatically deploys to Vercel on push to `main`:

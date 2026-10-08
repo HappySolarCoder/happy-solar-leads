@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
@@ -97,7 +99,7 @@ export default function UsersManagementPage() {
         setGoalsLoading(true);
         setGoalsError('');
         const token = await auth.currentUser.getIdToken();
-        const res = await fetch(`/api/admin/user-goals?month=${encodeURIComponent(goalsMonth)}`, {
+        const res = await apiFetch(`/api/admin/user-goals?month=${encodeURIComponent(goalsMonth)}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) {
@@ -129,7 +131,7 @@ export default function UsersManagementPage() {
         month: goalsMonth,
         goals: users.map(u => ({ uid: u.id, doorKnocksGoal: goalsByUserId[u.id] || 0 })),
       };
-      const res = await fetch('/api/admin/user-goals', {
+      const res = await apiFetch('/api/admin/user-goals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
@@ -232,7 +234,7 @@ export default function UsersManagementPage() {
       const token = await auth?.currentUser?.getIdToken();
       if (!token) throw new Error('Not authenticated');
 
-      const response = await fetch('/api/admin/delete-user', {
+      const response = await apiFetch('/api/admin/delete-user', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

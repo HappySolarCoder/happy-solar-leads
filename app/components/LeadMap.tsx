@@ -1,5 +1,9 @@
 'use client';
 
+import { getLocation } from '@/app/utils/geolocation';
+
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useEffect, useRef, useState, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -352,7 +356,7 @@ export default function LeadMap({
         longPressTimer = setTimeout(() => {
           if (longPressStartPos) {
             console.log('[LeadMap] Touch long press detected, dropping pin');
-            fetch('/api/debug-log', {
+            apiFetch('/api/debug-log', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ level: 'info', message: 'Touch long press triggered', data: { lat: longPressStartPos.lat, lng: longPressStartPos.lng } })
@@ -1268,7 +1272,7 @@ export default function LeadMap({
     console.log('[LeadMap] Temp pin created at', latlng.lat, latlng.lng);
 
     // Send debug log - temp pin created
-    fetch('/api/debug-log', {
+    apiFetch('/api/debug-log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ level: 'info', message: 'Temp pin created, starting geocode', data: { lat: latlng.lat, lng: latlng.lng } })
@@ -1276,7 +1280,7 @@ export default function LeadMap({
 
     // Reverse geocode to get address
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`
       );
       const data = await response.json();
@@ -1321,14 +1325,14 @@ export default function LeadMap({
     console.log('[LeadMap] Modal should show now');
     
     // Send debug log - modal state set
-    fetch('/api/debug-log', {
+    apiFetch('/api/debug-log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ level: 'info', message: 'Modal state set to true', data: { lat: latlng.lat, lng: latlng.lng } })
     }).catch(() => {});
     } catch (error) {
       console.error('[LeadMap] handleDropPin error:', error);
-      fetch('/api/debug-log', {
+      apiFetch('/api/debug-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ level: 'error', message: 'handleDropPin failed', data: { error: String(error) } })
@@ -1339,14 +1343,12 @@ export default function LeadMap({
   // Handle saving new lead from dropped pin
   const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
     try {
-      if (isProximityRequired(currentUser) && navigator.geolocation) {
+      if (isProximityRequired(currentUser)) {
         try {
-          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 5000,
-              maximumAge: 0,
-            });
+          const position = await getLocation({
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0,
           });
 
           const pinLat = typeof leadData.lat === 'number' ? leadData.lat : dropPinLocation?.lat;
@@ -1377,6 +1379,8 @@ export default function LeadMap({
           }
         } catch (err) {
           console.warn('[LeadMap] Manual pin GPS capture failed:', err);
+          alert('Your location could not be verified. Enable precise location and try again.');
+          return;
         }
       }
 
@@ -1443,7 +1447,7 @@ export default function LeadMap({
 
       // Run Solar API in background
       if (newLead.lat && newLead.lng) {
-        fetch('/api/solar', {
+        apiFetch('/api/solar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1489,7 +1493,7 @@ export default function LeadMap({
       // Surface the real reason up to UI (permission-denied vs auth-not-ready)
       const msg = error?.message || String(error);
       const code = (error as any)?.code;
-      fetch('/api/debug-log', {
+      apiFetch('/api/debug-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ level: 'error', message: 'manual lead save failed', data: { code, error: msg } })

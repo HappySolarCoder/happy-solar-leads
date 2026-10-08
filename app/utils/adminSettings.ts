@@ -1,3 +1,4 @@
+import { apiFetch } from '@/app/utils/apiFetch';
 import { auth, db } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
@@ -46,7 +47,7 @@ export async function saveAdminSettingsAsync(settings: AdminSettings): Promise<v
     // Preferred: save via server API (Admin SDK) to avoid Firestore client rules issues
     if (auth?.currentUser) {
       const idToken = await auth.currentUser.getIdToken();
-      const res = await fetch('/api/admin/settings', {
+      const res = await apiFetch('/api/admin/settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

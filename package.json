@@ -13,9 +13,24 @@
     "test-assign": "node scripts/test-autoassign.js",
     "reset": "node scripts/reset-data.js",
     "gen-leads": "node scripts/generate-test-leads.js",
-    "gen-users": "node scripts/generate-test-users.js"
+    "gen-users": "node scripts/generate-test-users.js",
+    "mobile:build": "node scripts/mobile/build.mjs && npm run mobile:assets",
+    "mobile:sync": "cap sync",
+    "mobile:ios": "npm run mobile:build && cap sync ios && cap open ios",
+    "mobile:android": "npm run mobile:build && cap sync android && cap open android",
+    "mobile:test": "node --import tsx --test tests/mobile/*.test.ts",
+    "mobile:assets": "capacitor-assets generate --assetPath resources --ios --android"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/geolocation": "^8.2.3",
+    "@capacitor/ios": "^8.5.3",
+    "@capacitor/keyboard": "^8.0.6",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@fontsource/inter": "^5.3.0",
     "@opentelemetry/api": "^1.9.0",
     "@turf/boolean-point-in-polygon": "^7.3.4",
     "@turf/convex": "^7.3.4",
@@ -39,6 +54,8 @@
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.3",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/leaflet": "^1.9.21",
@@ -51,6 +68,7 @@
     "eslint-config-next": "16.1.6",
     "playwright": "^1.58.2",
     "tailwindcss": "^4.1.18",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

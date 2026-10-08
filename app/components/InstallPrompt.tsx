@@ -1,5 +1,7 @@
 'use client';
 
+import { Capacitor } from '@capacitor/core';
+
 import { useState, useEffect } from 'react';
 import { X, Download } from 'lucide-react';
 
@@ -8,6 +10,7 @@ export default function InstallPrompt() {
   const [showPrompt, setShowPrompt] = useState(false);
 
   useEffect(() => {
+    if (Capacitor.isNativePlatform()) return;
     // Check if already installed
     if (window.matchMedia('(display-mode: standalone)').matches) {
       return; // Already installed

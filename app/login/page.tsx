@@ -1,5 +1,6 @@
 'use client';
 
+import { Capacitor } from '@capacitor/core';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchSignInMethodsForEmail, signInWithEmailAndPassword } from 'firebase/auth';
@@ -35,7 +36,7 @@ export default function LoginPage() {
       }
       
       // Redirect to main app
-      router.push('/');
+      router.replace(Capacitor.isNativePlatform() ? '/mobile' : '/');
     } catch (err: any) {
       console.error('Login error:', err);
       

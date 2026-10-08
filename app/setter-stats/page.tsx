@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { TrendingUp, Target, DollarSign, Award, ArrowLeft, Users, Calendar, Trophy, BarChart3 } from 'lucide-react';
@@ -80,7 +82,7 @@ export default function DataDashboard() {
           }
 
           if (token) {
-            const res = await fetch('/api/stats/all-leads', {
+            const res = await apiFetch('/api/stats/all-leads', {
               headers: { Authorization: `Bearer ${token}` },
             });
             if (res.ok) {

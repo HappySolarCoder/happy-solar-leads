@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -113,7 +115,7 @@ export default function AppointmentsPage() {
       const { auth } = await import('@/app/utils/firebase');
       const token = await auth?.currentUser?.getIdToken();
       if (!token) return null;
-      const res = await fetch('/api/admin/sync-appointments', {
+      const res = await apiFetch('/api/admin/sync-appointments', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return null;
@@ -133,7 +135,7 @@ export default function AppointmentsPage() {
       const token = await auth?.currentUser?.getIdToken();
       if (!token) return;
 
-      const res = await fetch('/api/admin/sync-appointments', {
+      const res = await apiFetch('/api/admin/sync-appointments', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });

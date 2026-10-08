@@ -1,18 +1,13 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/inter/700.css";
+import NativeRuntime from "./components/NativeRuntime";
 import "./globals.css";
 import InstallPrompt from './components/InstallPrompt';
 import ServiceWorkerRegister from './components/ServiceWorkerRegister';
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "Raydar - Solar Lead Management",
@@ -22,12 +17,6 @@ export const metadata: Metadata = {
     apple: '/apple-touch-icon.png',
   },
   manifest: '/manifest.json',
-  viewport: {
-    width: 'device-width',
-    initialScale: 1,
-    maximumScale: 5,
-    userScalable: true,
-  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
@@ -39,6 +28,11 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport: Viewport = {
+  width: "device-width", initialScale: 1, maximumScale: 5, userScalable: true,
+  themeColor: "#FFFFFF", viewportFit: "cover",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -47,12 +41,15 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className="antialiased"
         style={{ userSelect: 'auto', WebkitUserSelect: 'auto' }}
       >
-        <ServiceWorkerRegister />
-        <InstallPrompt />
-        {children}
+        <div className="native-viewport">
+          <NativeRuntime />
+          <ServiceWorkerRegister />
+          <InstallPrompt />
+          {children}
+        </div>
       </body>
     </html>
   );

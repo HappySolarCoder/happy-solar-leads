@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useEffect, useState } from 'react';
 import { auth } from '@/app/utils/firebase';
 import type { Territory } from '@/app/types/territory';
@@ -26,7 +28,7 @@ export function useTeamAreasOverlay(enabled: boolean) {
       const token = await auth?.currentUser?.getIdToken();
       if (!token) return;
 
-      const res = await fetch('/api/team-areas', {
+      const res = await apiFetch('/api/team-areas', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {

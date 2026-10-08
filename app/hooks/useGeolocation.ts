@@ -1,96 +1,63 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { App } from '@capacitor/app';
+import { getLocation, watchLocation, type LocationPosition, type LocationError } from '@/app/utils/geolocation';
 
-export interface GpsPosition {
-  lat: number;
-  lng: number;
-  accuracy: number;
-  timestamp: number;
-}
+export interface GpsPosition { lat: number; lng: number; accuracy: number; timestamp: number }
+export type GeolocationError = LocationError;
 
-export interface GeolocationError {
-  code: number;
-  message: string;
-}
-
-export function useGeolocation(options?: {
-  enableHighAccuracy?: boolean;
-  timeout?: number;
-  maximumAge?: number;
-  watch?: boolean; // Continuous tracking
-}) {
+export function useGeolocation(options?: PositionOptions & { watch?: boolean }) {
   const [position, setPosition] = useState<GpsPosition | null>(null);
   const [error, setError] = useState<GeolocationError | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const watchIdRef = useRef<number | null>(null);
-
-  const defaultOptions = {
-    enableHighAccuracy: true,
-    timeout: 10000,
-    maximumAge: 0,
-    watch: true, // Default to continuous tracking
-    ...options,
-  };
+  const { enableHighAccuracy = true, timeout = 10000, maximumAge = 0, watch = true } = options ?? {};
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !navigator.geolocation) {
-      setError({
-        code: 0,
-        message: 'Geolocation not supported',
-      });
-      setIsLoading(false);
-      return;
-    }
-
-    const handleSuccess = (pos: GeolocationPosition) => {
-      setPosition({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-        timestamp: pos.timestamp,
-      });
-      setError(null);
-      setIsLoading(false);
+    let disposed = false;
+    let generation = 0;
+    let stopWatch: (() => Promise<void>) | undefined;
+    const stop = () => {
+      generation += 1;
+      if (stopWatch) void stopWatch().catch(() => {});
+      stopWatch = undefined;
     };
-
-    const handleError = (err: GeolocationPositionError) => {
-      setError({
-        code: err.code,
-        message: err.message,
-      });
-      setIsLoading(false);
-    };
-
-    if (defaultOptions.watch) {
-      // Continuous tracking
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        handleSuccess,
-        handleError,
-        {
-          enableHighAccuracy: defaultOptions.enableHighAccuracy,
-          timeout: defaultOptions.timeout,
-          maximumAge: defaultOptions.maximumAge,
-        }
-      );
-    } else {
-      // One-time position
-      navigator.geolocation.getCurrentPosition(
-        handleSuccess,
-        handleError,
-        {
-          enableHighAccuracy: defaultOptions.enableHighAccuracy,
-          timeout: defaultOptions.timeout,
-          maximumAge: defaultOptions.maximumAge,
-        }
-      );
-    }
-
-    // Cleanup
-    return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
+    const start = async () => {
+      stop();
+      const current = generation;
+      const isCurrent = () => !disposed && current === generation;
+      const success = (pos: LocationPosition) => {
+        if (!isCurrent()) return;
+        setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp });
+        setError(null);
+        setIsLoading(false);
+      };
+      const failure = (err: LocationError) => {
+        if (!isCurrent()) return;
+        setError(err);
+        setIsLoading(false);
+      };
+      setIsLoading(true);
+      const settings = { enableHighAccuracy, timeout, maximumAge };
+      if (watch) {
+        const cleanup = await watchLocation(success, failure, settings);
+        if (isCurrent()) stopWatch = cleanup;
+        else void cleanup().catch(() => {});
+      } else {
+        getLocation(settings).then(success, failure);
       }
     };
-  }, [defaultOptions.enableHighAccuracy, defaultOptions.timeout, defaultOptions.maximumAge, defaultOptions.watch]);
+    void start();
+    // Location is foreground-only. Release GPS while backgrounded and restart
+    // on resume, including after a permission change in the phone's Settings.
+    const listener = Capacitor.isNativePlatform()
+      ? App.addListener('appStateChange', ({ isActive }) => { if (isActive && !disposed) void start(); else stop(); })
+      : null;
+    return () => {
+      disposed = true;
+      stop();
+      if (listener) void listener.then(handle => handle.remove()).catch(() => {});
+    };
+  }, [enableHighAccuracy, timeout, maximumAge, watch]);
 
   return { position, error, isLoading };
 }

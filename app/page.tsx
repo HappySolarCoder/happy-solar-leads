@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { Plus, Upload, Users, Menu, X, Map as MapIcon, List, Navigation, Wand2, UserPlus, Shield, TrendingUp, Search } from 'lucide-react';
@@ -239,7 +241,7 @@ export default function Home() {
     
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const response = await fetch(`/api/geocode?address=${encodeURIComponent(query)}`);
+        const response = await apiFetch(`/api/geocode?address=${encodeURIComponent(query)}`);
         const data = await response.json();
         
         if (data.results && data.results.length > 0) {

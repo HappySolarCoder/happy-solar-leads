@@ -1,5 +1,7 @@
 'use client';
 
+import { getLocation } from '@/app/utils/geolocation';
+
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { Lead, User, ObjectionType, LeadDispositionHistoryEntry } from '@/app/types';
@@ -181,14 +183,12 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       const disposition = dispositions.find(d => d.id === newStatus);
       let gpsData = {};
       
-      if (disposition?.countsAsDoorKnock && navigator.geolocation) {
+      if (disposition?.countsAsDoorKnock) {
         try {
-          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 5000,
-              maximumAge: 0,
-            });
+          const position = await getLocation({
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0,
           });
           
           // Calculate distance from lead address
@@ -229,7 +229,10 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           };
         } catch (err) {
           console.warn('GPS capture failed:', err);
-          // Continue without GPS if it fails (allows indoor knocking where GPS might not work)
+          if (isProximityRequired(currentUser)) {
+            alert('Your location could not be verified. Enable precise location and try again.');
+            return;
+          }
         }
       }
       

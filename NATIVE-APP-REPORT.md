@@ -1,3 +1,7 @@
+> Historical proposal (February 2026). For the current implementation and verified
+> limitations, see [MOBILE-APP.md](MOBILE-APP.md). The estimates and blanket claims
+> below are not a release-readiness assessment.
+
 # Raydar Native App Investigation Report
 **Date:** February 14, 2026  
 **Current Status:** Progressive Web App (PWA)  

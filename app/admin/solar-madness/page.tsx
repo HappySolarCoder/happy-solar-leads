@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useEffect, useMemo, useState } from 'react';
 import { auth } from '@/app/utils/firebase';
 
@@ -29,7 +31,7 @@ export default function SolarMadnessAdminPage() {
           setError('Not logged in');
           return;
         }
-        const res = await fetch('/api/admin/solar-madness-config', {
+        const res = await apiFetch('/api/admin/solar-madness-config', {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error(await res.text());
@@ -65,7 +67,7 @@ export default function SolarMadnessAdminPage() {
         return;
       }
       const parsed = JSON.parse(raw);
-      const res = await fetch('/api/admin/solar-madness-config', {
+      const res = await apiFetch('/api/admin/solar-madness-config', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

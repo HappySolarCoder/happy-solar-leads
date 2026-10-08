@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
@@ -122,7 +124,7 @@ export default function KnockingPage() {
     async function fetchWeather() {
       setWeatherLoading(true);
       try {
-        const response = await fetch(`/api/weather?lat=${lat}&lng=${lng}`);
+        const response = await apiFetch(`/api/weather?lat=${lat}&lng=${lng}`);
         const data = await response.json();
         if (data.temperature) {
           setWeather({
@@ -213,7 +215,7 @@ export default function KnockingPage() {
     
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const response = await fetch(`/api/geocode?address=${encodeURIComponent(query)}`);
+        const response = await apiFetch(`/api/geocode?address=${encodeURIComponent(query)}`);
         const data = await response.json();
         
         if (data.results && data.results.length > 0) {

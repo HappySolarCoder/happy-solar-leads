@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
@@ -40,7 +42,7 @@ export default function SignupPage() {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const token = await userCredential.user.getIdToken();
 
-      const response = await fetch('/api/auth/create-profile', {
+      const response = await apiFetch('/api/auth/create-profile', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

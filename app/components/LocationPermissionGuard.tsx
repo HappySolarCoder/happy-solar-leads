@@ -1,5 +1,7 @@
 'use client';
 
+import { Capacitor } from '@capacitor/core';
+import { getLocation, isLocationAvailable, type LocationError } from '@/app/utils/geolocation';
 import { useEffect, useState, useRef } from 'react';
 import { MapPin, AlertTriangle, Settings } from 'lucide-react';
 
@@ -36,54 +38,18 @@ export default function LocationPermissionGuard({
   }, []);
 
   const checkLocationPermission = async () => {
-    if (!navigator.geolocation) {
-      setPermissionStatus('denied');
-      return;
-    }
-
+    if (!isLocationAvailable()) { setPermissionStatus('denied'); return; }
     try {
-      // Use maximumAge to prevent triggering permission prompts
-      navigator.geolocation.getCurrentPosition(
-        () => {
-          setPermissionStatus('granted');
-        },
-        (error) => {
-          if (error.code === error.PERMISSION_DENIED) {
-            setPermissionStatus('denied');
-          } else {
-            // Don't set to 'prompt' - this triggers the modal
-            // Instead, allow access if location might work
-            setPermissionStatus('granted');
-          }
-        },
-        {
-          enableHighAccuracy: false,
-          timeout: 5000,
-          maximumAge: 300000, // Cache for 5 minutes
-        }
-      );
-    } catch (error) {
-      // On error, allow access rather than blocking
+      await getLocation({ enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 });
       setPermissionStatus('granted');
+    } catch (error) {
+      // A temporary GPS timeout is handled by the map. A denial needs Settings.
+      setPermissionStatus((error as LocationError).code === 1 ? 'denied' : 'granted');
     }
   };
 
-  const handleRequestPermission = () => {
-    navigator.geolocation.getCurrentPosition(
-      () => {
-        setPermissionStatus('granted');
-      },
-      (error) => {
-        if (error.code === error.PERMISSION_DENIED) {
-          setPermissionStatus('denied');
-        }
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-      }
-    );
-  };
+  const handleRequestPermission = () => { void checkLocationPermission(); };
+  const isNative = Capacitor.isNativePlatform();
 
   // If location granted or not required, show children
   if (permissionStatus === 'granted' || permissionStatus === 'checking') {
@@ -145,7 +111,9 @@ export default function LocationPermissionGuard({
               <div className="flex-1">
                 <h4 className="font-semibold text-yellow-800 mb-2">How to enable:</h4>
                 
-                {isIOS && (
+                {isNative ? (
+                  <p className="text-sm text-yellow-700">Open your phone’s <strong>Settings → Apps → Raydar → Location</strong>. Allow location while using the app and enable <strong>Precise Location</strong>, then return and reload Raydar.</p>
+                ) : isIOS && (
                   <ol className="text-sm text-yellow-700 space-y-1 list-decimal list-inside">
                     <li>Open iPhone <strong>Settings</strong></li>
                     <li>Scroll down and tap <strong>Safari</strong> (or your browser)</li>
@@ -155,7 +123,7 @@ export default function LocationPermissionGuard({
                   </ol>
                 )}
                 
-                {isAndroid && (
+                {!isNative && isAndroid && (
                   <ol className="text-sm text-yellow-700 space-y-1 list-decimal list-inside">
                     <li>Open Android <strong>Settings</strong></li>
                     <li>Tap <strong>Apps</strong> or <strong>Applications</strong></li>
@@ -166,7 +134,7 @@ export default function LocationPermissionGuard({
                   </ol>
                 )}
                 
-                {!isIOS && !isAndroid && (
+                {!isNative && !isIOS && !isAndroid && (
                   <p className="text-sm text-yellow-700">
                     Click the <strong>Request Access</strong> button below and allow location when your browser prompts you.
                   </p>

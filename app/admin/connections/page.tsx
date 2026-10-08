@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useEffect, useState } from 'react';
 import { auth } from '@/app/utils/firebase';
 import { useRouter } from 'next/navigation';
@@ -51,7 +53,7 @@ export default function AdminConnectionsPage() {
       setIsSyncing(true);
       const token = await auth?.currentUser?.getIdToken();
       if (!token) return;
-      const res = await fetch('/api/admin/sync-appointments', {
+      const res = await apiFetch('/api/admin/sync-appointments', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
