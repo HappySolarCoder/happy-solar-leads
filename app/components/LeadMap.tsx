@@ -1531,38 +1531,24 @@ export default function LeadMap({
     <div className="relative w-full h-full">
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       
-      {/* Map Type Toggle Button */}
-      <button
-        onClick={() => {
-          const newType = mapType === 'satellite' ? 'street' : 'satellite';
-          setMapType(newType);
-          if (onMapTypeChange) onMapTypeChange(newType);
-        }}
-        className="absolute top-6 right-6 px-4 py-2 bg-white hover:bg-[#FF5F5A] border-2 border-[#E2E8F0] rounded-lg shadow-lg flex items-center gap-2 text-[#2D3748] hover:text-white transition-all duration-200 hover:scale-105 active:scale-95 z-20 font-medium text-sm"
-        title={`Switch to ${mapType === 'satellite' ? 'street' : 'satellite'} view`}
-        style={{ boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }}
-      >
-        {mapType === 'satellite' ? (
-          <>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 3v18h18" />
-              <path d="M7 17h10" />
-              <path d="M7 12h10" />
-              <path d="M7 7h10" />
-            </svg>
-            Street
-          </>
-        ) : (
-          <>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-              <path d="M2 12h20" />
-            </svg>
-            Satellite
-          </>
-        )}
-      </button>
+      {/* Both real basemaps remain available without changing pins or map position. */}
+      <div role="group" aria-label="Map imagery"
+        className="absolute top-3 right-3 z-20 flex gap-1 rounded-xl border border-[#D5DFDA] bg-white p-1 shadow-lg">
+        {([{ value: 'street', label: 'Map', description: 'Street map' },
+          { value: 'satellite', label: 'Satellite', description: 'Real aerial imagery' }] as const).map(option => (
+          <button key={option.value} type="button" aria-pressed={mapType === option.value}
+            title={option.description}
+            onClick={() => {
+              if (mapType === option.value) return;
+              setMapType(option.value);
+              onMapTypeChange?.(option.value);
+            }}
+            className={`min-h-11 rounded-lg px-3 text-xs font-semibold transition-colors ${mapType === option.value
+              ? 'bg-[#203D49] text-white' : 'text-[#3D5E58] hover:bg-[#EDF2EB]'}`}>
+            {option.label}
+          </button>
+        ))}
+      </div>
 
       {onToggleTeamAreas && (
         <button

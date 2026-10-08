@@ -92,6 +92,13 @@ try {
     window.__center = document.querySelector('.field-pin[title^="Door 5050"]');
     window.__src = window.__center.querySelector("img").src;
   });
+  const imagery = page.getByRole('group', {name:'Map imagery'});
+  if (await imagery.getByRole('button', {name:'Satellite',exact:true}).getAttribute('aria-pressed') !== 'true') throw Error('Satellite should be the initial map');
+  await imagery.getByRole('button', {name:'Map',exact:true}).click();
+  await page.waitForFunction(() => Array.from(document.querySelectorAll('.leaflet-tile-pane img')).some(img => img.src.includes('tile.openstreetmap.org')));
+  await imagery.getByRole('button', {name:'Satellite',exact:true}).click();
+  await page.waitForFunction(() => Array.from(document.querySelectorAll('.leaflet-tile-pane img')).some(img => img.src.includes('World_Imagery')));
+  if (!(await page.evaluate(() => window.__pins.every(pin => pin.isConnected)))) throw Error('Imagery toggle replaced pins');
   await page.getByRole("button", { name: "GPS tick", exact: true }).click();
   await page.waitForTimeout(500);
   if (
@@ -135,6 +142,7 @@ try {
       renderedAtInitialViewport: count,
       firstPinMs,
       checks: [
+        "Map/Satellite switches real tile sources while retaining pins",
         "GPS reuses DOM pins",
         "one GHL update changes one icon without replacing pins",
         "latest lead click",

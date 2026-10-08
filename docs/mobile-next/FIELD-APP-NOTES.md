@@ -2,7 +2,9 @@
 
 ## Implemented in this revision
 
-The knocking screen now has one 60px toolbar, with search, daily knock count, Map/List, filters, and GPS. The large title and persistent rows for metrics and secondary controls are removed. Filters, heat map, GHL outcome filter, pin guide and daily pace open in an on-demand sheet. The map keeps the remaining height; the Next door and Focus actions are small floating buttons.
+The knocking screen now has one 60px toolbar, with search, daily knock count, Map/List, filters, and GPS. The large title and persistent rows for metrics and secondary controls are removed. Filters, heat map, GHL outcome filter, pin guide and daily pace open in an on-demand sheet. **Map / Satellite** is an explicit two-button control on the real map: Map uses OpenStreetMap streets; Satellite uses Esri aerial imagery and labels (the default). Switching imagery preserves the pins and camera position. The design-gallery background is illustrative, not a replacement for the installed map.
+
+The map keeps the remaining height; the Next door and Focus actions are small floating buttons.
 
 Pins use reusable static SVG artwork: a pointed location tip, recognizable door/status symbol, solar-quality accent, and a separate GHL outcome badge. The selected pin has cyan corner brackets. At lower zoom, artwork simplifies to dots and existing clusters. Pin color still respects configured disposition colors. Historical pins retain their muted, restricted-data treatment. There is no per-pin animation, blur filter, external image request, or continuous effect.
 
