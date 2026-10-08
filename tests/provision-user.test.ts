@@ -6,7 +6,7 @@ import {
   secretsMatch,
   type ProvisionDeps,
 } from '../app/utils/provisionUser.ts';
-import { validatePasswordChange } from '../app/utils/passwordChange.ts';
+import { clearMustChangePassword, validatePasswordChange } from '../app/utils/passwordChange.ts';
 
 const SECRET = 'provision-test-secret';
 const TEMP_PASSWORD = 'TempPass-should-not-be-logged';
@@ -249,5 +249,41 @@ describe('validatePasswordChange', () => {
     assert.equal(validatePasswordChange({ currentPassword: 'old-pass', newPassword: 'long-enough', confirmPassword: 'different' }), 'New password and confirmation do not match.');
     assert.equal(validatePasswordChange({ currentPassword: 'long-enough', newPassword: 'long-enough', confirmPassword: 'long-enough' }), 'New password must be different from your current password.');
     assert.equal(validatePasswordChange({ currentPassword: 'old-password', newPassword: 'new-password', confirmPassword: 'new-password' }), null);
+  });
+});
+
+describe('provision role limits', () => {
+  it('refuses manager and admin so Bloom can only create field reps', async () => {
+    for (const role of ['admin', 'manager', 'Admin', 'super_admin']) {
+      const harness = deps();
+      const result = await handleProvisionPost({ authorization: `Bearer ${SECRET}`, secret: SECRET, body: body({ role }), deps: harness });
+      assert.equal(result.status, 400);
+      assert.equal(harness.calls.create.length, 0);
+      assert.equal(harness.calls.set.length, 0);
+    }
+  });
+});
+
+describe('clearMustChangePassword', () => {
+  it('needs a valid ID token and clears only the caller flag', async () => {
+    const cleared: string[] = [];
+    const base = {
+      verifyIdToken: async (token: string) => {
+        if (token !== 'good') throw new Error('bad token');
+        return { uid: 'uid-1' };
+      },
+      readFlag: async (uid: string) => (uid === 'uid-1' ? true : null),
+      clearFlag: async (uid: string) => {
+        cleared.push(uid);
+      },
+    };
+    assert.equal((await clearMustChangePassword({ ...base, idToken: null })).status, 401);
+    assert.equal((await clearMustChangePassword({ ...base, idToken: 'forged' })).status, 401);
+    assert.deepEqual(cleared, []);
+    assert.equal((await clearMustChangePassword({ ...base, idToken: 'good' })).status, 200);
+    assert.deepEqual(cleared, ['uid-1']);
+    const noFlag = await clearMustChangePassword({ ...base, idToken: 'good', readFlag: async () => false });
+    assert.equal(noFlag.status, 200);
+    assert.deepEqual(cleared, ['uid-1']);
   });
 });

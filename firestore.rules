@@ -86,15 +86,7 @@ service cloud.firestore {
     // Only admins can create/update/delete users
     match /users/{userId} {
       allow read: if signedIn();
-      allow create, delete: if isAdmin();
-      // Reps may clear only their own mustChangePassword flag (true -> false).
-      // Every other field stays admin-only.
-      allow update: if isAdmin() || (
-        signedIn()
-        && userId == uid()
-        && request.resource.data.mustChangePassword == false
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['mustChangePassword'])
-      );
+      allow create, update, delete: if isAdmin();
     }
 
     // ====================== DISPOSITIONS ======================

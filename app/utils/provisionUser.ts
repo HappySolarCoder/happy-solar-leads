@@ -8,7 +8,8 @@ import { createHash, timingSafeEqual } from 'crypto';
  * role Raydar already uses.
  */
 
-export type ProvisionRole = 'setter' | 'closer' | 'manager' | 'admin';
+/** Bloom may only create field reps. Manager and admin stay manual in User Management. */
+export type ProvisionRole = 'setter' | 'closer';
 
 export type ProvisionDeps = {
   getUserByEmail: (email: string) => Promise<{ uid: string } | null>;
@@ -30,8 +31,6 @@ const ROLE_ALIASES: Record<string, ProvisionRole> = {
   'field marketing agent': 'setter',
   'field marketing': 'setter',
   closer: 'closer',
-  manager: 'manager',
-  admin: 'admin',
 };
 
 export function secretsMatch(provided: string, expected: string): boolean {

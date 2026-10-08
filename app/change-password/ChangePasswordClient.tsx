@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { EmailAuthProvider, onAuthStateChanged, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { AlertCircle, Eye, EyeOff, Lock } from 'lucide-react';
 import { auth, db } from '@/app/utils/firebase';
 import { signOut } from '@/app/utils/auth';
@@ -103,8 +103,16 @@ export default function ChangePasswordClient({ allowForcedPreview }: { allowForc
         updated = true;
         setPasswordAlreadyUpdated(true);
       }
-      await updateDoc(doc(db, 'users', auth.currentUser.uid), { mustChangePassword: false });
-      router.replace('/');
+      if (forced) {
+        const idToken = await auth.currentUser.getIdToken(true);
+        const response = await fetch('/api/auth/password-changed', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${idToken}` },
+        });
+        if (!response.ok) throw new Error('unlock-failed');
+      }
+      // Full load so the gate rereads the profile.
+      window.location.replace('/');
     } catch (err) {
       console.error('Change password failed:', errorCode(err) || 'unknown');
       setError(messageForAuthError(err, updated));
