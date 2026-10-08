@@ -1,6 +1,11 @@
 'use client';
 
 import { FieldToolbar, MobileNav, MobileNotice } from '../_components/MobileShell';
+import DoorCoach from '../_components/DoorCoach';
+import { summarizeActivity } from '../_lib/metrics';
+import { countWorkdaysElapsedAndRemaining } from '@/app/utils/goals';
+import { fieldPinArtwork } from '@/app/utils/fieldPin';
+import MobileDialog from '../_components/MobileDialog';
 import { useLiveLeads } from '@/app/hooks/useLiveLeads';
 import { AppointmentOutcomeBadge } from '@/app/components/AppointmentOutcomeBadge';
 import { appointmentOutcomeLegend, getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
@@ -10,15 +15,14 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, List, Navigation, Filter, MapPin, Settings, Search, X, Route, Clock, Footprints, Car } from 'lucide-react';
-import { getLeads, getLeadsAsync, getUsersAsync, saveCurrentUser } from '@/app/utils/storage';
+import { getUsersAsync, saveCurrentUser } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
-import LeadDetail from '@/app/components/LeadDetail';
+const LeadDetail = dynamic(() => import('@/app/components/LeadDetail'), { ssr: false });
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
-import GoalsPaceModal from '@/app/components/GoalsPaceModal';
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 import { useHistoricalTerritoryPins } from '@/app/hooks/useHistoricalTerritoryPins';
 import { mergeHistoricalTerritoryPins } from '@/app/utils/historicalTerritoryPins';
@@ -37,18 +41,20 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   ),
 });
 
+const EMPTY_LEADS: Lead[] = [];
+
 export default function KnockingPage() {
   const router = useRouter();
-  const [loadedLeads, setLeads] = useState<Lead[]>([]);
+
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const live = useLiveLeads(currentUser);
-  const leads = live ? live.leads : loadedLeads;
+  const leads = live?.leads || EMPTY_LEADS;
   const [outcomesOnly, setOutcomesOnly] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const isRefreshing = !!currentUser && !live;
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
   const [mapZoom, setMapZoom] = useState(15);
@@ -171,40 +177,25 @@ export default function KnockingPage() {
       setCurrentUser(user);
       saveCurrentUser(user); // Save to localStorage for later retrieval
 
-      // Non-blocking: show cached content immediately, refresh in background
+      // Start the map immediately. The live listener is the single lead read path.
       setIsLoading(false);
-      setIsRefreshing(true);
-      const loadedLeads = await getLeadsAsync();
-      setLeads(loadedLeads);
-      setIsRefreshing(false);
     }
     loadData();
   }, [router]);
   
-  // Load dispositions and users
+  // Load supporting data only after authentication; reps do not need the user directory.
   useEffect(() => {
+    if (!currentUser) return;
     getDispositionsAsync().then(setDispositions);
-    getUsersAsync().then(setUsers);
-  }, []);
+    if (canSeeAllLeads(currentUser.role)) getUsersAsync().then(setUsers);
+  }, [currentUser]);
 
-  // Refresh leads
-  const refreshLeads = useCallback(async () => {
-    try {
-      const loadedLeads = await getLeadsAsync();
-      setLeads(loadedLeads);
-      setWriteError(null);
-    } catch (error: any) {
-      const code = error?.code || 'unknown';
-      const msg = error?.message || 'Failed to save changes.';
-      setWriteError(`${code}: ${msg}`);
-    }
-  }, []);
-
-  // Handle lead selection
-  const handleLeadSelect = (lead: Lead) => {
+  // Successful writes arrive on the existing listener without refetching every lead.
+  const refreshLeads = useCallback(async () => setWriteError(null), []);
+  const handleLeadSelect = useCallback((lead: Lead) => {
     setSelectedLeadId(lead.id);
     setShowLeadDetail(true);
-  };
+  }, []);
 
   // Handle address search
   const handleAddressSearch = async (query: string) => {
@@ -317,11 +308,11 @@ export default function KnockingPage() {
   const drivingTimeMinutes = Math.round(routeDistance / 0.42);
 
   // Role-based visibility: setters/closers only see their claimed OR territory-assigned leads
-  const roleFilteredLeads = currentUser
+  const roleFilteredLeads = useMemo(() => currentUser
     ? (currentUser.role === 'setter' || currentUser.role === 'closer')
-      ? leads.filter(l => (l.leadType === 'customer' || l.leadType === 'sale') || l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
+      ? leads.filter(l => l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
       : leads
-    : [];
+    : EMPTY_LEADS, [leads, currentUser]);
 
   // Generate route when button is clicked
   const handleGenerateRoute = useCallback(() => {
@@ -352,6 +343,7 @@ export default function KnockingPage() {
     return roleFilteredLeads;
   }, [roleFilteredLeads, leadTypeFilter, isCustomerLead]);
 
+  const filteredLeads = useMemo(() => {
   // Prospects baseline (exclude poor solar leads). Customers are unaffected by solar filters.
   let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l) && (l.solarCategory !== 'poor' || !!getAppointmentOutcome(l)));
   let customers = leadTypeFilteredLeads.filter(isCustomerLead);
@@ -403,27 +395,28 @@ export default function KnockingPage() {
       ? prospects
       : [...customers, ...prospects];
 
-  const filteredLeads = outcomesOnly ? typeFilteredLeads.filter(l => getAppointmentOutcome(l)) : typeFilteredLeads;
+  return outcomesOnly ? typeFilteredLeads.filter(l => getAppointmentOutcome(l)) : typeFilteredLeads;
+
+  }, [leadTypeFilteredLeads, isCustomerLead, setterFilter, solarFilter, dispositionFilter, dispositions, freshPinsOnly, leadTypeFilter, outcomesOnly]);
 
   // Calculate distances and sort by nearest if GPS available
-  const leadsWithDistance = filteredLeads.map(lead => ({
-    ...lead,
-    distance: gpsPosition && lead.lat && lead.lng
-      ? calculateDistance(gpsPosition.lat, gpsPosition.lng, lead.lat, lead.lng)
-      : undefined,
-  })).sort((a, b) => {
-    if (a.distance !== undefined && b.distance !== undefined) {
-      return a.distance - b.distance;
-    }
-    return 0;
-  });
+  const leadsWithDistance = useMemo(() => {
+    // Distances are needed by the list and the tools sheet, never to draw the map.
+    if (viewMode !== 'list' && !showFilters) return [];
+    return filteredLeads.map(lead => ({
+      ...lead,
+      distance: gpsPosition && lead.lat != null && lead.lng != null
+        ? calculateDistance(gpsPosition.lat, gpsPosition.lng, lead.lat, lead.lng)
+        : undefined,
+    })).sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+  }, [filteredLeads, viewMode, showFilters, gpsPosition?.lat, gpsPosition?.lng]);
 
-  // Map-only. The knock list and route stay on the rep's own doors.
-  const mapLeads = mergeHistoricalTerritoryPins(
-    leadsWithDistance,
-    outcomesOnly ? [] : historicalPins,
-    currentUser?.id,
-  );
+  // Keep original lead objects stable: GPS movement must not recreate every pin.
+  const mapLeads = useMemo(() => mergeHistoricalTerritoryPins(
+    filteredLeads, outcomesOnly ? EMPTY_LEADS : historicalPins, currentUser?.id,
+  ), [filteredLeads, outcomesOnly, historicalPins, currentUser?.id]);
+  const userPosition = useMemo<[number, number] | undefined>(() => gpsPosition
+    ? [gpsPosition.lat, gpsPosition.lng] : undefined, [gpsPosition?.lat, gpsPosition?.lng]);
 
   // Get selected lead
   const selectedLead = leads.find(l => l.id === selectedLeadId);
@@ -576,26 +569,27 @@ export default function KnockingPage() {
   }).length;
 
   // Goals (v1) — deterministic goal read via API
-  const [dailyTarget, setDailyTarget] = useState<number | null>(null);
+  const [monthlyGoal, setMonthlyGoal] = useState<number | null>(null);
+  const monthNow = new Date();
+  const goalYear = monthNow.getFullYear();
+  const goalMonth = monthNow.getMonth();
+  const monthlyKnocks = useMemo(() => currentUser ? summarizeActivity(leads, currentUser.id, dispositions, new Date(goalYear, goalMonth, 1), new Date(goalYear, goalMonth+1, 1)).knocks : 0, [leads, currentUser, dispositions, goalYear, goalMonth]);
+  const dailyTarget = monthlyGoal === null || !live ? null : Math.ceil(Math.max(0, monthlyGoal - monthlyKnocks) / Math.max(1, countWorkdaysElapsedAndRemaining(monthNow).remaining));
 
   useEffect(() => {
     async function loadGoalTarget() {
       if (!currentUser) return;
       try {
         const monthId = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-        const { getMyGoalViaApiAsync, getMyMonthlyKnocksAsync, countWorkdaysElapsedAndRemaining } = await import('@/app/utils/goals');
+        const { getMyGoalViaApiAsync } = await import('@/app/utils/goals');
         const goal = await getMyGoalViaApiAsync(monthId);
         if (!goal?.doorKnocksGoal) {
-          setDailyTarget(null);
+          setMonthlyGoal(null);
           return;
         }
-        const K = await getMyMonthlyKnocksAsync(new Date(), currentUser);
-        const { remaining } = countWorkdaysElapsedAndRemaining(new Date());
-        const remainingWorkdays = Math.max(1, remaining);
-        const needed = Math.max(0, Number(goal.doorKnocksGoal) - K);
-        setDailyTarget(Math.ceil(needed / remainingWorkdays));
+        setMonthlyGoal(Number(goal.doorKnocksGoal));
       } catch {
-        setDailyTarget(null);
+        setMonthlyGoal(null);
       }
     }
     loadGoalTarget();
@@ -615,7 +609,7 @@ export default function KnockingPage() {
   return (
     <LocationPermissionGuard requireLocation={false}>
       <div className="rm-field-shell">
-      {currentUser && <GoalsPaceModal currentUser={currentUser} openOverride={showGoalsModal} onCloseOverride={() => setShowGoalsModal(false)} />}
+      {showGoalsModal && <MobileDialog title="Daily pace" onClose={() => setShowGoalsModal(false)}><div className="rm-coach-panel"><div className="rm-panel-heading"><h2>Daily pace</h2><button onClick={() => setShowGoalsModal(false)} aria-label="Close daily pace"><X size={22}/></button></div><p>{monthlyKnocks} of {monthlyGoal} monthly knocks completed.</p><h2>{dailyTarget ?? '—'} knocks per remaining workday</h2><p>Based on your company goal and the latest recorded disposition per door.</p></div></MobileDialog>}
 
       <header className={`relative flex-shrink-0 ${showSearchSheet ? 'z-[70]' : 'z-50'}`}>
         <FieldToolbar mode={viewMode} onMode={setViewMode}
@@ -624,9 +618,6 @@ export default function KnockingPage() {
           filterCount={solarFilter.length + Number(dispositionFilter !== 'all') + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly)}
           accuracy={gpsPosition?.accuracy} gpsError={!!gpsError} gpsLoading={gpsLoading} knocks={todaysKnocks}
           onLocate={() => { if (gpsPosition) { setMapCenter([gpsPosition.lat, gpsPosition.lng]); setMapZoom(17); } }} />
-        <div className="rm-map-shortcuts"><button disabled={!nextBest} onClick={() => { if (nextBest) handleLeadSelect(nextBest); }}>Nearest great roof{nextBest ? ` · ${nextBestIsFar ? 'farther away' : nextBestDistance}` : ' · none nearby'}</button>{dailyTarget !== null && <button onClick={() => setShowGoalsModal(true)}>Daily pace · {dailyTarget}</button>}</div>
-        <div className="rm-map-summary"><span>{filteredLeads.length} pins{isRefreshing ? ' · Updating…' : ''}</span><button aria-pressed={outcomesOnly} onClick={() => setOutcomesOnly(!outcomesOnly)}>GHL outcomes{outcomesOnly ? ' ✓' : ''}</button><button aria-pressed={showHeat} onClick={() => setShowHeat(!showHeat)}>Heat map</button></div>
-        {outcomesOnly && <div className="rm-pin-legend" aria-label="Appointment outcome colors">{appointmentOutcomeLegend.map(outcome => <span key={outcome.key}><i style={{ background: outcome.color }} />{outcome.label}</span>)}</div>}
         {live?.error && <MobileNotice>{live.error}</MobileNotice>}
         {live?.cached && !live.error && <MobileNotice>Showing cached leads. Outcomes update when you reconnect.</MobileNotice>}
         {writeError && (
@@ -697,7 +688,14 @@ export default function KnockingPage() {
 
         {/* Filters Panel */}
         {showFilters && (
-          <div className="rm-mobile-filters px-4 py-3 border-t border-[#E2E8F0] bg-[#F7FAFC]">
+          <MobileDialog title="Map filters and tools" onClose={() => setShowFilters(false)}>
+          <div className="rm-mobile-filters px-4 py-3 bg-[#F7FAFC]">
+            <div className="rm-panel-heading"><h2>Map filters & tools</h2><button onClick={() => setShowFilters(false)} aria-label="Close map filters"><X size={22} /></button></div>
+        <div className="rm-map-shortcuts"><button disabled={!nextBest} onClick={() => { if (nextBest) { setShowFilters(false); handleLeadSelect(nextBest); } }}>Nearest great roof{nextBest ? ` · ${nextBestIsFar ? 'farther away' : nextBestDistance}` : ' · none nearby'}</button>{dailyTarget !== null && <button onClick={() => { setShowFilters(false); setShowGoalsModal(true); }}>Daily pace · {dailyTarget}</button>}</div>
+        <div className="rm-map-summary"><span>{filteredLeads.length} pins{isRefreshing ? ' · Updating…' : ''}</span><button aria-pressed={outcomesOnly} onClick={() => setOutcomesOnly(!outcomesOnly)}>GHL outcomes{outcomesOnly ? ' ✓' : ''}</button><button aria-pressed={showHeat} onClick={() => setShowHeat(!showHeat)}>Heat map</button></div>
+        {outcomesOnly && <div className="rm-pin-legend" aria-label="Appointment outcome colors">{appointmentOutcomeLegend.map(outcome => <span key={outcome.key}><i style={{ background: outcome.color }} />{outcome.label}</span>)}</div>}
+
+            <details className="rm-pin-key"><summary>Pin guide</summary><div>{['assigned','interested','not-home','go-back','appointment','sale','not-interested'].map(status => { const lead = {status} as Lead; const pin = fieldPinArtwork(lead, dispositions.find(d => d.id === status), 17); return <span key={status}><img src={pin.url} alt="" width={30} height={35}/>{pin.style.label}</span>; })}</div><p>The top accent shows roof quality. A corner badge shows the GHL result. Cyan brackets mark your selected door.</p></details>
             {/* Lead Type Filter (mobile) */}
             <div className="mb-3">
               <div className="flex items-center gap-2 mb-2">
@@ -862,9 +860,10 @@ export default function KnockingPage() {
               onClick={() => setShowFilters(false)}
               className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-[#FF5F5A] to-[#FF7A6B] text-white font-semibold rounded-xl shadow-sm active:scale-95 transition-transform"
             >
-              Apply Filters
+              Show map
             </button>
           </div>
+          </MobileDialog>
         )}
       </header>
 
@@ -984,16 +983,17 @@ export default function KnockingPage() {
 
       {/* Map View - Full Screen */}
       {viewMode === 'map' && (
-        <main className="flex-1 relative overflow-hidden">
+        <main className="rm-knocking-map flex-1 relative overflow-hidden" aria-label="Knocking map">
           <LeadMap
             leads={mapLeads}
+            dispositionOptions={dispositions}
             currentUser={currentUser}
             users={coloredUsers}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
             assignmentMode="none"
-            selectedLeadIdsForAssignment={[]}
-            userPosition={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
+            userPosition={userPosition}
+            showLocateControl={false}
             center={mapCenter} // Set ONCE on GPS load, then only on manual recenter
             zoom={mapZoom} // Closer zoom for mobile
             onLeadAdded={refreshLeads}
@@ -1005,6 +1005,8 @@ export default function KnockingPage() {
             teamMembers={teamMembersForMap}
             onToggleTeamAreas={setShowTeamAreas}
           />
+          {currentUser && <DoorCoach key={currentUser.id} leads={leads} userId={currentUser.id} position={userPosition} onLead={handleLeadSelect} />}
+          {isRefreshing && <div className="rm-map-loading" role="status">Loading your pins…</div>}
           {/* GPS Locate button is now built into LeadMap component */}
         </main>
       )}

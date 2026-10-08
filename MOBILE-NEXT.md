@@ -19,7 +19,7 @@ For iOS, run `npm run mobile:ios`, select the signing team for the new bundle ID
 ## Design and workflows
 
 - Today: personal activity, goal-based daily pace, scheduled go-backs, recent appointment outcomes, and one primary Start knocking action.
-- Knock: labeled Map/List switch, location accuracy, address search, count of active filters, reset filters, nearest great roof, daily pace, heat map, and a GHL outcome filter/legend.
+- Knock: map-first 60px toolbar, labeled Map/List toggle, GPS, address search, active filter count, and an on-demand panel for filters, roof suggestions, daily pace, heat map and the pin guide. Static vector pins distinguish status, solar quality and GHL outcome. Floating Next door and Appointment focus tools support appointment setting.
 - Follow-ups: searchable agenda grouped into overdue, today, upcoming, and undated records when present; existing scheduling and editing open from lead details.
 - Progress: Today/This week/This month selector, working seven-day chart, and clearly defined activity metrics. Removed the old misleading all-time personal bests and unscoped team-average comparison.
 - Account: existing field tools, appointments, team reporting, role-gated management links, GHL sync status/control for managers/admins, and sign-out.
@@ -55,7 +55,7 @@ Acceptance: choose a test lead already assigned to the tester and linked to GHL;
 
 `/mobile/preview/` is an interactive read-only gallery with clearly labeled fictional data. It uses the same Today, Follow-ups, Progress, navigation, field-toolbar and outcome components as the installed app. The gallery map is illustrative; the real Knock screen retains the existing Leaflet map, lead actions, solar filters, and server data. The gallery does not write to Firebase.
 
-Screenshots are in `docs/mobile-next/`. The browser check covered navigation, outcome filtering/details, search/empty/reset states, period switching and horizontal overflow at 320, 393, 768 and 1280px.
+Screenshots are in `docs/mobile-next/`. See [field-app notes](docs/mobile-next/FIELD-APP-NOTES.md) for performance fixes, researched features, Next door and Appointment focus details, and remaining database considerations. The browser check covered navigation, outcome filtering/details, search/empty/reset states, period switching and horizontal overflow at 320, 393, 768 and 1280px.
 
 Run:
 
@@ -66,4 +66,4 @@ npm run mobile:build
 npx cap sync
 ```
 
-The mobile export, standard web build, focused lint, TypeScript and 36 relevant regression tests passed. Native builds, GPS on a device, production sign-in, Firestore security-rule behavior, and a real GHL-to-pin update still require device/account acceptance. Background GPS, push notifications, and durable offline saves are not added by this redesign.
+The mobile export, standard web build, focused lint, TypeScript and 41 relevant regression tests passed. Native builds, GPS on a device, production sign-in, Firestore security-rule behavior, and a real GHL-to-pin update still require device/account acceptance. Background GPS, push notifications, and durable offline saves are not added by this redesign.

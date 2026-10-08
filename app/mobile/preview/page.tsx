@@ -17,6 +17,8 @@ import AppointmentOutcomeCard, {
   AppointmentOutcomeBadge,
 } from "@/app/components/AppointmentOutcomeBadge";
 import { getAppointmentOutcome } from "@/app/utils/appointmentOutcome";
+import DoorCoach from "../_components/DoorCoach";
+import { fieldPinArtwork } from "@/app/utils/fieldPin";
 import MobileDialog from "../_components/MobileDialog";
 
 // This route is a read-only design gallery. It never initializes a user session,
@@ -86,7 +88,12 @@ const demoLeads: Lead[] = [
     goBackScheduledDate: new Date(2026, 9, 9),
     goBackScheduledTime: "11:00",
   },
-];
+].map((lead, index) => ({
+  ...lead,
+  assignedTo: "preview-rep",
+  lat: 43.1566 + index * 0.001,
+  lng: -77.6088 + index * 0.001,
+}));
 const stats = { knocks: 28, conversations: 9, appointments: 3, sales: 1 };
 const week = { knocks: 142, conversations: 38, appointments: 11, sales: 4 };
 const month = { knocks: 284, conversations: 76, appointments: 22, sales: 8 };
@@ -171,15 +178,6 @@ export default function DesignPreview() {
             knocks={28}
             onLocate={() => setDialog("Location accuracy")}
           />
-          <div className="rm-map-summary">
-            <span>{visible.length} sample pins</span>
-            <button
-              aria-pressed={outcomesOnly}
-              onClick={() => setOutcomesOnly(!outcomesOnly)}
-            >
-              GHL outcomes{outcomesOnly ? " ✓" : ""}
-            </button>
-          </div>
           {mode === "map" ? (
             <div className="rm-demo-map">
               <svg
@@ -229,6 +227,7 @@ export default function DesignPreview() {
               </svg>
               {visible.map((lead, index) => {
                 const outcome = getAppointmentOutcome(lead);
+                const pin = fieldPinArtwork(lead, undefined, 17);
                 return (
                   <button
                     key={lead.id}
@@ -237,14 +236,20 @@ export default function DesignPreview() {
                     style={{
                       left: `${17 + ((index * 17) % 67)}%`,
                       top: `${18 + ((index * 19) % 59)}%`,
-                      background: outcome?.color,
                     }}
                     onClick={() => setSelected(lead)}
                   >
-                    {outcome?.symbol || <MapPin size={16} />}
+                    <img src={pin.url} alt="" width={44} height={51} />
                   </button>
                 );
               })}
+              <DoorCoach
+                leads={demoLeads}
+                userId="preview-rep"
+                position={[43.1566, -77.6088]}
+                onLead={setSelected}
+                now={demoNow}
+              />
               <small>Illustrative neighborhood · Sample GPS</small>
             </div>
           ) : (

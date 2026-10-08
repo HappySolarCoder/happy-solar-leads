@@ -160,59 +160,55 @@ export function FieldToolbar({
   onLocate: () => void;
 }) {
   return (
-    <div className="rm-field-toolbar">
-      <div className="rm-field-title">
-        <div>
-          <span className="rm-eyebrow">YOUR FIELD WORKSPACE</span>
-          <h1>Make your next move.</h1>
-        </div>
-        <span className="rm-knock-counter">
-          <DoorOpen size={16} />
-          <b>{knocks}</b>
-          <span>today</span>
-        </span>
-      </div>
-      <div className="rm-search-row">
-        <button className="rm-search" onClick={onSearch}>
-          <Search size={19} />
-          <span>Find an address</span>
-        </button>
-        <button
-          className={`rm-filter ${filterCount ? "is-active" : ""}`}
-          onClick={onFilter}
-          aria-label={`Filters${filterCount ? `, ${filterCount} active` : ""}`}
-        >
-          <SlidersHorizontal size={19} />
-          {filterCount > 0 && <span>{filterCount}</span>}
-        </button>
-      </div>
-      <div className="rm-field-controls">
-        <div className="rm-segment" aria-label="Lead display">
-          <button aria-pressed={mode === "map"} onClick={() => onMode("map")}>
-            <Map size={16} />
-            Map
-          </button>
-          <button aria-pressed={mode === "list"} onClick={() => onMode("list")}>
-            <List size={16} />
-            List
-          </button>
-        </div>
-        <button
-          className={`rm-gps ${gpsError || (accuracy !== undefined && accuracy > 50) ? "is-warning" : ""}`}
-          onClick={onLocate}
-          disabled={gpsError || accuracy === undefined}
-          aria-label="Center map on my location"
-        >
-          <Crosshair size={15} />
-          <span>
-            {gpsError
-              ? "Location unavailable"
-              : gpsLoading || accuracy === undefined
-                ? "Finding GPS…"
-                : `GPS ±${Math.round(accuracy)} m`}
-          </span>
-        </button>
-      </div>
+    <div className="rm-field-toolbar" aria-label="Knocking controls">
+      <button className="rm-search" onClick={onSearch}>
+        <Search size={19} />
+        <span>Search</span>
+      </button>
+      <span
+        className="rm-knock-counter"
+        title={`${knocks} doors knocked today`}
+        aria-label={`${knocks} doors knocked today`}
+      >
+        <DoorOpen size={16} />
+        <b>{knocks}</b>
+      </span>
+      <button
+        className="rm-mode-toggle"
+        onClick={() => onMode(mode === "map" ? "list" : "map")}
+      >
+        {mode === "map" ? <List size={18} /> : <Map size={18} />}
+        <span>{mode === "map" ? "List" : "Map"}</span>
+      </button>
+      <button
+        className={`rm-filter ${filterCount ? "is-active" : ""}`}
+        onClick={onFilter}
+        aria-label={`Filters${filterCount ? `, ${filterCount} active` : ""}`}
+      >
+        <SlidersHorizontal size={19} />
+        {filterCount > 0 && <span>{filterCount}</span>}
+      </button>
+      <button
+        className={`rm-gps ${gpsError || (accuracy !== undefined && accuracy > 50) ? "is-warning" : ""}`}
+        onClick={onLocate}
+        disabled={gpsError || accuracy === undefined}
+        aria-label={
+          gpsError
+            ? "Location unavailable"
+            : gpsLoading || accuracy === undefined
+              ? "Finding GPS"
+              : `Center map on my location, GPS accuracy ${Math.round(accuracy)} meters`
+        }
+        title={
+          gpsError
+            ? "Location unavailable"
+            : accuracy === undefined
+              ? "Finding GPS…"
+              : `GPS ±${Math.round(accuracy)} m`
+        }
+      >
+        <Crosshair size={20} />
+      </button>
     </div>
   );
 }

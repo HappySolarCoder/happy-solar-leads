@@ -34,26 +34,41 @@ export function useLiveLeads(user: User | null) {
     const ready = queries.map(() => false);
     const cached = queries.map(() => true);
     let failed = false;
+    let combinedLeads: Lead[] = [];
     const cleanups = queries.map((q, index) =>
       onSnapshot(
         q,
         { includeMetadataChanges: true },
         (snapshot) => {
           if (failed) return;
-          records[index] = new Map(
-            snapshot.docs.map((doc) => [doc.id, mapLeadDoc(doc)]),
-          );
+          const changes = snapshot.docChanges();
+          for (const change of changes) {
+            if (change.type === "removed") records[index].delete(change.doc.id);
+            else {
+              const lead = mapLeadDoc(change.doc);
+              records[index].set(change.doc.id, lead);
+              // Preserve the newest object across overlapping assigned/claimed queries.
+              records.forEach((group, other) => {
+                if (other !== index && group.has(lead.id))
+                  group.set(lead.id, lead);
+              });
+            }
+          }
+          const firstSnapshot = !ready[index];
           ready[index] = true;
           cached[index] = snapshot.metadata.fromCache;
           if (ready.every(Boolean)) {
-            const combined = new Map<string, Lead>();
-            records.forEach((group) =>
-              group.forEach((lead, id) => combined.set(id, lead)),
-            );
+            if (changes.length || firstSnapshot) {
+              const combined = new Map<string, Lead>();
+              records.forEach((group) =>
+                group.forEach((lead, id) => combined.set(id, lead)),
+              );
+              combinedLeads = [...combined.values()];
+            }
             setResult({
               userId,
               scope,
-              leads: [...combined.values()],
+              leads: combinedLeads,
               error: "",
               cached: cached.some(Boolean),
             });
@@ -73,7 +88,10 @@ export function useLiveLeads(user: User | null) {
         },
       ),
     );
-    return () => cleanups.forEach((unsubscribe) => unsubscribe());
+    return () => {
+      failed = true;
+      cleanups.forEach((unsubscribe) => unsubscribe());
+    };
   }, [userId, role, scope]);
   if (userId && !db)
     return {

@@ -1122,7 +1122,7 @@
   font-size: 13px;
   font-weight: 700;
 }
-.rm-demo-map small {
+.rm-demo-map > small {
   position: absolute;
   bottom: 8px;
   left: 12px;
@@ -1298,4 +1298,319 @@
 }
 .rm-outcome-badge {
   align-self: flex-start;
+}
+
+/* The knocking screen gives the map priority: one 60px row, tools on demand. */
+.rm-field-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 60px;
+  padding: 8px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--rm-line);
+}
+.rm-field-toolbar .rm-search {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px;
+  height: 44px;
+  min-height: 44px;
+  font-size: 12px;
+  gap: 6px;
+  border-radius: 10px;
+}
+.rm-field-toolbar .rm-knock-counter {
+  gap: 3px;
+  padding: 0 2px;
+}
+.rm-field-toolbar .rm-knock-counter b {
+  font-size: 12px;
+}
+.rm-field-toolbar .rm-filter,
+.rm-field-toolbar .rm-gps {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  flex-shrink: 0;
+  justify-content: center;
+  border-radius: 10px;
+}
+.rm-mode-toggle {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  height: 44px;
+  font-size: 11px;
+  border: 1px solid var(--rm-line);
+  border-radius: 10px;
+  background: white;
+}
+.rm-knocking-map {
+  min-height: 0;
+}
+.rm-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.rm-panel-heading h2 {
+  font-size: 18px;
+  font-weight: 600;
+}
+.rm-panel-heading button {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+}
+.rm-dialog .rm-mobile-filters {
+  max-height: 78dvh;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+.rm-dialog .rm-map-shortcuts {
+  padding: 0 0 12px;
+}
+.rm-dialog .rm-map-summary {
+  padding: 8px 0;
+  background: transparent;
+}
+.rm-map-loading {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 450;
+  background: #fffef4ed;
+  border: 1px solid var(--rm-line);
+  box-shadow: 0 3px 14px #203b3520;
+  padding: 8px 14px;
+  border-radius: 24px;
+  color: var(--rm-green);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.rm-door-actions {
+  position: absolute;
+  left: 12px;
+  bottom: 32px;
+  z-index: 25;
+  display: flex;
+  gap: 6px;
+}
+.rm-door-actions > button {
+  height: 44px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 14px;
+  background: #203d49;
+  color: #fff;
+  border: 1px solid #74bdb9;
+  box-shadow: 0 4px 12px #13374426;
+  font-size: 12px;
+  font-weight: 600;
+}
+.rm-door-actions > button + button {
+  background: #fffefa;
+  color: #275c52;
+  border-color: #c4d7c9;
+}
+.rm-door-actions > button.is-complete {
+  background: #ddf6e9;
+}
+.rm-coach-panel {
+  padding: 20px 22px 24px;
+  overflow-y: auto;
+  max-height: 82dvh;
+}
+.rm-coach-panel h2 {
+  font-size: 26px;
+  line-height: 1.2;
+  letter-spacing: -0.8px;
+  font-weight: 600;
+}
+.rm-coach-panel p {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--rm-muted);
+  margin: 14px 0;
+}
+.rm-coach-panel .rm-panel-heading .rm-eyebrow {
+  font-size: 9px;
+}
+.rm-coach-queue {
+  display: grid;
+  gap: 9px;
+  margin: 20px 0;
+}
+.rm-coach-queue > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 12px 10px;
+  border: 1px solid var(--rm-line);
+  border-radius: 14px;
+  background: white;
+  width: 100%;
+}
+.rm-coach-queue > button > span {
+  flex: 1;
+  min-width: 0;
+}
+.rm-coach-queue strong {
+  font-size: 13px;
+  display: block;
+}
+.rm-coach-queue small {
+  position: static;
+  display: block;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--rm-muted);
+  margin: 4px 0;
+}
+.rm-coach-queue em {
+  font-size: 10px;
+  font-style: normal;
+  color: var(--rm-green);
+}
+.rm-coach-tip {
+  background: #eaf1e4;
+  border-radius: 14px;
+  padding: 14px;
+}
+.rm-coach-tip strong {
+  font-size: 12px;
+}
+.rm-coach-tip p {
+  margin: 5px 0 0;
+}
+.rm-coach-empty {
+  margin: 20px 0;
+  padding: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  background: white;
+  border: 1px dashed var(--rm-line);
+  border-radius: 14px;
+}
+.rm-focus-score {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 20px 0;
+  color: var(--rm-green);
+}
+.rm-focus-score > span {
+  font-size: 64px;
+  font-weight: 600;
+  line-height: 1;
+}
+.rm-focus-score small {
+  position: static;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.rm-focus-track {
+  height: 8px;
+  background: #e1e8dc;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.rm-focus-track > span {
+  display: block;
+  height: 100%;
+  background: #248369;
+  border-radius: 8px;
+}
+.rm-focus-choices {
+  display: flex;
+  gap: 10px;
+  margin: 22px 0;
+}
+.rm-focus-choices button {
+  flex: 1;
+  border: 1px solid #bfd0c0;
+  background: white;
+  padding: 20px 6px;
+  border-radius: 16px;
+}
+.rm-focus-choices b {
+  display: block;
+  font-size: 32px;
+  color: var(--rm-green);
+}
+.rm-focus-choices span {
+  font-size: 10px;
+}
+.rm-coach-footnote {
+  position: static !important;
+  font-size: 10px;
+  color: var(--rm-muted);
+}
+.rm-coach-end {
+  display: block;
+  width: 100%;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--rm-muted);
+}
+.rm-coach-panel .rm-primary {
+  margin-top: 16px;
+}
+.rm-demo-pin {
+  width: 44px;
+  height: 51px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+.rm-pin-key {
+  font-size: 12px;
+  padding: 10px 0;
+  margin-bottom: 12px;
+}
+.rm-pin-key summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+}
+.rm-pin-key > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.rm-pin-key > div span {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+}
+.rm-pin-key p {
+  font-size: 11px;
+  color: var(--rm-muted);
+  line-height: 1.6;
+  margin-top: 12px;
+}
+/* A phone map may be shorter in landscape; don't force a cropped 400px canvas. */
+.rm-knocking-map .leaflet-container {
+  min-height: 0 !important;
+  border-radius: 0 !important;
+}
+
+.rm-dialog > section:has(> .rm-coach-panel),
+.rm-dialog > section:has(> .rm-mobile-filters) {
+  padding: 0;
 }
