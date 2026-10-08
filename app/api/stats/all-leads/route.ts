@@ -30,7 +30,13 @@ export async function GET(request: NextRequest) {
     }
 
     const idToken = authHeader.split(' ')[1];
-    await adminAuth().verifyIdToken(idToken);
+    const decoded = await adminAuth().verifyIdToken(idToken);
+
+    const meDoc = await adminDb().collection('users').doc(decoded.uid).get();
+    const me = meDoc.data() as any;
+    if (!meDoc.exists || !['admin', 'manager'].includes(String(me?.role || ''))) {
+      return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+    }
 
     const snap = await adminDb().collection('leads').get();
     const leads = snap.docs.map((d) => serializeValue({ id: d.id, ...(d.data() as any) }));
