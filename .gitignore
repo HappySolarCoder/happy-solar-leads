@@ -41,3 +41,15 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# Native build staging and signing material
+/.mobile-build/
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+!mobile.env.example
+
+# Recreated from resources/logo.png by mobile:build
+/android/app/src/main/res/**/*.png
+/ios/App/App/Assets.xcassets/**/*.png

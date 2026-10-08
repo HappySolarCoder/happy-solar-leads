@@ -1,3 +1,4 @@
+import { apiFetch } from '@/app/utils/apiFetch';
 import type { SolarMadnessAwardResponse } from '@/app/types/solarMadness';
 
 export async function awardSolarMadnessAsync(params: {
@@ -6,7 +7,7 @@ export async function awardSolarMadnessAsync(params: {
   dispositionId?: string;
   dispositionName?: string;
 }): Promise<SolarMadnessAwardResponse> {
-  const res = await fetch('/api/solar-madness/award', {
+  const res = await apiFetch('/api/solar-madness/award', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

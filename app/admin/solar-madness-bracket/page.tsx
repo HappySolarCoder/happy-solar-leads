@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useEffect, useMemo, useState } from 'react';
 import { auth } from '@/app/utils/firebase';
 
@@ -30,7 +32,7 @@ export default function SolarMadnessBracketAdminPage() {
           setError('Not logged in');
           return;
         }
-        const res = await fetch('/api/admin/solar-madness-bracket', {
+        const res = await apiFetch('/api/admin/solar-madness-bracket', {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error(await res.text());
@@ -60,7 +62,7 @@ export default function SolarMadnessBracketAdminPage() {
         return;
       }
       const bracket = JSON.parse(raw);
-      const res = await fetch('/api/admin/solar-madness-bracket', {
+      const res = await apiFetch('/api/admin/solar-madness-bracket', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

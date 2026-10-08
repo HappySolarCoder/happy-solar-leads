@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useState, useRef, useEffect } from 'react';
 import { Upload, File, X, MapPin, CheckCircle, AlertCircle, Tag } from 'lucide-react';
 import { CSVRow, Lead, LeadTag, LEAD_TAG_LABELS, LEAD_TAG_COLORS, LEAD_TAG_DESCRIPTIONS } from '@/app/types';
@@ -15,7 +17,7 @@ import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
 function logToFile(level: string, component: string, message: string, data: any = {}) {
   console.log(`[${level}] [${component}] ${message}`, data);
 
-  fetch('/api/log', {
+  apiFetch('/api/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ level, component, message, data }),
@@ -231,7 +233,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
           }
 
           // Fetch solar data
-          const solarResp = await fetch('/api/solar', {
+          const solarResp = await apiFetch('/api/solar', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lat: result.lat, lng: result.lng })

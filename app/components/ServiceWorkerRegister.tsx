@@ -1,5 +1,7 @@
 'use client';
 
+import { Capacitor } from '@capacitor/core';
+
 import { useEffect, useState } from 'react';
 
 export default function ServiceWorkerRegister() {
@@ -7,6 +9,7 @@ export default function ServiceWorkerRegister() {
   const [registration, setRegistration] = useState<ServiceWorkerRegistration | null>(null);
 
   useEffect(() => {
+    if (Capacitor.isNativePlatform()) return;
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker
         .register('/sw.js')

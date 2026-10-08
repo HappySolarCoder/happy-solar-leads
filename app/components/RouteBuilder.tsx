@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useState } from 'react';
 import { Lead, User } from '@/app/types';
 import { MapPin, Navigation, X, Clock, Route } from 'lucide-react';
@@ -64,7 +66,7 @@ export default function RouteBuilder({ leads, users, onGenerateRoute, onClearRou
         .filter(l => l.lat && l.lng)
         .map(l => ({ lat: l.lat, lng: l.lng }));
 
-      const response = await fetch('/api/route', {
+      const response = await apiFetch('/api/route', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

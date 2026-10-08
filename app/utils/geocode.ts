@@ -1,3 +1,4 @@
+import { apiFetch } from '@/app/utils/apiFetch';
 // Geocoding utility using Next.js API proxy to avoid CORS
 
 import { CSVRow, Lead, PropertyType } from '@/app/types';
@@ -79,7 +80,7 @@ export async function geocodeAddress(row: CSVRow): Promise<{ lat: number; lng: n
 
   try {
     // Use our own API route as proxy to avoid CORS
-    const response = await fetch('/api/geocode', {
+    const response = await apiFetch('/api/geocode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ address: query }),

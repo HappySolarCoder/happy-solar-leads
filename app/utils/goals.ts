@@ -1,3 +1,4 @@
+import { apiFetch } from '@/app/utils/apiFetch';
 import { auth, db } from '@/app/utils/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { startOfMonth, endOfMonth, format, isAfter, isBefore } from 'date-fns';
@@ -110,7 +111,7 @@ export async function getMyGoalAsync(month: string, uidOverride?: string): Promi
 export async function getMyGoalViaApiAsync(month: string): Promise<{ month: string; doorKnocksGoal: number | null } | null> {
   if (!auth?.currentUser) return null;
   const token = await auth.currentUser.getIdToken();
-  const res = await fetch(`/api/goals/me?month=${encodeURIComponent(month)}`, {
+  const res = await apiFetch(`/api/goals/me?month=${encodeURIComponent(month)}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) return null;

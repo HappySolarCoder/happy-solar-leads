@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useState } from 'react';
 
 export default function SolarTest() {
@@ -32,7 +34,7 @@ export default function SolarTest() {
     setOutput([`Lead: ${lead.name}`, `${lead.lat}, ${lead.lng}`, '', 'Fetching...']);
 
     try {
-      const resp = await fetch('/api/solar', {
+      const resp = await apiFetch('/api/solar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lat: lead.lat, lng: lead.lng })

@@ -110,6 +110,7 @@ describe('mapUserDoc', () => {
   it('the old getAllUsers call throws on string createdAt (cause verified)', () => {
     const data = { createdAt: '2026-06-01T00:00:00.000Z' };
     assert.throws(
+      // @ts-expect-error Deliberately exercise the old invalid call at runtime.
       () => data.createdAt?.toDate() || new Date(),
       (err: unknown) => err instanceof TypeError && /toDate is not a function/.test(String(err)),
     );

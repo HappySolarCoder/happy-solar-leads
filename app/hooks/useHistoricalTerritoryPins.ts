@@ -1,5 +1,7 @@
 'use client';
 
+import { apiFetch } from '@/app/utils/apiFetch';
+
 import { useEffect, useState } from 'react';
 import { auth } from '@/app/utils/firebase';
 import type { Lead } from '@/app/types';
@@ -65,7 +67,7 @@ export function useHistoricalTerritoryPins(userId?: string): Lead[] {
       const token = await auth?.currentUser?.getIdToken();
       if (!token || cancelled) return;
 
-      const res = await fetch('/api/historical-territory-pins', {
+      const res = await apiFetch('/api/historical-territory-pins', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
