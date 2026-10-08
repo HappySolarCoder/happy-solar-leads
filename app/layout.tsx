@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import InstallPrompt from './components/InstallPrompt';
 import ServiceWorkerRegister from './components/ServiceWorkerRegister';
+import MustChangePasswordGate from './components/MustChangePasswordGate';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -52,6 +53,7 @@ export default function RootLayout({
       >
         <ServiceWorkerRegister />
         <InstallPrompt />
+        <MustChangePasswordGate />
         {children}
       </body>
     </html>

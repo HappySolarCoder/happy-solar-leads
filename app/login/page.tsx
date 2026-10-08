@@ -33,6 +33,12 @@ export default function LoginPage() {
         saveCurrentUser(user);
         console.log('User saved to localStorage:', user.name);
       }
+
+      const next = new URLSearchParams(window.location.search).get('next');
+      if (user?.mustChangePassword || next === '/change-password') {
+        router.replace('/change-password');
+        return;
+      }
       
       // Redirect to main app
       router.push('/');

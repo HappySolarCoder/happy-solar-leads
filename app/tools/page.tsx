@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Calendar, Map, Users, BarChart3, Settings, ShieldCheck, Layers, Sparkles } from 'lucide-react';
+import { ArrowLeft, Calendar, Map, Users, BarChart3, Settings, ShieldCheck, Layers, Sparkles, KeyRound } from 'lucide-react';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { User } from '@/app/types';
 import { getLeadsAsync } from '@/app/utils/storage';
@@ -90,6 +90,22 @@ export default function ToolsPage() {
                 <p className="text-white/90 text-sm">5 new features released this week! Check out mobile dashboards, go backs, and more.</p>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold text-[#2D3748] mb-4">Account</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <button
+              onClick={() => router.push('/change-password')}
+              className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow text-left group min-h-12"
+            >
+              <div className="p-3 bg-[#F7FAFC] rounded-lg group-hover:bg-[#EDF2F7] transition-colors mb-3">
+                <KeyRound className="w-6 h-6 text-[#718096]" />
+              </div>
+              <h3 className="text-lg font-semibold text-[#2D3748] mb-1">Change password</h3>
+              <p className="text-sm text-[#718096]">Update your sign-in password</p>
+            </button>
           </div>
         </div>
 
