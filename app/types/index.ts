@@ -64,6 +64,9 @@ export type PropertyType = 'house' | 'apartment' | 'commercial' | 'unknown';
 export type LeadType = 'prospect' | 'customer' | 'sale';
 
 export interface Lead {
+  fieldDoor?: import("@/app/field/types").FieldDoorData;
+  fieldHandoff?: import("@/app/field/types").FieldHandoff;
+  fieldRecovery?: {requestedAt:string; phone:string; consentVersion:string; callbackRequested:boolean};
   id: string;
   leadType?: LeadType; // default: prospect
   name: string;
@@ -189,6 +192,7 @@ export interface LeadPhoto {
 }
 
 export interface LeadDispositionHistoryEntry {
+  field?: import("@/app/field/types").FieldObservation;
   disposition: string;      // Disposition name at time of change
   timestamp: Date;          // When the disposition was set
   userId: string;           // User who set the disposition
