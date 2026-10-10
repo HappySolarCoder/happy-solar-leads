@@ -86,7 +86,13 @@ export function MobileHeader({
   return (
     <header className="rm-header">
       <div className="rm-brand">
-        <Image src="/brand/raydar-v5/raydar-primary-v5.svg" alt="Raydar" width={150} height={48} priority />
+        <Image
+          src="/brand/raydar-v5/raydar-primary-v5.svg"
+          alt="Raydar"
+          width={150}
+          height={48}
+          priority
+        />
         <span className="rm-edition">NEXT</span>
       </div>
       {title && <span className="rm-header-title">{title}</span>}
@@ -114,7 +120,13 @@ export function MobileHeader({
 export function MobileLoading() {
   return (
     <div className="rm-loading" role="status">
-      <Image src="/brand/raydar-v5/raydar-mark-v5.svg" alt="Raydar Signal R" width={64} height={70} priority />
+      <Image
+        src="/brand/raydar-v5/raydar-mark-v5.svg"
+        alt="Raydar Signal R"
+        width={64}
+        height={70}
+        priority
+      />
       <h1>Getting your day ready</h1>
       <LoaderCircle className="rm-spin" size={22} />
       <span>Loading your Raydar workspace</span>
@@ -150,7 +162,7 @@ export function FieldToolbar({
   accuracy?: number;
   gpsError: boolean;
   gpsLoading: boolean;
-  knocks: number;
+  knocks?: number;
   onLocate: () => void;
 }) {
   return (
@@ -161,11 +173,19 @@ export function FieldToolbar({
       </button>
       <span
         className="rm-knock-counter"
-        title={`${knocks} doors knocked today`}
-        aria-label={`${knocks} doors knocked today`}
+        title={
+          knocks === undefined
+            ? "Loading today’s knocks"
+            : `${knocks} doors knocked today`
+        }
+        aria-label={
+          knocks === undefined
+            ? "Loading today’s knocks"
+            : `${knocks} doors knocked today`
+        }
       >
         <DoorOpen size={16} />
-        <b>{knocks}</b>
+        <b>{knocks ?? "—"}</b>
       </span>
       <button
         className="rm-mode-toggle"
@@ -183,22 +203,28 @@ export function FieldToolbar({
         {filterCount > 0 && <span>{filterCount}</span>}
       </button>
       <button
-        className={`rm-gps ${gpsError || (accuracy !== undefined && accuracy > 50) ? "is-warning" : ""}`}
+        className={`rm-gps ${
+          gpsError || (accuracy !== undefined && accuracy > 50)
+            ? "is-warning"
+            : ""
+        }`}
         onClick={onLocate}
         disabled={gpsError || accuracy === undefined}
         aria-label={
           gpsError
             ? "Location unavailable"
             : gpsLoading || accuracy === undefined
-              ? "Finding GPS"
-              : `Center map on my location, GPS accuracy ${Math.round(accuracy)} meters`
+            ? "Finding GPS"
+            : `Center map on my location, GPS accuracy ${Math.round(
+                accuracy
+              )} meters`
         }
         title={
           gpsError
             ? "Location unavailable"
             : accuracy === undefined
-              ? "Finding GPS…"
-              : `GPS ±${Math.round(accuracy)} m`
+            ? "Finding GPS…"
+            : `GPS ±${Math.round(accuracy)} m`
         }
       >
         <Crosshair size={20} />
@@ -211,20 +237,28 @@ export function SectionHeading({
   title,
   action,
   onAction,
+  href,
 }: {
   title: string;
   action?: string;
   onAction?: () => void;
+  href?: string;
 }) {
   return (
     <div className="rm-section-heading">
       <h2>{title}</h2>
-      {action && (
-        <button onClick={onAction}>
-          {action}
-          <ArrowUpRight size={15} />
-        </button>
-      )}
+      {action &&
+        (href ? (
+          <Link href={href}>
+            {action}
+            <ArrowUpRight size={15} />
+          </Link>
+        ) : (
+          <button onClick={onAction}>
+            {action}
+            <ArrowUpRight size={15} />
+          </button>
+        ))}
     </div>
   );
 }

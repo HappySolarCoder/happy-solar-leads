@@ -8,18 +8,27 @@ import {
   MobileNotice,
 } from "../_components/MobileShell";
 import { ProgressView } from "../_components/MobileViews";
+import { useDeviceNow } from "../_components/useDeviceNow";
 import { useMobileData } from "../_components/useMobileData";
 import { dayStart, summarizeActivity } from "../_lib/metrics";
 
 export default function MobileStatsPage() {
   const router = useRouter();
-  const { user, leads, dispositions, loading, error } = useMobileData();
+  const now = useDeviceNow();
+  const {
+    user,
+    leads,
+    dispositions,
+    loading,
+    dataLoading,
+    dataUnavailable,
+    error,
+  } = useMobileData();
   if (loading) return <MobileLoading />;
   if (!user)
     return (
       <MobileNotice>{error || "Sign in to see your progress."}</MobileNotice>
     );
-  const now = new Date();
   const today = dayStart(now);
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   const monday = new Date(today);
@@ -41,13 +50,25 @@ export default function MobileStatsPage() {
     <div className="rm-shell">
       <MobileHeader name={user.name} />
       {error && <MobileNotice>{error}</MobileNotice>}
-      <ProgressView
-        today={summarize(today)}
-        week={summarize(monday)}
-        month={summarize(new Date(now.getFullYear(), now.getMonth(), 1))}
-        days={days}
-        onNavigate={router.push}
-      />
+      {dataLoading || dataUnavailable ? (
+        <main className="rm-content">
+          <h1 className="rm-page-heading">Your progress</h1>
+          <p className="rm-data-loading" role="status">
+            {dataUnavailable
+              ? "Activity is unavailable. Check your connection and account access."
+              : "Loading your activity…"}
+          </p>
+        </main>
+      ) : (
+        <ProgressView
+          today={summarize(today)}
+          week={summarize(monday)}
+          month={summarize(new Date(now.getFullYear(), now.getMonth(), 1))}
+          days={days}
+          onNavigate={router.push}
+        />
+      )}
+
       <MobileNav />
     </div>
   );

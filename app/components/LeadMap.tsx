@@ -1,5 +1,7 @@
 'use client';
 
+import { observeMapSize } from '@/app/utils/observeMapSize';
+
 import { fieldPinArtwork, fieldPinZoomTier } from '@/app/utils/fieldPin';
 import { buildLeadViewportIndex, queryLeadViewport } from '@/app/utils/mapViewport';
 import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
@@ -67,6 +69,16 @@ const EMPTY_IDS: string[] = [];
 const EMPTY_ROUTES: UserRoute[] = [];
 type PinEntry = { marker: L.Marker; lead: Lead; styleKey: string; users: User[]; disposition?: Disposition };
 
+function markPinSelected(entry: PinEntry, selected: boolean) {
+  const icon = entry.marker.options.icon;
+  if (icon) {
+    const base = (icon.options.className || '').replace(/\bis-selected\b/g, '').trim();
+    icon.options.className = `${base}${selected ? ' is-selected' : ''}`;
+  }
+  entry.marker.getElement()?.classList.toggle('is-selected', selected);
+  entry.marker.setZIndexOffset(entry.lead.historicalTerritoryPin ? -300 : selected ? 500 : 0);
+}
+
 export default function LeadMap({ 
   leads: leadsProp,
   dispositionOptions,
@@ -101,6 +113,18 @@ export default function LeadMap({
   const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
   const pinEntriesRef = useRef(new Map<string, PinEntry>());
   const routeModeRef = useRef(false);
+  const selectedPinRef = useRef<string | undefined>(undefined);
+  // Selecting a door only changes its outline. Do not replace its Leaflet icon
+  // or restart batched marker reconciliation while a touch event is in progress.
+  useEffect(() => {
+    const previous = selectedPinRef.current;
+    selectedPinRef.current = selectedLeadId;
+    for (const id of [previous, selectedLeadId]) {
+      if (!id) continue;
+      const entry = pinEntriesRef.current.get(id);
+      if (entry) markPinSelected(entry, id === selectedLeadId);
+    }
+  }, [selectedLeadId]);
   const clickRef = useRef(onLeadClick);
   useEffect(() => { clickRef.current = onLeadClick; }, [onLeadClick]);
   const hasUserPosition = Boolean(userPosition);
@@ -316,6 +340,8 @@ export default function LeadMap({
     
     mapInstanceRef.current = map;
 
+    const stopObservingSize = observeMapSize(map);
+
     // Mark user interaction to prevent auto-fit snapback
     map.on('dragstart', () => {
       userInteractedRef.current = true;
@@ -408,6 +434,8 @@ export default function LeadMap({
     });
 
     return () => {
+      stopObservingSize();
+      clearTimeout(longPressTimer);
       if (routeLineRef.current) routeLineRef.current.remove();
       map.remove();
       mapInstanceRef.current = null;
@@ -666,7 +694,7 @@ export default function LeadMap({
         const isClaimedByMe = !!currentUser && lead.claimedBy === currentUser.id;
         const canClaim = lead.claimedBy == null || isClaimedByMe;
         const selectedForAssignment = assignedIds.has(lead.id);
-        const selected = lead.id === selectedLeadId || selectedForAssignment;
+        const selected = selectedForAssignment;
         const disposition = byId.get(lead.status) || byName.get(String(lead.dispositionHistory?.[0]?.disposition || '').toLowerCase());
         const styleKey = `${fieldPinZoomTier(currentZoom)}:${viewMode}:${selected}:${isClaimedByMe}:${canClaim}:${selectedForAssignment}`;
         let entry = entries.get(lead.id);
@@ -710,6 +738,8 @@ export default function LeadMap({
         }
       }
       if (added.length) layer.addLayers(added);
+      const selectedEntry = selectedPinRef.current ? entries.get(selectedPinRef.current) : undefined;
+      if (selectedEntry) markPinSelected(selectedEntry, true);
       if (offset < eligible.length) frame = requestAnimationFrame(renderBatch);
       else if (process.env.NODE_ENV !== 'production') console.debug('[LeadMap] Pin reconciliation', {visible: eligible.length, created, updated, removed: removed.length});
     };
@@ -750,7 +780,7 @@ export default function LeadMap({
     }
 
     return () => { cancelled = true; cancelAnimationFrame(frame); };
-  }, [leads, viewportIndex, selectedLeadId, currentUser, routeWaypoints, userRoutes, isClient, dispositions, zoomTier, viewportKey, hasUserPosition, users, viewMode, selectedLeadIdsForAssignment]);
+  }, [leads, viewportIndex, currentUser, routeWaypoints, userRoutes, isClient, dispositions, zoomTier, viewportKey, hasUserPosition, users, viewMode, selectedLeadIdsForAssignment]);
 
   // Handle territory drawing mode
   useEffect(() => {

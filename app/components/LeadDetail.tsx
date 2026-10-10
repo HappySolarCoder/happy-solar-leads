@@ -3,6 +3,7 @@
 import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
 import DoorstepMemory from './DoorstepMemory';
 
+import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { getLocation } from '@/app/utils/geolocation';
 
 import { useState, useEffect, useRef } from 'react';
@@ -35,6 +36,8 @@ import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/
 
 interface LeadDetailProps {
   fieldMemory?: boolean;
+  dispositionOptions?: Disposition[];
+  dispositionsLoading?: boolean;
   lead: Lead;
   currentUser: User | null;
   onClose: () => void;
@@ -97,7 +100,7 @@ const ICON_MAP: Record<string, any> = {
   'arrow-left': ArrowLeft,
 };
 
-export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false }: LeadDetailProps) {
+export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false, dispositionOptions, dispositionsLoading = false }: LeadDetailProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
   const noteInput = useRef<HTMLTextAreaElement>(null);
@@ -107,10 +110,12 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
   const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
   const [pendingGoBackStatus, setPendingGoBackStatus] = useState('go-back');
-  const [dispositions, setDispositions] = useState<Disposition[]>([]);
+  const [loadedDispositions, setDispositions] = useState<Disposition[]>(DEFAULT_DISPOSITIONS);
+  const dispositions = dispositionOptions ?? loadedDispositions;
   const [users, setUsers] = useState<User[]>([]);
   const [adminAssignUser, setAdminAssignUser] = useState<string>('');
-  const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
+  const [isLoadingDispositions, setIsLoadingDispositions] = useState(!dispositionOptions);
+  const actionsLoading = dispositionOptions ? dispositionsLoading : isLoadingDispositions;
   const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
   const [solarMadnessAward, setSolarMadnessAward] = useState<(SolarMadnessAwardResponse & { matchup?: any }) | null>(null);
   const [photos, setPhotos] = useState(lead.photos || []);
@@ -119,17 +124,24 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
   const canClaim = !lead.claimedBy || isClaimedByMe;
   const isClaimed = !!lead.claimedBy;
 
-  // Load dispositions on mount
+  // Read the selected lead immediately, including from cache. Supporting settings
+  // and the admin-only assignment directory must not block or trap the panel.
   useEffect(() => {
-    async function loadData() {
-      const dispos = await getDispositionsAsync();
-      setDispositions(dispos);
-      const userList = await getUsersAsync();
-      setUsers(userList.filter(u => u.role !== 'admin')); // Exclude admins from assignment list
-      setIsLoadingDispositions(false);
-    }
-    loadData();
-  }, []);
+    if (dispositionOptions) return;
+    let active = true;
+    void getDispositionsAsync().then((items) => {
+      if (active) { setDispositions(items); setIsLoadingDispositions(false); }
+    }).catch(() => { if (active) setIsLoadingDispositions(false); });
+    return () => { active = false; };
+  }, [dispositionOptions]);
+  useEffect(() => {
+    if (currentUser?.role !== 'admin') return;
+    let active = true;
+    void getUsersAsync().then((items) => {
+      if (active) setUsers(items.filter(user => user.role !== 'admin'));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [currentUser?.id, currentUser?.role]);
 
   // Lock background scroll while lead detail is open so the app header/page does not fight the panel
   useEffect(() => {
@@ -157,7 +169,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
   );
 
   const handleStatusChange = async (newStatus: string) => {
-    if (!currentUser) return;
+    if (!currentUser || actionsLoading) return;
     
     // Check for special behavior dispositions
     const disposition = dispositions.find(d => d.id === newStatus);
@@ -444,7 +456,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
     }
   };
 
-  if (isLoadingDispositions) {
+  if (actionsLoading && !fieldMemory) {
     return (
       <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] flex items-center justify-center">
         <div className="text-center">
@@ -673,6 +685,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
           {/* Quick Actions */}
           <div className="mb-6">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Quick Actions</h3>
+            {actionsLoading && <p role="status" className="text-sm text-[#718096] mb-3">Loading actions. You can still read this lead and close the panel.</p>}
             
             {/* Admin: Assign to user dropdown */}
             {currentUser?.role === 'admin' && (
@@ -697,7 +710,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
               {!isClaimed && (
                 <button
                   onClick={() => handleStatusChange('claimed')}
-                  disabled={isUpdating}
+                  disabled={isUpdating || actionsLoading}
                   className="flex items-center justify-center gap-2 px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-lg font-medium transition-all disabled:opacity-50"
                 >
                   <Target className="w-4 h-4" />
@@ -708,7 +721,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
               {isClaimedByMe && (
                 <button
                   onClick={() => handleStatusChange('unclaimed')}
-                  disabled={isUpdating}
+                  disabled={isUpdating || actionsLoading}
                   className="flex items-center justify-center gap-2 px-4 py-3 bg-[#718096] hover:bg-[#4A5568] text-white rounded-lg font-medium transition-all disabled:opacity-50"
                 >
                   <Circle className="w-4 h-4" />
@@ -722,7 +735,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
                   <button
                     key={dispo.id}
                     onClick={() => handleStatusChange(dispo.id)}
-                    disabled={isUpdating}
+                    disabled={isUpdating || actionsLoading}
                     className="flex items-center justify-center gap-2 px-4 py-3 text-white rounded-lg font-medium transition-all disabled:opacity-50 hover:opacity-90"
                     style={{ backgroundColor: dispo.color }}
                   >
@@ -745,7 +758,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
                     <button
                       key={dispo.id}
                       onClick={() => handleStatusChange(dispo.id)}
-                      disabled={isUpdating}
+                      disabled={isUpdating || actionsLoading}
                       className="w-full flex items-center gap-3 p-3 border-2 rounded-lg font-medium transition-all disabled:opacity-50 hover:shadow-md"
                       style={{ 
                         borderColor: lead.status === dispo.id ? dispo.color : '#E2E8F0',

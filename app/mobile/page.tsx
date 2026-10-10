@@ -10,6 +10,7 @@ import {
   MobileNotice,
 } from "./_components/MobileShell";
 import { TodayView } from "./_components/MobileViews";
+import { useDeviceNow } from "./_components/useDeviceNow";
 import { useMobileData } from "./_components/useMobileData";
 import { personalOutcomeLeads } from "./_lib/fieldUpdates";
 import { dayStart, summarizeActivity } from "./_lib/metrics";
@@ -20,17 +21,29 @@ const LeadDetail = dynamic(() => import("@/app/components/LeadDetail"), {
 
 export default function MobilePage() {
   const router = useRouter();
-  const { user, leads, dispositions, followUps, loading, error, refresh } =
-    useMobileData();
+  const {
+    user,
+    leads,
+    dispositions,
+    followUps,
+    loading,
+    dataLoading,
+    dataUnavailable,
+    error,
+    refresh,
+    retry,
+  } = useMobileData();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [goal, setGoal] = useState<{ loading: boolean; target: number | null }>(
-    { loading: true, target: null },
+    { loading: true, target: null }
   );
-  const [now] = useState(() => new Date());
+  const now = useDeviceNow();
+  const localDay = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
   useEffect(() => {
     if (!user) return;
     let active = true;
     async function loadGoal() {
+      const now = new Date();
       try {
         const {
           getMyGoalViaApiAsync,
@@ -39,13 +52,16 @@ export default function MobilePage() {
         } = await import("@/app/utils/goals");
         const [monthlyGoal, knocks] = await Promise.all([
           getMyGoalViaApiAsync(
-            `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
+            `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+              2,
+              "0"
+            )}`
           ),
           getMyMonthlyKnocksAsync(now, user!),
         ]);
         const remaining = Math.max(
           1,
-          countWorkdaysElapsedAndRemaining(now).remaining,
+          countWorkdaysElapsedAndRemaining(now).remaining
         );
         if (active)
           setGoal({
@@ -53,7 +69,7 @@ export default function MobilePage() {
             target: monthlyGoal?.doorKnocksGoal
               ? Math.ceil(
                   Math.max(0, Number(monthlyGoal.doorKnocksGoal) - knocks) /
-                    remaining,
+                    remaining
                 )
               : null,
           });
@@ -65,11 +81,14 @@ export default function MobilePage() {
     return () => {
       active = false;
     };
-  }, [user, now]);
+  }, [user, localDay]);
   if (loading) return <MobileLoading />;
   if (!user)
     return (
-      <MobileNotice>{error || "Sign in to open your workspace."}</MobileNotice>
+      <MobileNotice>
+        {error || "Sign in to open your workspace."}
+        {error && <button onClick={retry}>Try again</button>}
+      </MobileNotice>
     );
   const selected = leads.find((l) => l.id === selectedId);
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
@@ -78,6 +97,9 @@ export default function MobilePage() {
       <MobileHeader name={user.name} />
       {error && <MobileNotice>{error}</MobileNotice>}
       <TodayView
+        liveNavigation
+        dataLoading={dataLoading}
+        dataUnavailable={dataUnavailable}
         userId={user.id}
         name={user.name}
         now={now}
@@ -86,7 +108,7 @@ export default function MobilePage() {
           user.id,
           dispositions,
           dayStart(now),
-          end,
+          end
         )}
         followUps={followUps}
         outcomeLeads={personalOutcomeLeads(leads, user.id)}
@@ -100,6 +122,8 @@ export default function MobilePage() {
         <LeadDetail
           key={selectedId}
           fieldMemory
+          dispositionOptions={dispositions}
+          dispositionsLoading={dataLoading}
           lead={selected}
           currentUser={user}
           onClose={() => setSelectedId(null)}

@@ -11,6 +11,7 @@ import type { Lead, User } from "@/app/types";
 export function useLiveLeads(user: User | null) {
   const [result, setResult] = useState<{
     userId: string;
+    owner: User | null;
     scope: string;
     leads: Lead[];
     error: string;
@@ -66,6 +67,7 @@ export function useLiveLeads(user: User | null) {
               combinedLeads = [...combined.values()];
             }
             setResult({
+              owner: user,
               userId,
               scope,
               leads: combinedLeads,
@@ -78,6 +80,7 @@ export function useLiveLeads(user: User | null) {
           failed = true;
           // Do not retain records after a permission failure or ownership change.
           setResult({
+            owner: user,
             userId,
             scope,
             leads: [],
@@ -92,7 +95,7 @@ export function useLiveLeads(user: User | null) {
       failed = true;
       cleanups.forEach((unsubscribe) => unsubscribe());
     };
-  }, [userId, role, scope]);
+  }, [userId, role, scope, user]);
   if (userId && !db)
     return {
       userId,
@@ -100,5 +103,5 @@ export function useLiveLeads(user: User | null) {
       error: "Firebase is not configured for this build.",
       cached: true,
     };
-  return result?.scope === scope ? result : null;
+  return result?.scope === scope && result.owner === user ? result : null;
 }

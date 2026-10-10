@@ -1,6 +1,6 @@
 'use client';
 
-import { FieldToolbar, MobileNav, MobileNotice } from '../_components/MobileShell';
+import { FieldToolbar, MobileNav, MobileNotice, MobileLoading } from '../_components/MobileShell';
 import DoorCoach from '../_components/DoorCoach';
 import ReturnVisitReminder from '../_components/ReturnVisitReminder';
 import FieldCompass from '../_components/FieldCompass';
@@ -8,7 +8,7 @@ import { summarizeActivity } from '../_lib/metrics';
 import { countWorkdaysElapsedAndRemaining } from '@/app/utils/goals';
 import { fieldPinArtwork } from '@/app/utils/fieldPin';
 import MobileDialog from '../_components/MobileDialog';
-import { useLiveLeads } from '@/app/hooks/useLiveLeads';
+import { useMobileData } from '../_components/useMobileData';
 import { AppointmentOutcomeBadge } from '@/app/components/AppointmentOutcomeBadge';
 import { appointmentOutcomeLegend, getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { apiFetch } from '@/app/utils/apiFetch';
@@ -17,12 +17,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, List, Navigation, Filter, MapPin, Settings, Search, X, Route, Clock, Footprints, Car } from 'lucide-react';
-import { getUsersAsync, saveCurrentUser } from '@/app/utils/storage';
-import { getCurrentAuthUser } from '@/app/utils/auth';
+import { getUsersAsync } from '@/app/utils/storage';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
 const LeadDetail = dynamic(() => import('@/app/components/LeadDetail'), { ssr: false });
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
-import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
@@ -48,15 +46,11 @@ const EMPTY_LEADS: Lead[] = [];
 export default function KnockingPage() {
   const router = useRouter();
 
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const live = useLiveLeads(currentUser);
-  const leads = live?.leads || EMPTY_LEADS;
+  const { user: currentUser, live, leads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dataUnavailable, error: sessionError } = useMobileData();
   const [outcomesOnly, setOutcomesOnly] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
-  const [isLoading, setIsLoading] = useState(true);
-  const isRefreshing = !!currentUser && !live;
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
   const [mapZoom, setMapZoom] = useState(15);
@@ -66,7 +60,6 @@ export default function KnockingPage() {
   const [freshPinsOnly, setFreshPinsOnly] = useState<boolean>(false);
   const [leadTypeFilter, setLeadTypeFilter] = useState<'all' | 'prospects' | 'customers'>('all');
   const [showFilters, setShowFilters] = useState(false);
-  const [dispositions, setDispositions] = useState<any[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [addressSearch, setAddressSearch] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -164,32 +157,13 @@ export default function KnockingPage() {
     return () => clearInterval(interval);
   }, [gpsPosition ? Math.round(gpsPosition.lat * 100) : null, gpsPosition ? Math.round(gpsPosition.lng * 100) : null]);
 
-  // Load data
+  // Only managers need the directory. Ignore responses after an account change.
   useEffect(() => {
-    async function loadData() {
-      const user = await getCurrentAuthUser();
-      if (!user) {
-        router.push('/login');
-        return;
-      }
-      if (user.approvalStatus === 'pending') {
-        router.push('/pending-approval');
-        return;
-      }
-      setCurrentUser(user);
-      saveCurrentUser(user); // Save to localStorage for later retrieval
-
-      // Start the map immediately. The live listener is the single lead read path.
-      setIsLoading(false);
+    let active = true;
+    if (currentUser && canSeeAllLeads(currentUser.role)) {
+      void getUsersAsync().then((items) => { if (active) setUsers(items); }).catch(() => {});
     }
-    loadData();
-  }, [router]);
-  
-  // Load supporting data only after authentication; reps do not need the user directory.
-  useEffect(() => {
-    if (!currentUser) return;
-    getDispositionsAsync().then(setDispositions);
-    if (canSeeAllLeads(currentUser.role)) getUsersAsync().then(setUsers);
+    return () => { active = false; };
   }, [currentUser]);
 
   // Successful writes arrive on the existing listener without refetching every lead.
@@ -597,16 +571,8 @@ export default function KnockingPage() {
     loadGoalTarget();
   }, [currentUser]);
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-[#476E88] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-[#718096]">Loading leads...</p>
-        </div>
-      </div>
-    );
-  }
+  if (isLoading) return <MobileLoading />;
+  if (!currentUser) return <MobileNotice>{sessionError || 'Sign in to open the map.'}</MobileNotice>;
 
   return (
     <LocationPermissionGuard requireLocation={false}>
@@ -618,10 +584,10 @@ export default function KnockingPage() {
           onSearch={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
           onFilter={() => setShowFilters(!showFilters)}
           filterCount={solarFilter.length + Number(dispositionFilter !== 'all') + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly)}
-          accuracy={gpsPosition?.accuracy} gpsError={!!gpsError} gpsLoading={gpsLoading} knocks={todaysKnocks}
+          accuracy={gpsPosition?.accuracy} gpsError={!!gpsError} gpsLoading={gpsLoading} knocks={dataLoading || dataUnavailable ? undefined : todaysKnocks}
           onLocate={() => { if (gpsPosition) { setMapCenter([gpsPosition.lat, gpsPosition.lng]); setMapZoom(17); } }} />
         {live?.error && <MobileNotice>{live.error}</MobileNotice>}
-        {live?.cached && !live.error && <MobileNotice>Showing cached leads. Outcomes update when you reconnect.</MobileNotice>}
+        {live?.cached && !live.error && <MobileNotice>Showing cached leads. Checking for latest outcomes.</MobileNotice>}
         {writeError && (
           <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
             Save failed: {writeError}
@@ -850,7 +816,7 @@ export default function KnockingPage() {
                 <option value="all">All Dispositions</option>
                 {dispositions.map(dispo => (
                   <option key={dispo.id} value={dispo.id}>
-                    {dispo.emoji} {dispo.name}
+                    {dispo.name}
                   </option>
                 ))}
               </select>
@@ -1008,8 +974,8 @@ export default function KnockingPage() {
             onToggleTeamAreas={setShowTeamAreas}
           />
           <FieldCompass />
-          {currentUser && <DoorCoach key={currentUser.id} leads={leads} userId={currentUser.id} position={userPosition} onLead={handleLeadSelect} />}
-          {currentUser && !showLeadDetail && <ReturnVisitReminder key={currentUser.id} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
+          {currentUser && !dataLoading && !dataUnavailable && <DoorCoach key={currentUser.id} leads={leads} userId={currentUser.id} position={userPosition} onLead={handleLeadSelect} />}
+          {currentUser && !isRefreshing && !dataUnavailable && !showLeadDetail && <ReturnVisitReminder key={currentUser.id} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
           {isRefreshing && <div className="rm-map-loading" role="status">Loading your pins…</div>}
           {/* GPS Locate button is now built into LeadMap component */}
         </main>
@@ -1032,7 +998,7 @@ export default function KnockingPage() {
           )}
           
           <div className="space-y-3">
-            {leadsWithDistance.length === 0 ? (
+            {isRefreshing || dataUnavailable ? <p className="rm-data-loading" role="status">{dataUnavailable ? "Pins are unavailable. Check your connection and account access." : "Loading your pins…"}</p> : leadsWithDistance.length === 0 ? (
               <div className="text-center py-12 text-[#718096]">
                 <p>No pins match these filters.</p><button className="rm-primary mt-4" onClick={() => setShowFilters(true)}>Review filters</button>
               </div>
@@ -1078,6 +1044,8 @@ export default function KnockingPage() {
         <LeadDetail
           key={selectedLead.id}
           fieldMemory
+          dispositionOptions={dispositions}
+          dispositionsLoading={dataLoading}
           lead={selectedLead}
           currentUser={currentUser}
           onClose={() => {

@@ -35,10 +35,13 @@
 .rm-shell {
   max-width: 720px;
   margin: 0 auto;
-  padding-bottom: 90px;
-  min-height: var(--app-height, 100dvh);
+  height: var(--app-height, 100dvh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .rm-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -92,8 +95,15 @@
   font-size: 12px;
 }
 .rm-content {
-  padding: 25px 24px 12px;
+  padding: 25px 24px 24px;
 }
+.rm-shell > .rm-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+.rm-shell > .rm-notice { flex-shrink: 0; }
 .rm-eyebrow {
   font-size: 10px;
   letter-spacing: 1.6px;
@@ -211,7 +221,7 @@
   font-weight: 600;
   letter-spacing: -0.4px;
 }
-.rm-section-heading button {
+.rm-section-heading :is(button, a) {
   display: flex;
   align-items: center;
   gap: 3px;
@@ -432,12 +442,11 @@
   color: var(--rm-muted);
 }
 .rm-nav {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  position: relative;
+  flex-shrink: 0;
+  width: 100%;
   max-width: 720px;
-  margin: auto;
+  margin: 0 auto;
   z-index: 60;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -836,7 +845,6 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-bottom: 78px;
   background: var(--rm-paper);
 }
 .rm-field-toolbar {
@@ -1699,3 +1707,12 @@
 
 .raydar-mobile .rt-map-section,.raydar-mobile .rt-panel{min-width:0;}
 .raydar-mobile .rt-map-section{overflow:hidden;}
+
+/* The map shrinks with banners and grows again without leaving uncovered tiles. */
+.rm-knocking-map, .rm-field-list { min-height: 0; }
+.rm-data-loading { padding: 24px 12px; color: var(--rm-muted); font-size: 13px; }
+html[data-native] .raydar-mobile .rt-shell { height: var(--app-height); padding-top: 0; }
+
+/* Selection never swaps/removes the underlying marker image or its tap target. */
+.field-pin.is-selected::after { content: ""; position: absolute; inset: 1px; border: 2px solid #f0bc18; border-radius: 12px; pointer-events: none; }
+.rm-section-heading :is(button, a) { min-height: 44px; padding: 6px 2px 6px 10px; }

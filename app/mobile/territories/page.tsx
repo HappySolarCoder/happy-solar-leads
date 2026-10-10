@@ -21,9 +21,9 @@ async function request<T = TerritoryData>(
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  if (response.status === 404)
+  if (response.status === 404 && !response.headers.get("content-type")?.includes("application/json"))
     throw new Error(
-      "The territory backend update is not installed yet. Deploy the v6 backend before using this editor."
+      "Territory management is not enabled on your company server yet. Your administrator needs to finish the server update."
     );
   const result = await response
     .json()

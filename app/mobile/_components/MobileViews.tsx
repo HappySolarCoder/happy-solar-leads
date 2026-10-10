@@ -114,13 +114,13 @@ export function LeadRow({
     bucket === "today"
       ? "Today"
       : bucket === "overdue"
-        ? "Overdue"
-        : bucket === "unscheduled"
-          ? "Unscheduled"
-          : date?.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-            });
+      ? "Overdue"
+      : bucket === "unscheduled"
+      ? "Unscheduled"
+      : date?.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        });
   return (
     <button className="rm-lead-row" onClick={() => onSelect(lead)}>
       <span
@@ -158,6 +158,9 @@ export function TodayView({
   outcomeLeads = [],
   dailyTarget,
   goalLoading,
+  dataLoading = false,
+  dataUnavailable = false,
+  liveNavigation = false,
   onNavigate,
   onLead,
 }: {
@@ -169,23 +172,31 @@ export function TodayView({
   outcomeLeads?: Lead[];
   dailyTarget: number | null;
   goalLoading: boolean;
+  dataLoading?: boolean;
+  dataUnavailable?: boolean;
+  liveNavigation?: boolean;
   onNavigate: Navigate;
   onLead: (lead: Lead) => void;
 }) {
+  const pending = dataLoading || dataUnavailable;
+  const pendingMessage = dataUnavailable
+    ? "Activity is unavailable. Check your connection and account access."
+    : "Loading your activity…";
+  const paceLoading = goalLoading || pending;
   const greeting =
     now.getHours() < 12
       ? "Good morning"
       : now.getHours() < 17
-        ? "Good afternoon"
-        : "Good evening";
+      ? "Good afternoon"
+      : "Good evening";
   const due = followUps.filter((l) =>
-    ["today", "overdue"].includes(followUpBucket(l, now)),
+    ["today", "overdue"].includes(followUpBucket(l, now))
   );
   const next = [...followUps]
     .sort(
       (a, b) =>
         new Date(a.goBackScheduledDate || 8640000000000000).getTime() -
-        new Date(b.goBackScheduledDate || 8640000000000000).getTime(),
+        new Date(b.goBackScheduledDate || 8640000000000000).getTime()
     )
     .slice(0, 2);
   const progress =
@@ -233,26 +244,26 @@ export function TodayView({
         action="See progress"
         onAction={() => onNavigate("/mobile/stats")}
       />
-      <div className="rm-metrics">
+      <div className="rm-metrics" aria-busy={dataLoading}>
         <div>
           <span className="rm-metric-icon coral">
             <DoorOpen size={19} />
           </span>
-          <strong>{metrics.knocks}</strong>
+          <strong>{pending ? "—" : metrics.knocks}</strong>
           <span>Doors knocked</span>
         </div>
         <div>
           <span className="rm-metric-icon sage">
             <MessageCircle size={19} />
           </span>
-          <strong>{metrics.conversations}</strong>
+          <strong>{pending ? "—" : metrics.conversations}</strong>
           <span>Interested+</span>
         </div>
         <div>
           <span className="rm-metric-icon gold">
             <CalendarDays size={19} />
           </span>
-          <strong>{metrics.appointments}</strong>
+          <strong>{pending ? "—" : metrics.appointments}</strong>
           <span>Appointments+</span>
         </div>
       </div>
@@ -263,16 +274,16 @@ export function TodayView({
             Daily pace
           </span>
           <b>
-            {goalLoading
+            {paceLoading
               ? "Loading…"
               : dailyTarget === null
-                ? "No goal set"
-                : dailyTarget === 0
-                  ? "Month goal reached"
-                  : `${metrics.knocks} / ${dailyTarget}`}
+              ? "No goal set"
+              : dailyTarget === 0
+              ? "Month goal reached"
+              : `${metrics.knocks} / ${dailyTarget}`}
           </b>
         </div>
-        {dailyTarget !== null && dailyTarget > 0 ? (
+        {!paceLoading && dailyTarget !== null && dailyTarget > 0 ? (
           <>
             <div
               className="rm-progress-track"
@@ -287,22 +298,27 @@ export function TodayView({
             <p>
               {metrics.knocks >= dailyTarget
                 ? "You’ve reached your pace for today."
-                : `${dailyTarget - metrics.knocks} more doors to reach today’s pace.`}
+                : `${
+                    dailyTarget - metrics.knocks
+                  } more doors to reach today’s pace.`}
             </p>
           </>
         ) : (
           <p>
-            {goalLoading
-              ? "Checking your monthly goal."
+            {paceLoading
+              ? pending
+                ? pendingMessage
+                : "Checking your monthly goal."
               : dailyTarget === 0
-                ? "Your monthly knock goal is complete. Keep the momentum going."
-                : "Your manager can set a monthly knock goal."}
+              ? "Your monthly knock goal is complete. Keep the momentum going."
+              : "Your manager can set a monthly knock goal."}
           </p>
         )}
       </div>
       <SectionHeading
         title="On your radar"
         action="View all"
+        href={liveNavigation ? "/mobile/follow-ups" : undefined}
         onAction={() => onNavigate("/mobile/follow-ups")}
       />
       <div className="rm-agenda">
@@ -311,9 +327,13 @@ export function TodayView({
             <CalendarDays size={16} />
             Follow-ups
           </span>
-          <span>{due.length} need attention</span>
+          <span>{pending ? "—" : `${due.length} need attention`}</span>
         </div>
-        {next.length ? (
+        {pending ? (
+          <p className="rm-data-loading" role="status">
+            {pendingMessage}
+          </p>
+        ) : next.length ? (
           next.map((lead) => (
             <LeadRow key={lead.id} lead={lead} now={now} onSelect={onLead} />
           ))
@@ -327,7 +347,20 @@ export function TodayView({
           </div>
         )}
       </div>
-      <OutcomeFeed key={userId} leads={outcomeLeads} userId={userId} onLead={onLead} />
+      {pending ? (
+        <p className="rm-data-loading">
+          {dataUnavailable
+            ? "Appointment outcomes are unavailable."
+            : "Loading appointment outcomes…"}
+        </p>
+      ) : (
+        <OutcomeFeed
+          key={userId}
+          leads={outcomeLeads}
+          userId={userId}
+          onLead={onLead}
+        />
+      )}
       <button className="rm-tool-link" onClick={() => onNavigate("/tools")}>
         <span className="rm-metric-icon gold">
           <Sun size={22} />
@@ -362,7 +395,7 @@ export function FollowUpsView({
       (filter === "all" || followUpBucket(lead, now) === filter) &&
       `${lead.name} ${lead.address} ${lead.city}`
         .toLowerCase()
-        .includes(search.trim().toLowerCase()),
+        .includes(search.trim().toLowerCase())
   );
   const groups = ["overdue", "today", "upcoming", "unscheduled"] as const;
   return (
@@ -393,14 +426,14 @@ export function FollowUpsView({
             {value === "all"
               ? "All"
               : value === "today"
-                ? "Today"
-                : value === "overdue"
-                  ? "Overdue"
-                  : "Upcoming"}
+              ? "Today"
+              : value === "overdue"
+              ? "Overdue"
+              : "Upcoming"}
             <span>
               {
                 leads.filter(
-                  (l) => value === "all" || followUpBucket(l, now) === value,
+                  (l) => value === "all" || followUpBucket(l, now) === value
                 ).length
               }
             </span>
@@ -416,8 +449,8 @@ export function FollowUpsView({
                 new Date(a.goBackScheduledDate || 0).getTime() -
                   new Date(b.goBackScheduledDate || 0).getTime() ||
                 (a.goBackScheduledTime || "").localeCompare(
-                  b.goBackScheduledTime || "",
-                ),
+                  b.goBackScheduledTime || ""
+                )
             );
           return entries.length ? (
             <section key={group}>
@@ -426,10 +459,10 @@ export function FollowUpsView({
                   group === "overdue"
                     ? "Needs a new visit"
                     : group === "today"
-                      ? "Today’s visits"
-                      : group === "upcoming"
-                        ? "Coming up"
-                        : "Choose a date"
+                    ? "Today’s visits"
+                    : group === "upcoming"
+                    ? "Coming up"
+                    : "Choose a date"
                 }
               />
               <div className="rm-agenda">
@@ -506,8 +539,8 @@ export function ProgressView({
             {value === "today"
               ? "Today"
               : value === "week"
-                ? "This week"
-                : "This month"}
+              ? "This week"
+              : "This month"}
           </button>
         ))}
       </div>
@@ -522,8 +555,8 @@ export function ProgressView({
             {period === "today"
               ? "Today"
               : period === "week"
-                ? "Since Monday"
-                : "This calendar month"}
+              ? "Since Monday"
+              : "This calendar month"}
           </small>
         </div>
         <div className="rm-progress-orbit" aria-hidden="true">
@@ -560,7 +593,9 @@ export function ProgressView({
                 <span
                   className={index === 6 ? "is-today" : ""}
                   style={{
-                    height: `${day.knocks ? Math.max(3, (day.knocks / max) * 100) : 2}%`,
+                    height: `${
+                      day.knocks ? Math.max(3, (day.knocks / max) * 100) : 2
+                    }%`,
                   }}
                 />
               </div>
@@ -587,7 +622,11 @@ export function ProgressView({
         <div className="rm-progress-track">
           <span
             style={{
-              width: `${metrics.knocks ? Math.min(100, (metrics.appointments / metrics.knocks) * 100) : 0}%`,
+              width: `${
+                metrics.knocks
+                  ? Math.min(100, (metrics.appointments / metrics.knocks) * 100)
+                  : 0
+              }%`,
             }}
           />
         </div>
