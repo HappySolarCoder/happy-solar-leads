@@ -110,6 +110,8 @@ describe('mapUserDoc', () => {
   it('the old getAllUsers call throws on string createdAt (cause verified)', () => {
     const data = { createdAt: '2026-06-01T00:00:00.000Z' };
     assert.throws(
+      // Deliberately execute the legacy invalid call to verify its runtime failure.
+      // @ts-expect-error a string has no toDate method
       () => data.createdAt?.toDate() || new Date(),
       (err: unknown) => err instanceof TypeError && /toDate is not a function/.test(String(err)),
     );
