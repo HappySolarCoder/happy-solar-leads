@@ -161,6 +161,7 @@ export function TodayView({
   dataLoading = false,
   dataUnavailable = false,
   liveNavigation = false,
+  canManageTerritories = false,
   onNavigate,
   onLead,
 }: {
@@ -175,6 +176,7 @@ export function TodayView({
   dataLoading?: boolean;
   dataUnavailable?: boolean;
   liveNavigation?: boolean;
+  canManageTerritories?: boolean;
   onNavigate: Navigate;
   onLead: (lead: Lead) => void;
 }) {
@@ -239,6 +241,7 @@ export function TodayView({
           </span>
         </span>
       </button>
+      {canManageTerritories && <button className="rm-manage-territories" onClick={() => onNavigate("/mobile/territories")}><MapPin size={20}/><span>Manage territories</span><ArrowRight size={18}/></button>}
       <SectionHeading
         title="Your day, so far"
         action="See progress"

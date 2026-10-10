@@ -97,6 +97,7 @@ export default function MobilePage() {
       <MobileHeader name={user.name} />
       {error && <MobileNotice>{error}</MobileNotice>}
       <TodayView
+        canManageTerritories={user.role === "admin" || user.role === "manager"}
         liveNavigation
         dataLoading={dataLoading}
         dataUnavailable={dataUnavailable}

@@ -24,7 +24,7 @@ const mocks = {
   "@/app/utils/auth": `export const signOut=async()=>window.fx.auth(null);`,
   "firebase/auth": `export function onAuthStateChanged(_,next){window.fx.authStarts++;window.fx.auth=id=>next(id?{uid:id}:null);queueMicrotask(()=>window.fx.auth(window.fx.user));return()=>{window.fx.authStops++}}`,
   "firebase/firestore": `export const doc=(_,collection,id)=>({collection,id});
-    export async function getDoc({id}){window.fx.profileReads++;return {exists:()=>true,data:()=>({name:id==='alice'?'Alex Field':'Sam Field',role:'setter',approvalStatus:'approved'})}}
+    export async function getDoc({id}){window.fx.profileReads++;return {exists:()=>true,data:()=>({name:id==='alice'?'Alex Field':'Sam Field',role:new URLSearchParams(location.search).get('role')||'setter',approvalStatus:'approved'})}}
     export const collection=(_,name)=>({name});export const where=(field,op,value)=>({field,op,value});export const query=(source,...filters)=>({source,filters});
     export function onSnapshot(query,options,next,error){const entry={query,next,error,active:true};window.fx.listeners.push(entry);window.fx.leadStarts++;return()=>{entry.active=false;window.fx.leadStops++}}`,
   "@/app/utils/firestore": `export const mapLeadDoc=s=>({...s.data(),id:s.id});`,
@@ -44,10 +44,10 @@ function Probe(){const d=useMobileData();const [banner,setBanner]=React.useState
  React.useEffect(()=>{if(!mapRef.current)return;const map=L.map(mapRef.current,{center:[43.15,-77.6],zoom:17});
  const Grid=L.GridLayer.extend({createTile(){const tile=document.createElement('div');tile.style.cssText='background:#cbdbe5;border:1px solid #a5bac8';tile.textContent='MAP TEST TILE';return tile}});new Grid().addTo(map);
  window.fx.map=map;const stop=observeMapSize(map);return()=>{stop();map.remove()}},[]);
- return <div className="rm-field-shell"><FieldToolbar mode="map" onMode={()=>{}} onSearch={()=>{}} onFilter={()=>{}} filterCount={0} gpsError={false} gpsLoading={false} knocks={d.dataLoading?undefined:0} onLocate={()=>{}}/>
+ return <div className="rm-field-shell"><FieldToolbar showTeamAreas={false} onToggleTeamAreas={()=>{}} onSearch={()=>{}} onFilter={()=>{}} filterCount={0} gpsError={false} gpsLoading={false} knocks={d.dataLoading?undefined:0} onLocate={()=>{}}/>
  {banner&&<MobileNotice>Checking for latest outcomes.</MobileNotice>}<main className="rm-knocking-map" style={{flex:1,position:'relative'}}><div ref={mapRef} style={{height:'100%',width:'100%'}}/><button id="remove-banner" style={{position:'absolute',top:10,right:10,zIndex:500,background:'white'}} onClick={()=>setBanner(false)}>Hide status</button></main><MobileNav/></div>}
 function More(){const d=useMobileData();return <div className="rm-shell"><MobileHeader name={d.user.name}/><main className="rm-content"><h1>Workspace</h1><p>Account tools are ready.</p><button onClick={()=>window.fx.auth(null)}>Sign out</button></main><MobileNav/></div>}
-function Screens(){const path=usePathname();return path==='/mobile'?<MobilePage/>:path==='/mobile/follow-ups'?<FollowUpsPage/>:path==='/mobile/stats'?<MobileStatsPage/>:path==='/mobile/knocking'?<Probe/>:<More/>}
+function Screens(){const path=usePathname();return path==='/mobile/territories'?<p>Territory editor destination</p>:path==='/mobile'?<MobilePage/>:path==='/mobile/follow-ups'?<FollowUpsPage/>:path==='/mobile/stats'?<MobileStatsPage/>:path==='/mobile/knocking'?<Probe/>:<More/>}
 function App(){const path=usePathname();return path==='/login'?<p>Signed out</p>:<MobileDataBoundary><Screens/></MobileDataBoundary>}
 createRoot(document.getElementById('root')).render(<App/>);`;
 await build({
@@ -313,6 +313,16 @@ try {
     await page.evaluate(() => fx.listeners.filter((x) => x.active).length),
     0
   );
+  await expect(page.getByRole("button",{name:"Manage territories",exact:true})).toHaveCount(0);
+  for (const role of ["manager","admin"]) {
+    await page.goto("http://127.0.0.1:4198/?role="+role);
+    const manage=page.getByRole("button",{name:"Manage territories",exact:true});
+    await expect(manage).toBeVisible();
+    const start=await page.getByRole("button",{name:/Start knocking/}).boundingBox(), shortcut=await manage.boundingBox();
+    assert.ok(shortcut.y>=start.y+start.height);
+    await manage.click();
+    assert.equal(await page.evaluate(()=>fx.path),"/mobile/territories");
+  }
   assert.deepEqual(errors, []);
   console.log(
     "PASS: usable shell during 20-second data delay; local greeting/date through noon, 5pm, midnight and resume; View all navigation; one auth/profile/settings load and two scoped lead listeners across tabs; placeholders; native insets/scrolling at 3 viewport sizes; real Leaflet banner resize; account isolation, permission errors and sign-out cleanup. External requests blocked."

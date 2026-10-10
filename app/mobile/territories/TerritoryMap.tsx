@@ -4,6 +4,8 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Crosshair, Layers } from "lucide-react";
 import { getLocation } from "@/app/utils/geolocation";
+import type { Place } from "./PlaceSearch";
+import type { DrawingTool } from "./drawing";
 import type { TerritoryPoint } from "@/app/types/territory";
 import type {
   ManagedTerritory,
@@ -14,6 +16,9 @@ type Props = {
   territories: ManagedTerritory[];
   selectedId: string;
   drawing: boolean;
+  drawingTool: DrawingTool;
+  searchPlace: Place | null;
+  onDraw: (points: TerritoryPoint[]) => void;
   points: TerritoryPoint[];
   candidates: TerritoryCandidate[];
   onPoint: (p: TerritoryPoint) => void;
@@ -31,6 +36,7 @@ export default function TerritoryMap(props: Props) {
   const base = useRef<L.LayerGroup | null>(null),
     overlays = useRef<L.LayerGroup | null>(null),
     draft = useRef<L.LayerGroup | null>(null);
+  const [panMode, setPanMode] = useState(false);
   const firstFit = useRef(false),
     selectedFit = useRef("");
   useEffect(() => {
@@ -45,14 +51,62 @@ export default function TerritoryMap(props: Props) {
     base.current = L.layerGroup().addTo(m);
     overlays.current = L.layerGroup().addTo(m);
     draft.current = L.layerGroup().addTo(m);
-    m.on("click", (e: L.LeafletMouseEvent) => {
-      if (propsRef.current.drawing)
-        propsRef.current.onPoint({ lat: e.latlng.lat, lng: e.latlng.lng });
-    });
+    // Use the original pointer gesture for corner taps; synthesized touch clicks
+    // can be swallowed when switching away from freehand drawing.
+    const container = root.current;
+    let tap: { id: number; x: number; y: number } | null = null;
+    const pointerDown = (e: PointerEvent) => {
+      if (!e.isPrimary) {
+        tap = null;
+        return;
+      }
+      if (
+        e.button !== 0 ||
+        (e.target as HTMLElement).closest(".leaflet-control")
+      )
+        return;
+      tap = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    };
+    const pointerMove = (e: PointerEvent) => {
+      if (
+        tap &&
+        e.pointerId === tap.id &&
+        Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 8
+      )
+        tap = null;
+    };
+    const pointerEnd = (e: PointerEvent) => {
+      const wasTap =
+        tap &&
+        e.pointerId === tap.id &&
+        Math.hypot(e.clientX - tap.x, e.clientY - tap.y) <= 8;
+      tap = null;
+      if (
+        !wasTap ||
+        e.type === "pointercancel" ||
+        !propsRef.current.drawing ||
+        propsRef.current.drawingTool === "freehand"
+      )
+        return;
+      const point = m.mouseEventToContainerPoint(e),
+        size = m.getSize();
+      if (point.x < 0 || point.y < 0 || point.x > size.x || point.y > size.y)
+        return;
+      const ll = m.containerPointToLatLng(point);
+      propsRef.current.onPoint({ lat: ll.lat, lng: ll.lng });
+    };
+    container.addEventListener("pointerdown", pointerDown, true);
+    container.addEventListener("pointermove", pointerMove, true);
+    container.addEventListener("pointerup", pointerEnd, true);
+    container.addEventListener("pointercancel", pointerEnd, true);
     const observer = new ResizeObserver(() => m.invalidateSize());
     observer.observe(root.current);
     return () => {
       observer.disconnect();
+      container.removeEventListener("pointerdown", pointerDown, true);
+      container.removeEventListener("pointermove", pointerMove, true);
+      container.removeEventListener("pointerup", pointerEnd, true);
+      container.removeEventListener("pointercancel", pointerEnd, true);
       m.remove();
       map.current = null;
     };
@@ -61,6 +115,115 @@ export default function TerritoryMap(props: Props) {
     if (props.drawing) map.current?.doubleClickZoom.disable();
     else map.current?.doubleClickZoom.enable();
   }, [props.drawing]);
+  useEffect(() => {
+    const m = map.current,
+      container = root.current;
+    if (
+      !m ||
+      !container ||
+      !props.drawing ||
+      props.drawingTool !== "freehand" ||
+      panMode
+    )
+      return;
+    m.dragging.disable();
+    m.touchZoom.disable();
+    m.scrollWheelZoom.disable();
+    m.boxZoom.disable();
+    container.style.touchAction = "none";
+    let samples: L.Point[] = [],
+      pointer: number | null = null;
+    const stroke = L.polyline([], {
+      color: "#F0BC18",
+      weight: 3,
+      interactive: false,
+    }).addTo(m);
+    function collect(e: PointerEvent) {
+      const p = m!.mouseEventToContainerPoint(e);
+      const rect = container!.getBoundingClientRect();
+      if (p.x < 0 || p.y < 0 || p.x > rect.width || p.y > rect.height) return;
+      if (!samples.length || p.distanceTo(samples[samples.length - 1]) >= 4) {
+        samples.push(p);
+        // Bound work while retaining the entire traced shape.
+        if (samples.length > 1600)
+          samples = samples.filter((_, i) => i % 2 === 0);
+        stroke.setLatLngs(samples.map((p) => m!.containerPointToLatLng(p)));
+      }
+    }
+    function down(e: PointerEvent) {
+      if (
+        e.button !== 0 ||
+        !e.isPrimary ||
+        pointer !== null ||
+        (e.target as HTMLElement).closest(".leaflet-control")
+      )
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      pointer = e.pointerId;
+      samples = [];
+      container!.setPointerCapture(pointer);
+      collect(e);
+    }
+    function move(e: PointerEvent) {
+      if (e.pointerId === pointer) {
+        e.preventDefault();
+        collect(e);
+      }
+    }
+    function end(e: PointerEvent) {
+      if (e.pointerId !== pointer) return;
+      if (e.type !== "pointercancel") {
+        collect(e);
+        let simplified = L.LineUtil.simplify(samples, 3);
+        if (simplified.length > 80)
+          simplified = Array.from(
+            { length: 80 },
+            (_, i) => simplified[Math.floor((i * (simplified.length - 1)) / 79)]
+          );
+        if (simplified.length >= 3)
+          propsRef.current.onDraw(
+            simplified.map((p) => {
+              const ll = m!.containerPointToLatLng(p);
+              return { lat: ll.lat, lng: ll.lng };
+            })
+          );
+        else
+          setMessage(
+            "Draw a larger boundary, then lift your finger to finish."
+          );
+      }
+      pointer = null;
+      stroke.setLatLngs([]);
+      if (container!.hasPointerCapture(e.pointerId))
+        container!.releasePointerCapture(e.pointerId);
+    }
+    container.addEventListener("pointerdown", down, true);
+    container.addEventListener("pointermove", move);
+    container.addEventListener("pointerup", end);
+    container.addEventListener("pointercancel", end);
+    return () => {
+      container.removeEventListener("pointerdown", down, true);
+      container.removeEventListener("pointermove", move);
+      container.removeEventListener("pointerup", end);
+      container.removeEventListener("pointercancel", end);
+      stroke.remove();
+      container.style.touchAction = "";
+      m.dragging.enable();
+      m.touchZoom.enable();
+      m.scrollWheelZoom.enable();
+      m.boxZoom.enable();
+    };
+  }, [props.drawing, props.drawingTool, panMode]);
+  useEffect(() => {
+    const p = props.searchPlace,
+      m = map.current;
+    if (!p || !m) return;
+    if (p.bounds)
+      m.fitBounds(p.bounds, { padding: [24, 24], maxZoom: 15, animate: false });
+    else m.setView([p.lat, p.lng], 14, { animate: false });
+    firstFit.current = true;
+  }, [props.searchPlace]);
   useEffect(() => {
     if (!base.current) return;
     base.current.clearLayers();
@@ -153,22 +316,23 @@ export default function TerritoryMap(props: Props) {
               interactive: false,
             })
       );
-    coords.forEach((p, i) => {
-      const marker = L.circleMarker(p, {
-        radius: 6,
-        color: "#304B5E",
-        fillColor: "#F0BC18",
-        fillOpacity: 1,
-        weight: 2,
-        interactive: false,
+    if (props.drawingTool !== "freehand")
+      coords.forEach((p, i) => {
+        const marker = L.circleMarker(p, {
+          radius: 6,
+          color: "#304B5E",
+          fillColor: "#F0BC18",
+          fillOpacity: 1,
+          weight: 2,
+          interactive: false,
+        });
+        marker.bindTooltip(String(i + 1), {
+          permanent: true,
+          direction: "top",
+          className: "rt-corner",
+        });
+        draft.current!.addLayer(marker);
       });
-      marker.bindTooltip(String(i + 1), {
-        permanent: true,
-        direction: "top",
-        className: "rt-corner",
-      });
-      draft.current!.addLayer(marker);
-    });
     props.candidates.forEach((p) =>
       draft.current!.addLayer(
         L.circleMarker([p.lat, p.lng], {
@@ -181,7 +345,7 @@ export default function TerritoryMap(props: Props) {
         })
       )
     );
-  }, [props.points, props.candidates]);
+  }, [props.points, props.candidates, props.drawingTool]);
   async function locate() {
     setMessage("Finding your location…");
     try {
@@ -214,9 +378,28 @@ export default function TerritoryMap(props: Props) {
         </button>
       </div>
       <span className="rt-north">N ↑</span>
+      {props.drawing && props.drawingTool === "freehand" && (
+        <button
+          className="rt-pan-draw"
+          aria-pressed={panMode}
+          onClick={() => setPanMode((v) => !v)}
+        >
+          {panMode ? "Resume drawing" : "Move map"}
+        </button>
+      )}
       {props.drawing && (
         <p className="rt-map-hint">
-          Tap each corner • drag to move • {props.points.length} corners
+          {props.drawingTool === "freehand"
+            ? panMode
+              ? "Drag or pinch to position the map"
+              : "Trace the boundary • lift to finish"
+            : props.drawingTool === "rectangle"
+            ? props.points.length === 1
+              ? "Tap the opposite corner"
+              : props.points.length === 4
+              ? "4 corners • rectangle ready"
+              : "Tap the first corner of your rectangle"
+            : `Tap each corner • ${props.points.length} corners`}
         </p>
       )}
       {message && (

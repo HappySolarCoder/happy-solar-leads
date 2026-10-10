@@ -59,6 +59,7 @@ interface LeadMapProps {
   heatCells?: { lat: number; lng: number; intensity: number; count: number }[]; // Optional heat overlay
   heatCellRadiusMeters?: number;
   showLocateControl?: boolean;
+  showZoomControl?: boolean;
   showTeamAreas?: boolean; // User toggle: overlay FMA territories + teammate pins
   teamMembers?: TeamAreaMember[];
   onToggleTeamAreas?: (next: boolean) => void;
@@ -104,6 +105,7 @@ export default function LeadMap({
   heatCells = [],
   heatCellRadiusMeters = 180,
   showLocateControl = true,
+  showZoomControl = true,
   showTeamAreas = false,
   teamMembers = [],
   onToggleTeamAreas,
@@ -297,7 +299,7 @@ export default function LeadMap({
     const map = L.map(mapRef.current, {
       center,
       zoom,
-      zoomControl: true,
+      zoomControl: showZoomControl,
       attributionControl: false,
     });
 

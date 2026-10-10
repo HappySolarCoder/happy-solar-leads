@@ -22,6 +22,8 @@ import {
   type TerritoryMember,
   type TerritoryReview,
 } from "@/app/utils/territoryManager";
+import PlaceSearch, { type Place } from "./PlaceSearch";
+import { rectangleCorners, type DrawingTool } from "./drawing";
 import MobileDialog from "../_components/MobileDialog";
 const TerritoryMap = dynamic(() => import("./TerritoryMap"), {
   ssr: false,
@@ -62,6 +64,8 @@ export default function TerritoryWorkspace({
       "rename" | "transfer" | "archive" | null
     >(null),
     [editValue, setEditValue] = useState("");
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>("rectangle");
+  const [searchPlace, setSearchPlace] = useState<Place | null>(null);
   const pending = useRef<{ key: string; requestId: string } | null>(null),
     lock = useRef(false);
   const selectedArea = data.territories.find((t) => t.id === selected);
@@ -98,6 +102,7 @@ export default function TerritoryWorkspace({
   }
   function start() {
     setSelected("");
+    setDrawingTool("rectangle");
     setMode("draw");
     setPoints([]);
     setReview(null);
@@ -191,14 +196,33 @@ export default function TerritoryWorkspace({
       </header>
       <div className="rt-body">
         <section className="rt-map-section">
+          <PlaceSearch
+            preview={preview}
+            disabled={busy}
+            onSelect={(p) => {
+              setSearchPlace({ ...p });
+              setSelected("");
+            }}
+          />
           <TerritoryMap
+            searchPlace={searchPlace}
+            drawingTool={drawingTool}
+            onDraw={setPoints}
             territories={data.territories}
             selectedId={selected}
             drawing={mode === "draw" && !busy}
             points={points}
             candidates={review?.candidates || []}
             onPoint={(p) =>
-              setPoints((prev) => (prev.length < 80 ? [...prev, p] : prev))
+              setPoints((prev) =>
+                drawingTool === "rectangle"
+                  ? prev.length === 1
+                    ? rectangleCorners(prev[0], p)
+                    : [p]
+                  : prev.length < 80
+                  ? [...prev, p]
+                  : prev
+              )
             }
             onSelect={(id) => {
               if (mode === "list") {
@@ -362,6 +386,33 @@ export default function TerritoryWorkspace({
               </div>
               {mode === "draw" ? (
                 <>
+                  <div
+                    className="rt-draw-tools"
+                    role="group"
+                    aria-label="Boundary tool"
+                  >
+                    {(
+                      [
+                        ["rectangle", "Rectangle"],
+                        ["corners", "Corners"],
+                        ["freehand", "Draw"],
+                      ] as const
+                    ).map(([tool, label]) => (
+                      <button
+                        key={tool}
+                        aria-pressed={drawingTool === tool}
+                        disabled={busy}
+                        onClick={() => {
+                          setDrawingTool(tool);
+                          setPoints([]);
+                          setReview(null);
+                          setError("");
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                   <div className="rt-form">
                     <label>
                       Territory name
@@ -393,22 +444,32 @@ export default function TerritoryWorkspace({
                     </label>
                   </div>
                   <p className="rt-help">
-                    Tap at least 3 corners on the map. You can still drag and
-                    zoom. Keep areas small enough for a useful knocking session.
+                    {drawingTool === "rectangle"
+                      ? "Tap two opposite corners to make a rectangle with four corners. Drag the map to move or pinch to zoom."
+                      : drawingTool === "freehand"
+                      ? "Trace the boundary with one finger or your mouse. Lift to finish. Use Move map to reposition; drawing again replaces the outline."
+                      : "Tap at least 4 corners around your area. Drag to move or pinch to zoom."}
                   </p>
                   <div className="rt-actions">
                     <button
-                      onClick={() => setPoints((p) => p.slice(0, -1))}
+                      onClick={() =>
+                        setPoints((p) =>
+                          drawingTool === "corners" ? p.slice(0, -1) : []
+                        )
+                      }
                       disabled={!points.length || busy}
                     >
                       <Undo2 size={18} />
-                      Undo corner
+                      {drawingTool === "corners" ? "Undo corner" : "Clear area"}
                     </button>
                     <button
                       className="rt-primary"
                       onClick={inspect}
                       disabled={
-                        points.length < 3 || !rep || !name.trim() || busy
+                        points.length < (drawingTool === "freehand" ? 3 : 4) ||
+                        !rep ||
+                        !name.trim() ||
+                        busy
                       }
                     >
                       {busy ? "Checking…" : "Review pins"}

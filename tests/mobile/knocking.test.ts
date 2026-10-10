@@ -8,6 +8,7 @@ import { fieldPinArtwork } from "../../app/utils/fieldPin.ts";
 import {
   suggestDoors,
   sessionAppointments,
+  sessionDoors,
 } from "../../app/mobile/_lib/doorCoach.ts";
 import type { Lead } from "../../app/types/index.ts";
 const now = new Date(2026, 9, 8, 12);
@@ -46,7 +47,7 @@ test("viewport selects a small area from 10,000 pins without copying lead object
   assert.equal(picked[0], leads[3000]);
   assert.equal(
     queryLeadViewport(index, { south: 43, north: 44, west: 0, east: 1 }).length,
-    0,
+    0
   );
 });
 test("viewport accepts zero coordinates and crossing the date line", () => {
@@ -58,11 +59,11 @@ test("viewport accepts zero coordinates and crossing the date line", () => {
   assert.equal(
     queryLeadViewport(index, { south: -1, north: 1, west: 178, east: -178 })
       .length,
-    2,
+    2
   );
   assert.equal(
     queryLeadViewport(index, { south: -1, north: 1, west: -1, east: 1 }).length,
-    1,
+    1
   );
 });
 test("pin has independent status/outcome symbols, selection state and simple zoomed-out artwork", () => {
@@ -107,9 +108,9 @@ test("next door queue prioritizes due go-backs and excludes other reps, negative
   ];
   assert.deepEqual(
     suggestDoors(leads, "rep", [base.lat!, base.lng!], now).map(
-      (x) => x.lead.id,
+      (x) => x.lead.id
     ),
-    ["due", "warm", "a"],
+    ["due", "warm", "a"]
   );
   assert.deepEqual(suggestDoors(leads, "rep", undefined, now), []);
 });
@@ -138,16 +139,74 @@ test("focus counts unique actual appointments by this rep since session start, i
     sessionAppointments(
       [history, foreign, outcomeOnly],
       "rep",
-      new Date(2026, 9, 8, 10).toISOString(),
+      new Date(2026, 9, 8, 10).toISOString()
     ),
-    1,
+    1
   );
   assert.equal(
     sessionAppointments(
       [history],
       "rep",
-      new Date(2026, 9, 8, 11, 30).toISOString(),
+      new Date(2026, 9, 8, 11, 30).toISOString()
     ),
-    0,
+    0
+  );
+});
+
+test("Focus counts unique configured door knocks since start, including history after later changes", async () => {
+  const { DEFAULT_DISPOSITIONS } = await import(
+    "../../app/types/disposition.ts"
+  );
+  const dispositions = [
+    ...DEFAULT_DISPOSITIONS,
+    {
+      ...DEFAULT_DISPOSITIONS[2],
+      id: "custom",
+      name: "Talked",
+      countsAsDoorKnock: true,
+    },
+  ];
+  const event = {
+    disposition: "Talked",
+    userId: "rep",
+    userName: "Rep",
+    timestamp: now,
+  };
+  const custom = { ...base, dispositionHistory: [event, event] };
+  const start = new Date(2026, 9, 8, 11).toISOString();
+  assert.equal(
+    sessionDoors(
+      [
+        custom,
+        custom,
+        { ...base, id: "claimed", status: "claimed", dispositionedAt: now },
+        { ...custom, id: "historical", historicalTerritoryPin: true },
+        {
+          ...custom,
+          id: "foreign",
+          dispositionHistory: [{ ...event, userId: "other" }],
+        },
+        {
+          ...custom,
+          id: "old",
+          dispositionHistory: [{ ...event, timestamp: new Date(2026, 9, 7) }],
+        },
+        { ...base, id: "legacy", status: "not-home", dispositionedAt: now },
+      ],
+      "rep",
+      start,
+      dispositions
+    ),
+    2
+  );
+  assert.equal(sessionDoors([custom], "rep", "invalid", dispositions), 0);
+  assert.equal(
+    sessionDoors(
+      [custom],
+      "rep",
+      start,
+      dispositions.map((d) => ({ ...d, countsAsDoorKnock: false }))
+    ),
+    0
   );
 });

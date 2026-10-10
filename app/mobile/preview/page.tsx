@@ -1,4 +1,5 @@
 "use client";
+import { DEFAULT_DISPOSITIONS } from "@/app/types/disposition";
 
 import { useState } from "react";
 import { X, MapPin, SlidersHorizontal } from "lucide-react";
@@ -110,6 +111,7 @@ const days = ["Fri", "Sat", "Sun", "Mon", "Tue", "Wed", "Thu"].map(
 );
 
 export default function DesignPreview() {
+  const [showTeamAreas, setShowTeamAreas] = useState(false);
   const [tab, setTab] = useState("/mobile");
   const [mode, setMode] = useState<"map" | "list">("map");
   const [selected, setSelected] = useState<Lead | null>(null);
@@ -173,8 +175,8 @@ export default function DesignPreview() {
       {tab === "/mobile/knocking" && (
         <>
           <FieldToolbar
-            mode={mode}
-            onMode={setMode}
+            showTeamAreas={showTeamAreas}
+            onToggleTeamAreas={() => setShowTeamAreas(v => !v)}
             onSearch={() => setDialog("Find an address")}
             onFilter={() => setDialog("Map filters")}
             filterCount={Number(outcomesOnly)}
@@ -192,6 +194,7 @@ export default function DesignPreview() {
                 aria-hidden="true"
               >
                 <rect width="420" height="550" fill="#e9edde" />
+                {showTeamAreas && <path d="M70 100H340V420H70Z" fill="#476E8820" stroke="#476E88" strokeWidth="3" strokeDasharray="6 4"/>}
                 <path
                   d="M-20 140 460 380M10 470 440 230M65-20 120 590M350-20 270 590"
                   stroke="#fffef7"
@@ -254,8 +257,7 @@ export default function DesignPreview() {
               <DoorCoach
                 leads={demoLeads}
                 userId="preview-rep"
-                position={[43.1566, -77.6088]}
-                onLead={setSelected}
+                dispositions={DEFAULT_DISPOSITIONS}
                 now={demoNow}
               />
               <small>Illustrative neighborhood · Sample GPS</small>

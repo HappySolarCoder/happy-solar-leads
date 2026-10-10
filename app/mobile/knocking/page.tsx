@@ -50,7 +50,7 @@ export default function KnockingPage() {
   const [outcomesOnly, setOutcomesOnly] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
-  const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
+  const [viewMode] = useState<'map' | 'list'>('map');
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
   const [mapZoom, setMapZoom] = useState(15);
@@ -580,7 +580,7 @@ export default function KnockingPage() {
       {showGoalsModal && <MobileDialog title="Daily pace" onClose={() => setShowGoalsModal(false)}><div className="rm-coach-panel"><div className="rm-panel-heading"><h2>Daily pace</h2><button onClick={() => setShowGoalsModal(false)} aria-label="Close daily pace"><X size={22}/></button></div><p>{monthlyKnocks} of {monthlyGoal} monthly knocks completed.</p><h2>{dailyTarget ?? '—'} knocks per remaining workday</h2><p>Based on your company goal and the latest recorded disposition per door.</p></div></MobileDialog>}
 
       <header className={`relative flex-shrink-0 ${showSearchSheet ? 'z-[70]' : 'z-50'}`}>
-        <FieldToolbar mode={viewMode} onMode={setViewMode}
+        <FieldToolbar showTeamAreas={showTeamAreas} onToggleTeamAreas={() => setShowTeamAreas(v => !v)}
           onSearch={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
           onFilter={() => setShowFilters(!showFilters)}
           filterCount={solarFilter.length + Number(dispositionFilter !== 'all') + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly)}
@@ -962,6 +962,7 @@ export default function KnockingPage() {
             assignmentMode="none"
             userPosition={userPosition}
             showLocateControl={false}
+            showZoomControl={false}
             center={mapCenter} // Set ONCE on GPS load, then only on manual recenter
             zoom={mapZoom} // Closer zoom for mobile
             onLeadAdded={refreshLeads}
@@ -971,10 +972,9 @@ export default function KnockingPage() {
             showTeamAreas={showTeamAreas}
             territories={showTeamAreas ? teamAreaTerritories : []}
             teamMembers={teamMembersForMap}
-            onToggleTeamAreas={setShowTeamAreas}
           />
           <FieldCompass />
-          {currentUser && !dataLoading && !dataUnavailable && <DoorCoach key={currentUser.id} leads={leads} userId={currentUser.id} position={userPosition} onLead={handleLeadSelect} />}
+          {currentUser && !dataLoading && !dataUnavailable && <DoorCoach key={currentUser.id} leads={leads} userId={currentUser.id} dispositions={dispositions} />}
           {currentUser && !isRefreshing && !dataUnavailable && !showLeadDetail && <ReturnVisitReminder key={currentUser.id} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
           {isRefreshing && <div className="rm-map-loading" role="status">Loading your pins…</div>}
           {/* GPS Locate button is now built into LeadMap component */}

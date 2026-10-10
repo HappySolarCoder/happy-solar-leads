@@ -13,7 +13,6 @@ import {
   LoaderCircle,
   Search,
   SlidersHorizontal,
-  List,
   Map,
   Crosshair,
 } from "lucide-react";
@@ -143,8 +142,8 @@ export function MobileNotice({ children }: { children: ReactNode }) {
 }
 
 export function FieldToolbar({
-  mode,
-  onMode,
+  showTeamAreas,
+  onToggleTeamAreas,
   onSearch,
   onFilter,
   filterCount,
@@ -154,8 +153,8 @@ export function FieldToolbar({
   knocks,
   onLocate,
 }: {
-  mode: "map" | "list";
-  onMode: (mode: "map" | "list") => void;
+  showTeamAreas: boolean;
+  onToggleTeamAreas: () => void;
   onSearch: () => void;
   onFilter: () => void;
   filterCount: number;
@@ -188,11 +187,13 @@ export function FieldToolbar({
         <b>{knocks ?? "—"}</b>
       </span>
       <button
-        className="rm-mode-toggle"
-        onClick={() => onMode(mode === "map" ? "list" : "map")}
+        className="rm-areas-toggle"
+        onClick={onToggleTeamAreas}
+        aria-label={showTeamAreas ? "Hide team areas" : "Show team areas"}
+        aria-pressed={showTeamAreas}
       >
-        {mode === "map" ? <List size={18} /> : <Map size={18} />}
-        <span>{mode === "map" ? "List" : "Map"}</span>
+        <Map size={18} />
+        <span>Areas</span>
       </button>
       <button
         className={`rm-filter ${filterCount ? "is-active" : ""}`}

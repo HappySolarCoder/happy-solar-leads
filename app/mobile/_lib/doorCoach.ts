@@ -21,14 +21,14 @@ export function suggestDoors(
   leads: Lead[],
   userId: string,
   position: [number, number] | undefined,
-  now: Date,
+  now: Date
 ): DoorSuggestion[] {
   if (!position) return [];
   const today = dayStart(now).getTime();
   const tomorrow = new Date(
     now.getFullYear(),
     now.getMonth(),
-    now.getDate() + 1,
+    now.getDate() + 1
   ).getTime();
   const candidates: DoorSuggestion[] = [];
   for (const lead of leads) {
@@ -56,7 +56,7 @@ export function suggestDoors(
       position[0],
       position[1],
       lead.lat!,
-      lead.lng!,
+      lead.lng!
     );
     if (distance > 1) continue;
     const last = lead.dispositionedAt
@@ -81,7 +81,9 @@ export function suggestDoors(
     } else if (untouched.has(status) && !last) {
       if (lead.solarCategory === "poor") continue;
       reason = ["great", "good"].includes(lead.solarCategory || "")
-        ? `${lead.solarCategory === "great" ? "Great" : "Good"} solar roof · unworked door`
+        ? `${
+            lead.solarCategory === "great" ? "Great" : "Good"
+          } solar roof · unworked door`
         : "Unworked door nearby";
       priority = ["great", "good"].includes(lead.solarCategory || "") ? 2 : 4;
     } else if (status === "not-home" && last > 0 && last < today) {
@@ -98,7 +100,7 @@ export function suggestDoors(
 export function sessionAppointments(
   leads: Lead[],
   userId: string,
-  startedAt: string,
+  startedAt: string
 ): number {
   const start = new Date(startedAt).getTime();
   if (!Number.isFinite(start)) return 0;
@@ -108,9 +110,9 @@ export function sessionAppointments(
       (event) =>
         event.userId === userId &&
         ["appointment", "appointment set", "appt set"].includes(
-          String(event.disposition).trim().toLowerCase(),
+          String(event.disposition).trim().toLowerCase()
         ) &&
-        new Date(event.timestamp).getTime() >= start,
+        new Date(event.timestamp).getTime() >= start
     );
     if (recorded) return true;
     return (
@@ -120,4 +122,39 @@ export function sessionAppointments(
       new Date(lead.dispositionedAt).getTime() >= start
     );
   }).length;
+}
+
+/** Unique doors with a configured knock event by this rep during the session. */
+export function sessionDoors(
+  leads: Lead[],
+  userId: string,
+  startedAt: string,
+  dispositions: import("@/app/types/disposition").Disposition[]
+): number {
+  const start = new Date(startedAt).getTime();
+  if (!Number.isFinite(start)) return 0;
+  const normalize = (value: string) => value.trim().toLowerCase();
+  const knockStatuses = new Set(
+    dispositions
+      .filter((d) => d.countsAsDoorKnock)
+      .flatMap((d) => [normalize(d.id), normalize(d.name)])
+  );
+  const ids = new Set<string>();
+  for (const lead of leads) {
+    if (lead.historicalTerritoryPin) continue;
+    const recorded = lead.dispositionHistory?.some(
+      (event) =>
+        event.userId === userId &&
+        knockStatuses.has(normalize(String(event.disposition))) &&
+        new Date(event.timestamp).getTime() >= start
+    );
+    const legacy =
+      !lead.dispositionHistory?.length &&
+      activityActor(lead) === userId &&
+      knockStatuses.has(normalize(lead.status || "")) &&
+      lead.dispositionedAt &&
+      new Date(lead.dispositionedAt).getTime() >= start;
+    if (recorded || legacy) ids.add(lead.id);
+  }
+  return ids.size;
 }
