@@ -120,6 +120,8 @@ try {
     page.getByRole("button", { name: "Assign 9 pins", exact: true })
   ).toBeVisible();
   await expect(page.locator(".leaflet-zoom-anim")).toHaveCount(0);
+  await expect(page.locator(".rt-map.leaflet-container")).toBeVisible();
+  assert.ok((await page.locator(".leaflet-tile-loaded").first().boundingBox()).width > 0, "Map tiles must retain their width after draw/review transitions");
   await page.screenshot({ path: `${dest}/Raydar-Territory-Review-v6.png` });
   await page
     .getByRole("button", { name: "Assign 9 pins", exact: true })

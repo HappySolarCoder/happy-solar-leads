@@ -193,10 +193,10 @@ export default function TerritoryMap(props: Props) {
     }
   }
   return (
-    <div className="rt-map-wrap">
+    <div className={`rt-map-wrap${props.drawing ? " rt-drawing" : ""}`}>
       <div
         ref={root}
-        className={`rt-map${props.drawing ? " rt-drawing" : ""}`}
+        className="rt-map"
         aria-label="Territory map. Drag to move; use plus and minus to zoom. Tap corners while drawing."
       />
       <div className="rt-map-actions">

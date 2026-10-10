@@ -1672,7 +1672,7 @@
 .raydar-mobile .rt-header>button,.raydar-mobile .rt-header>a{border:0;width:44px;height:44px;display:grid;place-items:center;background:transparent}
 .raydar-mobile .rt-shell .rt-primary,.raydar-mobile .rt-unavailable .rt-primary{background:#476e88;color:#fff;border-color:#476e88}
 .raydar-mobile .rt-body{display:grid;grid-template-columns:minmax(0,1fr) 390px;flex:1;min-height:0}
-.raydar-mobile .rt-map-section{min-height:0;position:relative}.raydar-mobile .rt-map-wrap,.raydar-mobile .rt-map{width:100%;height:100%;position:relative;background:#ebf1f5}.raydar-mobile .rt-map{z-index:0}.raydar-mobile .rt-drawing{cursor:crosshair}
+.raydar-mobile .rt-map-section{min-height:0;position:relative}.raydar-mobile .rt-map-wrap,.raydar-mobile .rt-map{width:100%;height:100%;position:relative;background:#ebf1f5}.raydar-mobile .rt-map{z-index:0}.raydar-mobile .rt-drawing .rt-map{cursor:crosshair}
 .raydar-mobile .rt-map-actions{position:absolute;z-index:500;top:12px;right:12px;display:flex;gap:7px}.raydar-mobile .rt-map-actions button{box-shadow:0 3px 12px #304b5e18}
 .raydar-mobile .rt-north{position:absolute;top:116px;left:13px;z-index:400;background:#fffcf5ed;padding:8px;border-radius:9px;font-size:12px;font-weight:750}
 .raydar-mobile .rt-map-hint,.raydar-mobile .rt-map-message{position:absolute;bottom:26px;left:16px;right:16px;margin:auto;max-width:420px;z-index:450;background:#fffcf5ee;border:1px solid #dce5e9;box-shadow:0 4px 18px #304b5e16;padding:9px 13px;border-radius:12px;font-size:12px;text-align:center;pointer-events:none}
