@@ -25,9 +25,12 @@ try{
  await page.getByRole('link',{name:'View all',exact:true}).click();
  await expect(page).toHaveURL(/\/mobile\/follow-ups\/?$/);console.log('Follow-up navigation passed');
  await page.getByRole('link',{name:'Knock',exact:true}).click();
+ await page.getByRole('button',{name:/^Center map on my location/}).click();
+ await page.waitForTimeout(450);
  await expect(page.locator('.leaflet-marker-icon[title]').first()).toBeVisible();
  const pinCount=await page.locator('.leaflet-marker-icon[title]').count();
- const pinPoint=await page.locator('.leaflet-marker-icon.field-pin').evaluateAll(markers=>{for(const marker of markers){const box=marker.getBoundingClientRect(),x=box.x+box.width/2,y=box.y+box.height/2;if(x>0&&x<innerWidth&&y>0&&y<innerHeight&&document.elementFromPoint(x,y)?.closest('.field-pin')===marker)return {x,y};}return null;});
+ const reachablePin=()=>page.locator('.leaflet-marker-icon.field-pin').evaluateAll(markers=>{for(const marker of markers){const box=marker.getBoundingClientRect();for(const dx of [.5,.3,.7])for(const dy of [.5,.3,.7]){const x=box.x+box.width*dx,y=box.y+box.height*dy;if(x>0&&x<innerWidth&&y>0&&y<innerHeight&&document.elementFromPoint(x,y)?.closest('.field-pin')===marker)return {x,y};}}return null;});
+ await expect.poll(reachablePin).toBeTruthy();const pinPoint=await reachablePin();
  assert.ok(pinPoint,'a worked pin is reachable in the viewport');await page.mouse.click(pinPoint.x,pinPoint.y);
  await expect(page.getByRole('button',{name:'Close lead details'})).toBeVisible();
  await expect(page.locator('.leaflet-marker-icon[title]')).toHaveCount(pinCount);
