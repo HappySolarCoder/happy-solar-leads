@@ -2,6 +2,7 @@
 
 import { FieldToolbar, MobileNav, MobileNotice } from '../_components/MobileShell';
 import DoorCoach from '../_components/DoorCoach';
+import ReturnVisitReminder from '../_components/ReturnVisitReminder';
 import { summarizeActivity } from '../_lib/metrics';
 import { countWorkdaysElapsedAndRemaining } from '@/app/utils/goals';
 import { fieldPinArtwork } from '@/app/utils/fieldPin';
@@ -1006,6 +1007,7 @@ export default function KnockingPage() {
             onToggleTeamAreas={setShowTeamAreas}
           />
           {currentUser && <DoorCoach key={currentUser.id} leads={leads} userId={currentUser.id} position={userPosition} onLead={handleLeadSelect} />}
+          {currentUser && !showLeadDetail && <ReturnVisitReminder key={currentUser.id} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
           {isRefreshing && <div className="rm-map-loading" role="status">Loading your pins…</div>}
           {/* GPS Locate button is now built into LeadMap component */}
         </main>
@@ -1072,6 +1074,8 @@ export default function KnockingPage() {
       {/* Lead Detail Panel */}
       {selectedLead && showLeadDetail && (
         <LeadDetail
+          key={selectedLead.id}
+          fieldMemory
           lead={selectedLead}
           currentUser={currentUser}
           onClose={() => {

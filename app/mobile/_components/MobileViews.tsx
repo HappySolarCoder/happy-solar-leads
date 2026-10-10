@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import OutcomeFeed from "./OutcomeFeed";
 import {
   ArrowRight,
   CalendarDays,
@@ -149,6 +150,7 @@ export function LeadRow({
 }
 
 export function TodayView({
+  userId,
   name,
   now,
   metrics,
@@ -159,6 +161,7 @@ export function TodayView({
   onNavigate,
   onLead,
 }: {
+  userId: string;
   name: string;
   now: Date;
   metrics: Metrics;
@@ -324,30 +327,7 @@ export function TodayView({
           </div>
         )}
       </div>
-      {outcomeLeads.length > 0 && (
-        <>
-          <SectionHeading title="Appointment updates" />
-          <div className="rm-agenda">
-            {outcomeLeads.slice(0, 3).map((lead) => (
-              <button
-                className="rm-lead-row"
-                key={lead.id}
-                onClick={() => onLead(lead)}
-              >
-                <span className="rm-lead-symbol">
-                  <CalendarDays size={20} />
-                </span>
-                <span className="rm-lead-copy">
-                  <strong>{lead.address}</strong>
-                  <span>{lead.name}</span>
-                  <AppointmentOutcomeBadge lead={lead} />
-                </span>
-                <ChevronRight size={18} className="rm-muted" />
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      <OutcomeFeed key={userId} leads={outcomeLeads} userId={userId} onLead={onLead} />
       <button className="rm-tool-link" onClick={() => onNavigate("/tools")}>
         <span className="rm-metric-icon gold">
           <Sun size={22} />

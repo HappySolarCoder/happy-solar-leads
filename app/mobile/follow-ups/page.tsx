@@ -34,6 +34,8 @@ export default function FollowUpsPage() {
       <MobileNav />
       {selected && user && (
         <LeadDetail
+          key={selected.id}
+          fieldMemory
           lead={selected}
           currentUser={user}
           onClose={() => setSelectedId(null)}

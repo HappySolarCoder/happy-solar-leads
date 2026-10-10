@@ -17,13 +17,15 @@ import AppointmentOutcomeCard, {
   AppointmentOutcomeBadge,
 } from "@/app/components/AppointmentOutcomeBadge";
 import { getAppointmentOutcome } from "@/app/utils/appointmentOutcome";
+import DoorstepMemory from "@/app/components/DoorstepMemory";
+import ReturnVisitReminder from "../_components/ReturnVisitReminder";
 import DoorCoach from "../_components/DoorCoach";
 import { fieldPinArtwork } from "@/app/utils/fieldPin";
 import MobileDialog from "../_components/MobileDialog";
 
 // This route is a read-only design gallery. It never initializes a user session,
 // reads company records, or saves a lead. Shared views are used by the real app.
-const demoNow = new Date(2026, 9, 8, 10, 30);
+const demoNow = new Date("2026-10-08T18:35:00Z");
 const demoLeads: Lead[] = [
   {
     id: "demo-1",
@@ -109,6 +111,7 @@ export default function DesignPreview() {
   const [tab, setTab] = useState("/mobile");
   const [mode, setMode] = useState<"map" | "list">("map");
   const [selected, setSelected] = useState<Lead | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
   const [dialog, setDialog] = useState("");
   const [query, setQuery] = useState("");
   const [outcomesOnly, setOutcomesOnly] = useState(false);
@@ -136,6 +139,7 @@ export default function DesignPreview() {
       )}
       {tab === "/mobile" && (
         <TodayView
+          userId="preview-rep"
           name="Evan Day"
           now={demoNow}
           metrics={stats}
@@ -243,6 +247,7 @@ export default function DesignPreview() {
                   </button>
                 );
               })}
+              <ReturnVisitReminder leads={demoLeads} userId="preview-rep" position={{ lat: 43.1566, lng: -77.6088, accuracy: 12, timestamp: demoNow.getTime() }} previewNow={demoNow} onLead={setSelected} />
               <DoorCoach
                 leads={demoLeads}
                 userId="preview-rep"
@@ -303,6 +308,9 @@ export default function DesignPreview() {
                 {selected.name} · {selected.city}, {selected.state}
               </p>
               <div className="mt-5">
+                <DoorstepMemory lead={selected} onNote={(note) => setNoteDraft(current => current.includes(note) ? current : [current, note].filter(Boolean).join('\n'))} />
+                <label className="block text-sm">Sample note draft<textarea aria-label="Sample note draft" className="block w-full border rounded-lg p-3 mt-2" value={noteDraft} onChange={event => setNoteDraft(event.target.value)} /></label>
+                <small>Preview only — nothing is saved.</small>
                 <AppointmentOutcomeCard lead={selected} />
               </div>
               <p>

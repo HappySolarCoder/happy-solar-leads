@@ -1,10 +1,11 @@
 'use client';
 
 import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
+import DoorstepMemory from './DoorstepMemory';
 
 import { getLocation } from '@/app/utils/geolocation';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 import { Lead, User, ObjectionType, LeadDispositionHistoryEntry } from '@/app/types';
 import { 
@@ -33,6 +34,7 @@ import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 
 interface LeadDetailProps {
+  fieldMemory?: boolean;
   lead: Lead;
   currentUser: User | null;
   onClose: () => void;
@@ -95,9 +97,10 @@ const ICON_MAP: Record<string, any> = {
   'arrow-left': ArrowLeft,
 };
 
-export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: LeadDetailProps) {
+export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false }: LeadDetailProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
+  const noteInput = useRef<HTMLTextAreaElement>(null);
   const [notesSaving, setNotesSaving] = useState(false);
   const [showAllStatuses, setShowAllStatuses] = useState(false);
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
@@ -604,6 +607,12 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             </div>
           </a>
 
+          {fieldMemory && <DoorstepMemory lead={lead} onNote={(note) => {
+            setNotes(current => current.includes(note) ? current : [current.trim(), note].filter(Boolean).join('\n'));
+            noteInput.current?.scrollIntoView({ block: 'center' });
+            noteInput.current?.focus({ preventScroll: true });
+          }} />}
+
           {/* Contact Info */}
           {(lead.phone || lead.email) && (
             <div className="mb-4 space-y-2">
@@ -812,6 +821,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Notes</h3>
             <textarea
+              ref={noteInput}
+              aria-label="Lead notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Add notes about this lead..."

@@ -11,7 +11,7 @@ import {
 } from "./_components/MobileShell";
 import { TodayView } from "./_components/MobileViews";
 import { useMobileData } from "./_components/useMobileData";
-import { getAppointmentOutcome } from "@/app/utils/appointmentOutcome";
+import { personalOutcomeLeads } from "./_lib/fieldUpdates";
 import { dayStart, summarizeActivity } from "./_lib/metrics";
 
 const LeadDetail = dynamic(() => import("@/app/components/LeadDetail"), {
@@ -78,6 +78,7 @@ export default function MobilePage() {
       <MobileHeader name={user.name} />
       {error && <MobileNotice>{error}</MobileNotice>}
       <TodayView
+        userId={user.id}
         name={user.name}
         now={now}
         metrics={summarizeActivity(
@@ -88,13 +89,7 @@ export default function MobilePage() {
           end,
         )}
         followUps={followUps}
-        outcomeLeads={leads
-          .filter((l) => getAppointmentOutcome(l))
-          .sort(
-            (a, b) =>
-              (new Date(b.ghlLastUpdatedAt || 0).getTime() || 0) -
-              (new Date(a.ghlLastUpdatedAt || 0).getTime() || 0),
-          )}
+        outcomeLeads={personalOutcomeLeads(leads, user.id)}
         dailyTarget={goal.target}
         goalLoading={goal.loading}
         onNavigate={router.push}
@@ -103,6 +98,8 @@ export default function MobilePage() {
       <MobileNav />
       {selected && (
         <LeadDetail
+          key={selectedId}
+          fieldMemory
           lead={selected}
           currentUser={user}
           onClose={() => setSelectedId(null)}
