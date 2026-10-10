@@ -32,6 +32,15 @@ const members = [
     team: "Demo team",
   },
 ];
+members.push(
+  ...Array.from({ length: 1000 }, (_, i) => ({
+    id: `demo-large-${i}`,
+    name: `Sample Rep ${String(i + 1).padStart(4, "0")}`,
+    color: "#587E98",
+    role: "setter",
+    team: "Demo team",
+  }))
+);
 const areas: ManagedTerritory[] = [
   {
     id: "demo-north",
@@ -93,6 +102,15 @@ export default function TerritoryPreview() {
         skipped: candidates.filter((c) => !c.eligible).length,
         truncated: false,
       } as T;
+    }
+    if (body.action === "archive-many") {
+      const ids = new Set(
+        (body.territories as { id: string }[]).map((t) => t.id)
+      );
+      data.current.territories = data.current.territories.filter(
+        (t) => !ids.has(t.id)
+      );
+      return { removed: ids.size } as T;
     }
     if (body.action === "create") {
       const user = members.find((m) => m.id === body.userId)!;

@@ -13,7 +13,7 @@ async function request<T = TerritoryData>(
 ): Promise<T> {
   const token = await auth?.currentUser?.getIdToken();
   if (!token) throw new Error("Sign in again to manage territories.");
-  const response = await apiFetch("/api/territory-management", {
+  const response = await apiFetch(body ? "/api/territory-management" : "/api/territory-management?summary=1", {
     method: body ? "POST" : "GET",
     headers: {
       Authorization: `Bearer ${token}`,

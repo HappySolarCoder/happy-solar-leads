@@ -307,3 +307,19 @@ test("transfer skips active or reassigned leads; boundary removal preserves ever
     before
   );
 });
+
+test("bulk territory deletion is scoped, versioned, atomic, retryable and never edits pins", async()=>{
+ const f=fixture();f.seed("leads/history",{status:"appointment",assignedTo:"rep",notes:"Keep",dispositionHistory:[{userId:"rep"}]});
+ f.seed("territories/a",{name:"A",userId:"rep",polygon,leadIds:["history"]});f.seed("territories/b",{name:"B",userId:"rep",polygon,leadIds:[]});f.seed("territories/c",{name:"C",userId:"outsider",polygon,leadIds:[]});
+ const data=(await f.request()).body,items=data.territories.map((t:any)=>({id:t.id,version:t.version}));
+ const body={action:"archive-many",userId:"rep",territories:items,requestId};
+ assert.equal((await f.request({...body,userId:"outsider"})).status,403);
+ assert.equal((await f.request({...body,territories:[...items,{id:"c",version:"bad"}]})).status,409);
+ assert.equal(f.records.has("territories/a"),true);
+ const before=structuredClone(f.records.get("leads/history"));f.setFailure(true);assert.equal((await f.request(body)).status,503);assert.equal(f.records.has("territories/b"),true);f.setFailure(false);
+ assert.equal((await f.request(body)).body.removed,2);assert.equal((await f.request(body)).body.removed,0);assert.deepEqual(f.records.get("leads/history"),before);assert.equal(f.records.has("territories/c"),true);
+});
+
+test("a user pending deletion cannot receive territory or act as manager",async()=>{
+ const f=fixture();f.seed("users/rep",{role:"setter",team:"A",deletionPending:true});assert.equal((await f.request({action:"preview",userId:"rep",polygon})).status,403);f.seed("users/manager",{role:"manager",team:"A",isActive:false});assert.equal((await f.request()).status,403);
+});

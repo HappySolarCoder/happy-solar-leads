@@ -69,9 +69,9 @@ export default function MorePage() {
     ...(user && canManageUsers(user.role)
       ? [
           {
-            href: "/admin",
+            href: "/mobile/workspace",
             title: "Manage workspace",
-            text: "People, territories, and settings",
+            text: "Manage user accounts",
             icon: Settings,
           },
         ]
@@ -122,7 +122,7 @@ export default function MorePage() {
           <LogOut size={18} />
           {signingOut ? "Signing out…" : "Sign out"}
         </button>
-        <p className="rm-version">Raydar Next · v9 · Full-map territory drawing</p>
+        <p className="rm-version">Raydar Next · v10 · Team territories + user management</p>
       </main>
       <MobileNav />
     </div>

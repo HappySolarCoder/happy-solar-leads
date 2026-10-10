@@ -83,7 +83,9 @@ try {
   await expect(page.getByText("4 corners · Boundary ready",{exact:true})).toBeVisible();
   assert.deepEqual(await map.boundingBox(),original,"Completion preserves map dimensions");
   await page.getByLabel("Territory name").fill("Oak Lane Focus");
-  await page.getByLabel("Assign to").selectOption("demo-rep");
+  await page.getByRole("button", {name:/^Assign to:/}).click();
+  await page.getByLabel("Search users").fill("Taylor");
+  await page.getByRole("button",{name:"Select Taylor Reed",exact:true}).click();
   await page.getByRole("button",{name:"Redraw boundary",exact:true}).click();
   await expect(show()).toBeVisible();
   await page.getByRole("button",{name:"Corners",exact:true}).click();
@@ -94,7 +96,7 @@ try {
   await page.getByRole("button",{name:"Done",exact:true}).click();
   await expect(hide()).toBeVisible();
   await expect(page.getByLabel("Territory name")).toHaveValue("Oak Lane Focus");
-  await expect(page.getByLabel("Assign to")).toHaveValue("demo-rep");
+  await expect(page.getByRole("button",{name:"Assign to: Taylor Reed",exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Redraw boundary",exact:true}).click();
   await page.getByRole("button",{name:"Draw",exact:true}).click();
   const b=await map.boundingBox();

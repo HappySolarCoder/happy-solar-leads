@@ -24,6 +24,7 @@ import {
 } from "@/app/utils/territoryManager";
 import PlaceSearch, { type Place } from "./PlaceSearch";
 import { rectangleCorners, type DrawingTool } from "./drawing";
+import PersonPicker from "../_components/PersonPicker";
 import TerritorySheet from "./TerritorySheet";
 import MobileDialog from "../_components/MobileDialog";
 const TerritoryMap = dynamic(() => import("./TerritoryMap"), {
@@ -40,6 +41,7 @@ export type TerritoryData = {
 export type TerritoryRequest = <T = TerritoryData>(
   body?: Record<string, unknown>
 ) => Promise<T>;
+const NO_CANDIDATES: TerritoryReview["candidates"] = [];
 export default function TerritoryWorkspace({
   initialData,
   request,
@@ -66,13 +68,45 @@ export default function TerritoryWorkspace({
     >(null),
     [editValue, setEditValue] = useState("");
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("rectangle");
+  const [territoryPage, setTerritoryPage] = useState(0);
+  const [deleteAll, setDeleteAll] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [boundaryComplete, setBoundaryComplete] = useState(false);
   const [searchPlace, setSearchPlace] = useState<Place | null>(null);
   const pending = useRef<{ key: string; requestId: string } | null>(null),
     lock = useRef(false);
   const selectedArea = data.territories.find((t) => t.id === selected);
-  const recipients = data.members.filter(mayReceiveTerritory);
+  const recipients = useMemo(
+    () => data.members.filter(mayReceiveTerritory),
+    [data.members]
+  );
+  const repOptions = useMemo(
+    () =>
+      recipients.map((m) => ({
+        id: m.id,
+        name: m.name,
+        detail: m.team || m.role,
+      })),
+    [recipients]
+  );
+  const userOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    data.territories.forEach((t) =>
+      counts.set(t.userId, (counts.get(t.userId) || 0) + 1)
+    );
+    return data.members.map((m) => ({
+      id: m.id,
+      name: m.name,
+      detail: `${counts.get(m.id) || 0} territories · ${
+        m.team || m.role || "Team member"
+      }`,
+    }));
+  }, [data.members, data.territories]);
+  const mapAreas = useMemo(
+    () => data.territories.filter((t) => !repFilter || t.userId === repFilter),
+    [data.territories, repFilter]
+  );
+  const filterUser = data.members.find((m) => m.id === repFilter);
   const areas = useMemo(
     () =>
       data.territories
@@ -119,6 +153,7 @@ export default function TerritoryWorkspace({
     pending.current = null;
   }
   function cancel() {
+    setTerritoryPage(0);
     setCollapsed(false);
     setBoundaryComplete(false);
     setMode("list");
@@ -195,7 +230,7 @@ export default function TerritoryWorkspace({
     // accurately and retain the operation id for an idempotent retry.
     setNotice(
       body.action === "archive"
-        ? "Boundary removed. All pins keep their current assignments."
+        ? "Territory deleted. Pin history and assignments are kept."
         : body.action === "rename"
         ? "Territory renamed."
         : `${result.changed} pins assigned. ${
@@ -212,6 +247,35 @@ export default function TerritoryWorkspace({
         "Saved successfully, but the list could not refresh. Tap Refresh to see the saved territory."
       );
     }
+  }
+  async function removeAll() {
+    await run(async () => {
+      const targets = data.territories.filter((t) => t.userId === repFilter);
+      let removed = 0;
+      for (let i = 0; i < targets.length; i += 50) {
+        const chunk = targets.slice(i, i + 50),
+          body = {
+            action: "archive-many",
+            userId: repFilter,
+            territories: chunk.map((t) => ({ id: t.id, version: t.version })),
+          };
+        const key = JSON.stringify(body);
+        if (pending.current?.key !== key)
+          pending.current = { key, requestId: crypto.randomUUID() };
+        await request({ ...body, requestId: pending.current.requestId });
+        const ids = new Set(chunk.map((t) => t.id));
+        removed += chunk.length;
+        setData((d) => ({
+          ...d,
+          territories: d.territories.filter((t) => !ids.has(t.id)),
+        }));
+        setNotice(`${removed} territories deleted. Pin history is kept.`);
+        setSelected("");
+        setTerritoryPage(0);
+      }
+      setDeleteAll(false);
+      pending.current = null;
+    });
   }
   function openEdit(kind: "rename" | "transfer" | "archive") {
     setError("");
@@ -255,11 +319,11 @@ export default function TerritoryWorkspace({
             searchPlace={searchPlace}
             drawingTool={drawingTool}
             onDraw={finishBoundary}
-            territories={data.territories}
+            territories={mapAreas}
             selectedId={selected}
             drawing={mode === "draw" && !busy && !boundaryComplete}
             points={points}
-            candidates={review?.candidates || []}
+            candidates={review?.candidates || NO_CANDIDATES}
             onPoint={addPoint}
             onSelect={(id) => {
               if (mode === "list") {
@@ -386,28 +450,47 @@ export default function TerritoryWorkspace({
                     aria-label="Search territories"
                     placeholder="Find a territory or rep"
                     value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
+                    onChange={(e) => {
+                      setFilter(e.target.value);
+                      setTerritoryPage(0);
+                    }}
                   />
                 </label>
-                <select
-                  aria-label="Filter by rep"
+                <PersonPicker
+                  label="Choose territory user"
                   value={repFilter}
-                  onChange={(e) => setRepFilter(e.target.value)}
-                >
-                  <option value="">All reps</option>
-                  {data.members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
+                  options={userOptions}
+                  emptyLabel="All team members"
+                  allowAll
+                  onChange={(id) => {
+                    setRepFilter(id);
+                    setSelected("");
+                    setTerritoryPage(0);
+                  }}
+                />
               </div>
+              {filterUser && (
+                <div className="rt-owner-summary">
+                  <strong>{filterUser.name}’s territories</strong>
+                  <span>{mapAreas.length} areas</span>
+                  <button
+                    disabled={busy || !mapAreas.length}
+                    onClick={() => {
+                      setError("");
+                      setDeleteAll(true);
+                    }}
+                  >
+                    Delete all territories
+                  </button>
+                </div>
+              )}
               {selectedArea && (
                 <div className="rt-selected">
                   <span className="rm-eyebrow">SELECTED AREA</span>
                   <h3>{selectedArea.name}</h3>
                   <p>
-                    {selectedArea.userName} · {selectedArea.leadIds.length}{" "}
+                    {selectedArea.userName} ·{" "}
+                    {selectedArea.leadCount ?? selectedArea.leadIds.length}{" "}
                     assigned pins at last save
                   </p>
                   <div className="rt-row-actions">
@@ -423,40 +506,43 @@ export default function TerritoryWorkspace({
                       Transfer
                     </button>
                     <button onClick={() => openEdit("archive")} disabled={busy}>
-                      Remove boundary
+                      Delete territory
                     </button>
                   </div>
                 </div>
               )}
               <div className="rt-list">
                 {areas.length ? (
-                  areas.map((t) => (
-                    <button
-                      className={`rt-area${
-                        selected === t.id ? " selected" : ""
-                      }`}
-                      key={t.id}
-                      onClick={() => {
-                        setSelected(t.id);
-                        setCollapsed(false);
-                      }}
-                      aria-pressed={selected === t.id}
-                    >
-                      <span
-                        className="rt-area-icon"
-                        style={{ color: t.userColor }}
+                  areas
+                    .slice(territoryPage * 30, territoryPage * 30 + 30)
+                    .map((t) => (
+                      <button
+                        className={`rt-area${
+                          selected === t.id ? " selected" : ""
+                        }`}
+                        key={t.id}
+                        onClick={() => {
+                          setSelected(t.id);
+                          setCollapsed(false);
+                        }}
+                        aria-pressed={selected === t.id}
                       >
-                        <MapPinned size={22} />
-                      </span>
-                      <span>
-                        <strong>{t.name}</strong>
-                        <small>
-                          {t.userName} · {t.leadIds.length} pins at last save
-                        </small>
-                      </span>
-                      <ArrowRight size={18} />
-                    </button>
-                  ))
+                        <span
+                          className="rt-area-icon"
+                          style={{ color: t.userColor }}
+                        >
+                          <MapPinned size={22} />
+                        </span>
+                        <span>
+                          <strong>{t.name}</strong>
+                          <small>
+                            {t.userName} · {t.leadCount ?? t.leadIds.length}{" "}
+                            pins at last save
+                          </small>
+                        </span>
+                        <ArrowRight size={18} />
+                      </button>
+                    ))
                 ) : (
                   <div className="rt-empty">
                     <MapPinned size={30} />
@@ -473,6 +559,25 @@ export default function TerritoryWorkspace({
                   </div>
                 )}
               </div>
+              {areas.length > 30 && (
+                <div className="rm-directory-paging">
+                  <button
+                    disabled={!territoryPage}
+                    onClick={() => setTerritoryPage((p) => p - 1)}
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    {territoryPage + 1} / {Math.ceil(areas.length / 30)}
+                  </span>
+                  <button
+                    disabled={(territoryPage + 1) * 30 >= areas.length}
+                    onClick={() => setTerritoryPage((p) => p + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
               <p className="rt-help">
                 Select an area to see it on the map. Your live pin outcomes stay
                 intact.
@@ -535,21 +640,16 @@ export default function TerritoryWorkspace({
                     </label>
                     <label>
                       Assign to
-                      <select
+                      <PersonPicker
+                        label="Assign to"
                         value={rep}
-                        onChange={(e) => {
-                          setRep(e.target.value);
+                        options={repOptions}
+                        onChange={(id) => {
+                          setRep(id);
                           setReview(null);
                         }}
                         disabled={busy}
-                      >
-                        <option value="">Choose a rep</option>
-                        {recipients.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </label>
                   </div>
                   {!boundaryComplete && (
@@ -643,6 +743,43 @@ export default function TerritoryWorkspace({
           )}
         </TerritorySheet>
       </div>
+      {deleteAll && filterUser && (
+        <MobileDialog
+          title="Delete all territories"
+          onClose={() => {
+            if (!busy) setDeleteAll(false);
+          }}
+        >
+          <div className="rt-dialog">
+            <h3>
+              Delete {mapAreas.length} territories for {filterUser.name}?
+            </h3>
+            <p>
+              Removes this user’s territory boundaries. Door-knocking history,
+              pin statuses, notes and appointments are kept.
+            </p>
+            {notice && <p role="status">{notice}</p>}
+            {error && (
+              <p role="alert">
+                {error} Any remaining territories are still listed; retry to
+                finish.
+              </p>
+            )}
+            <div className="rt-actions">
+              <button disabled={busy} onClick={() => setDeleteAll(false)}>
+                Cancel
+              </button>
+              <button
+                className="rt-primary"
+                disabled={busy || !mapAreas.length}
+                onClick={removeAll}
+              >
+                {busy ? "Deleting…" : "Delete all territories"}
+              </button>
+            </div>
+          </div>
+        </MobileDialog>
+      )}
       {dialog && selectedArea && (
         <MobileDialog
           title={
@@ -650,7 +787,7 @@ export default function TerritoryWorkspace({
               ? "Rename territory"
               : dialog === "transfer"
               ? "Transfer this area"
-              : "Remove this boundary"
+              : "Delete this territory"
           }
           onClose={() => {
             if (!busy) setDialog(null);
@@ -672,24 +809,21 @@ export default function TerritoryWorkspace({
               <>
                 <label>
                   New rep
-                  <select
+                  <PersonPicker
+                    label="New rep"
                     value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
+                    options={repOptions}
+                    onChange={setEditValue}
                     disabled={busy}
-                  >
-                    {recipients.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </label>
                 <p>
                   Move this boundary and its still-unworked assigned pins.
                   Claimed pins, appointments, notes, and worked leads stay with
                   their current rep.
                 </p>
-                {selectedArea.leadIds.length > 400 && (
+                {(selectedArea.leadCount ?? selectedArea.leadIds.length) >
+                  400 && (
                   <p className="rt-alert">
                     This legacy area exceeds 400 pins. It cannot be transferred
                     here; remove its boundary and create smaller areas without
@@ -720,7 +854,8 @@ export default function TerritoryWorkspace({
                   !editValue.trim() ||
                   (dialog === "transfer" &&
                     (editValue === selectedArea.userId ||
-                      selectedArea.leadIds.length > 400))
+                      (selectedArea.leadCount ?? selectedArea.leadIds.length) >
+                        400))
                 }
                 onClick={() =>
                   run(() =>
@@ -743,7 +878,7 @@ export default function TerritoryWorkspace({
                   ? "Save name"
                   : dialog === "transfer"
                   ? "Transfer area"
-                  : "Remove boundary"}
+                  : "Delete territory"}
               </button>
             </div>
           </div>
