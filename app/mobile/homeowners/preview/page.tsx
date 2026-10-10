@@ -138,6 +138,8 @@ export default function HomeownersPreview() {
       >
         <strong>Fictional map test · no live data</strong>
         <button onClick={() => setZoom(13)}>Zoom out</button>
+        <button onClick={() => setZoom(15)}>Neighborhood view</button>
+        <button onClick={() => setZoom(17)}>Street view</button>
         <button onClick={() => setZoom(18)}>Roof view</button>
         <button onClick={() => setEnabled((v) => !v)}>Toggle homes</button>
         <button disabled={busy} onClick={() => void cacheCheck()}>

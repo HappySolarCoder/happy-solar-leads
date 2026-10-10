@@ -27,7 +27,7 @@ test('warm badge coexists with disposition, solar score, outcome and selection',
   assert.notEqual(marked.url,fieldPinArtwork({...warm,source:'manual'},undefined,18,true).url);
   assert.equal(marked.url,fieldPinArtwork(warm,undefined,18,true).url);
   assert.ok(fieldPinArtwork(warm,undefined,18).size<fieldPinArtwork(warm,undefined,17).size);
-  assert.equal(fieldPinArtwork(warm,undefined,19).size,30);
+  assert.equal(fieldPinArtwork(warm,undefined,19).size,20);
   assert.notEqual(fieldPinZoomTier(17),fieldPinZoomTier(18));
 });
 test('compass uses absolute north readings and correctly handles portrait/landscape',()=>{

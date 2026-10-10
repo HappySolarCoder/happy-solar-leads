@@ -1,10 +1,10 @@
-# Homeowner map layer (included in v12.2)
+# Homeowner map layer (included in v12.2 and v12.3)
 
 The supplied brief describes the existing `homeowners` collection in Firebase project `gen-lang-client-0395385938`. This implementation does not import, edit, delete or link its records. It adds no write path for homeowner data and never creates a lead during matching or tapping.
 
 ## Map behavior
 
-Gray pins reuse the existing silhouette and roof-level sizes. A gray question-mark variant means **Suspected renter**. The boolean `suspectedRenter` takes precedence even when false; otherwise the raw absentee value supplies the estimate. The detail sheet labels occupancy as an estimate. Worked pins retain their disposition, Signal R/roof accent, GHL result and selection appearance.
+In v12.3, gray property marks are small centered circles (owner) or diamonds (**Suspected renter**) so roofs and trees remain visible. They are 6–8 CSS pixels, with a 24-pixel nearest-home tap radius; only the selected home expands to 16 pixels. The boolean `suspectedRenter` takes precedence even when false; otherwise the raw absentee value supplies the estimate. The detail sheet labels occupancy as an estimate. Worked pins retain their disposition, Signal R/roof accent, GHL result and selection appearance at smaller visual sizes, with 44-pixel tap targets.
 
 Matching is device-side: normalized street and municipality/city first, then the nearest loaded lead within 25 meters. Unit suffixes are removed. Multiple records for the same normalized house use the latest recorded visit. Unmatched leads remain. The merge knows only the leads available to the signed-in account, not other users' private/unloaded history. No gray pin is drawn for a matched record, even when an active map filter hides the worked pin.
 

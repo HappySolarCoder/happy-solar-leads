@@ -204,8 +204,8 @@ export function HomeownerStatus({
                 <img
                   src={homeownerPinArtwork(suspectedRenter(h), 18).url}
                   alt=""
-                  width={24}
-                  height={28}
+                  width={18}
+                  height={18}
                 />
                 <span>
                   <strong>{h.address}</strong>

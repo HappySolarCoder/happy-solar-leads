@@ -1,4 +1,4 @@
-For **v12.2**, start with [the release and installation guide](docs/mobile-next/FIELD-V12.2.md). The [page audit](docs/mobile-next/AUDIT-V12.2.md) lists verification and device checks.
+For **v12.3**, start with [the map visibility update and installation guide](docs/mobile-next/FIELD-V12.3.md). The earlier [v12.2 page audit](docs/mobile-next/AUDIT-V12.2.md) lists broader verification and device checks.
 
 # Raydar mobile app — team distribution
 

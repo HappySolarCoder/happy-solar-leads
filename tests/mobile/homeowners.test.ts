@@ -296,14 +296,17 @@ test("read budgets, stale camera cancellation and dense ranges do not loop", asy
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(outputs.length, count);
 });
-test("gray variants keep existing pin silhouette and worked-pin artwork untouched", () => {
+test("property marks remain distinct and roof-sized without changing worked-pin artwork", () => {
   const before = fieldPinArtwork(lead(), undefined, 18).url;
   const owner = homeownerPinArtwork(false, 18),
     renter = homeownerPinArtwork(true, 18);
-  assert.equal(owner.size, 30);
+  assert.ok(owner.size <= 8);
+  assert.equal(owner.anchorX, owner.size / 2);
+  assert.equal(owner.anchorY, owner.height / 2);
   assert.notEqual(owner.url, renter.url);
   assert.ok(decodeURIComponent(renter.url).includes("data-renter"));
-  assert.ok(decodeURIComponent(owner.url).includes("M24 53 8 35V13"));
+  assert.ok(decodeURIComponent(owner.url).includes("<circle"));
+  assert.ok(homeownerPinArtwork(false, 18, true).size > owner.size);
   assert.equal(fieldPinArtwork(lead(), undefined, 18).url, before);
 });
 test("spatial matching 10,000 existing pins avoids an all-pairs join", () => {

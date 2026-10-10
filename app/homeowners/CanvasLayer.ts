@@ -104,12 +104,12 @@ export class HomeownerCanvas extends L.Layer {
       if (im.complete && im.naturalWidth)
         ctx.drawImage(
           im,
-          p.x - sprite.size / 2,
-          p.y - sprite.height,
+          p.x - sprite.anchorX,
+          p.y - sprite.anchorY,
           sprite.size,
           sprite.height,
         );
-      const y = p.y - sprite.height / 2,
+      const y = p.y,
         k = `${Math.floor(p.x / 48)}:${Math.floor(y / 48)}`;
       this.hits.set(k, [...(this.hits.get(k) || []), { x: p.x, y, home: h }]);
     }
@@ -132,10 +132,17 @@ export class HomeownerCanvas extends L.Layer {
       target.closest(".leaflet-marker-icon,.leaflet-control,.leaflet-popup")
     )
       return;
-    const p = e.containerPoint,
-      cx = Math.floor(p.x / 48),
+    const hit = this.hitTest(e.containerPoint);
+    if (hit) {
+      L.DomEvent.stop(e.originalEvent);
+      this.pick(hit.home);
+    }
+  };
+  /** Shared with worked markers so their transparent tap padding cannot steal a home tap. */
+  hitTest(p: L.Point, radius = 24) {
+    const cx = Math.floor(p.x / 48),
       cy = Math.floor(p.y / 48);
-    let best = 24 * 24,
+    let best = radius * radius,
       home: Homeowner | undefined;
     for (let x = -1; x <= 1; x++)
       for (let y = -1; y <= 1; y++)
@@ -146,9 +153,6 @@ export class HomeownerCanvas extends L.Layer {
             home = h.home;
           }
         }
-    if (home) {
-      L.DomEvent.stop(e.originalEvent);
-      this.pick(home);
-    }
-  };
+    return home ? { home, distanceSquared: best } : undefined;
+  }
 }

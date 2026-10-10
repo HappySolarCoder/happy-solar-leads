@@ -750,7 +750,26 @@ export default function LeadMap({
           const liveEntry = entry;
           // Popup markup is only produced when opened, not for every pin during load.
           entry.marker.bindPopup(() => createPopupContent(liveEntry.lead), { maxWidth: 300, autoPan: false });
-          entry.marker.on('click', () => {
+          entry.marker.on('click', (event: L.LeafletMouseEvent) => {
+            // Transparent worked-pin padding must not steal a nearby property tap.
+            // Keyboard selection always opens the focused worked pin.
+            if (viewMode === 'map' && event.originalEvent?.detail) {
+              const point = map.mouseEventToContainerPoint(event.originalEvent);
+              const homeHit = homeLayer.current?.hitTest(point);
+              const image = liveEntry.marker.getElement()?.querySelector('img');
+              if (homeHit && image) {
+                const bounds = image.getBoundingClientRect();
+                const dx = event.originalEvent.clientX - (bounds.left + bounds.width / 2);
+                const dy = event.originalEvent.clientY - (bounds.top + bounds.height / 2);
+                const outsideImage = event.originalEvent.clientX < bounds.left || event.originalEvent.clientX > bounds.right ||
+                  event.originalEvent.clientY < bounds.top || event.originalEvent.clientY > bounds.bottom;
+                if (outsideImage && homeHit.distanceSquared < dx * dx + dy * dy) {
+                  liveEntry.marker.closePopup();
+                  homeClickRef.current?.(homeHit.home);
+                  return;
+                }
+              }
+            }
             const current = liveEntry.lead;
             if (isPersistentPinPopup(current)) {
               liveEntry.marker.closePopup();
@@ -758,6 +777,12 @@ export default function LeadMap({
               if (current.historicalTerritoryPin) return;
             } else if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
             clickRef.current(current, homeMergeRef.current.byLead.get(current.id));
+          });
+          entry.marker.on('keydown', (event: L.LeafletKeyboardEvent) => {
+            if (event.originalEvent.key === 'Enter' || event.originalEvent.key === ' ') {
+              L.DomEvent.stop(event.originalEvent);
+              liveEntry.marker.fire('click', { originalEvent: event.originalEvent });
+            }
           });
           entries.set(lead.id, entry);
           added.push(entry.marker);
@@ -1782,16 +1807,16 @@ const ICON_TO_UNICODE: Record<string, string> = {
 };
 
 function createMutedHistoricalIcon(disposition: Disposition | undefined, zoom: number): L.DivIcon {
-  let size = 30;
+  let size = zoom >= 18 ? 16 : 20;
   let showIcon = true;
   if (zoom < 12) {
     size = 7;
     showIcon = false;
   } else if (zoom < 14) {
-    size = 13;
+    size = 10;
     showIcon = false;
   } else if (zoom < 16) {
-    size = 20;
+    size = 14;
   }
 
   const color = '#9CA3AF';
