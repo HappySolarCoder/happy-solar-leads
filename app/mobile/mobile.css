@@ -1648,3 +1648,54 @@
 .raydar-mobile [aria-label="Doorstep memory"] dl,
 .raydar-mobile [aria-label="Doorstep memory"] button { color:#304B5E; }
 .raydar-mobile [aria-label="Doorstep memory"] button { border-color:#B3C9D8; }
+
+/* Compact heading control below Leaflet's zoom buttons; never adds a map header. */
+.rm-compass { position:absolute; top:90px; left:12px; z-index:24; display:flex; align-items:center; gap:7px; min-height:52px; padding:6px 9px; border:1px solid #D5E0E7; border-radius:14px; background:#fffef9; color:#304B5E; box-shadow:0 3px 12px #304b5e18; }
+.rm-compass > span:last-child { display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
+.rm-compass strong { font-size:12px; font-variant-numeric:tabular-nums; }
+.rm-compass small { font-size:9px; color:#617382; }
+.rm-compass-rose { position:relative; width:32px; height:39px; padding-top:9px; }
+.rm-compass-rose b { position:absolute; top:-2px; left:12px; font-size:9px; }
+.rm-compass-rose svg { width:32px; height:32px; }
+.rm-compass-display { display:flex; flex-direction:column; align-items:center; gap:8px; background:#EBF1F5; border-radius:18px; padding:22px; margin:14px 0; color:#476E88; }
+.rm-compass-display strong { font-size:40px; font-variant-numeric:tabular-nums; }
+.rm-compass-display span { font-size:11px; }
+.rm-compass-guide h3 { margin-top:18px; font-size:14px; font-weight:700; }
+.rm-compass-guide p { margin-top:7px; }
+
+/* Territory manager: map stays visible; manager controls scroll independently. */
+.raydar-mobile .rt-shell{height:100dvh;background:#fffcf5;color:#304b5e;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
+.raydar-mobile .rt-header{height:68px;flex:none;display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid #dce5e9;background:#fffcf5}
+.raydar-mobile .rt-header h1{font-size:21px;line-height:1.2;font-weight:750;margin:2px 0 0}.raydar-mobile .rt-header>div{flex:1}
+.raydar-mobile .rt-shell button,.raydar-mobile .rt-unavailable button{min-height:44px;border:1px solid #d8e1e6;background:white;border-radius:12px;padding:9px 12px;display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:13px;font-weight:650;color:#304b5e;cursor:pointer}
+.raydar-mobile .rt-shell button:disabled{opacity:.5;cursor:not-allowed}.raydar-mobile .rt-shell button:focus-visible,.raydar-mobile .rt-shell input:focus-visible,.raydar-mobile .rt-shell select:focus-visible{outline:3px solid #f0bc18;outline-offset:2px}
+.raydar-mobile .rt-header>button,.raydar-mobile .rt-header>a{border:0;width:44px;height:44px;display:grid;place-items:center;background:transparent}
+.raydar-mobile .rt-shell .rt-primary,.raydar-mobile .rt-unavailable .rt-primary{background:#476e88;color:#fff;border-color:#476e88}
+.raydar-mobile .rt-body{display:grid;grid-template-columns:minmax(0,1fr) 390px;flex:1;min-height:0}
+.raydar-mobile .rt-map-section{min-height:0;position:relative}.raydar-mobile .rt-map-wrap,.raydar-mobile .rt-map{width:100%;height:100%;position:relative;background:#ebf1f5}.raydar-mobile .rt-map{z-index:0}.raydar-mobile .rt-drawing{cursor:crosshair}
+.raydar-mobile .rt-map-actions{position:absolute;z-index:500;top:12px;right:12px;display:flex;gap:7px}.raydar-mobile .rt-map-actions button{box-shadow:0 3px 12px #304b5e18}
+.raydar-mobile .rt-north{position:absolute;top:116px;left:13px;z-index:400;background:#fffcf5ed;padding:8px;border-radius:9px;font-size:12px;font-weight:750}
+.raydar-mobile .rt-map-hint,.raydar-mobile .rt-map-message{position:absolute;bottom:26px;left:16px;right:16px;margin:auto;max-width:420px;z-index:450;background:#fffcf5ee;border:1px solid #dce5e9;box-shadow:0 4px 18px #304b5e16;padding:9px 13px;border-radius:12px;font-size:12px;text-align:center;pointer-events:none}
+.raydar-mobile .rt-map-message{bottom:70px}.raydar-mobile .rt-corner{font-size:10px;padding:1px 4px;color:#304b5e;box-shadow:none}
+.raydar-mobile .rt-panel{padding:22px;overflow:auto;border-left:1px solid #dce5e9;padding-bottom:calc(22px + env(safe-area-inset-bottom))}
+.raydar-mobile .rt-panel-heading{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:16px}.raydar-mobile .rt-panel h2{font-size:20px;line-height:1.25;font-weight:750;margin:0 0 4px}.raydar-mobile .rt-panel-heading p{font-size:12px;color:#617382;margin:0}
+.raydar-mobile .rt-panel-heading .rt-primary{white-space:nowrap}.raydar-mobile .rt-help{font-size:12px;color:#617382;line-height:1.55;margin:12px 0}.raydar-mobile .rt-filters{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.raydar-mobile .rt-search{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #d8e1e6;border-radius:11px;padding:0 12px}
+.raydar-mobile .rt-shell input,.raydar-mobile .rt-shell select,.raydar-mobile .rt-dialog input,.raydar-mobile .rt-dialog select{width:100%;min-width:0;min-height:44px;font-size:16px;background:#fff;color:#304b5e;border:1px solid #d8e1e6;border-radius:11px;padding:9px 11px}
+.raydar-mobile .rt-search input{border:0;padding-left:0}.raydar-mobile .rt-list{display:grid;gap:8px}.raydar-mobile .rt-list .rt-area{justify-content:flex-start;text-align:left;width:100%;padding:13px 10px;gap:10px;border-radius:14px}
+.raydar-mobile .rt-area>span:nth-child(2){flex:1;min-width:0}.raydar-mobile .rt-area strong{display:block;font-size:14px;overflow-wrap:anywhere}.raydar-mobile .rt-area small{display:block;font-size:11px;font-weight:450;color:#617382;margin-top:4px}
+.raydar-mobile .rt-area-icon{width:40px;height:44px;display:grid;place-items:center;background:#ebf1f5;border-radius:11px;flex:none}.raydar-mobile .rt-list .rt-area.selected{border-color:#587e98;background:#ebf1f5}
+.raydar-mobile .rt-selected{padding:16px;border-radius:16px;background:#ebf1f5;margin-bottom:14px}.raydar-mobile .rt-selected h3{font-size:19px;font-weight:750;margin:5px 0}.raydar-mobile .rt-selected p{font-size:12px;margin:0 0 12px;color:#617382}
+.raydar-mobile .rt-row-actions{display:flex;flex-wrap:wrap;gap:7px}.raydar-mobile .rt-row-actions button{font-size:11px;padding:8px}
+.raydar-mobile .rt-form{display:grid;gap:12px}.raydar-mobile .rt-form label,.raydar-mobile .rt-dialog label{display:grid;gap:6px;font-size:12px;font-weight:650}
+.raydar-mobile .rt-actions{display:flex;justify-content:space-between;gap:10px;margin-top:18px}.raydar-mobile .rt-actions>button{flex:1}.raydar-mobile .rt-counts{display:flex;gap:12px;margin:16px 0}.raydar-mobile .rt-counts>div{flex:1;padding:16px;background:#ebf1f5;border-radius:14px}.raydar-mobile .rt-counts strong{font-size:32px;font-weight:750;display:block;line-height:1.2}.raydar-mobile .rt-counts span{font-size:12px;color:#617382}
+.raydar-mobile .rt-alert,.raydar-mobile .rt-success{border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.5;margin:0 0 14px;background:#fff0e3;color:#783f1c}.raydar-mobile .rt-success{background:#e9f2eb;color:#355b43;display:flex;gap:8px}.raydar-mobile .rt-success svg{flex:none;margin-top:3px}
+.raydar-mobile .rt-empty{padding:30px 15px;text-align:center;color:#617382}.raydar-mobile .rt-empty svg{margin:0 auto 10px}.raydar-mobile .rt-empty h3{font-size:16px;font-weight:700;color:#304b5e}.raydar-mobile .rt-empty p{font-size:13px;line-height:1.5;margin-top:8px}
+.raydar-mobile .rt-dialog{padding:24px;color:#304b5e}.raydar-mobile .rt-dialog h3{font-size:22px;font-weight:750;margin-bottom:18px}.raydar-mobile .rt-dialog p{font-size:14px;line-height:1.6;margin:14px 0}.raydar-mobile .rt-dialog button{min-height:44px;padding:10px 14px;border-radius:12px;border:1px solid #d8e1e6}.raydar-mobile .rt-dialog .rt-primary{background:#476e88;color:white}
+.raydar-mobile .rt-unavailable{padding:32px;max-width:520px;margin:auto;display:grid;gap:20px}.raydar-mobile .rt-unavailable h1{font-size:26px;font-weight:750}.raydar-mobile .rt-unavailable p{line-height:1.6}.raydar-mobile .rt-loading{display:grid;place-items:center}
+@media(max-width:760px){.raydar-mobile .rt-body{grid-template-columns:minmax(0,1fr);grid-template-rows:44% minmax(0,1fr)}.raydar-mobile .rt-header{height:60px;padding:6px 10px}.raydar-mobile .rt-header h1{font-size:19px}.raydar-mobile .rt-panel{border-left:0;border-top:1px solid #dce5e9;padding:16px 16px calc(20px + env(safe-area-inset-bottom))}.raydar-mobile .rt-panel h2{font-size:18px}.raydar-mobile .rt-panel-heading{margin-bottom:12px}.raydar-mobile .rt-form{grid-template-columns:1fr 1fr;gap:10px}.raydar-mobile .rt-filters{flex-direction:row}.raydar-mobile .rt-search{flex:1;min-width:0}.raydar-mobile .rt-filters select{max-width:125px}.raydar-mobile .rt-map-hint{font-size:11px;padding:7px 10px;bottom:21px}.raydar-mobile .rt-panel-heading>div{min-width:0}.raydar-mobile .rt-panel-heading h2{overflow-wrap:anywhere}}
+
+.raydar-mobile .rt-map .leaflet-control-attribution{font-size:9px;max-width:90%;}
+
+.raydar-mobile .rt-map-section,.raydar-mobile .rt-panel{min-width:0;}
+.raydar-mobile .rt-map-section{overflow:hidden;}

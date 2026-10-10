@@ -1,6 +1,6 @@
 'use client';
 
-import { fieldPinArtwork } from '@/app/utils/fieldPin';
+import { fieldPinArtwork, fieldPinZoomTier } from '@/app/utils/fieldPin';
 import { buildLeadViewportIndex, queryLeadViewport } from '@/app/utils/mapViewport';
 import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { getLocation } from '@/app/utils/geolocation';
@@ -331,11 +331,7 @@ export default function LeadMap({
       setMapZoom(currentZoom);
       
       // Calculate zoom tier (only re-render markers when tier changes, not on every zoom)
-      // Tiers: 0 (<12), 1 (12-14), 2 (14-16), 3 (>16)
-      let newTier = 0;
-      if (currentZoom >= 16) newTier = 3;
-      else if (currentZoom >= 14) newTier = 2;
-      else if (currentZoom >= 12) newTier = 1;
+      const newTier = fieldPinZoomTier(currentZoom);
       
       setZoomTier(newTier);
       setViewportKey(prev => prev + 1); // Trigger viewport update on zoom
@@ -672,14 +668,14 @@ export default function LeadMap({
         const selectedForAssignment = assignedIds.has(lead.id);
         const selected = lead.id === selectedLeadId || selectedForAssignment;
         const disposition = byId.get(lead.status) || byName.get(String(lead.dispositionHistory?.[0]?.disposition || '').toLowerCase());
-        const styleKey = `${zoomTier}:${viewMode}:${selected}:${isClaimedByMe}:${canClaim}:${selectedForAssignment}`;
+        const styleKey = `${fieldPinZoomTier(currentZoom)}:${viewMode}:${selected}:${isClaimedByMe}:${canClaim}:${selectedForAssignment}`;
         let entry = entries.get(lead.id);
         if (entry && entry.lead === lead && entry.styleKey === styleKey && entry.users === users && entry.disposition === disposition) continue;
         const icon = createCustomIcon(lead, users, viewMode, lead.solarCategory, lead.status, selected,
           isClaimedByMe, canClaim, !!lead.claimedBy, selectedForAssignment, disposition, currentZoom, lead.tags);
         const title = `${lead.address} · ${fieldPinArtwork(lead, disposition, currentZoom).label}`;
         if (!entry) {
-          entry = { marker: L.marker([lead.lat!, lead.lng!], {icon, title, zIndexOffset: lead.historicalTerritoryPin ? -300 : 0}), lead, styleKey, users, disposition };
+          entry = { marker: L.marker([lead.lat!, lead.lng!], {icon, title, alt: title, zIndexOffset: lead.historicalTerritoryPin ? -300 : 0}), lead, styleKey, users, disposition };
           const liveEntry = entry;
           // Popup markup is only produced when opened, not for every pin during load.
           entry.marker.bindPopup(() => createPopupContent(liveEntry.lead), { maxWidth: 300, autoPan: false });
@@ -1781,10 +1777,13 @@ function createCustomIcon(
 
   if (viewMode === 'map') {
     const pin = fieldPinArtwork(lead, disposition, zoom, isSelected);
+    const hitSize = Math.max(44, pin.height);
+    const left = (hitSize - pin.size) / 2;
+    const top = hitSize - pin.height;
     return L.divIcon({
       className: 'field-pin',
-      html: `<img src="${pin.url}" width="${pin.size}" height="${pin.height}" alt="" draggable="false" style="display:block;pointer-events:none"/>`,
-      iconSize: [pin.size, pin.height], iconAnchor: [pin.size / 2, zoom < 14 ? pin.height / 2 : pin.height - 3], popupAnchor: [0, -pin.height],
+      html: `<img src="${pin.url}" width="${pin.size}" height="${pin.height}" alt="" draggable="false" style="display:block;pointer-events:none;position:absolute;left:${left}px;top:${top}px"/>`,
+      iconSize: [hitSize, hitSize], iconAnchor: [hitSize / 2, zoom < 14 ? top + pin.height / 2 : hitSize - (pin.height * 3 / 56)], popupAnchor: [0, -pin.height],
     });
   }
 

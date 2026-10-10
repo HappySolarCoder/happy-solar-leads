@@ -20,6 +20,7 @@ import { getAppointmentOutcome } from "@/app/utils/appointmentOutcome";
 import DoorstepMemory from "@/app/components/DoorstepMemory";
 import ReturnVisitReminder from "../_components/ReturnVisitReminder";
 import DoorCoach from "../_components/DoorCoach";
+import FieldCompass from "../_components/FieldCompass";
 import { fieldPinArtwork } from "@/app/utils/fieldPin";
 import MobileDialog from "../_components/MobileDialog";
 
@@ -95,6 +96,7 @@ const demoLeads: Lead[] = [
   assignedTo: "preview-rep",
   lat: 43.1566 + index * 0.001,
   lng: -77.6088 + index * 0.001,
+  ...(index === 0 || index === 2 ? {tags:['solar-data' as const],solarCategory:'great' as const,solarScore:89} : {}),
 }));
 const stats = { knocks: 28, conversations: 9, appointments: 3, sales: 1 };
 const week = { knocks: 142, conversations: 38, appointments: 11, sales: 4 };
@@ -231,7 +233,7 @@ export default function DesignPreview() {
               </svg>
               {visible.map((lead, index) => {
                 const outcome = getAppointmentOutcome(lead);
-                const pin = fieldPinArtwork(lead, undefined, 17);
+                const pin = fieldPinArtwork(lead, undefined, 18);
                 return (
                   <button
                     key={lead.id}
@@ -243,10 +245,11 @@ export default function DesignPreview() {
                     }}
                     onClick={() => setSelected(lead)}
                   >
-                    <img src={pin.url} alt="" width={44} height={51} />
+                    <img src={pin.url} alt="" width={pin.size} height={pin.height} />
                   </button>
                 );
               })}
+              <FieldCompass />
               <ReturnVisitReminder leads={demoLeads} userId="preview-rep" position={{ lat: 43.1566, lng: -77.6088, accuracy: 12, timestamp: demoNow.getTime() }} previewNow={demoNow} onLead={setSelected} />
               <DoorCoach
                 leads={demoLeads}

@@ -9,6 +9,7 @@ import {
   CalendarDays,
   ChartNoAxesCombined,
   LogOut,
+  MapPinned,
   Settings,
   Users,
   Wrench,
@@ -51,6 +52,12 @@ export default function MorePage() {
     },
     ...(user && canAssignLeads(user.role)
       ? [
+          {
+            href: "/mobile/territories",
+            title: "Manage territories",
+            text: "Draw areas, assign reps, and manage your team",
+            icon: MapPinned,
+          },
           {
             href: "/team-map",
             title: "Team map",
@@ -115,7 +122,7 @@ export default function MorePage() {
           <LogOut size={18} />
           {signingOut ? "Signing out…" : "Sign out"}
         </button>
-        <p className="rm-version">Raydar Next · v5 · Signal R</p>
+        <p className="rm-version">Raydar Next · v6 · Field tools + territories</p>
       </main>
       <MobileNav />
     </div>

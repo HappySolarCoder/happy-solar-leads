@@ -3,6 +3,7 @@
 import { FieldToolbar, MobileNav, MobileNotice } from '../_components/MobileShell';
 import DoorCoach from '../_components/DoorCoach';
 import ReturnVisitReminder from '../_components/ReturnVisitReminder';
+import FieldCompass from '../_components/FieldCompass';
 import { summarizeActivity } from '../_lib/metrics';
 import { countWorkdaysElapsedAndRemaining } from '@/app/utils/goals';
 import { fieldPinArtwork } from '@/app/utils/fieldPin';
@@ -696,7 +697,7 @@ export default function KnockingPage() {
         <div className="rm-map-summary"><span>{filteredLeads.length} pins{isRefreshing ? ' · Updating…' : ''}</span><button aria-pressed={outcomesOnly} onClick={() => setOutcomesOnly(!outcomesOnly)}>GHL outcomes{outcomesOnly ? ' ✓' : ''}</button><button aria-pressed={showHeat} onClick={() => setShowHeat(!showHeat)}>Heat map</button></div>
         {outcomesOnly && <div className="rm-pin-legend" aria-label="Appointment outcome colors">{appointmentOutcomeLegend.map(outcome => <span key={outcome.key}><i style={{ background: outcome.color }} />{outcome.label}</span>)}</div>}
 
-            <details className="rm-pin-key"><summary>Pin guide</summary><div>{['assigned','interested','not-home','go-back','appointment','sale','not-interested'].map(status => { const lead = {status} as Lead; const pin = fieldPinArtwork(lead, dispositions.find(d => d.id === status), 17); return <span key={status}><img src={pin.url} alt="" width={30} height={35}/>{pin.style.label}</span>; })}</div><p>The top accent shows roof quality. A corner badge shows the GHL result. Cyan brackets mark your selected door.</p></details>
+            <details className="rm-pin-key"><summary>Pin guide</summary><div>{['assigned','interested','not-home','go-back','appointment','sale','not-interested'].map(status => { const lead = {status} as Lead; const pin = fieldPinArtwork(lead, dispositions.find(d => d.id === status), 17); return <span key={status}><img src={pin.url} alt="" width={30} height={35}/>{pin.style.label}</span>; })}</div><p>The Signal R badge marks pre-uploaded solar-rated warm leads. The top accent shows roof quality; the opposite corner badge shows the GHL result. Cyan brackets mark your selected door. Pins shrink at roof-level zoom while keeping a larger tap area.</p></details>
             {/* Lead Type Filter (mobile) */}
             <div className="mb-3">
               <div className="flex items-center gap-2 mb-2">
@@ -1006,6 +1007,7 @@ export default function KnockingPage() {
             teamMembers={teamMembersForMap}
             onToggleTeamAreas={setShowTeamAreas}
           />
+          <FieldCompass />
           {currentUser && <DoorCoach key={currentUser.id} leads={leads} userId={currentUser.id} position={userPosition} onLead={handleLeadSelect} />}
           {currentUser && !showLeadDetail && <ReturnVisitReminder key={currentUser.id} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
           {isRefreshing && <div className="rm-map-loading" role="status">Loading your pins…</div>}
