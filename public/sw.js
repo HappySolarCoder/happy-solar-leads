@@ -69,6 +69,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Account-scoped field APIs and opaque homeowner cards must never enter the shared PWA cache.
+  const pathname = new URL(event.request.url).pathname;
+  if (pathname.startsWith('/api/field-') || pathname === '/visit' || pathname.startsWith('/visit/')) {
+    event.respondWith(fetch(event.request, { cache: 'no-store' }));
+    return;
+  }
+
   // Network first for HTML pages (always get fresh content)
   if (event.request.mode === 'navigate' || event.request.headers.get('accept').includes('text/html')) {
     event.respondWith(

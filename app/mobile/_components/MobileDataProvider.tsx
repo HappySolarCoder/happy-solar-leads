@@ -30,6 +30,9 @@ import {
   type MobileSession,
 } from "../_lib/mobileSession";
 
+import { useFieldData } from '@/app/field/useFieldData';
+import { readArea } from '@/app/field/deviceStore';
+
 const EMPTY_LEADS: Lead[] = [];
 const MobileDataContext = createContext<ReturnType<
   typeof useSharedMobileData
@@ -61,6 +64,7 @@ function useSharedMobileData() {
         );
       },
       async (id) => {
+        if (!navigator.onLine) { const area = await readArea(id); if (area) return area.user; }
         const snapshot = await getDoc(doc(db!, "users", id));
         if (!snapshot.exists()) return null;
         const data = snapshot.data();
@@ -97,7 +101,9 @@ function useSharedMobileData() {
     };
   }, [scope]);
   const live = useLiveLeads(user);
-  const leads = live?.leads || EMPTY_LEADS;
+  const field = useFieldData(user, live?.leads || EMPTY_LEADS);
+  const leads = field.leads;
+  const preparedOffline = field.offline && !!field.area;
   const followUps = useMemo(
     () =>
       user
@@ -120,15 +126,16 @@ function useSharedMobileData() {
     user,
     leads,
     followUps,
+    field,
     live,
     refresh,
     retry,
     dispositions:
       settings?.scope === scope ? settings.dispositions : DEFAULT_DISPOSITIONS,
     loading: session.loading,
-    leadsLoading: !!user && !live,
-    dataLoading: !!user && (!live || settings?.scope !== scope),
-    dataUnavailable: !!live?.error,
+    leadsLoading: !!user && !live && !preparedOffline,
+    dataLoading: !!user && !preparedOffline && (!live || settings?.scope !== scope),
+    dataUnavailable: !preparedOffline && !!live?.error,
     error:
       session.error ||
       live?.error ||
@@ -171,12 +178,16 @@ export function MobileDataBoundary({ children }: { children: ReactNode }) {
     "/mobile/follow-ups",
     "/mobile/stats",
     "/mobile/more",
+    "/mobile/field-tools",
+    "/mobile/field-tools/settings",
   ].includes(path) ? (
     <MobileDataProvider>{children}</MobileDataProvider>
   ) : (
     children
   );
 }
+
+export function useOptionalMobileData() { return useContext(MobileDataContext); }
 
 export function useMobileData() {
   const data = useContext(MobileDataContext);

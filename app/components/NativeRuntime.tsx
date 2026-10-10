@@ -54,8 +54,8 @@ export default function NativeRuntime() {
 
   if (!offline) return null;
   return (
-    <div role="status" aria-live="polite" className="fixed bottom-3 left-3 right-3 z-[10000] rounded-xl bg-amber-100 px-4 py-3 text-sm text-amber-950 shadow-lg pointer-events-none">
-      <strong>You’re offline.</strong> Reconnect before saving. Maps and live data may be unavailable.
+    <div role="status" aria-live="polite" className="fixed bottom-[calc(env(safe-area-inset-bottom)+90px)] left-3 right-3 z-[10000] rounded-xl bg-amber-100 px-4 py-3 text-sm text-amber-950 shadow-lg pointer-events-none">
+      <strong>You’re offline.</strong> Prepared field visits and notes can queue. Other actions and map imagery need a connection.
     </div>
   );
 }

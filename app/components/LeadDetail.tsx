@@ -2,6 +2,11 @@
 
 import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
 import DoorstepMemory from './DoorstepMemory';
+import DictateButton from '@/app/field/DictateButton';
+import FieldDoorPanel, { type VisitDraft } from '@/app/field/FieldDoorPanel';
+import { useOptionalMobileData } from '@/app/mobile/_components/MobileDataProvider';
+import type { FieldMutation, FieldObservation } from '@/app/field/types';
+import { localParts } from '@/app/field/analysis';
 
 import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { getLocation } from '@/app/utils/geolocation';
@@ -101,6 +106,38 @@ const ICON_MAP: Record<string, any> = {
 };
 
 export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false, dispositionOptions, dispositionsLoading = false }: LeadDetailProps) {
+  const mobile = useOptionalMobileData();
+  const field = fieldMemory ? mobile?.field : undefined;
+  lead = field?.leads.find(item => item.id === lead.id) || lead;
+  const hasPendingFieldWork = !!field?.drafts.some(d => d.leadId === lead.id);
+  const pausedWithDrafts = hasPendingFieldWork && !field?.flags.capture;
+  const [visit, setVisit] = useState<VisitDraft>({});
+  const [fieldMessage, setFieldMessage] = useState('');
+  async function recordField(kind: FieldMutation['kind'], patch: Partial<FieldMutation> = {}) {
+    if (!field || !currentUser) throw Error('Sign in to save this visit.');
+    const at = new Date(), id = crypto.randomUUID(), zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const parts = localParts(at, zone), status = patch.status || lead.status;
+    const disposition = dispositions.find(d => d.id === status);
+    const observation: FieldObservation = {
+      ...visit, eventId: id, timeZone: zone, localHour: parts.hour, localDay: parts.day,
+      statusId: status, countsAsKnock: !!disposition?.countsAsDoorKnock,
+      flags: field.flags, experiment: field.config.experiment, group: field.group,
+      ...(status === 'not-home' ? { answered: false, conversation: undefined } : {}),
+      ...(patch.objectionType ? { objections: [patch.objectionType] } : {}),
+    };
+    if (kind === 'knock' && disposition?.countsAsDoorKnock) {
+      try {
+        const position = await getLocation({ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+        observation.gps = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, timestamp: new Date().toISOString() };
+      } catch {
+        if (isProximityRequired(currentUser)) throw Error('Your location could not be verified. Enable precise location and retry.');
+      }
+    }
+    await field.enqueue({id,userId:currentUser.id,leadId:lead.id,createdAt:at.toISOString(),kind,baseStatus:lead.status,baseNotes:lead.notes||'',...(kind==='knock'?{observation,disposition:disposition?.name||status}:{}),...patch});
+    setFieldMessage('Saved on this device. Sync status is in Field tools.');
+    if (kind === 'knock') setVisit({});
+    onUpdate();
+  }
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
   const noteInput = useRef<HTMLTextAreaElement>(null);
@@ -119,6 +156,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
   const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
   const [solarMadnessAward, setSolarMadnessAward] = useState<(SolarMadnessAwardResponse & { matchup?: any }) | null>(null);
   const [photos, setPhotos] = useState(lead.photos || []);
+  useEffect(() => {
+    if (!fieldMemory) return;
+    const receive = (event: Event) => { const value = (event as CustomEvent).detail; if (value.leadId !== lead.id) return; if (value.egg) setWonEasterEgg(value.egg); if (value.madness?.awarded) setSolarMadnessAward(value.madness); };
+    window.addEventListener('raydar-field-award', receive);
+    return () => window.removeEventListener('raydar-field-award', receive);
+  }, [fieldMemory, lead.id]);
+
 
   const isClaimedByMe = currentUser && lead.claimedBy === currentUser.id;
   const canClaim = !lead.claimedBy || isClaimedByMe;
@@ -170,6 +214,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser || actionsLoading) return;
+    if (pausedWithDrafts) { setFieldMessage('Field capture is paused. Sync or review this pin’s pending drafts in Field tools before changing it.'); return; }
     
     // Check for special behavior dispositions
     const disposition = dispositions.find(d => d.id === newStatus);
@@ -193,6 +238,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       return;
     }
     
+    if (field?.flags.capture && !['claimed','unclaimed'].includes(newStatus)) {
+      setIsUpdating(true);
+      try { await recordField('knock', { status: newStatus }); }
+      catch (e) { setFieldMessage((e as Error).message); }
+      finally { setIsUpdating(false); }
+      return;
+    }
     setIsUpdating(true);
     
     try {
@@ -329,8 +381,15 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
   // Handle saving notes
   const handleSaveNotes = async () => {
     if (!currentUser) return;
+    if (pausedWithDrafts) { setFieldMessage('Review pending drafts in Field tools before changing these notes.'); return; }
     
     setNotesSaving(true);
+    if (field?.flags.capture) {
+      try { await recordField('notes', { notes }); }
+      catch (e) { setFieldMessage((e as Error).message); }
+      finally { setNotesSaving(false); }
+      return;
+    }
     try {
       const { saveLeadAsync } = await import('@/app/utils/storage');
       const updatedLead: Lead = {
@@ -367,7 +426,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       ...lead,
       photos: updatedPhotos,
     };
-    await saveLeadAsync(updatedLead);
+    if (fieldMemory) { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, { photos: updatedPhotos }); } else await saveLeadAsync(updatedLead);
     if (onUpdate) onUpdate();
   };
 
@@ -377,6 +436,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
     setIsUpdating(true);
     
     try {
+      if (field?.flags.capture) { await recordField('knock', { status: 'not-interested', objectionType, objectionNotes }); setShowObjectionTracker(false); return; }
       // Update lead with objection data using async Firestore
       const { saveLeadAsync } = await import('@/app/utils/storage');
       
@@ -406,7 +466,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       
       setShowObjectionTracker(false);
       onUpdate();
-    } finally {
+    } catch (e) { setFieldMessage((e as Error).message); } finally {
       setIsUpdating(false);
     }
   };
@@ -417,6 +477,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
     setIsUpdating(true);
     
     try {
+      if (field?.flags.capture) { await recordField('knock', { status: pendingGoBackStatus || 'go-back', goBackScheduledDate: new Date(scheduleData.date).toISOString(), goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes }); setShowGoBackSchedule(false); return; }
       // Update lead with go back schedule data using async Firestore
       const { saveLeadAsync } = await import('@/app/utils/storage');
       
@@ -451,7 +512,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       
       setShowGoBackSchedule(false);
       onUpdate();
-    } finally {
+    } catch (e) { setFieldMessage((e as Error).message); } finally {
       setIsUpdating(false);
     }
   };
@@ -619,6 +680,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
             </div>
           </a>
 
+          {fieldMessage && <p className="rf-sync-status" role="status">{fieldMessage}</p>}
+          {fieldMemory && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
           {fieldMemory && <DoorstepMemory lead={lead} onNote={(note) => {
             setNotes(current => current.includes(note) ? current : [current.trim(), note].filter(Boolean).join('\n'));
             noteInput.current?.scrollIntoView({ block: 'center' });
@@ -833,6 +896,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
           {/* Notes Section */}
           <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Notes</h3>
+            {fieldMemory && <DictateButton onText={text => setNotes(current => [current.trim(), text].filter(Boolean).join("\n"))} onKeyboard={() => noteInput.current?.focus()} />}
             <textarea
               ref={noteInput}
               aria-label="Lead notes"
@@ -947,6 +1011,10 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       {/* Lead Editor Modal (Scheduling Manager) */}
       {showLeadEditor && (
         <LeadEditorModal
+          mobileMode={fieldMemory}
+          pendingFieldWork={hasPendingFieldWork}
+          fieldContext={field?.flags.capture ? [visit.openerId ? `Opener: ${field.config.openers.find(o => o.id === visit.openerId)?.label || visit.openerId}` : "", visit.previewShown ? "Company-approved savings illustration shown; not a quote." : "", visit.proofShown ? "Approved local proof shown." : ""].filter(Boolean).join("\n") : undefined}
+          onInfoSent={field?.flags.show ? async () => { try { await recordField("handoff", { handoff: "sent" }); } catch (e) { setFieldMessage(`Info sent; tracking needs attention: ${(e as Error).message}`); } } : undefined}
           lead={lead}
           onClose={() => setShowLeadEditor(false)}
           onSave={() => {

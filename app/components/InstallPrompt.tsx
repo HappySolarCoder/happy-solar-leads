@@ -1,11 +1,13 @@
 'use client';
 
+import { usePathname } from 'next/navigation';
 import { Capacitor } from '@capacitor/core';
 
 import { useState, useEffect } from 'react';
 import { X, Download } from 'lucide-react';
 
 export default function InstallPrompt() {
+  const pathname = usePathname();
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showPrompt, setShowPrompt] = useState(false);
 
@@ -59,7 +61,7 @@ export default function InstallPrompt() {
     localStorage.setItem('raydar_install_dismissed', 'true');
   };
 
-  if (!showPrompt) return null;
+  if (!showPrompt || pathname.replace(/\/$/, '') === '/visit') return null;
 
   return (
     <div className="fixed bottom-4 left-4 right-4 z-50 animate-slide-up">

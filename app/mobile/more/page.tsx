@@ -33,9 +33,9 @@ export default function MorePage() {
   if (loading) return <MobileLoading />;
   const links = [
     {
-      href: "/tools",
+      href: "/mobile/field-tools",
       title: "Field tools",
-      text: "Resources for your next conversation",
+      text: "Return sweeps, insights and scheduling handoffs",
       icon: Wrench,
     },
     {
@@ -122,7 +122,7 @@ export default function MorePage() {
           <LogOut size={18} />
           {signingOut ? "Signing out…" : "Sign out"}
         </button>
-        <p className="rm-version">Raydar Next · v10 · Team territories + user management</p>
+        <p className="rm-version">Raydar Next · v11 · Better conversations</p>
       </main>
       <MobileNav />
     </div>

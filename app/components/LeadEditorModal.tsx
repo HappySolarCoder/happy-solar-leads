@@ -11,12 +11,16 @@ import {
 } from '@/app/utils/schedulingManagerTel';
 
 interface LeadEditorModalProps {
+  mobileMode?: boolean;
+  pendingFieldWork?: boolean;
+  fieldContext?: string;
+  onInfoSent?: () => Promise<void>;
   lead: Lead;
   onClose: () => void;
   onSave: () => void;
 }
 
-export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorModalProps) {
+export default function LeadEditorModal({ lead, onClose, onSave, fieldContext, onInfoSent, mobileMode = false, pendingFieldWork = false }: LeadEditorModalProps) {
   const [formData, setFormData] = useState({
     name: lead.name,
     address: lead.address,
@@ -59,6 +63,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
   }, []);
 
   const handleSave = async () => {
+    if (mobileMode && pendingFieldWork) { alert('Sync or review this pin’s pending changes in Field tools before editing contact details. You can still send the scheduling information.'); return; }
     setIsSaving(true);
 
     try {
@@ -75,7 +80,10 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
         notes: formData.notes || undefined,
       };
 
-      await saveLeadAsync(updatedLead);
+      if (mobileMode) {
+        const { updateLeadAsync } = await import('@/app/utils/storage');
+        await updateLeadAsync(lead.id, { name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+      } else await saveLeadAsync(updatedLead);
       invalidateLeadsCache(); // Ensure fresh data after update
       onSave();
     } finally {
@@ -158,6 +166,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
 💰 Est. Bill: ${formData.estimatedBill ? `$${formData.estimatedBill}/mo` : 'N/A'}${solarSection}
 
 📝 Notes: ${formData.notes || 'None'}
+${fieldContext ? `Field context: ${fieldContext}` : ''}
 
 🎯 **Action Required:** Call customer to schedule appointment
       `.trim();
@@ -182,6 +191,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       if (response.ok) {
         console.log('✅ Webhook sent successfully');
         setInfoSent(true);
+        void onInfoSent?.().catch(() => {});
       } else {
         console.error('❌ Webhook failed:', response.status, response.statusText);
         alert(`Failed to send notification: ${response.status} ${response.statusText}`);

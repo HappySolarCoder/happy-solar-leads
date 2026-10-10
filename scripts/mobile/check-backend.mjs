@@ -19,6 +19,8 @@ let ready = true;
 for (const [path, expected] of [
   ["/api/territory-management", "Sign in again to manage territories."],
   ["/api/mobile-user-management", "Sign in again to manage users."],
+  ["/api/field-config", "Sign in to use field tools."],
+  ["/api/field-work", "Sign in to use field tools."],
 ]) {
   const url = new URL(path, origin);
   console.log(`Checking ${url.href} (no login credentials sent)`);
@@ -47,11 +49,11 @@ for (const [path, expected] of [
 }
 if (!ready) {
   console.error(
-    "Deploy the v10 backend-only PR, then check again. Installing the app does not deploy API routes. See docs/mobile-next/FIELD-V10.md."
+    "The corresponding backend companion needs review/deployment. Installing the app does not deploy API routes. See docs/mobile-next/FIELD-V11.md."
   );
   process.exitCode = 1;
 } else {
   console.log(
-    "Both management routes are available. Signed-in requests also validate server Firebase credentials and your account access."
+    "All four management/field routes are available. Signed-in requests also validate server Firebase credentials and your account access."
   );
 }

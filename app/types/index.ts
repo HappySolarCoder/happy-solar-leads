@@ -44,6 +44,7 @@ export interface User {
   lastLogin?: Date;
   // Territory (for lead assignment - DO NOT confuse with Team)
   territory?: string;
+  mustChangePassword?: boolean;
   // Team (for user organization - e.g., Rochester, Buffalo)
   team?: string;
   // Last published field GPS (users.currentLocation) — used by team map / area overlay
@@ -152,6 +153,9 @@ export interface Lead {
    * entry, otherwise dispositionedAt. A date only — not a user id.
    */
   appointmentSetAt?: Date;
+  fieldDoor?: import("@/app/field/types").FieldDoorData;
+  fieldHandoff?: import("@/app/field/types").FieldHandoff;
+  fieldRecovery?: {requestedAt:string; phone:string; consentVersion:string; callbackRequested:boolean};
 }
 
 /**
@@ -191,6 +195,7 @@ export interface LeadDispositionHistoryEntry {
   timestamp: Date;          // When the disposition was set
   userId: string;           // User who set the disposition
   userName: string;         // User's name at time (preserved even if user deleted)
+  field?: import("@/app/field/types").FieldObservation;
 }
 
 export type ObjectionType = 
