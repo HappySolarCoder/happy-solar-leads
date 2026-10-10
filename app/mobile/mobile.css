@@ -1743,3 +1743,34 @@ html[data-native] .raydar-mobile .rt-shell { height: var(--app-height); padding-
 .raydar-mobile .rt-shell .rt-draw-tools button[aria-pressed="true"] { background:#476E88; color:white; border-color:#476E88; }
 
 .raydar-mobile .rt-shell .rt-pan-draw { position:absolute; z-index:500; right:12px; top:64px; background:#FFFCF5; }
+
+/* v9: map size stays fixed while the details sheet slides over it. */
+.raydar-mobile .rt-sheet { padding:0; overflow:hidden; display:flex; flex-direction:column; }
+.raydar-mobile .rt-sheet-content { padding:22px; overflow:auto; overscroll-behavior:contain; min-height:0; }
+.raydar-mobile .rt-shell .rt-sheet-handle { display:none; }
+.rt-boundary-summary { display:flex; align-items:center; gap:12px; padding:12px; margin-bottom:14px; background:#EBF1F5; border-radius:12px; }
+.rt-boundary-summary p { flex:1; font-size:12px; line-height:1.5; }
+.rt-map-drawing-tools { position:absolute; z-index:550; bottom:30px; left:50%; transform:translateX(-50%); width:min(380px,calc(100% - 24px)); padding:8px; background:#FFFCF5; border:1px solid #B3C9D8; border-radius:16px; box-shadow:0 5px 20px #304b5e22; }
+.rt-map-drawing-tools .rt-draw-tools { margin:0; }
+.rt-drawing-actions { display:flex; align-items:center; gap:6px; margin-top:6px; }
+.rt-drawing-actions span { flex:1; font-size:11px; text-align:center; color:#617382; }
+.raydar-mobile .rt-shell .rt-drawing-actions button { padding:7px 10px; }
+@media(max-width:900px) {
+  .raydar-mobile .rt-body { position:relative; display:block; overflow:hidden; }
+  .raydar-mobile .rt-map-section { width:100%; height:100%; }
+  .raydar-mobile .rt-sheet { position:absolute; z-index:650; left:0; right:0; bottom:0; height:56%; max-height:100%; border-radius:20px 20px 0 0; border:1px solid #B3C9D8; background:#FFFCF5; box-shadow:0 -6px 24px #304b5e20; padding:0; transform:translateY(var(--rt-sheet-drag,0px)); transition:transform 180ms ease-out; }
+  .raydar-mobile .rt-sheet.is-collapsed { transform:translateY(calc(100% - 52px + var(--rt-sheet-drag,0px))); }
+  .raydar-mobile .rt-shell .rt-sheet-handle { display:flex; flex:none; width:100%; min-height:52px; height:52px; gap:10px; padding:15px 16px 5px; position:relative; border:0; border-radius:20px 20px 0 0; background:#FFFCF5; touch-action:none; user-select:none; cursor:grab; }
+  .rt-sheet-grip { position:absolute; top:7px; left:calc(50% - 20px); width:40px; height:4px; border-radius:4px; background:#B3C9D8; }
+  .raydar-mobile .rt-sheet-content { padding:8px 16px calc(20px + env(safe-area-inset-bottom)); }
+  .raydar-mobile .rt-sheet-content[inert] { visibility:hidden; }
+  .rt-map-drawing-tools { bottom:calc(64px + env(safe-area-inset-bottom)); }
+  .raydar-mobile .rt-drawing .rt-map-hint { bottom:180px; }
+  .raydar-mobile .rt-drawing .rt-map-message { bottom:218px; }
+  .raydar-mobile .rt-map .leaflet-control-attribution { margin-bottom:54px; max-width:100%; }
+}
+@media(prefers-reduced-motion:reduce) { .raydar-mobile .rt-sheet { transition:none; } }
+
+.raydar-mobile .rt-sheet.is-dragging { transition:none; }
+
+@media(max-width:900px) { .rt-body:not(.rt-details-collapsed) .rt-map-drawing-tools { visibility:hidden; } }

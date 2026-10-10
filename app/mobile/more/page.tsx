@@ -122,7 +122,7 @@ export default function MorePage() {
           <LogOut size={18} />
           {signingOut ? "Signing out…" : "Sign out"}
         </button>
-        <p className="rm-version">Raydar Next · v8 · Field controls + territory drawing</p>
+        <p className="rm-version">Raydar Next · v9 · Full-map territory drawing</p>
       </main>
       <MobileNav />
     </div>

@@ -24,6 +24,7 @@ import {
 } from "@/app/utils/territoryManager";
 import PlaceSearch, { type Place } from "./PlaceSearch";
 import { rectangleCorners, type DrawingTool } from "./drawing";
+import TerritorySheet from "./TerritorySheet";
 import MobileDialog from "../_components/MobileDialog";
 const TerritoryMap = dynamic(() => import("./TerritoryMap"), {
   ssr: false,
@@ -65,6 +66,8 @@ export default function TerritoryWorkspace({
     >(null),
     [editValue, setEditValue] = useState("");
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("rectangle");
+  const [collapsed, setCollapsed] = useState(false);
+  const [boundaryComplete, setBoundaryComplete] = useState(false);
   const [searchPlace, setSearchPlace] = useState<Place | null>(null);
   const pending = useRef<{ key: string; requestId: string } | null>(null),
     lock = useRef(false);
@@ -91,6 +94,7 @@ export default function TerritoryWorkspace({
     try {
       await fn();
     } catch (e) {
+      setCollapsed(false);
       setError(e instanceof Error ? e.message : "Please try again.");
     } finally {
       lock.current = false;
@@ -101,6 +105,8 @@ export default function TerritoryWorkspace({
     setData(await request());
   }
   function start() {
+    setCollapsed(true);
+    setBoundaryComplete(false);
     setSelected("");
     setDrawingTool("rectangle");
     setMode("draw");
@@ -113,14 +119,55 @@ export default function TerritoryWorkspace({
     pending.current = null;
   }
   function cancel() {
+    setCollapsed(false);
+    setBoundaryComplete(false);
     setMode("list");
     setPoints([]);
     setReview(null);
     setError("");
     pending.current = null;
   }
+  function redraw(tool = drawingTool) {
+    setDrawingTool(tool);
+    setMode("draw");
+    setBoundaryComplete(false);
+    setPoints([]);
+    setReview(null);
+    setError("");
+    setCollapsed(true);
+    pending.current = null;
+  }
+  function finishBoundary(next = points) {
+    try {
+      if (next.length < (drawingTool === "freehand" ? 3 : 4)) return;
+      setPoints(validateTerritoryPolygon(next));
+      setBoundaryComplete(true);
+      setError("");
+    } catch (e) {
+      setPoints(next);
+      setError(
+        e instanceof Error ? e.message : "Redraw the boundary and try again."
+      );
+    }
+    setCollapsed(false);
+  }
+  function addPoint(p: TerritoryPoint) {
+    if (boundaryComplete || busy) return;
+    if (drawingTool === "rectangle" && points.length === 1) {
+      finishBoundary(rectangleCorners(points[0], p));
+    } else
+      setPoints((prev) =>
+        drawingTool === "rectangle"
+          ? [p]
+          : prev.length < 80
+          ? [...prev, p]
+          : prev
+      );
+  }
   async function inspect() {
     await run(async () => {
+      if (!boundaryComplete)
+        throw new Error("Finish your boundary on the map first.");
       const polygon = validateTerritoryPolygon(points);
       if (!name.trim()) throw new Error("Give your territory a short name.");
       if (!rep) throw new Error("Choose the rep who will work this area.");
@@ -194,7 +241,7 @@ export default function TerritoryWorkspace({
           <RefreshCw size={20} />
         </button>
       </header>
-      <div className="rt-body">
+      <div className={`rt-body${collapsed ? " rt-details-collapsed" : ""}`}>
         <section className="rt-map-section">
           <PlaceSearch
             preview={preview}
@@ -207,32 +254,95 @@ export default function TerritoryWorkspace({
           <TerritoryMap
             searchPlace={searchPlace}
             drawingTool={drawingTool}
-            onDraw={setPoints}
+            onDraw={finishBoundary}
             territories={data.territories}
             selectedId={selected}
-            drawing={mode === "draw" && !busy}
+            drawing={mode === "draw" && !busy && !boundaryComplete}
             points={points}
             candidates={review?.candidates || []}
-            onPoint={(p) =>
-              setPoints((prev) =>
-                drawingTool === "rectangle"
-                  ? prev.length === 1
-                    ? rectangleCorners(prev[0], p)
-                    : [p]
-                  : prev.length < 80
-                  ? [...prev, p]
-                  : prev
-              )
-            }
+            onPoint={addPoint}
             onSelect={(id) => {
               if (mode === "list") {
                 setSelected(id);
+                setCollapsed(false);
                 setError("");
               }
             }}
           />
+          {mode === "draw" && !boundaryComplete && (
+            <div className="rt-map-drawing-tools">
+              <div
+                className="rt-draw-tools"
+                role="group"
+                aria-label="Boundary tool"
+              >
+                {(
+                  [
+                    ["rectangle", "Rectangle"],
+                    ["corners", "Corners"],
+                    ["freehand", "Draw"],
+                  ] as const
+                ).map(([tool, label]) => (
+                  <button
+                    key={tool}
+                    aria-pressed={drawingTool === tool}
+                    disabled={busy}
+                    onClick={() => redraw(tool)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="rt-drawing-actions">
+                <button
+                  aria-label={
+                    drawingTool === "corners" ? "Undo corner" : "Clear area"
+                  }
+                  disabled={!points.length || busy}
+                  onClick={() =>
+                    setPoints((p) =>
+                      drawingTool === "corners" ? p.slice(0, -1) : []
+                    )
+                  }
+                >
+                  <Undo2 size={16} />
+                  {drawingTool === "corners" ? "Undo" : "Clear"}
+                </button>
+                <span aria-live="polite">
+                  {drawingTool === "rectangle"
+                    ? points.length
+                      ? "Tap opposite corner"
+                      : "Tap first corner"
+                    : drawingTool === "corners"
+                    ? `${points.length} corners`
+                    : "Trace & lift to finish"}
+                </span>
+                {drawingTool === "corners" && (
+                  <button
+                    className="rt-primary"
+                    disabled={points.length < 4 || busy}
+                    onClick={() => finishBoundary()}
+                  >
+                    Done <Check size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </section>
-        <section className="rt-panel" aria-label="Territory controls">
+        <TerritorySheet
+          collapsed={collapsed}
+          onCollapse={setCollapsed}
+          title={
+            mode === "list"
+              ? "Team territories"
+              : mode === "review"
+              ? "Review & assign"
+              : boundaryComplete
+              ? "Boundary ready · Assign or redraw"
+              : "Territory details"
+          }
+        >
           {error && (
             <div className="rt-alert" role="alert">
               {error}
@@ -326,7 +436,10 @@ export default function TerritoryWorkspace({
                         selected === t.id ? " selected" : ""
                       }`}
                       key={t.id}
-                      onClick={() => setSelected(t.id)}
+                      onClick={() => {
+                        setSelected(t.id);
+                        setCollapsed(false);
+                      }}
                       aria-pressed={selected === t.id}
                     >
                       <span
@@ -371,10 +484,18 @@ export default function TerritoryWorkspace({
                 <div>
                   <span className="rm-eyebrow">
                     {mode === "draw"
-                      ? "1 · DRAW YOUR AREA"
-                      : "2 · REVIEW & ASSIGN"}
+                      ? boundaryComplete
+                        ? "2 · TERRITORY DETAILS"
+                        : "1 · DRAW YOUR AREA"
+                      : "3 · REVIEW & ASSIGN"}
                   </span>
-                  <h2>{mode === "draw" ? "Mark the neighborhood" : name}</h2>
+                  <h2>
+                    {mode === "draw"
+                      ? boundaryComplete
+                        ? "Name & assign"
+                        : "Mark the neighborhood"
+                      : name}
+                  </h2>
                 </div>
                 <button
                   onClick={cancel}
@@ -386,32 +507,20 @@ export default function TerritoryWorkspace({
               </div>
               {mode === "draw" ? (
                 <>
-                  <div
-                    className="rt-draw-tools"
-                    role="group"
-                    aria-label="Boundary tool"
-                  >
-                    {(
-                      [
-                        ["rectangle", "Rectangle"],
-                        ["corners", "Corners"],
-                        ["freehand", "Draw"],
-                      ] as const
-                    ).map(([tool, label]) => (
-                      <button
-                        key={tool}
-                        aria-pressed={drawingTool === tool}
-                        disabled={busy}
-                        onClick={() => {
-                          setDrawingTool(tool);
-                          setPoints([]);
-                          setReview(null);
-                          setError("");
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                  <div className="rt-boundary-summary">
+                    <p>
+                      {boundaryComplete
+                        ? `${points.length} corners · Boundary ready`
+                        : "Draw your boundary on the full map, then name it and choose a rep."}
+                    </p>
+                    <button
+                      onClick={() =>
+                        boundaryComplete ? redraw() : setCollapsed(true)
+                      }
+                      disabled={busy}
+                    >
+                      {boundaryComplete ? "Redraw boundary" : "Open full map"}
+                    </button>
                   </div>
                   <div className="rt-form">
                     <label>
@@ -443,29 +552,21 @@ export default function TerritoryWorkspace({
                       </select>
                     </label>
                   </div>
-                  <p className="rt-help">
-                    {drawingTool === "rectangle"
-                      ? "Tap two opposite corners to make a rectangle with four corners. Drag the map to move or pinch to zoom."
-                      : drawingTool === "freehand"
-                      ? "Trace the boundary with one finger or your mouse. Lift to finish. Use Move map to reposition; drawing again replaces the outline."
-                      : "Tap at least 4 corners around your area. Drag to move or pinch to zoom."}
-                  </p>
+                  {!boundaryComplete && (
+                    <p className="rt-help">
+                      {drawingTool === "rectangle"
+                        ? "Tap two opposite corners to make a rectangle with four corners. Drag the map to move or pinch to zoom."
+                        : drawingTool === "freehand"
+                        ? "Trace the boundary with one finger or your mouse. Lift to finish. Use Move map to reposition; drawing again replaces the outline."
+                        : "Tap at least 4 corners around your area. Drag to move or pinch to zoom."}
+                    </p>
+                  )}
                   <div className="rt-actions">
-                    <button
-                      onClick={() =>
-                        setPoints((p) =>
-                          drawingTool === "corners" ? p.slice(0, -1) : []
-                        )
-                      }
-                      disabled={!points.length || busy}
-                    >
-                      <Undo2 size={18} />
-                      {drawingTool === "corners" ? "Undo corner" : "Clear area"}
-                    </button>
                     <button
                       className="rt-primary"
                       onClick={inspect}
                       disabled={
+                        !boundaryComplete ||
                         points.length < (drawingTool === "freehand" ? 3 : 4) ||
                         !rep ||
                         !name.trim() ||
@@ -508,15 +609,8 @@ export default function TerritoryWorkspace({
                     </p>
                   )}
                   <div className="rt-actions">
-                    <button
-                      onClick={() => {
-                        setMode("draw");
-                        setReview(null);
-                        setError("");
-                      }}
-                      disabled={busy}
-                    >
-                      Edit boundary
+                    <button onClick={() => redraw()} disabled={busy}>
+                      Redraw boundary
                     </button>
                     <button
                       className="rt-primary"
@@ -547,7 +641,7 @@ export default function TerritoryWorkspace({
               )}
             </>
           )}
-        </section>
+        </TerritorySheet>
       </div>
       {dialog && selectedArea && (
         <MobileDialog
