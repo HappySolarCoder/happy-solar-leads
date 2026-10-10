@@ -17,6 +17,7 @@ Tap a gray pin to view the owner and secondary property details. Existing lead d
 - A serial worker cancels pending ranges when the camera moves. Firestore does not support aborting an already-sent `getDocs` request: that request can still be billed, and its valid bounded result is cached, but stale data never replaces the new view.
 - Each idle view is capped at 12 queries and 2,000 returned/minimum-query reads. This counter is not a billing meter: Security Rules profile checks, retries and Firebase billing details can add reads. Dense/partly covered areas ask the rep to zoom closer. No background catch-up scans run.
 - One canvas renders up to 2,000 gray homes in the viewport with cached SVG sprites, a spatial tap index and map-pane transforms. Existing worked markers keep their current implementation. No extra DOM marker per homeowner, continuous GPS service or paid imagery provider is added.
+- v12.3 rasterizes each small SVG sprite once per size/display scale, caches projected coordinates, reuses the canvas buffer, and suspends redraws during map motion. Saved homes are previewed immediately without starting network requests; network reads retain the same settling delay and budgets. Newly fetched results display before their local save completes.
 
 ## Cache correctness and offline use
 

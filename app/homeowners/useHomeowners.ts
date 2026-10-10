@@ -51,18 +51,15 @@ export function useHomeowners(
         receive({ ...EMPTY_HOMES, zoomIn: true });
         return;
       }
+      const b = map.getBounds();
+      const view = {
+        south: b.getSouth(), north: b.getNorth(),
+        west: b.getWest(), east: b.getEast(), zoom: map.getZoom(),
+      };
+      // Saved homes do not wait for the network debounce or an older in-flight request.
+      void loader!.preview(view, receive);
       timer = setTimeout(() => {
-        const b = map.getBounds();
-        loader!.request(
-          {
-            south: b.getSouth(),
-            north: b.getNorth(),
-            west: b.getWest(),
-            east: b.getEast(),
-            zoom: map.getZoom(),
-          },
-          receive,
-        );
+        loader!.request(view, receive);
       }, 500);
     };
     map.on("movestart zoomstart", cancel);

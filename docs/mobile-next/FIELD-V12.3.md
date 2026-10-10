@@ -1,6 +1,6 @@
 # Raydar v12.3 — clearer neighborhood maps
 
-This release reduces map obstruction from homeowner and worked-lead pins. It retains satellite/street imagery and the existing homeowner names, occupancy estimates, lead outcomes, warm-lead Signal R badge, and device cache. It makes no changes to Firebase queries, rules, imported data, or backend services.
+This release reduces map obstruction from homeowner and worked-lead pins and reduces homeowner rendering/loading delays. It retains satellite/street imagery and the existing homeowner names, occupancy estimates, lead outcomes, warm-lead Signal R badge, and device cache. It makes no changes to Firebase query definitions, read limits, rules, imported data, or backend services.
 
 ## Map sizing
 
@@ -16,6 +16,18 @@ Gray circles show owner records; gray diamonds show suspected renters. Both have
 
 Worked pins keep a 44 × 44 touch target. Property marks use nearest-home selection within 24 pixels. A worked marker's transparent padding now yields to a closer homeowner mark, while a direct hit on the worked image selects that lead. Keyboard Enter/Space opens the focused worked lead's details. Muted historical pins are also smaller. No records are moved, edited, removed, or filtered by this display change.
 
+## Map movement and loading
+
+- Saved homes are shown immediately from memory, then from device storage, independently of an older network request. Only network reads retain the existing 500 ms settling delay.
+- Up to four local cache lookups run together. Remote Firestore requests remain serial with the same 500-document query limit, 12-query/2,000-returned-read per-view budgets, and 30-day cache receipts.
+- Newly fetched homes display before the local save completes. Saving still finishes before starting another remote query, including when navigation cancels the old view.
+- Homeowner drawing pauses during drag/zoom. The existing canvas moves with the map; it redraws after movement settles. Small raster sprites, world coordinates, and the canvas buffer are reused.
+- Cached tiles use a latitude index to avoid scanning every saved record on each view update. Unchanged home arrays and duplicate-lead exclusions preserve their identities, avoiding repeated matching and worked-marker reconciliation for loading-status-only updates.
+
+In the isolated browser benchmark with 2,000 visible homeowner marks, device pixel ratio 2 and 4× CPU throttling, median draw time changed from 47.5 ms to 11.6 ms; p95 changed from 65.3 ms to 14.5 ms. Drawing during simulated map movement dropped from one unnecessary draw to zero; direct selection and selection after panning passed. These measure the homeowner rendering work in the test environment, not complete Galaxy S25 frame rate or mobile network latency.
+
+The cache-preview regression replays the same views with and without immediate previews and verifies the exact same remote query sequence. Cold-cache, repeat-view, offline, dense-area read-cap, and cancelled-navigation checks remain in place. No prefetch, wider geographic query, additional listener, full-collection read, or background remote scan was added.
+
 ## Install on the Mac mini
 
 ```bash
@@ -29,7 +41,7 @@ The installer reuses your earlier `.env.local` from Downloads. In Android Studio
 
 ## Firebase and the web app
 
-This pin-sizing update adds no Firebase reads or writes. Existing nearby queries, caps, and cached-area reuse are unchanged. New areas can still incur the existing reads. No production Vercel deployment or live Firebase rules change was performed.
+These rendering and local-cache optimizations add no new remote query path or Firebase writes. Existing nearby query bounds, caps, and cached-area reuse are unchanged. New areas can still incur the existing reads; this is not a guarantee of a fixed bill under changing usage. No production Vercel deployment or live Firebase rules change was performed.
 
 If the homeowner layer is still blocked, your Firebase bot should apply the additive homeowner-access rule described in [HOMEOWNERS-V12.md](HOMEOWNERS-V12.md), preserving the current live rules. That activation is separate from pin sizing; do not deploy an old entire rules file from this archive. The source release remains on its separate mobile branch. Do not merge this mobile branch into the production web branch.
 
@@ -45,7 +57,7 @@ The density comparison uses the actual app renderer with fictional homes and ill
 
 ![Same street view before and after](screenshots/v12.3/pin-density-comparison.png)
 
-Verification includes the 70 existing mobile/server tests, TypeScript via a successful static export, focused homeowner/artwork lint, and browser checks for direct worked-pin selection, small-home taps, expanded touch areas, close neighboring pins, keyboard selection, zoom-out hiding, and narrow/landscape widths. Cache/list/details regression checks use fictional data and block remote APIs. No live customer records are modified.
+Verification includes 74 mobile/server tests, TypeScript via a successful static export, focused homeowner/artwork lint, and browser checks for direct worked-pin selection, small-home taps, expanded touch areas, close neighboring pins, keyboard selection, zoom-out hiding, and narrow/landscape widths. Cache/list/details regression checks use fictional data and block remote APIs. No live customer records are modified.
 
 Actual Galaxy S25 frame rate, outdoor visibility, production Firebase access, and live imported coordinate accuracy still need a device check. Keep the existing app installed and test a dense Buffalo/Rochester block in satellite view after updating.
 
@@ -54,6 +66,7 @@ Reproduce the isolated browser checks:
 ```bash
 node scripts/mobile/check-export.mjs --audit
 node scripts/mobile/check-pin-density-v123.mjs
+node scripts/mobile/check-homeowner-render-performance.mjs
 MOBILE_EXPORT_DIR=/tmp/raydar-ui-audit-out node scripts/mobile/check-homeowners-v12.mjs
 ```
 

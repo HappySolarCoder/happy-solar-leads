@@ -52,15 +52,69 @@ export class HomeownerLoader {
     seq: number;
   };
   private memory = new Map<string, HomeTile>();
+  private cacheReads = new Map<string, Promise<HomeTile>>();
+  private indexed = new WeakMap<HomeTile, Homeowner[]>();
+  private visible: Homeowner[] = [];
+  private memoryRecords = 0;
+  private records(tile: HomeTile) {
+    let docs = this.indexed.get(tile);
+    if (!docs) {
+      docs = Object.values(tile.docs).sort((a, b) => a.lat - b.lat);
+      this.indexed.set(tile, docs);
+    }
+    return docs;
+  }
   private remember(tile: HomeTile) {
+    const old = this.memory.get(tile.tile);
+    if (old) this.memoryRecords -= this.records(old).length;
     this.memory.delete(tile.tile);
-    if (Object.keys(tile.docs).length <= 12000) this.memory.set(tile.tile, tile);
-    let records = [...this.memory.values()].reduce((total, value) => total + Object.keys(value.docs).length, 0);
-    while (this.memory.size > 12 || records > 12000) {
+    const count = this.records(tile).length;
+    if (count <= 12000) {
+      this.memory.set(tile.tile, tile);
+      this.memoryRecords += count;
+    }
+    while (this.memory.size > 12 || this.memoryRecords > 12000) {
       const oldest = this.memory.keys().next().value!;
-      records -= Object.keys(this.memory.get(oldest)!.docs).length;
+      this.memoryRecords -= this.records(this.memory.get(oldest)!).length;
       this.memory.delete(oldest);
     }
+  }
+  private cached(tile: string): Promise<HomeTile> {
+    const existing = this.memory.get(tile);
+    if (existing) return Promise.resolve(existing);
+    let pending = this.cacheReads.get(tile);
+    if (!pending) {
+      pending = this.deps.read(tile).then(saved => {
+        // A newer in-flight network result wins over an older disk snapshot.
+        const current = this.memory.get(tile) || saved;
+        this.remember(current);
+        return current;
+      }).finally(() => this.cacheReads.delete(tile));
+      this.cacheReads.set(tile, pending);
+    }
+    return pending;
+  }
+  private visibleHomes(tiles: Iterable<HomeTile>, view: View) {
+    const circle = viewCircle(view), all = new Map<string, Homeowner>();
+    const south = view.south - 25 / 111000, north = view.north + 25 / 111000;
+    for (const tile of tiles) {
+      const docs = this.records(tile);
+      let lo = 0, hi = docs.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (docs[mid].lat < south) lo = mid + 1; else hi = mid;
+      }
+      for (let i = lo; i < docs.length && docs[i].lat <= north; i++) {
+        const h = docs[i];
+        if (inView(h, view, 25) && distanceBetween(circle.center, [h.lat, h.lng]) * 1000 <= circle.radius + 35)
+          all.set(h.id, h);
+      }
+    }
+    const homes = [...all.values()];
+    // Loading/status-only updates must not repeat matching and pin reconciliation.
+    if (homes.length !== this.visible.length || homes.some((h, i) => h !== this.visible[i]))
+      this.visible = homes;
+    return this.visible;
   }
   constructor(private deps: Dependencies) {}
   cancel() {
@@ -70,6 +124,45 @@ export class HomeownerLoader {
   request(view: View, emit: (s: HomeownerState) => void) {
     this.pending = { view, emit, seq: ++this.sequence };
     void this.run();
+  }
+  /** Immediate memory, then saved disk tiles. Never starts a Firestore request. */
+  async preview(view: View, emit: (s: HomeownerState) => void) {
+    this.pending = undefined;
+    const seq = ++this.sequence, plan = planRanges(view);
+    const active = () => seq === this.sequence;
+    if (!plan.size) {
+      emit({ ...EMPTY_HOMES, offline: !this.deps.online(), zoomIn: true });
+      return;
+    }
+    const tiles = new Map<string, HomeTile>();
+    const publish = () => {
+      if (!active()) return;
+      let missing = tiles.size < plan.size, partial = false;
+      for (const [key, ranges] of plan) {
+        const tile = tiles.get(key);
+        if (!tile) continue;
+        const remaining = missingRanges(tile, ranges, view.zoom);
+        missing ||= remaining.ranges.length > 0;
+        partial ||= remaining.dense;
+      }
+      emit({ ...EMPTY_HOMES, homes: this.visibleHomes(tiles.values(), view),
+        offline: !this.deps.online(), loading: missing && this.deps.online(), partial });
+    };
+    for (const key of plan.keys()) {
+      const tile = this.memory.get(key);
+      if (tile) tiles.set(key, tile);
+    }
+    publish();
+    const keys = [...plan.keys()].filter(key => !tiles.has(key));
+    try {
+      // A handful of local reads in parallel; remote reads remain strictly serial.
+      for (let i = 0; i < keys.length && active(); i += 4) {
+        await Promise.all(keys.slice(i, i + 4).map(async key => tiles.set(key, await this.cached(key))));
+        publish();
+      }
+    } catch {
+      // The normal load reports cache errors. Keep already-visible homes here.
+    }
   }
   private async run() {
     if (this.running) return;
@@ -107,18 +200,8 @@ export class HomeownerLoader {
     const tiles = new Map<string, HomeTile>();
     const publish = (loading: boolean) => {
       if (!active()) return;
-      const circle = viewCircle(view);
-      const all = new Map<string, Homeowner>();
-      for (const t of tiles.values())
-        for (const h of Object.values(t.docs))
-          if (
-            inView(h, view, 25) &&
-            distanceBetween(circle.center, [h.lat, h.lng]) * 1000 <=
-              circle.radius + 35
-          )
-            all.set(h.id, h);
       emit({
-        homes: [...all.values()],
+        homes: this.visibleHomes(tiles.values(), view),
         loading,
         offline: !this.deps.online(),
         partial,
@@ -129,11 +212,9 @@ export class HomeownerLoader {
       });
     };
     try {
-      for (const tile of plan.keys()) {
-        let t = this.memory.get(tile);
-        if (!t) t = await this.deps.read(tile);
-        tiles.set(tile, t);
-        this.remember(t);
+      const keys = [...plan.keys()];
+      for (let i = 0; i < keys.length && active(); i += 4) {
+        await Promise.all(keys.slice(i, i + 4).map(async key => tiles.set(key, await this.cached(key))));
       }
       if (!active()) return;
       const work: { tile: string; r: Range }[] = [];
@@ -166,9 +247,10 @@ export class HomeownerLoader {
         this.remember(updated);
         // Store all bounded results, including geohash false positives. Filter only at render time.
         // This is essential: a coverage receipt cannot discard homes outside the old viewport.
-        await this.deps.save(updated);
         if (result.rawCount >= QUERY_LIMIT) partial = true;
         publish(true);
+        // Show results before waiting on device storage. Persist before another remote query.
+        await this.deps.save(updated);
       }
     } catch (e) {
       const x = e as { code?: string; message?: string };

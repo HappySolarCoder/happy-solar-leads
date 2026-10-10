@@ -9,9 +9,12 @@ export class HomeownerCanvas extends L.Layer {
   private homes: Homeowner[] = [];
   private selected?: string;
   private images = new Map<string, HTMLImageElement>();
+  private sprites = new Map<string, HTMLCanvasElement>();
+  private projected = new WeakMap<Homeowner, L.Point>();
   private hits = new Map<string, { x: number; y: number; home: Homeowner }[]>();
   private origin?: L.LatLng;
   private frame = 0;
+  private moving = false;
   constructor(private pick: (h: Homeowner) => void) {
     super();
   }
@@ -28,7 +31,8 @@ export class HomeownerCanvas extends L.Layer {
     pane.style.zIndex = "550";
     pane.style.pointerEvents = "none";
     pane.appendChild(this.canvas);
-    map.on("moveend zoomend resize", this.schedule, this);
+    map.on("movestart zoomstart", this.pause, this);
+    map.on("moveend zoomend resize", this.resume, this);
     map.on("zoomanim", this.animate, this);
     map.on("click", this.tap, this);
     this.schedule();
@@ -36,7 +40,8 @@ export class HomeownerCanvas extends L.Layer {
   }
   onRemove(map: L.Map) {
     cancelAnimationFrame(this.frame);
-    map.off("moveend zoomend resize", this.schedule, this);
+    map.off("movestart zoomstart", this.pause, this);
+    map.off("moveend zoomend resize", this.resume, this);
     map.off("zoomanim", this.animate, this);
     map.off("click", this.tap, this);
     this.canvas?.remove();
@@ -46,13 +51,24 @@ export class HomeownerCanvas extends L.Layer {
     return this;
   }
   update(homes: Homeowner[], selected?: string) {
+    if (homes === this.homes && selected === this.selected) return;
     this.homes = homes;
     this.selected = selected;
     this.schedule();
   }
   private schedule = () => {
+    if (this.moving || !this.map) return;
     cancelAnimationFrame(this.frame);
     this.frame = requestAnimationFrame(() => this.draw());
+  };
+  private pause = () => {
+    this.moving = true;
+    cancelAnimationFrame(this.frame);
+    this.hits.clear();
+  };
+  private resume = () => {
+    this.moving = false;
+    this.schedule();
   };
   private image(url: string) {
     let im = this.images.get(url);
@@ -68,6 +84,21 @@ export class HomeownerCanvas extends L.Layer {
     }
     return im;
   }
+  private sprite(artwork: ReturnType<typeof homeownerPinArtwork>, dpr: number) {
+    const key = `${artwork.url}:${artwork.size}:${dpr}`;
+    let sprite = this.sprites.get(key);
+    if (!sprite) {
+      const im = this.image(artwork.url);
+      if (!im.complete || !im.naturalWidth) return;
+      sprite = document.createElement('canvas');
+      sprite.width = Math.ceil(artwork.size * dpr);
+      sprite.height = Math.ceil(artwork.height * dpr);
+      sprite.getContext('2d')?.drawImage(im, 0, 0, sprite.width, sprite.height);
+      this.sprites.set(key, sprite);
+      if (this.sprites.size > 24) this.sprites.delete(this.sprites.keys().next().value!);
+    }
+    return sprite;
+  }
   private draw() {
     const map = this.map,
       canvas = this.canvas;
@@ -75,8 +106,12 @@ export class HomeownerCanvas extends L.Layer {
     const size = map.getSize(),
       dpr = Math.min(devicePixelRatio || 1, 2),
       zoom = map.getZoom();
-    canvas.width = size.x * dpr;
-    canvas.height = size.y * dpr;
+    // Reuse the backing buffer; allocating it on every pan creates avoidable work.
+    const pixelWidth = Math.ceil(size.x * dpr), pixelHeight = Math.ceil(size.y * dpr);
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
     canvas.style.width = `${size.x}px`;
     canvas.style.height = `${size.y}px`;
     L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
@@ -84,12 +119,21 @@ export class HomeownerCanvas extends L.Layer {
     this.hits.clear();
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size.x, size.y);
     if (zoom < 15) return;
     const sprites = new Map<string, ReturnType<typeof homeownerPinArtwork>>();
+    const pixels = new Map<string, HTMLCanvasElement | undefined>();
+    const scale = map.getZoomScale(zoom, 0);
+    const offset = map.layerPointToContainerPoint(L.point(0, 0)).subtract(map.getPixelOrigin());
     let count = 0;
     for (const h of this.homes) {
-      const p = map.latLngToContainerPoint([h.lat, h.lng]);
+      let world = this.projected.get(h);
+      if (!world) {
+        world = map.project([h.lat, h.lng], 0);
+        this.projected.set(h, world);
+      }
+      const p = { x: Math.round(world.x * scale) + offset.x, y: Math.round(world.y * scale) + offset.y };
       if (p.x < 0 || p.y < 0 || p.x > size.x || p.y > size.y) continue;
       if (count++ >= MAX_PINS) break;
       const renter = suspectedRenter(h),
@@ -100,8 +144,9 @@ export class HomeownerCanvas extends L.Layer {
         sprite = homeownerPinArtwork(renter, zoom, selected);
         sprites.set(key, sprite);
       }
-      const im = this.image(sprite.url);
-      if (im.complete && im.naturalWidth)
+      if (!pixels.has(key)) pixels.set(key, this.sprite(sprite, dpr));
+      const im = pixels.get(key);
+      if (im)
         ctx.drawImage(
           im,
           p.x - sprite.anchorX,
@@ -111,7 +156,9 @@ export class HomeownerCanvas extends L.Layer {
         );
       const y = p.y,
         k = `${Math.floor(p.x / 48)}:${Math.floor(y / 48)}`;
-      this.hits.set(k, [...(this.hits.get(k) || []), { x: p.x, y, home: h }]);
+      let bucket = this.hits.get(k);
+      if (!bucket) this.hits.set(k, bucket = []);
+      bucket.push({ x: p.x, y, home: h });
     }
   }
   private animate = (e: L.ZoomAnimEvent) => {

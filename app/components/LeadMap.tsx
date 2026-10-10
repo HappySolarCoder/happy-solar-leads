@@ -230,7 +230,11 @@ export default function LeadMap({
 
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
-  const leads = useMemo(() => homeMerge.hiddenLeadIds.size ? leadsProp.filter(l => !homeMerge.hiddenLeadIds.has(l.id)) : leadsProp, [leadsProp, homeMerge.hiddenLeadIds]);
+  const hiddenLeadKey = JSON.stringify([...homeMerge.hiddenLeadIds].sort());
+  const leads = useMemo(() => {
+    const hidden = new Set<string>(JSON.parse(hiddenLeadKey));
+    return hidden.size ? leadsProp.filter(l => !hidden.has(l.id)) : leadsProp;
+  }, [leadsProp, hiddenLeadKey]);
 
   const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
 

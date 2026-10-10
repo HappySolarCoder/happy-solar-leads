@@ -1,0 +1,36 @@
+{
+  "environment": "Isolated Chromium; 393x740 viewport; device pixel ratio 2; 4x CPU throttling; no network data",
+  "scope": "Homeowner canvas draw only; 2000 fictional visible homes; not end-to-end device FPS",
+  "before": {
+    "homes": 2000,
+    "medianDrawMs": 47.5,
+    "p95DrawMs": 65.29999999981374,
+    "pausedDraws": 1,
+    "resumed": true,
+    "exactHit": true,
+    "panHit": true,
+    "canvasCount": 1,
+    "cpuThrottle": 4,
+    "errors": []
+  },
+  "after": {
+    "homes": 2000,
+    "medianDrawMs": 11.600000000093132,
+    "p95DrawMs": 14.5,
+    "pausedDraws": 0,
+    "resumed": true,
+    "exactHit": true,
+    "panHit": true,
+    "canvasCount": 1,
+    "cpuThrottle": 4,
+    "errors": []
+  },
+  "costVerification": "homeowner-performance.test.ts replays identical view navigation with and without immediate local previews and asserts the exact same remote query sequence.",
+  "verification": {
+    "mobileTestsPassed": 74,
+    "typecheck": "passed",
+    "staticMobileExport": "passed",
+    "mapDensityAndSelectionBrowserChecks": "passed",
+    "homeownerCacheAndOfflineBrowserChecks": "passed"
+  }
+}
