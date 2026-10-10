@@ -11,6 +11,8 @@ export type TerritoryMember = {
   isActive?: boolean;
   approved?: boolean;
   approvalStatus?: string;
+  deleted?: boolean;
+  deletionPending?: boolean;
 };
 export type ManagedTerritory = {
   id: string;
@@ -20,6 +22,7 @@ export type ManagedTerritory = {
   userColor: string;
   polygon: TerritoryPoint[];
   leadIds: string[];
+  leadCount?: number;
   version: string;
 };
 export type TerritoryCandidate = {
@@ -40,8 +43,14 @@ export function mayManageTerritories(user: {
   role?: string;
   approved?: boolean;
   approvalStatus?: string;
+  isActive?: boolean;
+  deleted?: boolean;
+  deletionPending?: boolean;
 }) {
   return (
+    !user.deleted &&
+    !user.deletionPending &&
+    user.isActive !== false &&
     ["admin", "manager"].includes(user.role || "") &&
     user.approved !== false &&
     user.approvalStatus !== "pending"
@@ -56,6 +65,8 @@ export function inManagerTeam(actor: TerritoryMember, member: TerritoryMember) {
 }
 export function mayReceiveTerritory(member: TerritoryMember) {
   return (
+    !member.deleted &&
+    !member.deletionPending &&
     member.isActive !== false &&
     member.approved !== false &&
     member.approvalStatus !== "pending" &&
