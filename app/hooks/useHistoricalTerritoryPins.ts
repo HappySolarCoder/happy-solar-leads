@@ -54,6 +54,8 @@ function toLead(raw: HistoricalPinPayload): Lead {
  * Other reps' Appointment Set and Sold pins inside the signed-in user's
  * territory polygons. Empty when the user has no territory.
  */
+const EMPTY_PINS: Lead[] = [];
+
 export function useHistoricalTerritoryPins(userId?: string): Lead[] {
   const [pins, setPins] = useState<Lead[]>([]);
   const [loadedFor, setLoadedFor] = useState<string | undefined>(undefined);
@@ -91,6 +93,6 @@ export function useHistoricalTerritoryPins(userId?: string): Lead[] {
     };
   }, [userId]);
 
-  if (!userId || loadedFor !== userId) return [];
+  if (!userId || loadedFor !== userId) return EMPTY_PINS;
   return pins;
 }

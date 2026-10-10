@@ -1,0 +1,17 @@
+/* Native-export-only brand scope. The deployed web app retains its theme. */
+html[data-raydar-native] {
+  background: #FFFCF5;
+}
+html[data-raydar-native] [class~="bg-[#F7FAFC]"] { background-color: #FFFCF5; }
+html[data-raydar-native] [class~="bg-[#FF5F5A]"] { background-color: #476E88; }
+html[data-raydar-native] [class~="text-[#FF5F5A]"] { color: #476E88; }
+html[data-raydar-native] [class~="border-[#FF5F5A]"] { border-color: #476E88; }
+html[data-raydar-native] [class~="border-[#FF5F5A]/30"] { border-color: #B3C9D8; }
+html[data-raydar-native] [class~="bg-[#FF5F5A]/5"],
+html[data-raydar-native] [class~="bg-[#FF5F5A]/10"] { background-color: #EBF1F5; }
+html[data-raydar-native] [class~="hover:bg-[#E54E49]"]:hover { background-color: #3C6078; }
+html[data-raydar-native] [class~="hover:text-[#FF5F5A]"]:hover { color: #476E88; }
+html[data-raydar-native] [class~="focus:ring-[#FF5F5A]"]:focus { --tw-ring-color: #587E98; }
+html[data-raydar-native] [class~="focus:border-[#FF5F5A]"]:focus { border-color: #587E98; }
+html[data-raydar-native] input[type="radio"],
+html[data-raydar-native] input[type="checkbox"] { accent-color: #476E88; }

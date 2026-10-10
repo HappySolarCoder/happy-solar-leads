@@ -1,5 +1,10 @@
 'use client';
 
+import { observeMapSize } from '@/app/utils/observeMapSize';
+
+import { fieldPinArtwork, fieldPinZoomTier } from '@/app/utils/fieldPin';
+import { buildLeadViewportIndex, queryLeadViewport } from '@/app/utils/mapViewport';
+import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { getLocation } from '@/app/utils/geolocation';
 
 import { apiFetch } from '@/app/utils/apiFetch';
@@ -31,6 +36,7 @@ interface UserRoute {
 
 interface LeadMapProps {
   leads: Lead[];
+  dispositionOptions?: Disposition[];
   currentUser: User | null;
   users?: User[]; // All users for territory color mapping
   onLeadClick: (lead: Lead) => void;
@@ -52,25 +58,43 @@ interface LeadMapProps {
   searchLocation?: { lat: number; lng: number } | null; // For address search marker
   heatCells?: { lat: number; lng: number; intensity: number; count: number }[]; // Optional heat overlay
   heatCellRadiusMeters?: number;
+  showLocateControl?: boolean;
+  showZoomControl?: boolean;
   showTeamAreas?: boolean; // User toggle: overlay FMA territories + teammate pins
   teamMembers?: TeamAreaMember[];
   onToggleTeamAreas?: (next: boolean) => void;
 }
 
+const EMPTY_USERS: User[] = [];
+const EMPTY_IDS: string[] = [];
+const EMPTY_ROUTES: UserRoute[] = [];
+type PinEntry = { marker: L.Marker; lead: Lead; styleKey: string; users: User[]; disposition?: Disposition };
+
+function markPinSelected(entry: PinEntry, selected: boolean) {
+  const icon = entry.marker.options.icon;
+  if (icon) {
+    const base = (icon.options.className || '').replace(/\bis-selected\b/g, '').trim();
+    icon.options.className = `${base}${selected ? ' is-selected' : ''}`;
+  }
+  entry.marker.getElement()?.classList.toggle('is-selected', selected);
+  entry.marker.setZIndexOffset(entry.lead.historicalTerritoryPin ? -300 : selected ? 500 : 0);
+}
+
 export default function LeadMap({ 
-  leads: leadsProp, 
+  leads: leadsProp,
+  dispositionOptions,
   currentUser,
-  users = [],
+  users = EMPTY_USERS,
   onLeadClick, 
   selectedLeadId,
   routeWaypoints,
-  userRoutes = [],
+  userRoutes = EMPTY_ROUTES,
   center = [43.1566, -77.6088], // Rochester, NY - default for admin oversight
   zoom = 11,
   onMapMove,
   onMapTypeChange,
   assignmentMode = 'none',
-  selectedLeadIdsForAssignment = [],
+  selectedLeadIdsForAssignment = EMPTY_IDS,
   onTerritoryDrawn,
   userPosition,
   viewMode = 'map',
@@ -80,6 +104,8 @@ export default function LeadMap({
   searchLocation,
   heatCells = [],
   heatCellRadiusMeters = 180,
+  showLocateControl = true,
+  showZoomControl = true,
   showTeamAreas = false,
   teamMembers = [],
   onToggleTeamAreas,
@@ -87,6 +113,23 @@ export default function LeadMap({
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
+  const pinEntriesRef = useRef(new Map<string, PinEntry>());
+  const routeModeRef = useRef(false);
+  const selectedPinRef = useRef<string | undefined>(undefined);
+  // Selecting a door only changes its outline. Do not replace its Leaflet icon
+  // or restart batched marker reconciliation while a touch event is in progress.
+  useEffect(() => {
+    const previous = selectedPinRef.current;
+    selectedPinRef.current = selectedLeadId;
+    for (const id of [previous, selectedLeadId]) {
+      if (!id) continue;
+      const entry = pinEntriesRef.current.get(id);
+      if (entry) markPinSelected(entry, id === selectedLeadId);
+    }
+  }, [selectedLeadId]);
+  const clickRef = useRef(onLeadClick);
+  useEffect(() => { clickRef.current = onLeadClick; }, [onLeadClick]);
+  const hasUserPosition = Boolean(userPosition);
   const routeLineRef = useRef<L.Polyline | null>(null);
   const drawControlRef = useRef<any>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
@@ -96,7 +139,8 @@ export default function LeadMap({
   const userInteractedRef = useRef<boolean>(false); // After user pans/zooms, never auto-fit/auto-pan
   const [isClient, setIsClient] = useState(false);
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
-  const [dispositions, setDispositions] = useState<Disposition[]>([]);
+  const [loadedDispositions, setDispositions] = useState<Disposition[]>([]);
+  const dispositions = dispositionOptions ?? loadedDispositions;
   const [mapZoom, setMapZoom] = useState(zoom);
   const [zoomTier, setZoomTier] = useState(0); // Tier system to avoid re-rendering on every zoom
   const [viewportKey, setViewportKey] = useState(0); // Trigger re-render on pan/zoom
@@ -150,14 +194,17 @@ export default function LeadMap({
   // For large datasets, we only render what's passed in
   const leads = useMemo(() => leadsProp, [leadsProp]);
 
+  const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
+
   // Load dispositions
   useEffect(() => {
+    if (dispositionOptions) return;
     async function loadDispositions() {
       const dispos = await getDispositionsAsync();
       setDispositions(dispos);
     }
     loadDispositions();
-  }, []);
+  }, [dispositionOptions]);
 
   // Reset fitBounds when userRoutes changes (new date/user filter selected)
   useEffect(() => {
@@ -252,7 +299,7 @@ export default function LeadMap({
     const map = L.map(mapRef.current, {
       center,
       zoom,
-      zoomControl: true,
+      zoomControl: showZoomControl,
       attributionControl: false,
     });
 
@@ -274,18 +321,28 @@ export default function LeadMap({
 
     // Create marker cluster group with optimized clustering for performance
     markersLayerRef.current = L.markerClusterGroup({
+      iconCreateFunction: (cluster) => {
+        const count = cluster.getChildCount();
+        const label = count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
+        return L.divIcon({
+          className: 'field-cluster', iconSize: [46, 46],
+          html: `<div title="${count} doors — zoom in" style="width:46px;height:46px;border-radius:16px;background:#203d49;border:2px solid #6fc9c5;box-shadow:0 0 0 3px #ffffffbb;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;font:700 15px system-ui"><span>${label}</span><span style="font:500 8px system-ui;color:#bde4da;letter-spacing:.6px">DOORS</span></div>`,
+        });
+      },
       disableClusteringAtZoom: 15, // Show individual pins at zoom 15+ (slightly later for performance)
       maxClusterRadius: 60, // Reduced from default 80 (tighter clusters = fewer markers)
       spiderfyOnMaxZoom: true, // Spread out markers when clicking cluster at max zoom
       showCoverageOnHover: false, // Don't show cluster bounds on hover (cleaner UX + performance)
       zoomToBoundsOnClick: true, // Zoom into cluster when clicked
-      chunkedLoading: true, // Better performance for large datasets
+      chunkedLoading: false, // Marker creation/insertion is already scheduled in cancellable frame batches
       chunkInterval: 50, // Process in 50ms chunks
       chunkDelay: 50, // 50ms delay between chunks
       removeOutsideVisibleBounds: true, // Remove markers outside view (huge performance boost)
     }).addTo(map);
     
     mapInstanceRef.current = map;
+
+    const stopObservingSize = observeMapSize(map);
 
     // Mark user interaction to prevent auto-fit snapback
     map.on('dragstart', () => {
@@ -302,11 +359,7 @@ export default function LeadMap({
       setMapZoom(currentZoom);
       
       // Calculate zoom tier (only re-render markers when tier changes, not on every zoom)
-      // Tiers: 0 (<12), 1 (12-14), 2 (14-16), 3 (>16)
-      let newTier = 0;
-      if (currentZoom >= 16) newTier = 3;
-      else if (currentZoom >= 14) newTier = 2;
-      else if (currentZoom >= 12) newTier = 1;
+      const newTier = fieldPinZoomTier(currentZoom);
       
       setZoomTier(newTier);
       setViewportKey(prev => prev + 1); // Trigger viewport update on zoom
@@ -383,9 +436,13 @@ export default function LeadMap({
     });
 
     return () => {
+      stopObservingSize();
+      clearTimeout(longPressTimer);
       if (routeLineRef.current) routeLineRef.current.remove();
       map.remove();
       mapInstanceRef.current = null;
+      pinEntriesRef.current.clear();
+      routeModeRef.current = false;
     };
   }, [isClient]);
 
@@ -500,41 +557,22 @@ export default function LeadMap({
     const map = mapInstanceRef.current;
     const layer = markersLayerRef.current;
 
-    // Performance: Log start time
-    const startTime = Date.now();
-    console.log(`[LeadMap] Updating ${leads.length} markers...`);
-
     const pinnedIdAtStart = persistentPopupIdRef.current;
-
-    // Clear existing markers
-    layer.clearLayers();
+    const routeMode = Boolean(userRoutes.length || routeWaypoints?.length);
+    if (routeMode || routeModeRef.current) {
+      layer.clearLayers();
+      pinEntriesRef.current.clear();
+    }
+    routeModeRef.current = routeMode;
     if (routeLineRef.current) {
       routeLineRef.current.remove();
       routeLineRef.current = null;
     }
-
-    // Get current zoom level for scaling
     const currentZoom = map.getZoom();
-
-    // PERFORMANCE OPTIMIZATION: Viewport-based filtering
-    // Only render markers that are within the current map bounds + buffer
-    const bounds = map.getBounds();
-    const padding = 0.5; // Add 50% buffer around visible area
-    const latDiff = bounds.getNorth() - bounds.getSouth();
-    const lngDiff = bounds.getEast() - bounds.getWest();
-    const paddedBounds = L.latLngBounds([
-      [bounds.getSouth() - latDiff * padding, bounds.getWest() - lngDiff * padding],
-      [bounds.getNorth() + latDiff * padding, bounds.getEast() + lngDiff * padding]
-    ]);
-
-    // Filter leads to only those in viewport
-    const visibleLeads = leads.filter(lead => {
-      if (!lead.lat || !lead.lng) return false;
-      return paddedBounds.contains([lead.lat, lead.lng]);
+    const bounds = map.getBounds().pad(0.3);
+    const visibleLeads = queryLeadViewport(viewportIndex, {
+      south: bounds.getSouth(), north: bounds.getNorth(), west: bounds.getWest(), east: bounds.getEast(),
     });
-
-    console.log(`[LeadMap] Rendering ${visibleLeads.length} of ${leads.length} visible leads (${Math.round(visibleLeads.length / leads.length * 100)}%)`);
-
 
     // Show multiple user routes (activity map mode)
     if (userRoutes && userRoutes.length > 0) {
@@ -631,77 +669,83 @@ export default function LeadMap({
       return;
     }
 
-    // Regular lead display - using visible leads only
-    // Always show leads with dispositions (they've been knocked)
-    visibleLeads.forEach(lead => {
-      const hasDisposition = isKnockStatus(lead.status);
-      if (!lead.lat || !lead.lng) return;
-
-      const isHistorical = lead.historicalTerritoryPin === true;
-      const isAssignedToMe = currentUser != null && lead.assignedTo != null && lead.assignedTo === currentUser.id;
-      const isClaimedByMe = currentUser != null && lead.claimedBy != null && lead.claimedBy === currentUser.id;
-
-      // Skip poor solar leads UNLESS:
-      // - they have a disposition (already knocked), OR
-      // - they are assigned/claimed by the current user (they still need to see their turf)
-      // Past Appointment Set / Sold pins from other reps stay visible even on poor roofs.
-      if (!isHistorical && lead.solarCategory === 'poor' && !hasDisposition && !isAssignedToMe && !isClaimedByMe) return;
-
-      const isSelected = lead.id === selectedLeadId;
-      // isClaimedByMe already computed above
-      const canClaim = lead.claimedBy == null || isClaimedByMe;
-      const isSelectedForAssignment = selectedLeadIdsForAssignment.includes(lead.id);
-
-      // Find disposition for this lead (prefer current status id, fallback to latest history label)
-      const latestHistoryDisposition = String(lead.dispositionHistory?.[0]?.disposition || '').toLowerCase();
-      const disposition = dispositions.find(d => d.id === lead.status)
-        || dispositions.find(d => String(d.name || '').toLowerCase() === latestHistoryDisposition);
-
-      const icon = createCustomIcon(
-        lead,
-        users,
-        viewMode, // Only show territory colors in assignments view
-        lead.solarCategory,
-        lead.status,
-        Boolean(isSelected || isSelectedForAssignment),
-        Boolean(isClaimedByMe),
-        Boolean(canClaim),
-        Boolean(lead.claimedBy),
-        isSelectedForAssignment,
-        disposition,
-        currentZoom,
-        lead.tags // Pass tags for special styling
-      );
-
-      const marker = L.marker([lead.lat!, lead.lng!], {
-        icon,
-        // Keep past pins under the viewer's own active markers.
-        zIndexOffset: isHistorical ? -300 : 0,
-      });
-      const keepPopupOpen = isPersistentPinPopup(lead);
-      if (keepPopupOpen) {
-        // Popup lives on the map, keyed by lead id, so clearing this marker
-        // layer on pan/zoom/refetch does not unmount it.
-        marker.on('click', () => {
-          showPersistentPopup(map, lead);
-          // Other reps' past pins stay popup-only. Own pins still open the
-          // detail sheet; the map popup remains until X or a map tap.
-          if (isHistorical) return;
-          onLeadClick(lead);
-        });
-      } else {
-        // Prevent Leaflet from auto-panning the map to keep popups in view (this causes "snap back" / lock feeling on mobile).
-        marker.bindPopup(createPopupContent(lead), { maxWidth: 300, autoPan: false });
-        marker.on('click', () => {
-          if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
-          onLeadClick(lead);
-        });
-      }
-      // IMPORTANT: Do NOT call openPopup() inside the render loop.
-      // LeadMap re-renders on pan/zoom (viewportKey) and would repeatedly open the popup,
-      // which can force the map to re-center.
-      marker.addTo(layer);
+    // Reuse marker instances. A GPS tick or unchanged snapshot never rebuilds pins.
+    const entries = pinEntriesRef.current;
+    const eligible = visibleLeads.filter(lead => lead.historicalTerritoryPin ||
+      lead.solarCategory !== 'poor' || isKnockStatus(lead.status) || getAppointmentOutcome(lead) ||
+      (currentUser && (lead.assignedTo === currentUser.id || lead.claimedBy === currentUser.id)));
+    const visibleIds = new Set(eligible.map(lead => lead.id));
+    const removed: L.Marker[] = [];
+    entries.forEach((entry, id) => {
+      if (!visibleIds.has(id)) { removed.push(entry.marker); entries.delete(id); }
     });
+    if (removed.length) layer.removeLayers(removed);
+    const assignedIds = new Set(selectedLeadIdsForAssignment);
+    const byId = new Map(dispositions.map(d => [d.id, d]));
+    const byName = new Map(dispositions.map(d => [String(d.name || '').toLowerCase(), d]));
+    let offset = 0;
+    let frame = 0;
+    let cancelled = false;
+    let created = 0, updated = 0;
+    const renderBatch = () => {
+      if (cancelled) return;
+      const start = performance.now();
+      const added: L.Marker[] = [];
+      while (offset < eligible.length && performance.now() - start < 8 && added.length < 75) {
+        const lead = eligible[offset++];
+        const isClaimedByMe = !!currentUser && lead.claimedBy === currentUser.id;
+        const canClaim = lead.claimedBy == null || isClaimedByMe;
+        const selectedForAssignment = assignedIds.has(lead.id);
+        const selected = selectedForAssignment;
+        const disposition = byId.get(lead.status) || byName.get(String(lead.dispositionHistory?.[0]?.disposition || '').toLowerCase());
+        const styleKey = `${fieldPinZoomTier(currentZoom)}:${viewMode}:${selected}:${isClaimedByMe}:${canClaim}:${selectedForAssignment}`;
+        let entry = entries.get(lead.id);
+        if (entry && entry.lead === lead && entry.styleKey === styleKey && entry.users === users && entry.disposition === disposition) continue;
+        const icon = createCustomIcon(lead, users, viewMode, lead.solarCategory, lead.status, selected,
+          isClaimedByMe, canClaim, !!lead.claimedBy, selectedForAssignment, disposition, currentZoom, lead.tags);
+        const title = `${lead.address} · ${fieldPinArtwork(lead, disposition, currentZoom).label}`;
+        if (!entry) {
+          entry = { marker: L.marker([lead.lat!, lead.lng!], {icon, title, alt: title, zIndexOffset: lead.historicalTerritoryPin ? -300 : 0}), lead, styleKey, users, disposition };
+          const liveEntry = entry;
+          // Popup markup is only produced when opened, not for every pin during load.
+          entry.marker.bindPopup(() => createPopupContent(liveEntry.lead), { maxWidth: 300, autoPan: false });
+          entry.marker.on('click', () => {
+            const current = liveEntry.lead;
+            if (isPersistentPinPopup(current)) {
+              liveEntry.marker.closePopup();
+              showPersistentPopup(map, current);
+              if (current.historicalTerritoryPin) return;
+            } else if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
+            clickRef.current(current);
+          });
+          entries.set(lead.id, entry);
+          added.push(entry.marker);
+          created++;
+        } else {
+          const old = entry.lead;
+          // Coordinates affect clustering: remove/re-add only a moved pin.
+          if (old.lat !== lead.lat || old.lng !== lead.lng) {
+            layer.removeLayer(entry.marker);
+            entry.marker.setLatLng([lead.lat!, lead.lng!]);
+            added.push(entry.marker);
+          }
+          entry.marker.setIcon(icon);
+          entry.marker.setZIndexOffset(lead.historicalTerritoryPin ? -300 : selected ? 500 : 0);
+          const element = entry.marker.getElement();
+          element?.setAttribute('title', title);
+          element?.setAttribute('aria-label', title);
+          entry.lead = lead; entry.styleKey = styleKey; entry.users = users; entry.disposition = disposition;
+          if (entry.marker.isPopupOpen()) entry.marker.setPopupContent(createPopupContent(lead));
+          updated++;
+        }
+      }
+      if (added.length) layer.addLayers(added);
+      const selectedEntry = selectedPinRef.current ? entries.get(selectedPinRef.current) : undefined;
+      if (selectedEntry) markPinSelected(selectedEntry, true);
+      if (offset < eligible.length) frame = requestAnimationFrame(renderBatch);
+      else if (process.env.NODE_ENV !== 'production') console.debug('[LeadMap] Pin reconciliation', {visible: eligible.length, created, updated, removed: removed.length});
+    };
+    frame = requestAnimationFrame(renderBatch);
 
     if (pinnedIdAtStart) {
       const pinned = leads.find((item) => item.id === pinnedIdAtStart);
@@ -729,7 +773,7 @@ export default function LeadMap({
     });
     // Only fit bounds once when leads first load, not on every render/pan/zoom
     // On /mobile/knocking we want to default to GPS location (not last knocked pin / small lead set).
-    const preferGpsCenter = currentUser?.role !== 'admin' && Boolean(userPosition);
+    const preferGpsCenter = currentUser?.role !== 'admin' && hasUserPosition;
 
     if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current && !userInteractedRef.current && !preferGpsCenter) {
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
@@ -737,12 +781,8 @@ export default function LeadMap({
       hasFitLeadsBoundsRef.current = true;
     }
 
-    // Performance: Log completion time
-    const duration = Date.now() - startTime;
-    console.log(`[LeadMap] Rendered ${visibleLeads.length} markers in ${duration}ms (zoom tier: ${zoomTier})`);
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey, userPosition]);
-  // Note: Using zoomTier instead of direct mapZoom - only re-renders when crossing zoom thresholds
-  // This prevents constant re-renders on every zoom event (just 4 tiers: <12, 12-14, 14-16, >16)
+    return () => { cancelled = true; cancelAnimationFrame(frame); };
+  }, [leads, viewportIndex, currentUser, routeWaypoints, userRoutes, isClient, dispositions, zoomTier, viewportKey, hasUserPosition, users, viewMode, selectedLeadIdsForAssignment]);
 
   // Handle territory drawing mode
   useEffect(() => {
@@ -1519,38 +1559,24 @@ export default function LeadMap({
     <div className="relative w-full h-full">
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       
-      {/* Map Type Toggle Button */}
-      <button
-        onClick={() => {
-          const newType = mapType === 'satellite' ? 'street' : 'satellite';
-          setMapType(newType);
-          if (onMapTypeChange) onMapTypeChange(newType);
-        }}
-        className="absolute top-6 right-6 px-4 py-2 bg-white hover:bg-[#FF5F5A] border-2 border-[#E2E8F0] rounded-lg shadow-lg flex items-center gap-2 text-[#2D3748] hover:text-white transition-all duration-200 hover:scale-105 active:scale-95 z-20 font-medium text-sm"
-        title={`Switch to ${mapType === 'satellite' ? 'street' : 'satellite'} view`}
-        style={{ boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }}
-      >
-        {mapType === 'satellite' ? (
-          <>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 3v18h18" />
-              <path d="M7 17h10" />
-              <path d="M7 12h10" />
-              <path d="M7 7h10" />
-            </svg>
-            Street
-          </>
-        ) : (
-          <>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-              <path d="M2 12h20" />
-            </svg>
-            Satellite
-          </>
-        )}
-      </button>
+      {/* Both real basemaps remain available without changing pins or map position. */}
+      <div role="group" aria-label="Map imagery"
+        className="absolute top-3 right-3 z-20 flex gap-1 rounded-xl border border-[#D5DFDA] bg-white p-1 shadow-lg">
+        {([{ value: 'street', label: 'Map', description: 'Street map' },
+          { value: 'satellite', label: 'Satellite', description: 'Real aerial imagery' }] as const).map(option => (
+          <button key={option.value} type="button" aria-pressed={mapType === option.value}
+            title={option.description}
+            onClick={() => {
+              if (mapType === option.value) return;
+              setMapType(option.value);
+              onMapTypeChange?.(option.value);
+            }}
+            className={`min-h-11 rounded-lg px-3 text-xs font-semibold transition-colors ${mapType === option.value
+              ? 'bg-[#203D49] text-white' : 'text-[#3D5E58] hover:bg-[#EDF2EB]'}`}>
+            {option.label}
+          </button>
+        ))}
+      </div>
 
       {onToggleTeamAreas && (
         <button
@@ -1575,7 +1601,7 @@ export default function LeadMap({
       )}
 
       {/* GPS Locate Button */}
-      {userPosition && (
+      {userPosition && showLocateControl && (
         <button
           onClick={handleLocateMe}
           className="absolute bottom-6 right-6 w-12 h-12 bg-white hover:bg-[#FF5F5A] border-2 border-[#E2E8F0] rounded-full shadow-lg flex items-center justify-center text-[#FF5F5A] hover:text-white transition-all duration-200 hover:scale-110 active:scale-95 z-20"
@@ -1781,6 +1807,18 @@ function createCustomIcon(
     return createMutedHistoricalIcon(disposition, zoom);
   }
 
+  if (viewMode === 'map') {
+    const pin = fieldPinArtwork(lead, disposition, zoom, isSelected);
+    const hitSize = Math.max(44, pin.height);
+    const left = (hitSize - pin.size) / 2;
+    const top = hitSize - pin.height;
+    return L.divIcon({
+      className: 'field-pin',
+      html: `<img src="${pin.url}" width="${pin.size}" height="${pin.height}" alt="" draggable="false" style="display:block;pointer-events:none;position:absolute;left:${left}px;top:${top}px"/>`,
+      iconSize: [hitSize, hitSize], iconAnchor: [hitSize / 2, zoom < 14 ? top + pin.height / 2 : hitSize - (pin.height * 3 / 56)], popupAnchor: [0, -pin.height],
+    });
+  }
+
   // Customer pins (installed sales/customers)
   const leadType = (lead.leadType === 'sale' ? 'customer' : lead.leadType) || 'prospect';
   const isCustomerPin = leadType === 'customer';
@@ -1950,6 +1988,9 @@ function pastPinDetailHtml(lead: Lead, alreadyShown?: string): string {
 }
 
 function createPopupContent(lead: Lead): string {
+  const outcome = getAppointmentOutcome(lead);
+  const outcomeHtml = outcome ? `<p style="margin:9px 0;padding:7px 9px;background:${outcome.background};color:${outcome.color};border-radius:7px;font-size:12px;font-weight:600;">GHL: ${escapePopupText(outcome.label)}</p>` : '';
+
   if (lead.historicalTerritoryPin) {
     const statusLabel = STATUS_LABELS[lead.status] || lead.disposition || lead.status || 'Past pin';
     return `
@@ -1959,7 +2000,7 @@ function createPopupContent(lead: Lead): string {
         <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${escapePopupText(lead.address)}</p>
         <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${escapePopupText(lead.city)}, ${escapePopupText(lead.state)} ${escapePopupText(lead.zip)}</p>
         <div style="display:inline-block;padding:4px 10px;background:#E5E7EB;color:#4B5563;border-radius:9999px;font-size:12px;font-weight:600;">${escapePopupText(statusLabel)}</div>
-        ${pastPinDetailHtml(lead, statusLabel)}
+        ${outcomeHtml}${pastPinDetailHtml(lead, statusLabel)}
         <p style="margin:8px 0 0 0;font-size:11px;color:#6b7280;">Another rep already set or sold this door. Shown because it is inside your territory.</p>
       </div>
     `;
@@ -1980,6 +2021,7 @@ function createPopupContent(lead: Lead): string {
           ${lead.soldByName ? `<div><strong>Sales Rep:</strong> ${lead.soldByName}</div>` : ''}
           ${lead.setByName ? `<div><strong>FMA:</strong> ${lead.setByName}</div>` : ''}
         </div>
+        ${outcomeHtml}
         ${lead.phone ? `<p style="margin:8px 0 0 0;font-size:13px;color:#4b5563;">📞 ${lead.phone}</p>` : ''}
       </div>
     `;
@@ -1994,7 +2036,7 @@ function createPopupContent(lead: Lead): string {
       <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${escapePopupText(lead.address)}</p>
       <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${escapePopupText(lead.city)}, ${escapePopupText(lead.state)} ${escapePopupText(lead.zip)}</p>
       <div style="display:inline-block;padding:4px 10px;background:${statusColor}20;color:${statusColor};border-radius:9999px;font-size:12px;font-weight:500;">${escapePopupText(statusLabel)}</div>
-      ${pastPinDetailHtml(lead, statusLabel)}
+      ${outcomeHtml}${pastPinDetailHtml(lead, statusLabel)}
       ${lead.phone ? `<p style="margin:8px 0 0 0;font-size:13px;color:#4b5563;">📞 ${escapePopupText(lead.phone)}</p>` : ''}
     </div>
   `;

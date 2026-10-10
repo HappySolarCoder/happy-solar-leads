@@ -18,8 +18,9 @@
     "mobile:sync": "cap sync",
     "mobile:ios": "npm run mobile:build && cap sync ios && cap open ios",
     "mobile:android": "npm run mobile:build && cap sync android && cap open android",
+    "mobile:check-backend": "node scripts/mobile/check-backend.mjs",
     "mobile:test": "node --import tsx --test tests/mobile/*.test.ts",
-    "mobile:assets": "capacitor-assets generate --assetPath resources --ios --android"
+    "mobile:assets": "capacitor-assets generate --assetPath resources/raydar-v5 --ios --android --iconBackgroundColor '#F0BC18' --iconBackgroundColorDark '#F0BC18' --splashBackgroundColor '#FFFCF5' --splashBackgroundColorDark '#FFFCF5'"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.3",

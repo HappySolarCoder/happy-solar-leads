@@ -1,20 +1,28 @@
 'use client';
 
+import { FieldToolbar, MobileNav, MobileNotice, MobileLoading } from '../_components/MobileShell';
+import DoorCoach from '../_components/DoorCoach';
+import ReturnVisitReminder from '../_components/ReturnVisitReminder';
+import FieldCompass from '../_components/FieldCompass';
+import { summarizeActivity } from '../_lib/metrics';
+import { countWorkdaysElapsedAndRemaining } from '@/app/utils/goals';
+import { fieldPinArtwork } from '@/app/utils/fieldPin';
+import MobileDialog from '../_components/MobileDialog';
+import { useMobileData } from '../_components/useMobileData';
+import { AppointmentOutcomeBadge } from '@/app/components/AppointmentOutcomeBadge';
+import { appointmentOutcomeLegend, getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { apiFetch } from '@/app/utils/apiFetch';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, List, Navigation, Filter, MapPin, Settings, Search, X, Route, Clock, Footprints, Car } from 'lucide-react';
-import { getLeads, getLeadsAsync, getUsersAsync, saveCurrentUser } from '@/app/utils/storage';
-import { getCurrentAuthUser } from '@/app/utils/auth';
+import { getUsersAsync } from '@/app/utils/storage';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
-import LeadDetail from '@/app/components/LeadDetail';
+const LeadDetail = dynamic(() => import('@/app/components/LeadDetail'), { ssr: false });
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
-import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
-import GoalsPaceModal from '@/app/components/GoalsPaceModal';
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 import { useHistoricalTerritoryPins } from '@/app/hooks/useHistoricalTerritoryPins';
 import { mergeHistoricalTerritoryPins } from '@/app/utils/historicalTerritoryPins';
@@ -26,22 +34,23 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   loading: () => (
     <div className="w-full h-full flex items-center justify-center bg-[#F7FAFC]">
       <div className="text-center">
-        <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+        <div className="w-8 h-8 border-4 border-[#476E88] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
         <p className="text-sm text-[#718096]">Loading map...</p>
       </div>
     </div>
   ),
 });
 
+const EMPTY_LEADS: Lead[] = [];
+
 export default function KnockingPage() {
   const router = useRouter();
-  const [leads, setLeads] = useState<Lead[]>(() => getLeads());
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  const { user: currentUser, live, leads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dataUnavailable, error: sessionError } = useMobileData();
+  const [outcomesOnly, setOutcomesOnly] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
-  const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [viewMode] = useState<'map' | 'list'>('map');
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const [hasInitializedMap, setHasInitializedMap] = useState(false);
   const [mapZoom, setMapZoom] = useState(15);
@@ -51,12 +60,12 @@ export default function KnockingPage() {
   const [freshPinsOnly, setFreshPinsOnly] = useState<boolean>(false);
   const [leadTypeFilter, setLeadTypeFilter] = useState<'all' | 'prospects' | 'customers'>('all');
   const [showFilters, setShowFilters] = useState(false);
-  const [dispositions, setDispositions] = useState<any[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [addressSearch, setAddressSearch] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchLocation, setSearchLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const searchSequence = useRef(0);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [showSearchSheet, setShowSearchSheet] = useState(false);
@@ -126,7 +135,7 @@ export default function KnockingPage() {
       try {
         const response = await apiFetch(`/api/weather?lat=${lat}&lng=${lng}`);
         const data = await response.json();
-        if (data.temperature) {
+        if (data.temperature !== undefined) {
           setWeather({
             temperature: data.temperature,
             condition: data.condition,
@@ -146,67 +155,36 @@ export default function KnockingPage() {
     // Refresh weather every 30 minutes
     const interval = setInterval(fetchWeather, 30 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [gpsPosition]);
+  }, [gpsPosition ? Math.round(gpsPosition.lat * 100) : null, gpsPosition ? Math.round(gpsPosition.lng * 100) : null]);
 
-  // Load data
+  // Only managers need the directory. Ignore responses after an account change.
   useEffect(() => {
-    async function loadData() {
-      const user = await getCurrentAuthUser();
-      if (!user) {
-        router.push('/login');
-        return;
-      }
-      if (user.approvalStatus === 'pending') {
-        router.push('/pending-approval');
-        return;
-      }
-      setCurrentUser(user);
-      saveCurrentUser(user); // Save to localStorage for later retrieval
-
-      // Non-blocking: show cached content immediately, refresh in background
-      setIsLoading(false);
-      setIsRefreshing(true);
-      const loadedLeads = await getLeadsAsync();
-      setLeads(loadedLeads);
-      setIsRefreshing(false);
+    let active = true;
+    if (currentUser && canSeeAllLeads(currentUser.role)) {
+      void getUsersAsync().then((items) => { if (active) setUsers(items); }).catch(() => {});
     }
-    loadData();
-  }, [router]);
-  
-  // Load dispositions and users
-  useEffect(() => {
-    getDispositionsAsync().then(setDispositions);
-    getUsersAsync().then(setUsers);
-  }, []);
+    return () => { active = false; };
+  }, [currentUser]);
 
-  // Refresh leads
-  const refreshLeads = useCallback(async () => {
-    try {
-      const loadedLeads = await getLeadsAsync();
-      setLeads(loadedLeads);
-      setWriteError(null);
-    } catch (error: any) {
-      const code = error?.code || 'unknown';
-      const msg = error?.message || 'Failed to save changes.';
-      setWriteError(`${code}: ${msg}`);
-    }
-  }, []);
-
-  // Handle lead selection
-  const handleLeadSelect = (lead: Lead) => {
+  // Successful writes arrive on the existing listener without refetching every lead.
+  const refreshLeads = useCallback(async () => setWriteError(null), []);
+  const handleLeadSelect = useCallback((lead: Lead) => {
     setSelectedLeadId(lead.id);
     setShowLeadDetail(true);
-  };
+  }, []);
 
   // Handle address search
   const handleAddressSearch = async (query: string) => {
     setAddressSearch(query);
+    const sequence = ++searchSequence.current;
+    setSearchResults([]);
     
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
     
     if (query.length < 3) {
+      setIsSearching(false);
       setSearchResults([]);
       return;
     }
@@ -217,6 +195,7 @@ export default function KnockingPage() {
       try {
         const response = await apiFetch(`/api/geocode?address=${encodeURIComponent(query)}`);
         const data = await response.json();
+        if (sequence !== searchSequence.current) return;
         
         if (data.results && data.results.length > 0) {
           setSearchResults(data.results.slice(0, 5));
@@ -224,10 +203,11 @@ export default function KnockingPage() {
           setSearchResults([]);
         }
       } catch (error) {
+        if (sequence !== searchSequence.current) return;
         console.error('Address search error:', error);
         setSearchResults([]);
       } finally {
-        setIsSearching(false);
+        if (sequence === searchSequence.current) setIsSearching(false);
       }
     }, 300);
   };
@@ -304,11 +284,11 @@ export default function KnockingPage() {
   const drivingTimeMinutes = Math.round(routeDistance / 0.42);
 
   // Role-based visibility: setters/closers only see their claimed OR territory-assigned leads
-  const roleFilteredLeads = currentUser
+  const roleFilteredLeads = useMemo(() => currentUser
     ? (currentUser.role === 'setter' || currentUser.role === 'closer')
-      ? leads.filter(l => (l.leadType === 'customer' || l.leadType === 'sale') || l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
+      ? leads.filter(l => l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
       : leads
-    : [];
+    : EMPTY_LEADS, [leads, currentUser]);
 
   // Generate route when button is clicked
   const handleGenerateRoute = useCallback(() => {
@@ -339,8 +319,9 @@ export default function KnockingPage() {
     return roleFilteredLeads;
   }, [roleFilteredLeads, leadTypeFilter, isCustomerLead]);
 
+  const filteredLeads = useMemo(() => {
   // Prospects baseline (exclude poor solar leads). Customers are unaffected by solar filters.
-  let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l) && l.solarCategory !== 'poor');
+  let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l) && (l.solarCategory !== 'poor' || !!getAppointmentOutcome(l)));
   let customers = leadTypeFilteredLeads.filter(isCustomerLead);
 
   // Filter by setter if selected (Admin/Manager only) — prospects only
@@ -384,31 +365,34 @@ export default function KnockingPage() {
     });
   }
 
-  const filteredLeads = leadTypeFilter === 'customers'
+  const typeFilteredLeads = leadTypeFilter === 'customers'
     ? customers
     : leadTypeFilter === 'prospects'
       ? prospects
       : [...customers, ...prospects];
 
-  // Calculate distances and sort by nearest if GPS available
-  const leadsWithDistance = filteredLeads.map(lead => ({
-    ...lead,
-    distance: gpsPosition && lead.lat && lead.lng
-      ? calculateDistance(gpsPosition.lat, gpsPosition.lng, lead.lat, lead.lng)
-      : undefined,
-  })).sort((a, b) => {
-    if (a.distance !== undefined && b.distance !== undefined) {
-      return a.distance - b.distance;
-    }
-    return 0;
-  });
+  return outcomesOnly ? typeFilteredLeads.filter(l => getAppointmentOutcome(l)) : typeFilteredLeads;
 
-  // Map-only. The knock list and route stay on the rep's own doors.
-  const mapLeads = mergeHistoricalTerritoryPins(
-    [...leadsWithDistance, ...leads.filter(l => l.leadType === 'customer' || l.leadType === 'sale')],
-    historicalPins,
-    currentUser?.id,
-  );
+  }, [leadTypeFilteredLeads, isCustomerLead, setterFilter, solarFilter, dispositionFilter, dispositions, freshPinsOnly, leadTypeFilter, outcomesOnly]);
+
+  // Calculate distances and sort by nearest if GPS available
+  const leadsWithDistance = useMemo(() => {
+    // Distances are needed by the list and the tools sheet, never to draw the map.
+    if (viewMode !== 'list' && !showFilters) return [];
+    return filteredLeads.map(lead => ({
+      ...lead,
+      distance: gpsPosition && lead.lat != null && lead.lng != null
+        ? calculateDistance(gpsPosition.lat, gpsPosition.lng, lead.lat, lead.lng)
+        : undefined,
+    })).sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+  }, [filteredLeads, viewMode, showFilters, gpsPosition?.lat, gpsPosition?.lng]);
+
+  // Keep original lead objects stable: GPS movement must not recreate every pin.
+  const mapLeads = useMemo(() => mergeHistoricalTerritoryPins(
+    filteredLeads, outcomesOnly ? EMPTY_LEADS : historicalPins, currentUser?.id,
+  ), [filteredLeads, outcomesOnly, historicalPins, currentUser?.id]);
+  const userPosition = useMemo<[number, number] | undefined>(() => gpsPosition
+    ? [gpsPosition.lat, gpsPosition.lng] : undefined, [gpsPosition?.lat, gpsPosition?.lng]);
 
   // Get selected lead
   const selectedLead = leads.find(l => l.id === selectedLeadId);
@@ -549,11 +533,11 @@ export default function KnockingPage() {
     .map((d: any) => String(d.id).toLowerCase());
 
   const todaysKnocks = leads.filter(l => {
-    if (!l.dispositionedAt || l.dispositionedAt < todayStart) return false;
+    if (!l.dispositionedAt || new Date(l.dispositionedAt) < todayStart) return false;
 
     // Count by actor (who actually dispositioned), fallback to claimedBy for legacy rows.
     const lastHistoryUserId = (l.dispositionHistory && l.dispositionHistory[0]?.userId) ? String(l.dispositionHistory[0].userId) : null;
-    const actedByMe = lastHistoryUserId === currentUser?.id || l.claimedBy === currentUser?.id;
+    const actedByMe = (lastHistoryUserId || l.claimedBy || l.assignedTo) === currentUser?.id;
     if (!actedByMe) return false;
 
     const disp = String(l.status || l.disposition || '').toLowerCase();
@@ -561,148 +545,49 @@ export default function KnockingPage() {
   }).length;
 
   // Goals (v1) — deterministic goal read via API
-  const [dailyTarget, setDailyTarget] = useState<number | null>(null);
+  const [monthlyGoal, setMonthlyGoal] = useState<number | null>(null);
+  const monthNow = new Date();
+  const goalYear = monthNow.getFullYear();
+  const goalMonth = monthNow.getMonth();
+  const monthlyKnocks = useMemo(() => currentUser ? summarizeActivity(leads, currentUser.id, dispositions, new Date(goalYear, goalMonth, 1), new Date(goalYear, goalMonth+1, 1)).knocks : 0, [leads, currentUser, dispositions, goalYear, goalMonth]);
+  const dailyTarget = monthlyGoal === null || !live ? null : Math.ceil(Math.max(0, monthlyGoal - monthlyKnocks) / Math.max(1, countWorkdaysElapsedAndRemaining(monthNow).remaining));
 
   useEffect(() => {
     async function loadGoalTarget() {
       if (!currentUser) return;
       try {
         const monthId = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-        const { getMyGoalViaApiAsync, getMyMonthlyKnocksAsync, countWorkdaysElapsedAndRemaining } = await import('@/app/utils/goals');
+        const { getMyGoalViaApiAsync } = await import('@/app/utils/goals');
         const goal = await getMyGoalViaApiAsync(monthId);
         if (!goal?.doorKnocksGoal) {
-          setDailyTarget(null);
+          setMonthlyGoal(null);
           return;
         }
-        const K = await getMyMonthlyKnocksAsync(new Date(), currentUser);
-        const { remaining } = countWorkdaysElapsedAndRemaining(new Date());
-        const remainingWorkdays = Math.max(1, remaining);
-        const needed = Math.max(0, Number(goal.doorKnocksGoal) - K);
-        setDailyTarget(Math.ceil(needed / remainingWorkdays));
+        setMonthlyGoal(Number(goal.doorKnocksGoal));
       } catch {
-        setDailyTarget(null);
+        setMonthlyGoal(null);
       }
     }
     loadGoalTarget();
   }, [currentUser]);
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-[#718096]">Loading leads...</p>
-        </div>
-      </div>
-    );
-  }
+  if (isLoading) return <MobileLoading />;
+  if (!currentUser) return <MobileNotice>{sessionError || 'Sign in to open the map.'}</MobileNotice>;
 
   return (
-    <LocationPermissionGuard requireLocation={true}>
-      <div className="h-screen flex flex-col bg-white overflow-hidden">
-      {currentUser && <GoalsPaceModal currentUser={currentUser} openOverride={showGoalsModal} onCloseOverride={() => setShowGoalsModal(false)} />}
+    <LocationPermissionGuard requireLocation={false}>
+      <div className="rm-field-shell">
+      {showGoalsModal && <MobileDialog title="Daily pace" onClose={() => setShowGoalsModal(false)}><div className="rm-coach-panel"><div className="rm-panel-heading"><h2>Daily pace</h2><button onClick={() => setShowGoalsModal(false)} aria-label="Close daily pace"><X size={22}/></button></div><p>{monthlyKnocks} of {monthlyGoal} monthly knocks completed.</p><h2>{dailyTarget ?? '—'} knocks per remaining workday</h2><p>Based on your company goal and the latest recorded disposition per door.</p></div></MobileDialog>}
 
-      {/* Mobile Header - Clean App Bar (icon-first) */}
-      <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200 px-4 flex-shrink-0">
-        <div className="h-14 flex items-center gap-2">
-          {/* Back / Close detail */}
-          <button
-            onClick={() => {
-              if (showLeadDetail) {
-                setShowLeadDetail(false);
-                setSelectedLeadId(undefined);
-              } else {
-                router.push('/mobile');
-              }
-            }}
-            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all flex-none"
-            title={showLeadDetail ? 'Close' : 'Back'}
-          >
-            {showLeadDetail ? (
-              <X className="w-5 h-5 text-[#718096]" />
-            ) : (
-              <ArrowLeft className="w-5 h-5 text-[#718096]" />
-            )}
-          </button>
-
-          {/* Search pill (button) */}
-          <button
-            onClick={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
-            className="h-11 flex-1 min-w-0 rounded-full bg-gray-100 border border-gray-200 px-4 inline-flex items-center gap-2 text-left hover:bg-gray-200/60 transition-colors"
-            title="Search address"
-          >
-            <Search className="w-4 h-4 text-gray-500 flex-none" />
-            <span className="text-sm text-gray-500 truncate">Search address…</span>
-          </button>
-
-          {/* Tools */}
-          <button
-            onClick={() => router.push('/tools')}
-            className="h-11 w-11 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 active:scale-95 transition-all flex-none"
-            title="Tools"
-          >
-            <Settings className="w-5 h-5 text-[#718096]" />
-          </button>
-        </div>
-
-        {/* Row 2: Chips (icon + number only) */}
-        <div className="pb-3 pt-2 -mt-1 flex items-center gap-2 overflow-x-auto pr-1 text-xs font-semibold tabular-nums [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {isRefreshing && (
-            <div className="h-10 min-h-10 px-3 rounded-full bg-[#FFF7ED] border border-[#FDBA74] text-[#9A3412] inline-flex items-center gap-2 leading-none whitespace-nowrap">
-              <span className="animate-pulse">⟳</span>
-              <span>Refreshing…</span>
-            </div>
-          )}
-          {/* Standard chip class: consistent height + rhythm */}
-          <div className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap">
-            <span className="text-sm leading-none">🚪</span>
-            <span className="text-sm font-semibold leading-none tabular-nums">{todaysKnocks}</span>
-          </div>
-
-          {dailyTarget !== null && (
-            <button
-              onClick={() => setShowGoalsModal(true)}
-              className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap hover:bg-gray-50"
-              title="Goal details"
-            >
-              <span className="text-sm leading-none">🎯</span>
-              <span className="text-sm font-semibold leading-none tabular-nums">{dailyTarget}</span>
-            </button>
-          )}
-
-          <button
-            onClick={() => { if (nextBest) handleLeadSelect(nextBest); }}
-            disabled={!nextBest}
-            className="h-10 min-h-10 px-3 rounded-full bg-white border border-gray-200 text-[#2D3748] inline-flex items-center gap-2 leading-none whitespace-nowrap disabled:opacity-50"
-            title="Nearest 3⭐"
-          >
-            <span className="text-sm leading-none">⭐</span>
-            <span className="text-sm font-semibold leading-none truncate max-w-[140px]">
-              {nextBest ? (nextBestIsFar ? 'Far' : `${nextBestDistance}${nextBestDirection ? ` ${nextBestDirection}` : ''}`) : '—'}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setShowHeat(!showHeat)}
-            className={`h-10 w-10 min-h-10 rounded-full border inline-flex items-center justify-center leading-none ${
-              showHeat ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-gray-200 text-[#2D3748] bg-white'
-            }`}
-            title="Heat map"
-          >
-            <span className="text-sm leading-none">🔥</span>
-          </button>
-
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`h-10 w-10 min-h-10 rounded-full border inline-flex items-center justify-center leading-none ${
-              showFilters ? 'border-[#FF5F5A] text-[#FF5F5A] bg-[#FF5F5A]/5' : 'border-gray-200 text-[#2D3748] bg-white'
-            }`}
-            title="Filters"
-          >
-            <Filter className="w-4 h-4" />
-          </button>
-        </div>
-
+      <header className={`relative flex-shrink-0 ${showSearchSheet ? 'z-[70]' : 'z-50'}`}>
+        <FieldToolbar showTeamAreas={showTeamAreas} onToggleTeamAreas={() => setShowTeamAreas(v => !v)}
+          onSearch={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+          onFilter={() => setShowFilters(!showFilters)}
+          filterCount={solarFilter.length + Number(dispositionFilter !== 'all') + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly)}
+          accuracy={gpsPosition?.accuracy} gpsError={!!gpsError} gpsLoading={gpsLoading} knocks={dataLoading || dataUnavailable ? undefined : todaysKnocks}
+          onLocate={() => { if (gpsPosition) { setMapCenter([gpsPosition.lat, gpsPosition.lng]); setMapZoom(17); } }} />
+        {live?.error && <MobileNotice>{live.error}</MobileNotice>}
+        {live?.cached && !live.error && <MobileNotice>Showing cached leads. Checking for latest outcomes.</MobileNotice>}
         {writeError && (
           <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
             Save failed: {writeError}
@@ -731,13 +616,14 @@ export default function KnockingPage() {
                     ref={searchInputRef}
                     type="text"
                     placeholder="Search address..."
+                    aria-label="Search address"
                     value={addressSearch}
                     onChange={(e) => handleAddressSearch(e.target.value)}
                     className="bg-transparent w-full text-sm text-gray-900 placeholder:text-gray-500 outline-none"
                   />
                   {addressSearch && (
                     <button
-                      onClick={() => { setAddressSearch(''); setSearchResults([]); }}
+                      onClick={() => handleAddressSearch('')}
                       className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-gray-200"
                       title="Clear"
                     >
@@ -749,10 +635,11 @@ export default function KnockingPage() {
               <div className="px-4 pb-4 overflow-y-auto max-h-[55vh]">
                 {isSearching && (
                   <div className="p-3 text-sm text-gray-500 flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-[#FF5F5A] border-t-transparent rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-[#476E88] border-t-transparent rounded-full animate-spin" />
                     Searching...
                   </div>
                 )}
+                {!isSearching && addressSearch.length >= 3 && searchResults.length === 0 && <p className="p-3 text-sm text-gray-500">No addresses found. Try adding the city or ZIP code.</p>}
                 {searchResults.map((result, index) => (
                   <button
                     key={index}
@@ -769,7 +656,14 @@ export default function KnockingPage() {
 
         {/* Filters Panel */}
         {showFilters && (
-          <div className="px-4 py-3 border-t border-[#E2E8F0] bg-[#F7FAFC]">
+          <MobileDialog title="Map filters and tools" onClose={() => setShowFilters(false)}>
+          <div className="rm-mobile-filters px-4 py-3 bg-[#F7FAFC]">
+            <div className="rm-panel-heading"><h2>Map filters & tools</h2><button onClick={() => setShowFilters(false)} aria-label="Close map filters"><X size={22} /></button></div>
+        <div className="rm-map-shortcuts"><button disabled={!nextBest} onClick={() => { if (nextBest) { setShowFilters(false); handleLeadSelect(nextBest); } }}>Nearest great roof{nextBest ? ` · ${nextBestIsFar ? 'farther away' : nextBestDistance}` : ' · none nearby'}</button>{dailyTarget !== null && <button onClick={() => { setShowFilters(false); setShowGoalsModal(true); }}>Daily pace · {dailyTarget}</button>}</div>
+        <div className="rm-map-summary"><span>{filteredLeads.length} pins{isRefreshing ? ' · Updating…' : ''}</span><button aria-pressed={outcomesOnly} onClick={() => setOutcomesOnly(!outcomesOnly)}>GHL outcomes{outcomesOnly ? ' ✓' : ''}</button><button aria-pressed={showHeat} onClick={() => setShowHeat(!showHeat)}>Heat map</button></div>
+        {outcomesOnly && <div className="rm-pin-legend" aria-label="Appointment outcome colors">{appointmentOutcomeLegend.map(outcome => <span key={outcome.key}><i style={{ background: outcome.color }} />{outcome.label}</span>)}</div>}
+
+            <details className="rm-pin-key"><summary>Pin guide</summary><div>{['assigned','interested','not-home','go-back','appointment','sale','not-interested'].map(status => { const lead = {status} as Lead; const pin = fieldPinArtwork(lead, dispositions.find(d => d.id === status), 17); return <span key={status}><img src={pin.url} alt="" width={30} height={35}/>{pin.style.label}</span>; })}</div><p>The Signal R badge marks pre-uploaded solar-rated warm leads. The top accent shows roof quality; the opposite corner badge shows the GHL result. Cyan brackets mark your selected door. Pins shrink at roof-level zoom while keeping a larger tap area.</p></details>
             {/* Lead Type Filter (mobile) */}
             <div className="mb-3">
               <div className="flex items-center gap-2 mb-2">
@@ -789,7 +683,7 @@ export default function KnockingPage() {
                     onClick={() => setLeadTypeFilter(opt.key)}
                     className={`flex-1 h-9 rounded-lg text-xs font-semibold transition-colors ${
                       leadTypeFilter === opt.key
-                        ? 'bg-[#FF5F5A] text-white'
+                        ? 'bg-[#476E88] text-white'
                         : 'bg-transparent text-[#2D3748] hover:bg-gray-50'
                     }`}
                     type="button"
@@ -812,7 +706,7 @@ export default function KnockingPage() {
                 <select
                   value={setterFilter}
                   onChange={(e) => setSetterFilter(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                  className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#476E88] focus:ring-2 focus:ring-[#476E88]/10"
                 >
                   <option value="all">All Setters</option>
                   {users.map(user => (
@@ -840,7 +734,7 @@ export default function KnockingPage() {
                     onChange={(e) => {
                       if (e.target.checked) setSolarFilter([]);
                     }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                   />
                   <span className="text-xs text-[#2D3748]">All</span>
                 </label>
@@ -855,7 +749,7 @@ export default function KnockingPage() {
                         setSolarFilter(solarFilter.filter(f => f !== 'solid'));
                       }
                     }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                   />
                   <span className="text-xs text-[#2D3748]">⭐ Solid (60-74)</span>
                 </label>
@@ -870,7 +764,7 @@ export default function KnockingPage() {
                         setSolarFilter(solarFilter.filter(f => f !== 'good'));
                       }
                     }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                   />
                   <span className="text-xs text-[#2D3748]">⭐⭐ Good (75-84)</span>
                 </label>
@@ -885,7 +779,7 @@ export default function KnockingPage() {
                         setSolarFilter(solarFilter.filter(f => f !== 'great'));
                       }
                     }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                   />
                   <span className="text-xs text-[#2D3748]">⭐⭐⭐ Great (85+)</span>
                 </label>
@@ -899,7 +793,7 @@ export default function KnockingPage() {
                   type="checkbox"
                   checked={freshPinsOnly}
                   onChange={(e) => setFreshPinsOnly(e.target.checked)}
-                  className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                  className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                 />
                 <span className="text-xs text-[#2D3748] font-semibold">Fresh Pins</span>
                 <span className="text-[11px] text-[#718096]">(not dispositioned in last 30 days)</span>
@@ -917,25 +811,27 @@ export default function KnockingPage() {
               <select
                 value={dispositionFilter}
                 onChange={(e) => setDispositionFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#476E88] focus:ring-2 focus:ring-[#476E88]/10"
               >
                 <option value="all">All Dispositions</option>
                 {dispositions.map(dispo => (
                   <option key={dispo.id} value={dispo.id}>
-                    {dispo.emoji} {dispo.name}
+                    {dispo.name}
                   </option>
                 ))}
               </select>
             </div>
             
+            <button className="w-full mt-3 py-3 text-sm text-[#476E88]" onClick={() => { setSolarFilter([]); setDispositionFilter('all'); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); }}>Reset all filters</button>
             {/* Apply Button - Closes filter panel */}
             <button
               onClick={() => setShowFilters(false)}
-              className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-[#FF5F5A] to-[#FF7A6B] text-white font-semibold rounded-xl shadow-sm active:scale-95 transition-transform"
+              className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-[#476E88] to-[#587E98] text-white font-semibold rounded-xl shadow-sm active:scale-95 transition-transform"
             >
-              Apply Filters
+              Show map
             </button>
           </div>
+          </MobileDialog>
         )}
       </header>
 
@@ -981,7 +877,7 @@ export default function KnockingPage() {
 
       {/* Route Panel (disabled - feature not shipped yet) */}
       {false && showRoute && routeLeads.length > 0 && (
-        <div className="px-3 py-3 bg-gradient-to-r from-[#FF5F5A] to-[#F27141] text-white">
+        <div className="px-3 py-3 bg-gradient-to-r from-[#476E88] to-[#587E98] text-white">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Route className="w-5 h-5" />
@@ -1019,7 +915,7 @@ export default function KnockingPage() {
                 key={lead.id}
                 className="flex items-center gap-2 p-2 bg-white/20 rounded-lg"
               >
-                <div className="w-6 h-6 bg-white text-[#FF5F5A] rounded-full flex items-center justify-center text-sm font-bold">
+                <div className="w-6 h-6 bg-white text-[#476E88] rounded-full flex items-center justify-center text-sm font-bold">
                   {index + 1}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -1044,7 +940,7 @@ export default function KnockingPage() {
               href={`https://www.google.com/maps/dir/${gpsPosition!.lat},${gpsPosition!.lng}/${routeLeads[0]?.lat},${routeLeads[0]?.lng}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-3 w-full py-2 bg-white text-[#FF5F5A] rounded-lg font-semibold text-center flex items-center justify-center gap-2"
+              className="mt-3 w-full py-2 bg-white text-[#476E88] rounded-lg font-semibold text-center flex items-center justify-center gap-2"
             >
               <Navigation className="w-5 h-5" />
               Start Navigation
@@ -1055,16 +951,18 @@ export default function KnockingPage() {
 
       {/* Map View - Full Screen */}
       {viewMode === 'map' && (
-        <main className="flex-1 relative overflow-hidden">
+        <main className="rm-knocking-map flex-1 relative overflow-hidden" aria-label="Knocking map">
           <LeadMap
             leads={mapLeads}
+            dispositionOptions={dispositions}
             currentUser={currentUser}
             users={coloredUsers}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
             assignmentMode="none"
-            selectedLeadIdsForAssignment={[]}
-            userPosition={gpsPosition ? [gpsPosition.lat, gpsPosition.lng] : undefined}
+            userPosition={userPosition}
+            showLocateControl={false}
+            showZoomControl={false}
             center={mapCenter} // Set ONCE on GPS load, then only on manual recenter
             zoom={mapZoom} // Closer zoom for mobile
             onLeadAdded={refreshLeads}
@@ -1074,15 +972,18 @@ export default function KnockingPage() {
             showTeamAreas={showTeamAreas}
             territories={showTeamAreas ? teamAreaTerritories : []}
             teamMembers={teamMembersForMap}
-            onToggleTeamAreas={setShowTeamAreas}
           />
+          <FieldCompass />
+          {currentUser && !dataLoading && !dataUnavailable && <DoorCoach key={currentUser.id} leads={leads} userId={currentUser.id} dispositions={dispositions} />}
+          {currentUser && !isRefreshing && !dataUnavailable && !showLeadDetail && <ReturnVisitReminder key={currentUser.id} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
+          {isRefreshing && <div className="rm-map-loading" role="status">Loading your pins…</div>}
           {/* GPS Locate button is now built into LeadMap component */}
         </main>
       )}
 
       {/* List View */}
       {viewMode === 'list' && (
-        <main className="flex-1 overflow-y-auto px-4 py-4">
+        <main className="rm-field-list flex-1 overflow-y-auto px-4 py-4">
           {/* GPS Status */}
           {gpsLoading && (
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800 flex items-center gap-2">
@@ -1097,28 +998,28 @@ export default function KnockingPage() {
           )}
           
           <div className="space-y-3">
-            {leadsWithDistance.length === 0 ? (
+            {isRefreshing || dataUnavailable ? <p className="rm-data-loading" role="status">{dataUnavailable ? "Pins are unavailable. Check your connection and account access." : "Loading your pins…"}</p> : leadsWithDistance.length === 0 ? (
               <div className="text-center py-12 text-[#718096]">
-                <p>No leads available</p>
+                <p>No pins match these filters.</p><button className="rm-primary mt-4" onClick={() => setShowFilters(true)}>Review filters</button>
               </div>
             ) : (
               leadsWithDistance.map(lead => (
                 <button
                   key={lead.id}
                   onClick={() => handleLeadSelect(lead)}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-xl p-4 text-left hover:border-[#FF5F5A] active:scale-98 transition-all"
+                  className="w-full bg-white border border-[#E2E8F0] rounded-xl p-4 text-left hover:border-[#476E88] active:scale-98 transition-all"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <div className="font-semibold text-[#2D3748] truncate">{lead.name}</div>
                         {lead.distance !== undefined && (
-                          <span className="text-xs font-semibold text-[#FF5F5A] flex-shrink-0">
+                          <span className="text-xs font-semibold text-[#476E88] flex-shrink-0">
                             📍 {formatDistance(lead.distance)}
                           </span>
                         )}
                       </div>
-                      <div className="text-sm text-[#718096] truncate">{lead.address}</div>
+                      <div className="text-sm text-[#718096] truncate">{lead.address}</div><div className="mt-2"><AppointmentOutcomeBadge lead={lead} /></div>
                       <div className="text-xs text-[#718096] mt-1">{lead.city}, {lead.state}</div>
                     </div>
                     <div className="flex-shrink-0">
@@ -1136,9 +1037,15 @@ export default function KnockingPage() {
         </main>
       )}
 
+      <MobileNav />
+
       {/* Lead Detail Panel */}
       {selectedLead && showLeadDetail && (
         <LeadDetail
+          key={selectedLead.id}
+          fieldMemory
+          dispositionOptions={dispositions}
+          dispositionsLoading={dataLoading}
           lead={selectedLead}
           currentUser={currentUser}
           onClose={() => {

@@ -1,8 +1,12 @@
 'use client';
 
+import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
+import DoorstepMemory from './DoorstepMemory';
+
+import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { getLocation } from '@/app/utils/geolocation';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 import { Lead, User, ObjectionType, LeadDispositionHistoryEntry } from '@/app/types';
 import { 
@@ -31,6 +35,9 @@ import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 
 interface LeadDetailProps {
+  fieldMemory?: boolean;
+  dispositionOptions?: Disposition[];
+  dispositionsLoading?: boolean;
   lead: Lead;
   currentUser: User | null;
   onClose: () => void;
@@ -93,19 +100,22 @@ const ICON_MAP: Record<string, any> = {
   'arrow-left': ArrowLeft,
 };
 
-export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: LeadDetailProps) {
+export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false, dispositionOptions, dispositionsLoading = false }: LeadDetailProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
+  const noteInput = useRef<HTMLTextAreaElement>(null);
   const [notesSaving, setNotesSaving] = useState(false);
   const [showAllStatuses, setShowAllStatuses] = useState(false);
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
   const [pendingGoBackStatus, setPendingGoBackStatus] = useState('go-back');
-  const [dispositions, setDispositions] = useState<Disposition[]>([]);
+  const [loadedDispositions, setDispositions] = useState<Disposition[]>(DEFAULT_DISPOSITIONS);
+  const dispositions = dispositionOptions ?? loadedDispositions;
   const [users, setUsers] = useState<User[]>([]);
   const [adminAssignUser, setAdminAssignUser] = useState<string>('');
-  const [isLoadingDispositions, setIsLoadingDispositions] = useState(true);
+  const [isLoadingDispositions, setIsLoadingDispositions] = useState(!dispositionOptions);
+  const actionsLoading = dispositionOptions ? dispositionsLoading : isLoadingDispositions;
   const [wonEasterEgg, setWonEasterEgg] = useState<EasterEgg | null>(null);
   const [solarMadnessAward, setSolarMadnessAward] = useState<(SolarMadnessAwardResponse & { matchup?: any }) | null>(null);
   const [photos, setPhotos] = useState(lead.photos || []);
@@ -114,17 +124,24 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const canClaim = !lead.claimedBy || isClaimedByMe;
   const isClaimed = !!lead.claimedBy;
 
-  // Load dispositions on mount
+  // Read the selected lead immediately, including from cache. Supporting settings
+  // and the admin-only assignment directory must not block or trap the panel.
   useEffect(() => {
-    async function loadData() {
-      const dispos = await getDispositionsAsync();
-      setDispositions(dispos);
-      const userList = await getUsersAsync();
-      setUsers(userList.filter(u => u.role !== 'admin')); // Exclude admins from assignment list
-      setIsLoadingDispositions(false);
-    }
-    loadData();
-  }, []);
+    if (dispositionOptions) return;
+    let active = true;
+    void getDispositionsAsync().then((items) => {
+      if (active) { setDispositions(items); setIsLoadingDispositions(false); }
+    }).catch(() => { if (active) setIsLoadingDispositions(false); });
+    return () => { active = false; };
+  }, [dispositionOptions]);
+  useEffect(() => {
+    if (currentUser?.role !== 'admin') return;
+    let active = true;
+    void getUsersAsync().then((items) => {
+      if (active) setUsers(items.filter(user => user.role !== 'admin'));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [currentUser?.id, currentUser?.role]);
 
   // Lock background scroll while lead detail is open so the app header/page does not fight the panel
   useEffect(() => {
@@ -152,7 +169,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   );
 
   const handleStatusChange = async (newStatus: string) => {
-    if (!currentUser) return;
+    if (!currentUser || actionsLoading) return;
     
     // Check for special behavior dispositions
     const disposition = dispositions.find(d => d.id === newStatus);
@@ -439,9 +456,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     }
   };
 
-  if (isLoadingDispositions) {
+  if (actionsLoading && !fieldMemory) {
     return (
-      <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] flex items-center justify-center">
+      <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
           <p className="text-sm text-[#718096]">Loading...</p>
@@ -460,13 +477,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
     return (
       <>
-        <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
+        <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
           <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
             <div className="flex items-center gap-2">
               <span className="text-lg">🙂</span>
               <span className="font-semibold text-[#2D3748]">Customer</span>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-white rounded-lg transition-colors">
+            <button onClick={onClose} aria-label="Close lead details" className="p-2 hover:bg-white rounded-lg transition-colors">
               <X className="w-5 h-5 text-[#718096]" />
             </button>
           </div>
@@ -527,6 +544,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               })()}
             </div>
 
+            <AppointmentOutcomeCard lead={lead} />
+
             {lead.notes && (
               <div className="bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg p-4">
                 <div className="text-sm font-semibold text-[#2D3748] mb-1">Notes</div>
@@ -541,7 +560,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
   return (
     <>
-      <div className="fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
+      <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
         {/* Header */}
         <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
           <div className="flex items-center gap-3">
@@ -555,6 +574,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           </div>
           <button
             onClick={onClose}
+            aria-label="Close lead details"
             className="p-2 hover:bg-white rounded-lg transition-colors"
           >
             <X className="w-5 h-5 text-[#718096]" />
@@ -599,6 +619,12 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             </div>
           </a>
 
+          {fieldMemory && <DoorstepMemory lead={lead} onNote={(note) => {
+            setNotes(current => current.includes(note) ? current : [current.trim(), note].filter(Boolean).join('\n'));
+            noteInput.current?.scrollIntoView({ block: 'center' });
+            noteInput.current?.focus({ preventScroll: true });
+          }} />}
+
           {/* Contact Info */}
           {(lead.phone || lead.email) && (
             <div className="mb-4 space-y-2">
@@ -620,6 +646,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               )}
             </div>
           )}
+
+          <AppointmentOutcomeCard lead={lead} />
 
           {/* Solar Score */}
           {lead.solarScore && (
@@ -657,6 +685,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           {/* Quick Actions */}
           <div className="mb-6">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Quick Actions</h3>
+            {actionsLoading && <p role="status" className="text-sm text-[#718096] mb-3">Loading actions. You can still read this lead and close the panel.</p>}
             
             {/* Admin: Assign to user dropdown */}
             {currentUser?.role === 'admin' && (
@@ -681,7 +710,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               {!isClaimed && (
                 <button
                   onClick={() => handleStatusChange('claimed')}
-                  disabled={isUpdating}
+                  disabled={isUpdating || actionsLoading}
                   className="flex items-center justify-center gap-2 px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-lg font-medium transition-all disabled:opacity-50"
                 >
                   <Target className="w-4 h-4" />
@@ -692,7 +721,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               {isClaimedByMe && (
                 <button
                   onClick={() => handleStatusChange('unclaimed')}
-                  disabled={isUpdating}
+                  disabled={isUpdating || actionsLoading}
                   className="flex items-center justify-center gap-2 px-4 py-3 bg-[#718096] hover:bg-[#4A5568] text-white rounded-lg font-medium transition-all disabled:opacity-50"
                 >
                   <Circle className="w-4 h-4" />
@@ -706,7 +735,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
                   <button
                     key={dispo.id}
                     onClick={() => handleStatusChange(dispo.id)}
-                    disabled={isUpdating}
+                    disabled={isUpdating || actionsLoading}
                     className="flex items-center justify-center gap-2 px-4 py-3 text-white rounded-lg font-medium transition-all disabled:opacity-50 hover:opacity-90"
                     style={{ backgroundColor: dispo.color }}
                   >
@@ -729,7 +758,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
                     <button
                       key={dispo.id}
                       onClick={() => handleStatusChange(dispo.id)}
-                      disabled={isUpdating}
+                      disabled={isUpdating || actionsLoading}
                       className="w-full flex items-center gap-3 p-3 border-2 rounded-lg font-medium transition-all disabled:opacity-50 hover:shadow-md"
                       style={{ 
                         borderColor: lead.status === dispo.id ? dispo.color : '#E2E8F0',
@@ -805,6 +834,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Notes</h3>
             <textarea
+              ref={noteInput}
+              aria-label="Lead notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Add notes about this lead..."

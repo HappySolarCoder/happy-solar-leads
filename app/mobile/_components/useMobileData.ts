@@ -1,0 +1,1 @@
+export { useMobileData } from "./MobileDataProvider";

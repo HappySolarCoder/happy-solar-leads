@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { Capacitor, SystemBars, SystemBarsStyle, type PluginListenerHandle } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { Network } from '@capacitor/network';
@@ -10,6 +10,12 @@ import { SplashScreen } from '@capacitor/splash-screen';
 /** Installed-app lifecycle only. The website continues using its existing PWA. */
 export default function NativeRuntime() {
   const router = useRouter();
+  const pathname = usePathname();
+  useEffect(() => {
+    if (Capacitor.isNativePlatform() && ['/lead-management', '/territories', '/admin/assignments'].includes(pathname.replace(/\/$/, ''))) {
+      router.replace('/mobile/territories');
+    }
+  }, [pathname, router]);
   const [offline, setOffline] = useState(false);
 
   useEffect(() => {

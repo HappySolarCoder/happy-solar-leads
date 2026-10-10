@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Raydar</string>
-    <string name="title_activity_main">Raydar</string>
-    <string name="package_name">com.happyslr.raydar</string>
-    <string name="custom_url_scheme">com.happyslr.raydar</string>
+    <string name="app_name">Raydar Next</string>
+    <string name="title_activity_main">Raydar Next</string>
+    <string name="package_name">com.happyslr.raydar.next</string>
+    <string name="custom_url_scheme">com.happyslr.raydar.next</string>
 </resources>
