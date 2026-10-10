@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   ArrowUpRight,
@@ -85,12 +86,7 @@ export function MobileHeader({
   return (
     <header className="rm-header">
       <div className="rm-brand">
-        <span className="rm-brand-mark">
-          <Compass size={23} />
-        </span>
-        <span>
-          raydar<span className="rm-brand-dot">.</span>
-        </span>
+        <Image src="/brand/raydar-v5/raydar-primary-v5.svg" alt="Raydar" width={150} height={48} priority />
         <span className="rm-edition">NEXT</span>
       </div>
       {title && <span className="rm-header-title">{title}</span>}
@@ -118,9 +114,7 @@ export function MobileHeader({
 export function MobileLoading() {
   return (
     <div className="rm-loading" role="status">
-      <span className="rm-brand-mark">
-        <Compass size={30} />
-      </span>
+      <Image src="/brand/raydar-v5/raydar-mark-v5.svg" alt="Raydar Signal R" width={64} height={70} priority />
       <h1>Getting your day ready</h1>
       <LoaderCircle className="rm-spin" size={22} />
       <span>Loading your Raydar workspace</span>

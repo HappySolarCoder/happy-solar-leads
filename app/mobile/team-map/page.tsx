@@ -15,7 +15,7 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   loading: () => (
     <div className="w-full h-full flex items-center justify-center bg-[#F7FAFC]">
       <div className="text-center">
-        <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+        <div className="w-8 h-8 border-4 border-[#476E88] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
         <p className="text-sm text-[#718096]">Loading map...</p>
       </div>
     </div>
@@ -51,7 +51,7 @@ export default function TeamMapPage() {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <div className="w-16 h-16 border-4 border-[#476E88] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-[#718096]">Loading team...</p>
         </div>
       </div>
@@ -65,19 +65,19 @@ export default function TeamMapPage() {
         <div className="flex items-center justify-between">
           <button
             onClick={() => router.push('/mobile')}
-            className="p-2 -ml-2 text-[#718096] hover:text-[#FF5F5A] active:scale-95 transition-all"
+            className="p-2 -ml-2 text-[#718096] hover:text-[#476E88] active:scale-95 transition-all"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
 
           <div className="flex items-center gap-2">
-            <Users className="w-5 h-5 text-[#FF5F5A]" />
+            <Users className="w-5 h-5 text-[#476E88]" />
             <h1 className="font-bold text-[#2D3748]">Team Locations</h1>
           </div>
 
           <button
             onClick={() => window.location.reload()}
-            className="p-2 text-[#718096] hover:text-[#FF5F5A] active:scale-95 transition-all"
+            className="p-2 text-[#718096] hover:text-[#476E88] active:scale-95 transition-all"
           >
             <RefreshCw className="w-5 h-5" />
           </button>
@@ -109,8 +109,8 @@ export default function TeamMapPage() {
       {/* Coming Soon Notice */}
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="text-center max-w-md">
-          <div className="w-20 h-20 bg-[#FF5F5A]/10 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Users className="w-10 h-10 text-[#FF5F5A]" />
+          <div className="w-20 h-20 bg-[#476E88]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Users className="w-10 h-10 text-[#476E88]" />
           </div>
           <h2 className="text-xl font-bold text-[#2D3748] mb-2">
             Real-Time Team Tracking
@@ -122,23 +122,23 @@ export default function TeamMapPage() {
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Planned Features:</h3>
             <ul className="space-y-2 text-sm text-[#718096]">
               <li className="flex items-start gap-2">
-                <span className="text-[#FF5F5A] mt-0.5">●</span>
+                <span className="text-[#476E88] mt-0.5">●</span>
                 <span>See all team members' live GPS positions</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-[#FF5F5A] mt-0.5">●</span>
+                <span className="text-[#476E88] mt-0.5">●</span>
                 <span>Coverage heatmap showing knocked areas</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-[#FF5F5A] mt-0.5">●</span>
+                <span className="text-[#476E88] mt-0.5">●</span>
                 <span>Team member activity status (knocking, break, etc.)</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-[#FF5F5A] mt-0.5">●</span>
+                <span className="text-[#476E88] mt-0.5">●</span>
                 <span>Distance between team members</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-[#FF5F5A] mt-0.5">●</span>
+                <span className="text-[#476E88] mt-0.5">●</span>
                 <span>Historical tracking (where they've been today)</span>
               </li>
             </ul>

@@ -58,15 +58,15 @@ export function NeighborhoodArt() {
         <g key={i} transform={`translate(${x} ${y})`}>
           <path
             d="m0 0 22-13L45 0 23 13Z"
-            fill={i === 0 ? "#FFC1A3" : "#72A796"}
+            fill={i === 0 ? "#FFE595" : "#B3C9D8"}
           />
-          <path d="M0 0v22l23 14V13Z" fill={i === 0 ? "#EE8062" : "#458370"} />
+          <path d="M0 0v22l23 14V13Z" fill={i === 0 ? "#F0BC18" : "#769BB3"} />
           <path
             d="m23 13 22-13v22L23 36Z"
-            fill={i === 0 ? "#FFAE8C" : "#599480"}
+            fill={i === 0 ? "#FFCF4A" : "#95B3C6"}
           />
-          <path d="m5-3 14-8 9 5-14 8Z" fill="#204C43" />
-          <path d="m16 4 14-8 9 5-14 8Z" fill="#204C43" />
+          <path d="m5-3 14-8 9 5-14 8Z" fill="#304B5E" />
+          <path d="m16 4 14-8 9 5-14 8Z" fill="#304B5E" />
         </g>
       ))}
       <ellipse
@@ -74,7 +74,7 @@ export function NeighborhoodArt() {
         cy="100"
         rx="27"
         ry="16"
-        stroke="#FFD3BD"
+        stroke="#FFE595"
         strokeOpacity=".4"
       />
       <ellipse
@@ -82,17 +82,17 @@ export function NeighborhoodArt() {
         cy="100"
         rx="18"
         ry="10"
-        fill="#FFC5A8"
+        fill="#FFDD70"
         fillOpacity=".2"
       />
       <path
         d="M141 60c-10 0-18 8-18 18 0 13 18 29 18 29s18-16 18-29c0-10-8-18-18-18Z"
-        fill="#FF9675"
+        fill="#F0BC18"
       />
       <circle cx="141" cy="78" r="6" fill="#FFF9F3" />
-      <circle cx="64" cy="66" r="7" fill="#9ABFA5" />
-      <circle cx="239" cy="125" r="10" fill="#9ABFA5" />
-      <circle cx="258" cy="133" r="6" fill="#72A796" />
+      <circle cx="64" cy="66" r="7" fill="#CBDCE7" />
+      <circle cx="239" cy="125" r="10" fill="#CBDCE7" />
+      <circle cx="258" cy="133" r="6" fill="#B3C9D8" />
     </svg>
   );
 }

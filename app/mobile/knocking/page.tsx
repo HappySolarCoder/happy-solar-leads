@@ -35,7 +35,7 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   loading: () => (
     <div className="w-full h-full flex items-center justify-center bg-[#F7FAFC]">
       <div className="text-center">
-        <div className="w-8 h-8 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+        <div className="w-8 h-8 border-4 border-[#476E88] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
         <p className="text-sm text-[#718096]">Loading map...</p>
       </div>
     </div>
@@ -600,7 +600,7 @@ export default function KnockingPage() {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-[#FF5F5A] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <div className="w-16 h-16 border-4 border-[#476E88] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-[#718096]">Loading leads...</p>
         </div>
       </div>
@@ -668,7 +668,7 @@ export default function KnockingPage() {
               <div className="px-4 pb-4 overflow-y-auto max-h-[55vh]">
                 {isSearching && (
                   <div className="p-3 text-sm text-gray-500 flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-[#FF5F5A] border-t-transparent rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-[#476E88] border-t-transparent rounded-full animate-spin" />
                     Searching...
                   </div>
                 )}
@@ -716,7 +716,7 @@ export default function KnockingPage() {
                     onClick={() => setLeadTypeFilter(opt.key)}
                     className={`flex-1 h-9 rounded-lg text-xs font-semibold transition-colors ${
                       leadTypeFilter === opt.key
-                        ? 'bg-[#FF5F5A] text-white'
+                        ? 'bg-[#476E88] text-white'
                         : 'bg-transparent text-[#2D3748] hover:bg-gray-50'
                     }`}
                     type="button"
@@ -739,7 +739,7 @@ export default function KnockingPage() {
                 <select
                   value={setterFilter}
                   onChange={(e) => setSetterFilter(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                  className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#476E88] focus:ring-2 focus:ring-[#476E88]/10"
                 >
                   <option value="all">All Setters</option>
                   {users.map(user => (
@@ -767,7 +767,7 @@ export default function KnockingPage() {
                     onChange={(e) => {
                       if (e.target.checked) setSolarFilter([]);
                     }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                   />
                   <span className="text-xs text-[#2D3748]">All</span>
                 </label>
@@ -782,7 +782,7 @@ export default function KnockingPage() {
                         setSolarFilter(solarFilter.filter(f => f !== 'solid'));
                       }
                     }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                   />
                   <span className="text-xs text-[#2D3748]">⭐ Solid (60-74)</span>
                 </label>
@@ -797,7 +797,7 @@ export default function KnockingPage() {
                         setSolarFilter(solarFilter.filter(f => f !== 'good'));
                       }
                     }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                   />
                   <span className="text-xs text-[#2D3748]">⭐⭐ Good (75-84)</span>
                 </label>
@@ -812,7 +812,7 @@ export default function KnockingPage() {
                         setSolarFilter(solarFilter.filter(f => f !== 'great'));
                       }
                     }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                   />
                   <span className="text-xs text-[#2D3748]">⭐⭐⭐ Great (85+)</span>
                 </label>
@@ -826,7 +826,7 @@ export default function KnockingPage() {
                   type="checkbox"
                   checked={freshPinsOnly}
                   onChange={(e) => setFreshPinsOnly(e.target.checked)}
-                  className="w-3 h-3 rounded border-gray-300 text-[#FF5F5A]"
+                  className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
                 />
                 <span className="text-xs text-[#2D3748] font-semibold">Fresh Pins</span>
                 <span className="text-[11px] text-[#718096]">(not dispositioned in last 30 days)</span>
@@ -844,7 +844,7 @@ export default function KnockingPage() {
               <select
                 value={dispositionFilter}
                 onChange={(e) => setDispositionFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
+                className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#476E88] focus:ring-2 focus:ring-[#476E88]/10"
               >
                 <option value="all">All Dispositions</option>
                 {dispositions.map(dispo => (
@@ -855,11 +855,11 @@ export default function KnockingPage() {
               </select>
             </div>
             
-            <button className="w-full mt-3 py-3 text-sm text-[#245648]" onClick={() => { setSolarFilter([]); setDispositionFilter('all'); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); }}>Reset all filters</button>
+            <button className="w-full mt-3 py-3 text-sm text-[#476E88]" onClick={() => { setSolarFilter([]); setDispositionFilter('all'); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); }}>Reset all filters</button>
             {/* Apply Button - Closes filter panel */}
             <button
               onClick={() => setShowFilters(false)}
-              className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-[#FF5F5A] to-[#FF7A6B] text-white font-semibold rounded-xl shadow-sm active:scale-95 transition-transform"
+              className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-[#476E88] to-[#587E98] text-white font-semibold rounded-xl shadow-sm active:scale-95 transition-transform"
             >
               Show map
             </button>
@@ -910,7 +910,7 @@ export default function KnockingPage() {
 
       {/* Route Panel (disabled - feature not shipped yet) */}
       {false && showRoute && routeLeads.length > 0 && (
-        <div className="px-3 py-3 bg-gradient-to-r from-[#FF5F5A] to-[#F27141] text-white">
+        <div className="px-3 py-3 bg-gradient-to-r from-[#476E88] to-[#587E98] text-white">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Route className="w-5 h-5" />
@@ -948,7 +948,7 @@ export default function KnockingPage() {
                 key={lead.id}
                 className="flex items-center gap-2 p-2 bg-white/20 rounded-lg"
               >
-                <div className="w-6 h-6 bg-white text-[#FF5F5A] rounded-full flex items-center justify-center text-sm font-bold">
+                <div className="w-6 h-6 bg-white text-[#476E88] rounded-full flex items-center justify-center text-sm font-bold">
                   {index + 1}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -973,7 +973,7 @@ export default function KnockingPage() {
               href={`https://www.google.com/maps/dir/${gpsPosition!.lat},${gpsPosition!.lng}/${routeLeads[0]?.lat},${routeLeads[0]?.lng}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-3 w-full py-2 bg-white text-[#FF5F5A] rounded-lg font-semibold text-center flex items-center justify-center gap-2"
+              className="mt-3 w-full py-2 bg-white text-[#476E88] rounded-lg font-semibold text-center flex items-center justify-center gap-2"
             >
               <Navigation className="w-5 h-5" />
               Start Navigation
@@ -1039,14 +1039,14 @@ export default function KnockingPage() {
                 <button
                   key={lead.id}
                   onClick={() => handleLeadSelect(lead)}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-xl p-4 text-left hover:border-[#FF5F5A] active:scale-98 transition-all"
+                  className="w-full bg-white border border-[#E2E8F0] rounded-xl p-4 text-left hover:border-[#476E88] active:scale-98 transition-all"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <div className="font-semibold text-[#2D3748] truncate">{lead.name}</div>
                         {lead.distance !== undefined && (
-                          <span className="text-xs font-semibold text-[#FF5F5A] flex-shrink-0">
+                          <span className="text-xs font-semibold text-[#476E88] flex-shrink-0">
                             📍 {formatDistance(lead.distance)}
                           </span>
                         )}

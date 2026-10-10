@@ -50,6 +50,6 @@ next-env.d.ts
 *.mobileprovision
 !mobile.env.example
 
-# Recreated from resources/logo.png by mobile:build
+# Recreated from resources/raydar-v5/logo.svg by mobile:build
 /android/app/src/main/res/**/*.png
 /ios/App/App/Assets.xcassets/**/*.png

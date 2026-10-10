@@ -75,7 +75,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="text-center mb-8">
           <img
-            src="/raydar-horizontal.png"
+            src={process.env.NEXT_PUBLIC_NATIVE_BUILD === '1' ? '/brand/raydar-v5/raydar-primary-v5.svg' : '/raydar-horizontal.png'}
             alt="Raydar"
             className="h-12 mx-auto mb-4"
           />
