@@ -83,7 +83,7 @@ export default function GoBackScheduleModal({
           <h2 className="text-xl font-semibold text-[#2D3748]">
             {currentDisposition === 'house-for-sale' ? 'Schedule House for Sale' : 'Schedule Go Back'}
           </h2>
-          <button
+          <button aria-label="Close" data-raydar-back-close
             onClick={handleClose}
             className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
           >

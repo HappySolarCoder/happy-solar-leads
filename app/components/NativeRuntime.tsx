@@ -1,5 +1,7 @@
 'use client';
 
+import { updateNativeConnectivity } from '@/app/utils/connectivity';
+import { dismissMobileOverlay } from '@/app/utils/dismissMobileOverlay';
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Capacitor, SystemBars, SystemBarsStyle, type PluginListenerHandle } from '@capacitor/core';
@@ -12,9 +14,15 @@ export default function NativeRuntime() {
   const router = useRouter();
   const pathname = usePathname();
   useEffect(() => {
-    if (Capacitor.isNativePlatform() && ['/lead-management', '/territories', '/admin/assignments'].includes(pathname.replace(/\/$/, ''))) {
-      router.replace('/mobile/territories');
-    }
+    if (!Capacitor.isNativePlatform()) return;
+    const path = pathname.replace(/\/$/, '');
+    let target = '';
+    if (path === '/admin/users') target = '/mobile/workspace/users';
+    else if (['/lead-management', '/territories', '/admin/assignments'].includes(path)) target = '/mobile/territories';
+    else if (path === '/admin' || path.startsWith('/admin/')) target = '/mobile/workspace';
+    else if (path === '/team-map') target = '/mobile/team-map';
+    else if (path === '/ai-manager') target = '/mobile/field-tools';
+    if (target) router.replace(target);
   }, [pathname, router]);
   const [offline, setOffline] = useState(false);
 
@@ -31,12 +39,13 @@ export default function NativeRuntime() {
     async function initialize() {
       await Promise.all([SplashScreen.hide(), SystemBars.setStyle({ style: SystemBarsStyle.Light })]);
       keep(await Network.addListener('networkStatusChange', status => {
-        if (!disposed) setOffline(!status.connected);
+        if (!disposed) { setOffline(!status.connected); updateNativeConnectivity(status.connected); }
       }));
       const status = await Network.getStatus();
-      if (!disposed) setOffline(!status.connected);
+      if (!disposed) { setOffline(!status.connected); updateNativeConnectivity(status.connected); }
       if (Capacitor.getPlatform() === 'android') {
         keep(await App.addListener('backButton', ({ canGoBack }) => {
+          if (dismissMobileOverlay()) return;
           const path = window.location.pathname.replace(/\/$/, '') || '/';
           if (['/', '/mobile', '/login'].includes(path)) void App.minimizeApp();
           else if (canGoBack) window.history.back();

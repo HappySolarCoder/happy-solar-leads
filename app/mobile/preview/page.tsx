@@ -27,7 +27,7 @@ import MobileDialog from "../_components/MobileDialog";
 
 // This route is a read-only design gallery. It never initializes a user session,
 // reads company records, or saves a lead. Shared views are used by the real app.
-const demoNow = new Date("2026-10-08T18:35:00Z");
+const demoNow = new Date(2026, 9, 8, 11, 35);
 const demoLeads: Lead[] = [
   {
     id: "demo-1",

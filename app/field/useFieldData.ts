@@ -1,4 +1,5 @@
 "use client";
+import { isDeviceOnline } from "@/app/utils/connectivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "@/app/utils/firebase";
 import { apiFetch } from "@/app/utils/apiFetch";
@@ -107,7 +108,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     if (uid) update({ drafts: await readDrafts(uid) });
   }, [uid, update]);
   const loadConfig = useCallback(async () => {
-    if (!uid || !navigator.onLine) return;
+    if (!uid || !isDeviceOnline()) return;
     try {
       const data = await fieldRequest("/api/field-config");
       update({ config: cleanConfig(data.config), ready: true, error: "" });
@@ -119,7 +120,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     if (
       !uid ||
       locks.has(uid) ||
-      !navigator.onLine ||
+      !isDeviceOnline() ||
       auth?.currentUser?.uid !== uid
     )
       return;
@@ -143,7 +144,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         },
         remove: removeDraft,
         block: putDraft,
-        active: () => active.current === uid && auth?.currentUser?.uid === uid && navigator.onLine,
+        active: () => active.current === uid && auth?.currentUser?.uid === uid && isDeviceOnline(),
       });
       if (result.error) update({ error: result.error });
       await reloadDrafts();
@@ -157,14 +158,14 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
   useEffect(() => {
     if (!uid) return;
     let alive = true;
-    setOffline(!navigator.onLine);
+    setOffline(!isDeviceOnline());
     void Promise.all([readArea(uid), readDrafts(uid)])
       .then(([area, drafts]) => {
         if (alive) {
           update({
             area,
             drafts,
-            ...(!navigator.onLine && area
+            ...(!isDeviceOnline() && area
               ? { config: area.config, ready: true }
               : {}),
           });
@@ -179,13 +180,14 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         }
       });
     const online = () => {
-      setOffline(!navigator.onLine);
-      if (navigator.onLine) {
+      setOffline(!isDeviceOnline());
+      if (isDeviceOnline()) {
         void loadConfig();
         void sync();
       }
     };
     window.addEventListener("online", online);
+    window.addEventListener("raydar-network-change", online);
     window.addEventListener("offline", online);
     const visible = () => {
       if (document.visibilityState === "visible") online();
@@ -194,6 +196,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     return () => {
       alive = false;
       window.removeEventListener("online", online);
+      window.removeEventListener("raydar-network-change", online);
       window.removeEventListener("offline", online);
       document.removeEventListener("visibilitychange", visible);
     };
@@ -228,7 +231,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
   );
   const prepare = useCallback(
     async (leads: Lead[]) => {
-      if (!user || !current.ready || !navigator.onLine)
+      if (!user || !current.ready || !isDeviceOnline())
         throw Error("Connect and load field settings before preparing doors.");
       const area = {
         userId: uid,

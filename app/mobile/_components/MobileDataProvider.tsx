@@ -1,4 +1,5 @@
 "use client";
+import { isDeviceOnline } from "@/app/utils/connectivity";
 
 import {
   createContext,
@@ -64,7 +65,7 @@ function useSharedMobileData() {
         );
       },
       async (id) => {
-        if (!navigator.onLine) { const area = await readArea(id); if (area) return area.user; }
+        if (!isDeviceOnline()) { const area = await readArea(id); if (area) return area.user; }
         const snapshot = await getDoc(doc(db!, "users", id));
         if (!snapshot.exists()) return null;
         const data = snapshot.data();
@@ -178,6 +179,7 @@ export function MobileDataBoundary({ children }: { children: ReactNode }) {
     "/mobile/follow-ups",
     "/mobile/stats",
     "/mobile/more",
+    "/mobile/team-map",
     "/mobile/field-tools",
     "/mobile/field-tools/settings",
   ].includes(path) ? (

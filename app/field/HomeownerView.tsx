@@ -58,7 +58,7 @@ export default function HomeownerView({
         <button
           className="rf-icon"
           aria-label="Close preview"
-          onClick={onClose}
+          data-raydar-back-close onClick={onClose}
         >
           <X />
         </button>

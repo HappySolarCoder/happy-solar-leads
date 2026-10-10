@@ -1,4 +1,5 @@
 import "./mobile.css";
+import "../homeowners/homeowners.css";
 import "../field/field.css";
 import { MobileDataBoundary } from "./_components/MobileDataProvider";
 

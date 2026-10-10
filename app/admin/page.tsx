@@ -86,7 +86,7 @@ export default function AdminPage() {
       {/* Header */}
       <header className="bg-white border-b border-[#E2E8F0]">
         <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="p-3 bg-[#FF5F5A]/10 rounded-lg">
                 <Shield className="w-7 h-7 text-[#FF5F5A]" />
@@ -96,7 +96,7 @@ export default function AdminPage() {
                 <p className="text-sm text-[#718096]">System configuration and management</p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => router.push('/admin/settings')}
                 className="px-5 py-2.5 text-white bg-[#4299E1] hover:bg-[#3182CE] rounded-lg font-medium transition-colors flex items-center gap-2"

@@ -188,11 +188,11 @@ export default function LeadManagementPage() {
       if (user) {
         setOperationType('assigning');
         setIsDeleting(true);
-        
+
         try {
           // Convert polygon to Firestore-compatible format
           const polygonObjects = polygon.map(([lat, lng]) => ({ lat, lng }));
-          
+
           // 1. Save the territory first
           await saveTerritory({
             userId: user.id,
@@ -203,7 +203,7 @@ export default function LeadManagementPage() {
             createdAt: new Date(),
             createdBy: currentUser?.id || 'unknown',
           });
-          
+
           console.log('Territory saved to Firestore');
 
           // 2. Auto-assign all leads inside the territory
@@ -215,13 +215,13 @@ export default function LeadManagementPage() {
 
           for (let i = 0; i < leadIds.length; i += batchSize) {
             const batch = leadIds.slice(i, i + batchSize);
-            
+
             await Promise.all(
               batch.map(async (leadId) => {
                 try {
                   const lead = leads.find(l => l.id === leadId);
                   if (!lead) return;
-                  
+
                   // Preserve existing status, only assign if not already claimed
                   const updatedLead: Lead = {
                     ...lead,
@@ -230,7 +230,7 @@ export default function LeadManagementPage() {
                     // Only set status to 'assigned' if lead is unclaimed
                     ...(lead.status === 'unclaimed' ? { status: 'assigned' } : {}),
                   };
-                  
+
                   await saveLeadAsync(updatedLead);
                   processed++;
                 } catch (err) {
@@ -250,7 +250,7 @@ export default function LeadManagementPage() {
           const loadedTerritories = await getTerritoriesAsync();
           setTerritories(loadedTerritories);
           await handleUpdate();
-          
+
           alert(`Territory created! Assigned ${processed} leads to ${user.name}.`);
         } catch (error) {
           console.error('Failed to save territory:', error);
@@ -275,8 +275,8 @@ export default function LeadManagementPage() {
   });
 
   // Filter leads by selected user
-  const filteredLeads = userFilter === 'all' 
-    ? leads 
+  const filteredLeads = userFilter === 'all'
+    ? leads
     : leads.filter(lead => lead.assignedTo === userFilter || lead.claimedBy === userFilter);
 
   // Get lead counts per user (active users only for assignment UX)
@@ -304,13 +304,13 @@ export default function LeadManagementPage() {
 
       for (let i = 0; i < territory.leadIds.length; i += batchSize) {
         const batch = territory.leadIds.slice(i, i + batchSize);
-        
+
         await Promise.all(
           batch.map(async (leadId) => {
             try {
               const lead = leads.find(l => l.id === leadId);
               if (!lead) return;
-              
+
               // Unassign but keep disposition, dispositionHistory, and all other data
               // Preserve the actual disposition status (not generic 'dispositioned')
               const updatedLead: Lead = {
@@ -323,7 +323,7 @@ export default function LeadManagementPage() {
                 dispositionedAt: lead.dispositionedAt,
                 dispositionHistory: lead.dispositionHistory,
               };
-              
+
               await saveLeadAsync(updatedLead);
               processed++;
             } catch (err) {
@@ -357,11 +357,11 @@ export default function LeadManagementPage() {
 
   const handleBulkUnclaim = async () => {
     if (selectedLeads.size === 0) return;
-    
+
     const confirmed = confirm(
       `Are you sure you want to unclaim ${selectedLeads.size} lead(s)?`
     );
-    
+
     if (!confirmed) return;
 
     setOperationType('unclaiming');
@@ -377,19 +377,19 @@ export default function LeadManagementPage() {
       // Process in batches to avoid rate limits
       for (let i = 0; i < leadIds.length; i += batchSize) {
         const batch = leadIds.slice(i, i + batchSize);
-        
+
         // Process batch with individual error handling
         const results = await Promise.allSettled(
           batch.map(async (leadId) => {
             try {
               const lead = leads.find(l => l.id === leadId);
               if (!lead) throw new Error('Lead not found');
-              
+
               // Preserve the last disposition status if lead was knocked
               // Only change to 'unclaimed' if it was never knocked (status was 'assigned' or 'unclaimed')
               const wasNeverKnocked = lead.status === 'assigned' || lead.status === 'unclaimed';
               const newStatus = wasNeverKnocked ? 'unclaimed' : lead.status;
-              
+
               const updatedLead: Lead = {
                 ...lead,
                 claimedBy: undefined,
@@ -398,7 +398,7 @@ export default function LeadManagementPage() {
                 assignedAt: undefined,
                 status: newStatus,
               };
-              
+
               await saveLeadAsync(updatedLead);
               return true;
             } catch (err) {
@@ -427,7 +427,7 @@ export default function LeadManagementPage() {
       }
 
       await handleUpdate();
-      
+
       if (failed > 0) {
         alert(`Unclaimed ${processed} lead(s). ${failed} failed - please try those again.`);
       } else {
@@ -445,14 +445,14 @@ export default function LeadManagementPage() {
 
   const handleBulkAssign = async () => {
     if (selectedLeads.size === 0 || !assignToUser) return;
-    
+
     const targetUser = activeAssignableUsers.find(u => u.id === assignToUser);
     if (!targetUser) return;
 
     const confirmed = confirm(
       `Assign ${selectedLeads.size} lead(s) to ${targetUser.name}?`
     );
-    
+
     if (!confirmed) return;
 
     setIsDeleting(true);
@@ -466,20 +466,20 @@ export default function LeadManagementPage() {
 
       for (let i = 0; i < leadIds.length; i += batchSize) {
         const batch = leadIds.slice(i, i + batchSize);
-        
+
         const results = await Promise.allSettled(
           batch.map(async (leadId) => {
             try {
               const lead = leads.find(l => l.id === leadId);
               if (!lead) throw new Error('Lead not found');
-              
+
               const updatedLead: Lead = {
                 ...lead,
                 assignedTo: assignToUser,
                 assignedAt: new Date(),
                 status: 'assigned',
               };
-              
+
               await saveLeadAsync(updatedLead);
               return true;
             } catch (err) {
@@ -505,7 +505,7 @@ export default function LeadManagementPage() {
       }
 
       await handleUpdate();
-      
+
       if (failed > 0) {
         alert(`Assigned ${processed} lead(s). ${failed} failed - please try those again.`);
       } else {
@@ -539,16 +539,16 @@ export default function LeadManagementPage() {
         <div className="flex flex-col items-center gap-2">
           {/* Top Row: Back + Title + Logo */}
           <div className="flex items-center justify-between w-full">
-            <button
+            <button aria-label="Back"
               onClick={() => router.push('/tools')}
               className="p-2 text-[#718096] hover:text-[#FF5F5A] transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
             <h1 className="text-lg font-bold text-[#2D3748]">Lead Management</h1>
-            <img 
-              src="/raydar-icon.png" 
-              alt="Raydar" 
+            <img
+              src="/brand/raydar-v5/raydar-mark-v5.svg"
+              alt="Raydar"
               className="h-8 w-8 object-contain"
             />
           </div>
@@ -556,7 +556,7 @@ export default function LeadManagementPage() {
           {/* View Mode Toggle */}
           <div className="flex gap-1 bg-[#F7FAFC] rounded-lg p-1">
             <button
-              onClick={() => setViewMode('map')}
+              aria-label="Map view" onClick={() => setViewMode('map')}
               className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1 ${
                 viewMode === 'map'
                   ? 'bg-white text-[#FF5F5A] shadow-sm'
@@ -567,7 +567,7 @@ export default function LeadManagementPage() {
               <span className="hidden xs:inline">Map</span>
             </button>
             <button
-              onClick={() => setViewMode('assignments')}
+              aria-label="Assignments view" onClick={() => setViewMode('assignments')}
               className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors flex items-center gap-1 ${
                 viewMode === 'assignments'
                   ? 'bg-white text-[#FF5F5A] shadow-sm'
@@ -629,7 +629,7 @@ export default function LeadManagementPage() {
 
         {/* Floating Draw Button - Mobile */}
         {viewMode === 'assignments' && (
-          <button
+          <button aria-label="Edit"
             onClick={() => {
               setDrawingMode(!drawingMode);
               if (drawingMode) deselectAll();

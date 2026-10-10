@@ -131,7 +131,7 @@ export default function RouteBuilder({ leads, users, onGenerateRoute, onClearRou
           <Navigation className="w-5 h-5" />
           <h2 className="font-semibold">Smart Route</h2>
         </div>
-        <button
+        <button aria-label="Close"
           onClick={onClearRoute}
           className="p-1 hover:bg-blue-700 rounded"
         >

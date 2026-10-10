@@ -133,7 +133,7 @@ export default function AddLeadModal({
                 <p className="text-xs text-[#718096]">Dropped pin location</p>
               </div>
             </div>
-            <button
+            <button aria-label="Close"
               onClick={onClose}
               className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
             >

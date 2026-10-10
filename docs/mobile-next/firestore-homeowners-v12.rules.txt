@@ -1,0 +1,19 @@
+// Add ONLY this match block INSIDE the existing
+// match /databases/{database}/documents { ... }
+// Keep all existing rules. This does not replace the project's ruleset.
+match /homeowners/{homeownerId} {
+  function activeHomeownerReader() {
+    let user = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    return user.role in ['admin', 'manager', 'setter', 'closer']
+      && user.get('isActive', true) != false
+      && user.get('approved', true) != false
+      && user.get('approvalStatus', 'approved') == 'approved'
+      && user.get('deleted', false) != true
+      && user.get('deletionPending', false) != true;
+  }
+  allow list: if request.auth != null
+    && request.query.limit != null
+    && request.query.limit <= 500
+    && activeHomeownerReader();
+  allow get, create, update, delete: if false;
+}

@@ -215,7 +215,7 @@ export default function TerritoriesPage() {
         <div className="max-w-7xl mx-auto px-6 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-6">
-              <button
+              <button aria-label="Expand"
                 onClick={() => router.push('/')}
                 className="p-3 hover:bg-gray-100/80 rounded-2xl transition-all duration-200 hover:scale-105"
               >
@@ -350,7 +350,7 @@ export default function TerritoriesPage() {
 
                     {canManageUsers(currentUser.role) && (
                       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                        <button
+                        <button aria-label="Edit"
                           onClick={() => {
                             setEditingTerritory(territory);
                             setFormData({ 
@@ -363,7 +363,7 @@ export default function TerritoriesPage() {
                         >
                           <Edit2 className="w-5 h-5" />
                         </button>
-                        <button
+                        <button aria-label="Delete"
                           onClick={() => handleDeleteTerritory(territory)}
                           className="p-3 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200"
                         >
@@ -486,7 +486,7 @@ export default function TerritoriesPage() {
                 <h2 className="text-2xl font-bold text-gray-900">
                   {editingTerritory ? 'Edit Territory' : 'New Territory'}
                 </h2>
-                <button
+                <button aria-label="Close"
                   onClick={() => {
                     setShowCreateModal(false);
                     setEditingTerritory(null);

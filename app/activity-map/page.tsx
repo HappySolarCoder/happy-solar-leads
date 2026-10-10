@@ -267,7 +267,7 @@ export default function ActivityMapPage() {
         <div className="max-w-7xl mx-auto">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
-              <button
+              <button aria-label="Back"
                 onClick={() => router.push('/admin')}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
               >

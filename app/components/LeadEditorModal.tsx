@@ -226,7 +226,7 @@ ${fieldContext ? `Field context: ${fieldContext}` : ''}
               <h2 className="text-xl font-bold text-[#2D3748]">Scheduling Manager</h2>
               <p className="text-sm text-[#718096]">Edit lead info & call scheduler</p>
             </div>
-            <button
+            <button aria-label="Close" data-raydar-back-close
               onClick={onClose}
               className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
             >

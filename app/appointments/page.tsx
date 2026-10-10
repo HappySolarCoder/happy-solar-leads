@@ -73,6 +73,7 @@ function formatMaybeDateTime(value: unknown, fallback = 'Pending sync') {
 }
 
 export default function AppointmentsPage() {
+  const [loadError, setLoadError] = useState('');
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -107,7 +108,7 @@ export default function AppointmentsPage() {
 
       setIsLoading(false);
     }
-    load();
+    void load().catch(() => { setIsLoading(false); setLoadError('Appointments could not be loaded. Check your connection and try again.'); });
   }, [router]);
 
   const loadSyncStatus = async () => {
@@ -226,6 +227,7 @@ export default function AppointmentsPage() {
       .sort((a, b) => b.total - a.total || b.wonRate - a.wonRate);
   }, [rows]);
 
+  if (loadError) return <main className="min-h-screen bg-white p-6 flex flex-col justify-center gap-4 text-[#30445c]"><h1 className="text-2xl font-bold">Appointments unavailable</h1><p role="alert">{loadError}</p><button className="rounded-xl bg-[#587E98] text-white p-3" onClick={() => window.location.reload()}>Try again</button><button onClick={() => router.push('/mobile/more')}>Back to workspace</button></main>;
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center text-[#718096]">Loading appointments…</div>;
   }
@@ -233,7 +235,7 @@ export default function AppointmentsPage() {
   return (
     <div className="min-h-screen bg-[#F7FAFC]">
       <header className="bg-white border-b border-[#E2E8F0] px-4 py-3 flex items-center gap-3">
-        <button onClick={() => router.push('/tools')} className="p-2 rounded-lg hover:bg-[#F7FAFC]">
+        <button aria-label="Back" onClick={() => router.push('/tools')} className="p-2 rounded-lg hover:bg-[#F7FAFC]">
           <ArrowLeft className="w-5 h-5 text-[#718096]" />
         </button>
         <h1 className="text-lg font-bold text-[#2D3748]">Appointments</h1>

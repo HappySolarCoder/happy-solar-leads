@@ -1,14 +1,25 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { Plus, X, Edit2, Trash2, ChevronDown, ChevronRight, GripVertical, Check, Clock, Lightbulb } from 'lucide-react';
+import { useState, useEffect } from "react";
+import {
+  Plus,
+  X,
+  Edit2,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+  GripVertical,
+  Check,
+  Clock,
+  Lightbulb,
+} from "lucide-react";
 
 interface Feature {
   id: string;
   title: string;
   description: string;
-  priority: 'now' | 'later' | 'someday';
-  status: 'todo' | 'in-progress' | 'done';
+  priority: "now" | "later" | "someday";
+  status: "todo" | "in-progress" | "done";
   createdAt: string;
 }
 
@@ -23,90 +34,90 @@ interface Project {
 }
 
 // Local storage key
-const STORAGE_KEY = 'raydar_projects';
+const STORAGE_KEY = "raydar_projects";
 
 const DEFAULT_PROJECTS: Project[] = [
   {
-    id: 'raydar',
-    name: 'Raydar',
-    description: 'Lead management and solar scoring app',
-    icon: '⚡',
-    color: '#f59e0b',
+    id: "raydar",
+    name: "Raydar",
+    description: "Lead management and solar scoring app",
+    icon: "⚡",
+    color: "#f59e0b",
     collapsed: false,
     features: [
       {
-        id: 'f1',
-        title: 'CSV Upload with Geocoding',
-        description: 'Upload leads from CSV and geocode addresses',
-        priority: 'now',
-        status: 'done',
-        createdAt: '2026-02-06',
+        id: "f1",
+        title: "CSV Upload with Geocoding",
+        description: "Upload leads from CSV and geocode addresses",
+        priority: "now",
+        status: "done",
+        createdAt: "2026-02-06",
       },
       {
-        id: 'f2',
-        title: 'Google Solar API Integration',
-        description: 'Score leads based on solar potential',
-        priority: 'now',
-        status: 'done',
-        createdAt: '2026-02-06',
+        id: "f2",
+        title: "Google Solar API Integration",
+        description: "Score leads based on solar potential",
+        priority: "now",
+        status: "done",
+        createdAt: "2026-02-06",
       },
       {
-        id: 'f3',
-        title: 'Smart Routing',
-        description: 'Generate optimal door-to-door routes',
-        priority: 'now',
-        status: 'in-progress',
-        createdAt: '2026-02-07',
+        id: "f3",
+        title: "Smart Routing",
+        description: "Generate optimal door-to-door routes",
+        priority: "now",
+        status: "in-progress",
+        createdAt: "2026-02-07",
       },
       {
-        id: 'f4',
-        title: 'Neighborhood Intel',
-        description: 'Detect nearby solar installations and building data',
-        priority: 'later',
-        status: 'todo',
-        createdAt: '2026-02-07',
+        id: "f4",
+        title: "Neighborhood Intel",
+        description: "Detect nearby solar installations and building data",
+        priority: "later",
+        status: "todo",
+        createdAt: "2026-02-07",
       },
       {
-        id: 'f5',
-        title: 'Knock-to-Appointment Analytics',
-        description: 'Track conversion rates and performance metrics',
-        priority: 'later',
-        status: 'todo',
-        createdAt: '2026-02-07',
+        id: "f5",
+        title: "Knock-to-Appointment Analytics",
+        description: "Track conversion rates and performance metrics",
+        priority: "later",
+        status: "todo",
+        createdAt: "2026-02-07",
       },
       {
-        id: 'f6',
-        title: 'Weather Integration',
-        description: 'Weather-aware routing and lead prioritization',
-        priority: 'someday',
-        status: 'todo',
-        createdAt: '2026-02-07',
+        id: "f6",
+        title: "Weather Integration",
+        description: "Weather-aware routing and lead prioritization",
+        priority: "someday",
+        status: "todo",
+        createdAt: "2026-02-07",
       },
     ],
   },
   {
-    id: 'openclaw',
-    name: 'OpenClaw Assistant',
-    description: 'AI butler and task automation',
-    icon: '🎩',
-    color: '#3b82f6',
+    id: "openclaw",
+    name: "OpenClaw Assistant",
+    description: "AI butler and task automation",
+    icon: "🎩",
+    color: "#3b82f6",
     collapsed: true,
     features: [
       {
-        id: 'f7',
-        title: 'Sub-agent Management',
-        description: 'Manage specialized AI agents',
-        priority: 'now',
-        status: 'in-progress',
-        createdAt: '2026-02-06',
+        id: "f7",
+        title: "Sub-agent Management",
+        description: "Manage specialized AI agents",
+        priority: "now",
+        status: "in-progress",
+        createdAt: "2026-02-06",
       },
       {
-        id: 'f8',
-        title: 'Voice Commands',
-        description: 'Natural voice input for tasks',
-        priority: 'later',
-        status: 'todo',
-        createdAt: '2026-02-06',
+        id: "f8",
+        title: "Voice Commands",
+        description: "Natural voice input for tasks",
+        priority: "later",
+        status: "todo",
+        createdAt: "2026-02-06",
       },
     ],
   },
@@ -116,16 +127,18 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [showAddFeature, setShowAddFeature] = useState<string | null>(null);
-  const [newFeatureTitle, setNewFeatureTitle] = useState('');
-  const [newFeatureDesc, setNewFeatureDesc] = useState('');
-  const [newFeaturePriority, setNewFeaturePriority] = useState<'now' | 'later' | 'someday'>('later');
+  const [newFeatureTitle, setNewFeatureTitle] = useState("");
+  const [newFeatureDesc, setNewFeatureDesc] = useState("");
+  const [newFeaturePriority, setNewFeaturePriority] = useState<
+    "now" | "later" | "someday"
+  >("later");
   const [showAddProject, setShowAddProject] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectDesc, setNewProjectDesc] = useState('');
-  const [newProjectIcon, setNewProjectIcon] = useState('📁');
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDesc, setNewProjectDesc] = useState("");
+  const [newProjectIcon, setNewProjectIcon] = useState("📁");
   const [editingFeature, setEditingFeature] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState('');
-  const [editDesc, setEditDesc] = useState('');
+  const [editTitle, setEditTitle] = useState("");
+  const [editDesc, setEditDesc] = useState("");
 
   // Load from localStorage
   useEffect(() => {
@@ -155,9 +168,11 @@ export default function ProjectsPage() {
   };
 
   const toggleProject = (projectId: string) => {
-    saveProjects(projects.map(p => 
-      p.id === projectId ? { ...p, collapsed: !p.collapsed } : p
-    ));
+    saveProjects(
+      projects.map((p) =>
+        p.id === projectId ? { ...p, collapsed: !p.collapsed } : p,
+      ),
+    );
   };
 
   const addFeature = (projectId: string) => {
@@ -168,17 +183,19 @@ export default function ProjectsPage() {
       title: newFeatureTitle,
       description: newFeatureDesc,
       priority: newFeaturePriority,
-      status: 'todo',
-      createdAt: new Date().toISOString().split('T')[0],
+      status: "todo",
+      createdAt: new Date().toISOString().split("T")[0],
     };
 
-    saveProjects(projects.map(p => 
-      p.id === projectId ? { ...p, features: [...p.features, feature] } : p
-    ));
+    saveProjects(
+      projects.map((p) =>
+        p.id === projectId ? { ...p, features: [...p.features, feature] } : p,
+      ),
+    );
 
-    setNewFeatureTitle('');
-    setNewFeatureDesc('');
-    setNewFeaturePriority('later');
+    setNewFeatureTitle("");
+    setNewFeatureDesc("");
+    setNewFeaturePriority("later");
     setShowAddFeature(null);
   };
 
@@ -190,32 +207,46 @@ export default function ProjectsPage() {
       name: newProjectName,
       description: newProjectDesc,
       icon: newProjectIcon,
-      color: '#6b7280',
+      color: "#6b7280",
       collapsed: false,
       features: [],
     };
 
     setProjects([...projects, project]);
-    setNewProjectName('');
-    setNewProjectDesc('');
-    setNewProjectIcon('📁');
+    setNewProjectName("");
+    setNewProjectDesc("");
+    setNewProjectIcon("📁");
     setShowAddProject(false);
   };
 
   const deleteFeature = (projectId: string, featureId: string) => {
-    if (!confirm('Delete this feature?')) return;
-    saveProjects(projects.map(p => 
-      p.id === projectId ? { ...p, features: p.features.filter(f => f.id !== featureId) } : p
-    ));
+    if (!confirm("Delete this feature?")) return;
+    saveProjects(
+      projects.map((p) =>
+        p.id === projectId
+          ? { ...p, features: p.features.filter((f) => f.id !== featureId) }
+          : p,
+      ),
+    );
   };
 
-  const updateFeatureStatus = (projectId: string, featureId: string, status: Feature['status']) => {
-    saveProjects(projects.map(p => 
-      p.id === projectId ? {
-        ...p,
-        features: p.features.map(f => f.id === featureId ? { ...f, status } : f)
-      } : p
-    ));
+  const updateFeatureStatus = (
+    projectId: string,
+    featureId: string,
+    status: Feature["status"],
+  ) => {
+    saveProjects(
+      projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              features: p.features.map((f) =>
+                f.id === featureId ? { ...f, status } : f,
+              ),
+            }
+          : p,
+      ),
+    );
   };
 
   const startEditFeature = (feature: Feature) => {
@@ -225,39 +256,58 @@ export default function ProjectsPage() {
   };
 
   const saveEditFeature = (projectId: string, featureId: string) => {
-    saveProjects(projects.map(p => 
-      p.id === projectId ? {
-        ...p,
-        features: p.features.map(f => f.id === featureId ? { ...f, title: editTitle, description: editDesc } : f)
-      } : p
-    ));
+    saveProjects(
+      projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              features: p.features.map((f) =>
+                f.id === featureId
+                  ? { ...f, title: editTitle, description: editDesc }
+                  : f,
+              ),
+            }
+          : p,
+      ),
+    );
     setEditingFeature(null);
   };
 
   const deleteProject = (projectId: string) => {
-    if (!confirm('Delete this project and all its features?')) return;
-    saveProjects(projects.filter(p => p.id !== projectId));
+    if (!confirm("Delete this project and all its features?")) return;
+    saveProjects(projects.filter((p) => p.id !== projectId));
   };
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
-      case 'now': return 'bg-red-100 text-red-700';
-      case 'later': return 'bg-yellow-100 text-yellow-700';
-      case 'someday': return 'bg-gray-100 text-gray-700';
-      default: return 'bg-gray-100 text-gray-700';
+      case "now":
+        return "bg-red-100 text-red-700";
+      case "later":
+        return "bg-yellow-100 text-yellow-700";
+      case "someday":
+        return "bg-gray-100 text-gray-700";
+      default:
+        return "bg-gray-100 text-gray-700";
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'done': return 'bg-green-100 text-green-700';
-      case 'in-progress': return 'bg-blue-100 text-blue-700';
-      default: return 'bg-gray-100 text-gray-700';
+      case "done":
+        return "bg-green-100 text-green-700";
+      case "in-progress":
+        return "bg-blue-100 text-blue-700";
+      default:
+        return "bg-gray-100 text-gray-700";
     }
   };
 
   const getPriorityCount = (priority: string) => {
-    return projects.reduce((acc, p) => acc + p.features.filter(f => f.priority === priority).length, 0);
+    return projects.reduce(
+      (acc, p) =>
+        acc + p.features.filter((f) => f.priority === priority).length,
+      0,
+    );
   };
 
   if (!isLoaded) {
@@ -275,16 +325,22 @@ export default function ProjectsPage() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200 px-6 py-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Project Board</h1>
             <p className="text-sm text-gray-500">Track features and ideas</p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex gap-2 text-sm">
-              <span className="px-2 py-1 bg-red-100 text-red-700 rounded">Now: {getPriorityCount('now')}</span>
-              <span className="px-2 py-1 bg-yellow-100 text-yellow-700 rounded">Later: {getPriorityCount('later')}</span>
-              <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded">Someday: {getPriorityCount('someday')}</span>
+              <span className="px-2 py-1 bg-red-100 text-red-700 rounded">
+                Now: {getPriorityCount("now")}
+              </span>
+              <span className="px-2 py-1 bg-yellow-100 text-yellow-700 rounded">
+                Later: {getPriorityCount("later")}
+              </span>
+              <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded">
+                Someday: {getPriorityCount("someday")}
+              </span>
             </div>
             <button
               onClick={() => setShowAddProject(true)}
@@ -299,10 +355,13 @@ export default function ProjectsPage() {
 
       {/* Project Board */}
       <div className="p-6 space-y-6">
-        {projects.map(project => (
-          <div key={project.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {projects.map((project) => (
+          <div
+            key={project.id}
+            className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"
+          >
             {/* Project Header */}
-            <div 
+            <div
               className="px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
               style={{ borderLeft: `4px solid ${project.color}` }}
               onClick={() => toggleProject(project.id)}
@@ -310,13 +369,16 @@ export default function ProjectsPage() {
               <div className="flex items-center gap-3">
                 <span className="text-2xl">{project.icon}</span>
                 <div>
-                  <h2 className="font-semibold text-gray-900">{project.name}</h2>
+                  <h2 className="font-semibold text-gray-900">
+                    {project.name}
+                  </h2>
                   <p className="text-sm text-gray-500">{project.description}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-sm text-gray-500">
-                  {project.features.filter(f => f.status === 'done').length}/{project.features.length} done
+                  {project.features.filter((f) => f.status === "done").length}/
+                  {project.features.length} done
                 </span>
                 {project.collapsed ? (
                   <ChevronRight className="w-5 h-5 text-gray-400" />
@@ -324,7 +386,11 @@ export default function ProjectsPage() {
                   <ChevronDown className="w-5 h-5 text-gray-400" />
                 )}
                 <button
-                  onClick={(e) => { e.stopPropagation(); deleteProject(project.id); }}
+                  aria-label="Delete"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteProject(project.id);
+                  }}
                   className="p-1 hover:bg-red-100 rounded text-gray-400 hover:text-red-600"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -357,7 +423,9 @@ export default function ProjectsPage() {
                       <div className="flex items-center gap-2">
                         <select
                           value={newFeaturePriority}
-                          onChange={(e) => setNewFeaturePriority(e.target.value as any)}
+                          onChange={(e) =>
+                            setNewFeaturePriority(e.target.value as any)
+                          }
                           className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
                           <option value="now">🔴 Now</option>
@@ -392,8 +460,11 @@ export default function ProjectsPage() {
                 {/* Feature List */}
                 {project.features.length > 0 ? (
                   <div className="divide-y divide-gray-100">
-                    {project.features.map(feature => (
-                      <div key={feature.id} className="px-4 py-3 hover:bg-gray-50">
+                    {project.features.map((feature) => (
+                      <div
+                        key={feature.id}
+                        className="px-4 py-3 hover:bg-gray-50"
+                      >
                         {editingFeature === feature.id ? (
                           <div className="space-y-2">
                             <input
@@ -411,7 +482,9 @@ export default function ProjectsPage() {
                             />
                             <div className="flex gap-2">
                               <button
-                                onClick={() => saveEditFeature(project.id, feature.id)}
+                                onClick={() =>
+                                  saveEditFeature(project.id, feature.id)
+                                }
                                 className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded text-sm"
                               >
                                 Save
@@ -425,40 +498,64 @@ export default function ProjectsPage() {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex items-start gap-3">
+                          <div className="flex flex-wrap sm:flex-nowrap items-start gap-3">
                             <div className="flex flex-col gap-1 mt-1">
                               {/* Status dropdown */}
                               <select
                                 value={feature.status}
-                                onChange={(e) => updateFeatureStatus(project.id, feature.id, e.target.value as any)}
+                                onChange={(e) =>
+                                  updateFeatureStatus(
+                                    project.id,
+                                    feature.id,
+                                    e.target.value as any,
+                                  )
+                                }
                                 className={`text-xs px-2 py-1 rounded border-0 cursor-pointer ${getStatusColor(feature.status)}`}
                               >
                                 <option value="todo">○ Todo</option>
-                                <option value="in-progress">◐ In Progress</option>
+                                <option value="in-progress">
+                                  ◐ In Progress
+                                </option>
                                 <option value="done">● Done</option>
                               </select>
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="font-medium text-gray-900">{feature.title}</span>
-                                <span className={`text-xs px-2 py-0.5 rounded ${getPriorityColor(feature.priority)}`}>
-                                  {feature.priority === 'now' ? 'Now' : feature.priority === 'later' ? 'Later' : 'Someday'}
+                            <div className="w-full sm:w-auto sm:flex-1 min-w-0 order-first sm:order-none">
+                              <div className="flex flex-wrap items-center gap-2 mb-1">
+                                <span className="font-medium text-gray-900">
+                                  {feature.title}
+                                </span>
+                                <span
+                                  className={`text-xs px-2 py-0.5 rounded ${getPriorityColor(feature.priority)}`}
+                                >
+                                  {feature.priority === "now"
+                                    ? "Now"
+                                    : feature.priority === "later"
+                                      ? "Later"
+                                      : "Someday"}
                                 </span>
                               </div>
                               {feature.description && (
-                                <p className="text-sm text-gray-500">{feature.description}</p>
+                                <p className="text-sm text-gray-500">
+                                  {feature.description}
+                                </p>
                               )}
-                              <p className="text-xs text-gray-400 mt-1">{feature.createdAt}</p>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {feature.createdAt}
+                              </p>
                             </div>
                             <div className="flex gap-1">
                               <button
+                                aria-label="Edit"
                                 onClick={() => startEditFeature(feature)}
                                 className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-600"
                               >
                                 <Edit2 className="w-4 h-4" />
                               </button>
                               <button
-                                onClick={() => deleteFeature(project.id, feature.id)}
+                                aria-label="Delete"
+                                onClick={() =>
+                                  deleteFeature(project.id, feature.id)
+                                }
                                 className="p-1 hover:bg-red-100 rounded text-gray-400 hover:text-red-600"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -487,13 +584,19 @@ export default function ProjectsPage() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-lg font-semibold">New Project</h2>
-              <button onClick={() => setShowAddProject(false)} className="p-1 hover:bg-gray-100 rounded">
+              <button
+                aria-label="Close"
+                onClick={() => setShowAddProject(false)}
+                className="p-1 hover:bg-gray-100 rounded"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Project Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Project Name
+                </label>
                 <input
                   type="text"
                   value={newProjectName}
@@ -503,7 +606,9 @@ export default function ProjectsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Description
+                </label>
                 <textarea
                   value={newProjectDesc}
                   onChange={(e) => setNewProjectDesc(e.target.value)}
@@ -513,7 +618,9 @@ export default function ProjectsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Icon</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Icon
+                </label>
                 <input
                   type="text"
                   value={newProjectIcon}

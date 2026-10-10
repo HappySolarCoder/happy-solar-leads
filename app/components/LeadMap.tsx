@@ -1,5 +1,11 @@
 'use client';
 
+import { useHomeowners } from '@/app/homeowners/useHomeowners';
+import { buildHouseIndex, mergeHomeowners, type Homeowner } from '@/app/homeowners/model';
+import { HomeownerCanvas } from '@/app/homeowners/CanvasLayer';
+import { HomeownerStatus } from '@/app/homeowners/Details';
+import { EMPTY_HOMES } from '@/app/homeowners/loader';
+
 import { observeMapSize } from '@/app/utils/observeMapSize';
 
 import { fieldPinArtwork, fieldPinZoomTier } from '@/app/utils/fieldPin';
@@ -39,7 +45,12 @@ interface LeadMapProps {
   dispositionOptions?: Disposition[];
   currentUser: User | null;
   users?: User[]; // All users for territory color mapping
-  onLeadClick: (lead: Lead) => void;
+  onLeadClick: (lead: Lead, homeowner?: Homeowner) => void;
+  showHomeowners?: boolean;
+  homeownerLeads?: Lead[];
+  homeownerFixture?: Homeowner[];
+  selectedHomeownerId?: string;
+  onHomeownerClick?: (homeowner: Homeowner) => void;
   selectedLeadId?: string;
   routeWaypoints?: RouteWaypoint[];
   userRoutes?: UserRoute[]; // Multiple routes (one per user) for activity tracking
@@ -85,7 +96,12 @@ export default function LeadMap({
   dispositionOptions,
   currentUser,
   users = EMPTY_USERS,
-  onLeadClick, 
+  onLeadClick,
+  showHomeowners = false,
+  homeownerLeads,
+  homeownerFixture,
+  selectedHomeownerId,
+  onHomeownerClick,
   selectedLeadId,
   routeWaypoints,
   userRoutes = EMPTY_ROUTES,
@@ -110,6 +126,28 @@ export default function LeadMap({
   teamMembers = [],
   onToggleTeamAreas,
 }: LeadMapProps) {
+  const [homeownerMap, setHomeownerMap] = useState<L.Map | null>(null);
+  const homeLayer = useRef<HomeownerCanvas | null>(null);
+  const homeClickRef = useRef(onHomeownerClick);
+  useEffect(() => { homeClickRef.current = onHomeownerClick; }, [onHomeownerClick]);
+  const liveHomeowners = useHomeowners(homeownerMap, currentUser, showHomeowners && !homeownerFixture);
+  const homeState = homeownerFixture ? {...EMPTY_HOMES, homes: homeownerFixture} : liveHomeowners;
+  const houseIndex = useMemo(() => buildHouseIndex(showHomeowners ? homeownerLeads || leadsProp : []), [showHomeowners, homeownerLeads, leadsProp]);
+  const homeMerge = useMemo(() => mergeHomeowners(homeState.homes, houseIndex), [homeState.homes, houseIndex]);
+  const homeMergeRef = useRef(homeMerge);
+  useEffect(() => { homeMergeRef.current = homeMerge; }, [homeMerge]);
+  useEffect(() => {
+    if (!homeownerMap || !showHomeowners) return;
+    const layer = new HomeownerCanvas(h => homeClickRef.current?.(h));
+    layer.addTo(homeownerMap); homeLayer.current = layer;
+    return () => { layer.remove(); homeLayer.current = null; };
+  }, [homeownerMap, showHomeowners]);
+  useEffect(() => { homeLayer.current?.update(homeMerge.gray, selectedHomeownerId); }, [homeMerge.gray, selectedHomeownerId, homeownerMap, showHomeowners]);
+  const selectListedHome = (h: Homeowner) => {
+    const match = [...homeMerge.byLead].find(([, value]) => value.id === h.id);
+    const lead = match && (homeownerLeads || leadsProp).find(l => l.id === match[0]);
+    if (lead) onLeadClick(lead, h); else onHomeownerClick?.(h);
+  };
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
@@ -192,7 +230,7 @@ export default function LeadMap({
 
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
-  const leads = useMemo(() => leadsProp, [leadsProp]);
+  const leads = useMemo(() => homeMerge.hiddenLeadIds.size ? leadsProp.filter(l => !homeMerge.hiddenLeadIds.has(l.id)) : leadsProp, [leadsProp, homeMerge.hiddenLeadIds]);
 
   const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
 
@@ -341,6 +379,7 @@ export default function LeadMap({
     }).addTo(map);
     
     mapInstanceRef.current = map;
+    setHomeownerMap(map);
 
     const stopObservingSize = observeMapSize(map);
 
@@ -354,6 +393,7 @@ export default function LeadMap({
 
     // Listen for zoom changes - update tier only when crossing thresholds
     map.on('zoomend', () => {
+      if (mapInstanceRef.current !== map) return;
       const currentZoom = map.getZoom();
       const newCenter: [number, number] = [map.getCenter().lat, map.getCenter().lng];
       setMapZoom(currentZoom);
@@ -372,6 +412,7 @@ export default function LeadMap({
 
     // Listen for map panning - update viewport to load new markers
     map.on('moveend', () => {
+      if (mapInstanceRef.current !== map) return;
       const newCenter: [number, number] = [map.getCenter().lat, map.getCenter().lng];
       const currentZoom = map.getZoom();
       setViewportKey(prev => prev + 1);
@@ -716,7 +757,7 @@ export default function LeadMap({
               showPersistentPopup(map, current);
               if (current.historicalTerritoryPin) return;
             } else if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
-            clickRef.current(current);
+            clickRef.current(current, homeMergeRef.current.byLead.get(current.id));
           });
           entries.set(lead.id, entry);
           added.push(entry.marker);
@@ -1034,6 +1075,8 @@ export default function LeadMap({
         userMarkerRef.current = L.marker([lat, lng], {
           icon: personIcon,
           zIndexOffset: 1000,
+          interactive: false,
+          keyboard: false,
         }).addTo(map);
       }
     } else {
@@ -1559,6 +1602,7 @@ export default function LeadMap({
     <div className="relative w-full h-full">
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       
+      {showHomeowners && <HomeownerStatus state={homeState} onSelect={selectListedHome} />}
       {/* Both real basemaps remain available without changing pins or map position. */}
       <div role="group" aria-label="Map imagery"
         className="absolute top-3 right-3 z-20 flex gap-1 rounded-xl border border-[#D5DFDA] bg-white p-1 shadow-lg">

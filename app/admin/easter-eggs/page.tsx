@@ -84,7 +84,7 @@ export default function EasterEggsAdminPage() {
         <div className="max-w-7xl mx-auto">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <button
+              <button aria-label="Back"
                 onClick={() => router.push('/admin')}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
               >

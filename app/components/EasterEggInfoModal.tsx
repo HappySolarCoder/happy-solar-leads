@@ -48,7 +48,7 @@ export default function EasterEggInfoModal({ onClose }: Props) {
                 <p className="text-white/80 text-sm">Win prizes by knocking doors today</p>
               </div>
             </div>
-            <button
+            <button aria-label="Close"
               onClick={onClose}
               className="p-2 hover:bg-white/20 rounded-lg transition-colors"
             >

@@ -44,6 +44,7 @@ interface SetterMetrics {
 type SortBy = 'knocks' | 'conversations' | 'appointments' | 'goBacks';
 
 export default function DataDashboard() {
+  const [loadError, setLoadError] = useState('');
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>(() => getLeads());
   const [users, setUsers] = useState<User[]>(() => getUsers());
@@ -112,7 +113,7 @@ export default function DataDashboard() {
       setIsRefreshing(false);
     }
 
-    loadData();
+    void loadData().catch(() => { setIsLoading(false); setIsRefreshing(false); setLoadError('Team performance could not be loaded. Check your connection and try again.'); });
   }, [router]);
 
   // Calculate metrics for each setter
@@ -230,7 +231,7 @@ export default function DataDashboard() {
 
     // Convert to array and sort
     const metricsArray = Array.from(setterMap.values());
-    
+
     // Sort by selected metric
     if (sortBy === 'goBacks') {
       metricsArray.sort((a, b) => b.goBacksScheduled - a.goBacksScheduled);
@@ -275,6 +276,7 @@ export default function DataDashboard() {
     return 'bg-yellow-100 text-yellow-700';
   };
 
+  if (loadError) return <main className="min-h-screen bg-white p-6 flex flex-col justify-center gap-4 text-[#30445c]"><h1 className="text-2xl font-bold">Team performance unavailable</h1><p role="alert">{loadError}</p><button className="rounded-xl bg-[#587E98] text-white p-3" onClick={() => window.location.reload()}>Try again</button><button onClick={() => router.push('/mobile/more')}>Back to workspace</button></main>;
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#F7FAFC] flex items-center justify-center">
@@ -294,25 +296,25 @@ export default function DataDashboard() {
           {/* Logo & Back - Top Row */}
           <div className="flex items-center justify-between mb-3 sm:mb-4">
             <button
-              onClick={() => router.push('/tools')}
+              aria-label="Back to tools" onClick={() => router.push('/tools')}
               className="inline-flex items-center gap-2 text-[#4299E1] hover:text-[#3182CE] text-sm"
             >
               <ArrowLeft className="w-4 h-4" />
               <span className="hidden sm:inline">Back</span>
             </button>
-            <img 
-              src="/raydar-icon.png" 
-              alt="Raydar" 
+            <img
+              src="/brand/raydar-v5/raydar-mark-v5.svg"
+              alt="Raydar"
               className="h-8 w-8 sm:h-10 sm:w-10 object-contain"
             />
             <div className="w-16 sm:w-20"></div>
           </div>
-          
+
           {/* Centered Title & Filters */}
           <div className="text-center">
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-[#2D3748] mb-1 sm:mb-2">Team Performance</h1>
             <p className="text-xs sm:text-sm text-[#718096] mb-3 sm:mb-4">Real-time setter metrics {isRefreshing ? '• Refreshing…' : ''}</p>
-            
+
             {/* Time Filter */}
             <div className="flex flex-wrap justify-center gap-1 sm:gap-2 bg-white p-2 rounded-lg shadow-sm">
               {([
@@ -495,7 +497,7 @@ export default function DataDashboard() {
               Individual Performance
             </h2>
           </div>
-          
+
           {/* Sort Controls */}
           <div className="px-4 lg:px-6 py-3 bg-[#F7FAFC] border-b border-[#E2E8F0] overflow-x-auto">
             <div className="flex items-center gap-2 text-xs lg:text-sm min-w-max">

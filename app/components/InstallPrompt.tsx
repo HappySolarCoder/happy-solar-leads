@@ -66,7 +66,7 @@ export default function InstallPrompt() {
   return (
     <div className="fixed bottom-4 left-4 right-4 z-50 animate-slide-up">
       <div className="bg-white rounded-2xl shadow-2xl border border-[#E2E8F0] p-4 max-w-md mx-auto">
-        <button
+        <button aria-label="Close"
           onClick={handleDismiss}
           className="absolute top-2 right-2 p-1 text-[#718096] hover:text-[#2D3748]"
         >

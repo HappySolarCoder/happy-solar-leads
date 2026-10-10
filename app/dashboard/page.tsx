@@ -1,17 +1,25 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { 
-  TrendingUp, DoorClosed, Calendar, DollarSign, Target,
-  Users, Clock, CheckCircle, ArrowLeft, BarChart3
-} from 'lucide-react';
-import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
-import { getDispositionsAsync } from '@/app/utils/dispositions';
-import { getCurrentAuthUser } from '@/app/utils/auth';
-import { Lead, User, canSeeAllLeads } from '@/app/types';
-import { Disposition } from '@/app/types/disposition';
-import ActivityStream from '@/app/components/ActivityStream';
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import {
+  TrendingUp,
+  DoorClosed,
+  Calendar,
+  DollarSign,
+  Target,
+  Users,
+  Clock,
+  CheckCircle,
+  ArrowLeft,
+  BarChart3,
+} from "lucide-react";
+import { getLeadsAsync, getUsersAsync } from "@/app/utils/storage";
+import { getDispositionsAsync } from "@/app/utils/dispositions";
+import { getCurrentAuthUser } from "@/app/utils/auth";
+import { Lead, User, canSeeAllLeads } from "@/app/types";
+import { Disposition, isKnockStatus } from "@/app/types/disposition";
+import ActivityStream from "@/app/components/ActivityStream";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -20,12 +28,13 @@ export default function DashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     async function loadData() {
       const user = await getCurrentAuthUser();
       if (!user) {
-        router.push('/login');
+        router.push("/login");
         return;
       }
 
@@ -34,14 +43,34 @@ export default function DashboardPage() {
       const allLeads = await getLeadsAsync();
       const allUsers = await getUsersAsync();
       const allDispositions = await getDispositionsAsync();
-      
+
       setLeads(allLeads);
       setUsers(allUsers);
       setDispositions(allDispositions);
       setIsLoading(false);
     }
-    loadData();
+    void loadData().catch(() => {
+      setLoadError(true);
+      setIsLoading(false);
+    });
   }, [router]);
+
+  if (loadError)
+    return (
+      <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-6">
+        <h1 className="text-xl font-bold">Dashboard unavailable</h1>
+        <p>Check your connection and try again.</p>
+        <button
+          className="rounded-xl bg-[#476b83] text-white px-5 py-3"
+          onClick={() => window.location.reload()}
+        >
+          Try again
+        </button>
+        <button onClick={() => router.push("/mobile/more")}>
+          Back to workspace
+        </button>
+      </main>
+    );
 
   if (isLoading) {
     return (
@@ -59,10 +88,11 @@ export default function DashboardPage() {
   // Filter leads based on user role
   const visibleLeads = canSeeAllLeads(currentUser.role)
     ? leads
-    : leads.filter(l => 
-        l.status === 'unclaimed' || 
-        l.claimedBy === currentUser.id || 
-        l.assignedTo === currentUser.id
+    : leads.filter(
+        (l) =>
+          l.status === "unclaimed" ||
+          l.claimedBy === currentUser.id ||
+          l.assignedTo === currentUser.id,
       );
 
   // Get today's date (start of day)
@@ -71,15 +101,15 @@ export default function DashboardPage() {
 
   // Get statuses that count as door knocks from dispositions
   const doorKnockStatuses = dispositions
-    .filter(d => d.countsAsDoorKnock)
-    .flatMap(d => [
+    .filter((d) => d.countsAsDoorKnock)
+    .flatMap((d) => [
       d.id.toLowerCase(),
       d.name.toLowerCase(),
-      d.name.toLowerCase().replace(/\s+/g, '-'),
+      d.name.toLowerCase().replace(/\s+/g, "-"),
     ]);
 
   // Calculate daily stats
-  const todayLeads = visibleLeads.filter(l => {
+  const todayLeads = visibleLeads.filter((l) => {
     if (!l.dispositionedAt) return false;
     const dispDate = new Date(l.dispositionedAt);
     dispDate.setHours(0, 0, 0, 0);
@@ -87,41 +117,73 @@ export default function DashboardPage() {
   });
 
   // Count by disposition for today - using dynamic door knock statuses
-  const todayKnocks = todayLeads.filter(l => {
+  const todayKnocks = todayLeads.filter((l) => {
     if (!l.status) return false;
     const status = l.status.toLowerCase();
-    const disposition = String(l.disposition || '').toLowerCase();
-    return doorKnockStatuses.includes(status) || doorKnockStatuses.includes(disposition);
+    const disposition = String(l.disposition || "").toLowerCase();
+    return (
+      isKnockStatus(status) ||
+      doorKnockStatuses.includes(status) ||
+      doorKnockStatuses.includes(disposition)
+    );
   }).length;
 
-  // Conversations = all dispositions (not unclaimed/claimed)
-  const todayConversations = todayLeads.filter(l => {
-    if (!l.status) return false;
-    return l.status !== 'unclaimed' && l.status !== 'claimed';
-  }).length;
+  // Only outcomes that indicate a conversation; Not Home and scheduled returns
+  // do not establish that somebody answered. Explicit contact lives in Field tools.
+  const conversationOutcomes = new Set([
+    "interested",
+    "not-interested",
+    "appointment",
+    "sale",
+    "renter",
+    "dq-credit",
+  ]);
+  const todayConversations = todayLeads.filter((l) =>
+    conversationOutcomes.has(l.status || ""),
+  ).length;
 
-  const todayAppointments = todayLeads.filter(l => l.status === 'appointment').length;
-  const todaySales = todayLeads.filter(l => l.status === 'sale').length;
-  const todayInterested = todayLeads.filter(l => l.status === 'interested').length;
+  const todayAppointments = todayLeads.filter(
+    (l) => l.status === "appointment" || l.status === "sale",
+  ).length;
+  const todaySales = todayLeads.filter((l) => l.status === "sale").length;
+  const todayInterested = todayLeads.filter(
+    (l) => l.status === "interested",
+  ).length;
 
   // Calculate conversion rates
-  const conversationRate = todayKnocks > 0 ? ((todayConversations / todayKnocks) * 100).toFixed(1) : '0.0';
-  const appointmentRateFromConversions = todayConversations > 0 ? ((todayAppointments / todayConversations) * 100).toFixed(1) : '0.0';
-  const appointmentRateFromKnocks = todayKnocks > 0 ? ((todayAppointments / todayKnocks) * 100).toFixed(1) : '0.0';
-  const closeRate = todayAppointments > 0 ? ((todaySales / todayAppointments) * 100).toFixed(1) : '0.0';
+  const conversationRate =
+    todayKnocks > 0
+      ? ((todayConversations / todayKnocks) * 100).toFixed(1)
+      : "0.0";
+  const appointmentRateFromConversions =
+    todayConversations > 0
+      ? ((todayAppointments / todayConversations) * 100).toFixed(1)
+      : "0.0";
+  const appointmentRateFromKnocks =
+    todayKnocks > 0
+      ? ((todayAppointments / todayKnocks) * 100).toFixed(1)
+      : "0.0";
+  const closeRate =
+    todayAppointments > 0
+      ? ((todaySales / todayAppointments) * 100).toFixed(1)
+      : "0.0";
 
   // Overall stats
   const totalLeads = visibleLeads.length;
-  const available = visibleLeads.filter(l => l.status === 'unclaimed').length;
-  const myLeads = visibleLeads.filter(l => l.claimedBy === currentUser.id).length;
-  const totalAppointments = visibleLeads.filter(l => l.status === 'appointment').length;
-  const totalSales = visibleLeads.filter(l => l.status === 'sale').length;
+  const available = visibleLeads.filter((l) => l.status === "unclaimed").length;
+  const myLeads = visibleLeads.filter(
+    (l) => l.claimedBy === currentUser.id,
+  ).length;
+  const totalAppointments = visibleLeads.filter(
+    (l) => l.status === "appointment",
+  ).length;
+  const totalSales = visibleLeads.filter((l) => l.status === "sale").length;
 
   // Active setters (leads claimed today)
   const activeSetterIds = new Set(
-    todayLeads.map(l => l.claimedBy).filter(Boolean)
+    todayLeads.map((l) => l.claimedBy).filter(Boolean),
   );
-  const activeSetters = users.filter(u => activeSetterIds.has(u.id));
+  const activeSetters = users.filter((u) => activeSetterIds.has(u.id));
 
   return (
     <div className="min-h-screen bg-white">
@@ -130,20 +192,28 @@ export default function DashboardPage() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => router.push('/')}
+              aria-label="Back"
+              onClick={() => router.push("/")}
               className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
             >
               <ArrowLeft className="w-5 h-5 text-[#718096]" />
             </button>
             <div>
-              <h1 className="text-2xl font-bold text-[#2D3748]">Daily Dashboard</h1>
+              <h1 className="text-2xl font-bold text-[#2D3748]">
+                Daily Dashboard
+              </h1>
               <p className="text-sm text-[#718096]">
-                {today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                {today.toLocaleDateString("en-US", {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                })}
               </p>
             </div>
           </div>
           <img
-            src="/raydar-icon.png"
+            src="/brand/raydar-v5/raydar-mark-v5.svg"
             alt="Raydar"
             className="h-10 w-10"
           />
@@ -166,7 +236,9 @@ export default function DashboardPage() {
                   <DoorClosed className="w-4 h-4 text-[#FF5F5A]" />
                 </div>
               </div>
-              <div className="text-2xl font-bold text-[#2D3748] mb-1">{todayKnocks}</div>
+              <div className="text-2xl font-bold text-[#2D3748] mb-1">
+                {todayKnocks}
+              </div>
               <div className="text-xs text-[#718096]">Knocks</div>
             </div>
 
@@ -180,7 +252,9 @@ export default function DashboardPage() {
                   {conversationRate}%
                 </span>
               </div>
-              <div className="text-2xl font-bold text-[#2D3748] mb-1">{todayConversations}</div>
+              <div className="text-2xl font-bold text-[#2D3748] mb-1">
+                {todayConversations}
+              </div>
               <div className="text-xs text-[#718096]">Conversations</div>
             </div>
 
@@ -194,7 +268,9 @@ export default function DashboardPage() {
                   {appointmentRateFromConversions}%
                 </span>
               </div>
-              <div className="text-2xl font-bold text-[#2D3748] mb-1">{todayAppointments}</div>
+              <div className="text-2xl font-bold text-[#2D3748] mb-1">
+                {todayAppointments}
+              </div>
               <div className="text-xs text-[#718096]">Appts</div>
             </div>
 
@@ -205,7 +281,9 @@ export default function DashboardPage() {
                   <Target className="w-4 h-4 text-indigo-600" />
                 </div>
               </div>
-              <div className="text-2xl font-bold text-[#2D3748] mb-1">{appointmentRateFromKnocks}%</div>
+              <div className="text-2xl font-bold text-[#2D3748] mb-1">
+                {appointmentRateFromKnocks}%
+              </div>
               <div className="text-xs text-[#718096]">Appt % (Knocks)</div>
             </div>
 
@@ -219,7 +297,9 @@ export default function DashboardPage() {
                   {closeRate}%
                 </span>
               </div>
-              <div className="text-2xl font-bold text-[#2D3748] mb-1">{todaySales}</div>
+              <div className="text-2xl font-bold text-[#2D3748] mb-1">
+                {todaySales}
+              </div>
               <div className="text-xs text-[#718096]">Sales</div>
             </div>
 
@@ -230,7 +310,9 @@ export default function DashboardPage() {
                   <Target className="w-4 h-4 text-amber-600" />
                 </div>
               </div>
-              <div className="text-2xl font-bold text-[#2D3748] mb-1">{todayInterested}</div>
+              <div className="text-2xl font-bold text-[#2D3748] mb-1">
+                {todayInterested}
+              </div>
               <div className="text-xs text-[#718096]">Interested</div>
             </div>
           </div>
@@ -245,31 +327,41 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             {/* Total Leads */}
             <div className="bg-[#F7FAFC] border border-[#E2E8F0] rounded-xl p-4">
-              <div className="text-2xl font-bold text-[#2D3748] mb-1">{totalLeads}</div>
+              <div className="text-2xl font-bold text-[#2D3748] mb-1">
+                {totalLeads}
+              </div>
               <div className="text-xs text-[#718096]">Total Leads</div>
             </div>
 
             {/* Available */}
             <div className="bg-[#F7FAFC] border border-[#E2E8F0] rounded-xl p-4">
-              <div className="text-2xl font-bold text-[#FF5F5A] mb-1">{available}</div>
+              <div className="text-2xl font-bold text-[#FF5F5A] mb-1">
+                {available}
+              </div>
               <div className="text-xs text-[#718096]">Available</div>
             </div>
 
             {/* My Leads */}
             <div className="bg-[#F7FAFC] border border-[#E2E8F0] rounded-xl p-4">
-              <div className="text-2xl font-bold text-[#2D3748] mb-1">{myLeads}</div>
+              <div className="text-2xl font-bold text-[#2D3748] mb-1">
+                {myLeads}
+              </div>
               <div className="text-xs text-[#718096]">My Leads</div>
             </div>
 
             {/* Total Appointments */}
             <div className="bg-[#F7FAFC] border border-[#E2E8F0] rounded-xl p-4">
-              <div className="text-2xl font-bold text-blue-600 mb-1">{totalAppointments}</div>
+              <div className="text-2xl font-bold text-blue-600 mb-1">
+                {totalAppointments}
+              </div>
               <div className="text-xs text-[#718096]">Total Appts</div>
             </div>
 
             {/* Total Sales */}
             <div className="bg-[#F7FAFC] border border-[#E2E8F0] rounded-xl p-4">
-              <div className="text-2xl font-bold text-green-600 mb-1">{totalSales}</div>
+              <div className="text-2xl font-bold text-green-600 mb-1">
+                {totalSales}
+              </div>
               <div className="text-xs text-[#718096]">Total Sales</div>
             </div>
           </div>
@@ -288,14 +380,23 @@ export default function DashboardPage() {
               Active Today ({activeSetters.length})
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {activeSetters.map(setter => {
-                const setterLeads = todayLeads.filter(l => l.claimedBy === setter.id);
+              {activeSetters.map((setter) => {
+                const setterLeads = todayLeads.filter(
+                  (l) => l.claimedBy === setter.id,
+                );
                 const setterKnocks = setterLeads.length;
-                const setterAppts = setterLeads.filter(l => l.status === 'appointment').length;
-                const setterSales = setterLeads.filter(l => l.status === 'sale').length;
+                const setterAppts = setterLeads.filter(
+                  (l) => l.status === "appointment",
+                ).length;
+                const setterSales = setterLeads.filter(
+                  (l) => l.status === "sale",
+                ).length;
 
                 return (
-                  <div key={setter.id} className="bg-white border border-[#E2E8F0] rounded-xl p-4">
+                  <div
+                    key={setter.id}
+                    className="bg-white border border-[#E2E8F0] rounded-xl p-4"
+                  >
                     <div className="flex items-center gap-3 mb-3">
                       <div
                         className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold"
@@ -304,21 +405,31 @@ export default function DashboardPage() {
                         {setter.name.charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1">
-                        <div className="font-semibold text-[#2D3748]">{setter.name}</div>
-                        <div className="text-xs text-[#718096] capitalize">{setter.role}</div>
+                        <div className="font-semibold text-[#2D3748]">
+                          {setter.name}
+                        </div>
+                        <div className="text-xs text-[#718096] capitalize">
+                          {setter.role}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 text-sm">
                       <div>
-                        <div className="font-semibold text-[#2D3748]">{setterKnocks}</div>
+                        <div className="font-semibold text-[#2D3748]">
+                          {setterKnocks}
+                        </div>
                         <div className="text-xs text-[#718096]">Knocks</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-blue-600">{setterAppts}</div>
+                        <div className="font-semibold text-blue-600">
+                          {setterAppts}
+                        </div>
                         <div className="text-xs text-[#718096]">Appts</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-green-600">{setterSales}</div>
+                        <div className="font-semibold text-green-600">
+                          {setterSales}
+                        </div>
                         <div className="text-xs text-[#718096]">Sales</div>
                       </div>
                     </div>

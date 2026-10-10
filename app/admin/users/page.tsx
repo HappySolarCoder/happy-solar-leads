@@ -434,7 +434,7 @@ export default function UsersManagementPage() {
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <button
+              <button aria-label="Back"
                 onClick={() => router.push('/admin')}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
               >
@@ -905,7 +905,7 @@ export default function UsersManagementPage() {
                           >
                             <Check className="w-4 h-4" />
                           </button>
-                          <button
+                          <button aria-label="Close"
                             onClick={() => setEditingTeamId(null)}
                             className="p-1 text-gray-400 hover:bg-gray-100 rounded"
                           >
@@ -960,7 +960,7 @@ export default function UsersManagementPage() {
                 <h3 className="text-xl font-semibold text-[#2D3748]">Create Team</h3>
                 <p className="text-sm text-[#718096]">Add a new team for user organization</p>
               </div>
-              <button onClick={() => setShowTeamModal(false)} className="p-2 text-[#718096] hover:text-[#FF5F5A]">
+              <button aria-label="Close" onClick={() => setShowTeamModal(false)} className="p-2 text-[#718096] hover:text-[#FF5F5A]">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1005,7 +1005,7 @@ export default function UsersManagementPage() {
                 <h3 className="text-xl font-semibold text-[#2D3748]">Create User</h3>
                 <p className="text-sm text-[#718096]">Generate an account and share the credentials</p>
               </div>
-              <button onClick={() => setShowCreateModal(false)} className="p-2 text-[#718096] hover:text-[#FF5F5A]">
+              <button aria-label="Close" onClick={() => setShowCreateModal(false)} className="p-2 text-[#718096] hover:text-[#FF5F5A]">
                 <X className="w-5 h-5" />
               </button>
             </div>

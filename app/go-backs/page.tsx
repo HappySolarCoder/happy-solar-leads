@@ -166,7 +166,7 @@ export default function GoBacksPage() {
         <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3 min-w-0">
-              <button
+              <button aria-label="Back"
                 onClick={() => router.push('/mobile/knocking')}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
               >
@@ -312,7 +312,7 @@ export default function GoBacksPage() {
           <div className="bg-white rounded-lg shadow-sm p-6">
             {/* Calendar Header */}
             <div className="flex items-center justify-between mb-6">
-              <button
+              <button aria-label="Back"
                 onClick={prevMonth}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
               >
@@ -321,7 +321,7 @@ export default function GoBacksPage() {
               <h2 className="text-xl font-semibold text-[#2D3748]">
                 {format(selectedDate, 'MMMM yyyy')}
               </h2>
-              <button
+              <button aria-label="Back"
                 onClick={nextMonth}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors rotate-180"
               >
@@ -578,7 +578,7 @@ export default function GoBacksPage() {
                 <Settings className="w-5 h-5" />
                 Tools
               </h2>
-              <button
+              <button aria-label="Close"
                 onClick={() => setShowTools(false)}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
               >

@@ -40,7 +40,19 @@ const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
   ),
 });
 
+function NativeEntry() {
+  const router = useRouter();
+  useEffect(() => { router.replace('/mobile'); }, [router]);
+  return <main role="status" className="min-h-screen grid place-items-center bg-[#fffcf5] text-[#476b83]">Opening Raydar…</main>;
+}
+
 export default function Home() {
+  // Do not mount the legacy web map or start its full lead reads before the
+  // installed app redirects to Today. The ordinary website keeps WebHome.
+  return process.env.NEXT_PUBLIC_NATIVE_BUILD === '1' ? <NativeEntry /> : <WebHome />;
+}
+
+function WebHome() {
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [territories, setTerritories] = useState<any[]>([]);
@@ -648,7 +660,7 @@ export default function Home() {
                   className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A]"
                 />
                 {addressSearch && (
-                  <button
+                  <button aria-label="Close"
                     onClick={() => { setAddressSearch(''); setSearchResults([]); }}
                     className="absolute right-3 top-1/2 -translate-y-1/2"
                   >

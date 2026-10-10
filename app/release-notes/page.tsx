@@ -423,18 +423,11 @@ export default function ReleaseNotesPage() {
   };
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    if (date.toDateString() === today.toDateString()) {
-      return 'Today';
-    } else if (date.toDateString() === yesterday.toDateString()) {
-      return 'Yesterday';
-    } else {
-      return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-    }
+    // Release dates are calendar dates, not UTC instants that move to the prior day.
+    const date = new Date(`${dateStr}T12:00:00Z`);
+    return Number.isFinite(date.getTime()) ? date.toLocaleDateString('en-US', {
+      month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+    }) : dateStr;
   };
 
   const getCategoryColor = (category: string) => {

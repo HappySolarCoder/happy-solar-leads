@@ -74,7 +74,7 @@ export default function CreateEasterEggModal({ onClose, onCreated, currentUserId
         {/* Header */}
         <div className="sticky top-0 bg-white border-b border-[#E2E8F0] px-6 py-4 flex items-center justify-between">
           <h2 className="text-2xl font-bold text-[#2D3748]">Create Easter Egg</h2>
-          <button
+          <button aria-label="Close"
             onClick={onClose}
             className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
           >

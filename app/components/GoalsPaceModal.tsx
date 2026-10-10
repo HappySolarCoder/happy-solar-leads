@@ -85,7 +85,7 @@ export default function GoalsPaceModal({
             <Target className="w-5 h-5 text-[#FF5F5A]" />
             <h3 className="text-lg font-semibold text-[#2D3748]">Today’s Target</h3>
           </div>
-          <button onClick={close} className="h-10 w-10 rounded-full hover:bg-[#F7FAFC] flex items-center justify-center">
+          <button aria-label="Close" onClick={close} className="h-10 w-10 rounded-full hover:bg-[#F7FAFC] flex items-center justify-center">
             <X className="w-5 h-5 text-[#718096]" />
           </button>
         </div>

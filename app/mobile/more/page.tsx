@@ -59,9 +59,9 @@ export default function MorePage() {
             icon: MapPinned,
           },
           {
-            href: "/team-map",
+            href: "/mobile/team-map",
             title: "Team map",
-            text: "Territories and team activity",
+            text: "Recent team locations and activity",
             icon: Users,
           },
         ]
@@ -122,7 +122,7 @@ export default function MorePage() {
           <LogOut size={18} />
           {signingOut ? "Signing out…" : "Sign out"}
         </button>
-        <p className="rm-version">Raydar Next · v11 · Better conversations</p>
+        <p className="rm-version">Raydar Next · v12.2 · Field ready</p>
       </main>
       <MobileNav />
     </div>

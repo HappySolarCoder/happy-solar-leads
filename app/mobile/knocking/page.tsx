@@ -1,5 +1,9 @@
 'use client';
 
+import { HomeownerDetail } from '@/app/homeowners/Details';
+import type { Homeowner } from '@/app/homeowners/model';
+import { useDeviceValue } from '../_components/useDeviceValue';
+
 import { FieldToolbar, MobileNav, MobileNotice, MobileLoading } from '../_components/MobileShell';
 import DoorCoach from '../_components/DoorCoach';
 import ReturnVisitReminder from '../_components/ReturnVisitReminder';
@@ -47,6 +51,9 @@ export default function KnockingPage() {
   const router = useRouter();
 
   const { user: currentUser, live, leads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dataUnavailable, error: sessionError } = useMobileData();
+  const [selectedHomeowner, setSelectedHomeowner] = useState<Homeowner | undefined>();
+  const [homePreference, setHomePreference] = useDeviceValue(`raydar-homeowners:${currentUser?.id || ""}`, "localStorage");
+  const showHomeowners = homePreference !== "off";
   const [outcomesOnly, setOutcomesOnly] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
@@ -168,7 +175,8 @@ export default function KnockingPage() {
 
   // Successful writes arrive on the existing listener without refetching every lead.
   const refreshLeads = useCallback(async () => setWriteError(null), []);
-  const handleLeadSelect = useCallback((lead: Lead) => {
+  const handleLeadSelect = useCallback((lead: Lead, homeowner?: Homeowner) => {
+    setSelectedHomeowner(homeowner);
     setSelectedLeadId(lead.id);
     setShowLeadDetail(true);
   }, []);
@@ -393,6 +401,9 @@ export default function KnockingPage() {
   ), [filteredLeads, outcomesOnly, historicalPins, currentUser?.id]);
   const userPosition = useMemo<[number, number] | undefined>(() => gpsPosition
     ? [gpsPosition.lat, gpsPosition.lng] : undefined, [gpsPosition?.lat, gpsPosition?.lng]);
+
+  const homeownerLeads = useMemo(() => mergeHistoricalTerritoryPins(leads, historicalPins, currentUser?.id), [leads, historicalPins, currentUser?.id]);
+  const handleHomeownerSelect = useCallback((homeowner: Homeowner) => { setSelectedLeadId(undefined); setSelectedHomeowner(homeowner); setShowLeadDetail(true); }, []);
 
   // Get selected lead
   const selectedLead = leads.find(l => l.id === selectedLeadId);
@@ -660,6 +671,7 @@ export default function KnockingPage() {
           <div className="rm-mobile-filters px-4 py-3 bg-[#F7FAFC]">
             <div className="rm-panel-heading"><h2>Map filters & tools</h2><button onClick={() => setShowFilters(false)} aria-label="Close map filters"><X size={22} /></button></div>
         <div className="rm-map-shortcuts"><button disabled={!nextBest} onClick={() => { if (nextBest) { setShowFilters(false); handleLeadSelect(nextBest); } }}>Nearest great roof{nextBest ? ` · ${nextBestIsFar ? 'farther away' : nextBestDistance}` : ' · none nearby'}</button>{dailyTarget !== null && <button onClick={() => { setShowFilters(false); setShowGoalsModal(true); }}>Daily pace · {dailyTarget}</button>}</div>
+        <div className="rm-map-summary"><button aria-pressed={showHomeowners} onClick={() => setHomePreference(showHomeowners ? "off" : "on")}>Homeowner pins{showHomeowners ? " ✓" : ""}</button><span>Gray = property record · ? = suspected renter</span></div>
         <div className="rm-map-summary"><span>{filteredLeads.length} pins{isRefreshing ? ' · Updating…' : ''}</span><button aria-pressed={outcomesOnly} onClick={() => setOutcomesOnly(!outcomesOnly)}>GHL outcomes{outcomesOnly ? ' ✓' : ''}</button><button aria-pressed={showHeat} onClick={() => setShowHeat(!showHeat)}>Heat map</button></div>
         {outcomesOnly && <div className="rm-pin-legend" aria-label="Appointment outcome colors">{appointmentOutcomeLegend.map(outcome => <span key={outcome.key}><i style={{ background: outcome.color }} />{outcome.label}</span>)}</div>}
 
@@ -841,7 +853,7 @@ export default function KnockingPage() {
           <div className="bg-white rounded-2xl w-full max-w-sm max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="p-4 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-lg font-bold">Hourly Weather</h2>
-              <button onClick={() => setShowWeatherPopup(false)} className="p-1 hover:bg-gray-100 rounded">
+              <button aria-label="Close" onClick={() => setShowWeatherPopup(false)} className="p-1 hover:bg-gray-100 rounded">
                 <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
@@ -884,7 +896,7 @@ export default function KnockingPage() {
               <span className="font-semibold">Today's Route</span>
               <span className="text-white/80">({routeLeads.length} stops)</span>
             </div>
-            <button
+            <button aria-label="Close"
               onClick={() => setShowRoute(false)}
               className="p-1 hover:bg-white/20 rounded"
             >
@@ -954,6 +966,10 @@ export default function KnockingPage() {
         <main className="rm-knocking-map flex-1 relative overflow-hidden" aria-label="Knocking map">
           <LeadMap
             leads={mapLeads}
+            showHomeowners={showHomeowners && !outcomesOnly && dispositionFilter === "all" && leadTypeFilter !== "customers" && solarFilter.length === 0 && !freshPinsOnly && setterFilter === "all"}
+            homeownerLeads={homeownerLeads}
+            selectedHomeownerId={selectedHomeowner?.id}
+            onHomeownerClick={handleHomeownerSelect}
             dispositionOptions={dispositions}
             currentUser={currentUser}
             users={coloredUsers}
@@ -1039,6 +1055,7 @@ export default function KnockingPage() {
 
       <MobileNav />
 
+      {selectedHomeowner && !selectedLeadId && showLeadDetail && <HomeownerDetail homeowner={selectedHomeowner} onClose={() => {setSelectedHomeowner(undefined);setShowLeadDetail(false);}} />}
       {/* Lead Detail Panel */}
       {selectedLead && showLeadDetail && (
         <LeadDetail
@@ -1047,10 +1064,12 @@ export default function KnockingPage() {
           dispositionOptions={dispositions}
           dispositionsLoading={dataLoading}
           lead={selectedLead}
+          homeowner={selectedHomeowner}
           currentUser={currentUser}
           onClose={() => {
             setShowLeadDetail(false);
             setSelectedLeadId(undefined);
+            setSelectedHomeowner(undefined);
           }}
           onUpdate={refreshLeads}
         />

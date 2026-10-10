@@ -150,7 +150,7 @@ export default function AppMenu({
         <div className="sticky top-0 bg-white border-b border-[#E2E8F0] p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-2xl font-bold text-[#2D3748]">Menu</h2>
-            <button
+            <button aria-label="Close"
               type="button"
               onClick={() => setIsOpen(false)}
               className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"

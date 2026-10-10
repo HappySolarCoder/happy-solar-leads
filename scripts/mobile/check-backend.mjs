@@ -49,7 +49,7 @@ for (const [path, expected] of [
 }
 if (!ready) {
   console.error(
-    "The corresponding backend companion needs review/deployment. Installing the app does not deploy API routes. See docs/mobile-next/FIELD-V11.md."
+    "The corresponding backend companion needs review/deployment. Installing the app does not deploy API routes. See docs/mobile-next/FIELD-V12.2.md."
   );
   process.exitCode = 1;
 } else {

@@ -8,7 +8,7 @@ export function observeMapSize(map: {
   const observer = new ResizeObserver(() => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() =>
-      map.invalidateSize({ pan: false, debounceMoveend: true })
+      map.invalidateSize({ pan: false, debounceMoveend: false })
     );
   });
   observer.observe(map.getContainer());

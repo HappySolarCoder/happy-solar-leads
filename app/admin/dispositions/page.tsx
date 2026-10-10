@@ -212,9 +212,9 @@ export default function DispositionsPage() {
       {/* Header */}
       <header className="bg-white border-b border-[#E2E8F0]">
         <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-4">
-              <button
+              <button aria-label="Back"
                 onClick={() => router.push('/admin')}
                 className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
               >
@@ -273,7 +273,7 @@ export default function DispositionsPage() {
                     isDragging ? 'opacity-50 bg-[#FF5F5A]/5' : 'hover:bg-[#F7FAFC]'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-4">
                       {/* Drag Handle */}
                       <div className="cursor-grab active:cursor-grabbing">
@@ -292,7 +292,7 @@ export default function DispositionsPage() {
                       
                       {/* Info */}
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold text-[#2D3748]">{dispo.name}</h3>
                           {dispo.countsAsDoorKnock && (
                             <span className="text-xs px-2 py-0.5 bg-[#FF5F5A]/10 text-[#FF5F5A] rounded font-medium">Door Knock</span>
@@ -308,14 +308,14 @@ export default function DispositionsPage() {
                     </div>
                     
                     {/* Actions */}
-                    <div className="flex items-center gap-2">
-                      <button
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button aria-label="Edit"
                         onClick={() => handleEdit(dispo)}
                         className="p-2 hover:bg-white border border-transparent hover:border-[#E2E8F0] rounded-lg transition-colors"
                       >
                         <Edit2 className="w-4 h-4 text-[#718096]" />
                       </button>
-                      <button
+                      <button aria-label="Delete"
                         onClick={() => handleDelete(dispo.id)}
                         className="p-2 hover:bg-red-50 border border-transparent hover:border-red-200 rounded-lg transition-colors"
                       >
@@ -344,11 +344,11 @@ export default function DispositionsPage() {
             >
               {/* Modal Header */}
               <div className="p-6 border-b border-[#E2E8F0]">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <h2 className="text-2xl font-bold text-[#2D3748]">
                     {editingDispo ? 'Edit Disposition' : 'Create Disposition'}
                   </h2>
-                  <button
+                  <button aria-label="Close"
                     onClick={() => setShowCreateModal(false)}
                     className="p-2 hover:bg-[#F7FAFC] rounded-lg"
                   >
@@ -395,7 +395,7 @@ export default function DispositionsPage() {
                   <label className="block text-sm font-semibold text-[#2D3748] mb-2">
                     Color
                   </label>
-                  <div className="grid grid-cols-10 gap-2">
+                  <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
                     {DISPOSITION_COLORS.map(color => (
                       <button
                         key={color.hex}
@@ -418,7 +418,7 @@ export default function DispositionsPage() {
                   <label className="block text-sm font-semibold text-[#2D3748] mb-2">
                     Icon
                   </label>
-                  <div className="grid grid-cols-8 gap-2">
+                  <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
                     {AVAILABLE_ICONS.map(iconName => {
                       const Icon = ICON_MAP[iconName] || Circle;
                       return (

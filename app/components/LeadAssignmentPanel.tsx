@@ -130,7 +130,7 @@ export default function LeadAssignmentPanel({
         <div className="px-6 py-4 border-b border-gray-200">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Assign Leads</h2>
-            <button
+            <button aria-label="Close"
               onClick={onClose}
               className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
             >
@@ -243,7 +243,7 @@ export default function LeadAssignmentPanel({
                       </div>
                     </div>
                     {mode === 'manual' && (
-                      <button
+                      <button aria-label="Close"
                         onClick={() => onLeadSelect?.(lead.id)}
                         className="text-gray-400 hover:text-red-500"
                       >

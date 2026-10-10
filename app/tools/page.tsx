@@ -63,7 +63,7 @@ export default function ToolsPage() {
       <div className="bg-white border-b border-[#E2E8F0] sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center gap-4">
-            <button
+            <button aria-label="Back"
               onClick={() => router.push(isMobileView ? '/mobile/knocking' : '/')}
               className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
             >

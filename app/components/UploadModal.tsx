@@ -117,10 +117,10 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       // Step 2: Fetch solar data for each geocoded lead
       const newLeads: Lead[] = [];
       const skippedDuplicates: string[] = [];
-      
+
       // Load existing leads from Firestore to check for duplicates
       const existingLeads = await getLeadsAsync();
-      
+
       // Create a map for faster lookup (address -> lead)
       const existingLeadsMap = new Map<string, Lead>();
 
@@ -138,17 +138,17 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
         if (!key) return; // skip malformed legacy records
         existingLeadsMap.set(key, lead);
       });
-      
+
       for (let i = 0; i < geocodedSuccess.length; i++) {
         const result = geocodedSuccess[i];
-        
+
         // Skip apartments if filter is enabled
         if (excludeApartments && result.propertyType === 'apartment') {
           logToFile('INFO', 'UploadModal', 'Skipping apartment', { address: result.row.address });
           skippedDuplicates.push(`${result.row.address} (apartment)`);
           continue;
         }
-        
+
         // Check for duplicate address
         const normalizedAddress = normalizeAddressKey(
           result.row.address,
@@ -157,12 +157,12 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
           result.row.zip
         );
         const existingLead = normalizedAddress ? existingLeadsMap.get(normalizedAddress) : undefined;
-        
+
         // Determine if we should skip this lead based on tags
         // RULE: solar-data always wins! If new lead will have solar-data tag, it should update/replace existing
         const newLeadWillHaveSolarDataTag = selectedTags.includes('solar-data');
         const existingHasSolarDataTag = existingLead?.tags?.includes('solar-data');
-        
+
         if (existingLead) {
           // Case 1: Existing has solar-data, new doesn't → SKIP (preserve solar-data)
           if (existingHasSolarDataTag && !newLeadWillHaveSolarDataTag) {
@@ -170,7 +170,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             skippedDuplicates.push(result.row.address || 'Unknown');
             continue;
           }
-          
+
           // Case 2: New has solar-data, existing doesn't → Will UPDATE (processed below)
           // Case 3: Both have solar-data or neither → SKIP (preserve existing)
           if (!newLeadWillHaveSolarDataTag || (existingHasSolarDataTag && newLeadWillHaveSolarDataTag)) {
@@ -178,11 +178,11 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             skippedDuplicates.push(result.row.address || 'Unknown');
             continue;
           }
-          
+
           // If we get here: new has solar-data, existing doesn't → will UPDATE below
           logToFile('INFO', 'UploadModal', 'Upgrading existing lead to solar-data', { address: result.row.address });
         }
-        
+
         try {
           // Customer pins: skip solar enrichment entirely
           if (leadType === 'customer') {
@@ -238,18 +238,18 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lat: result.lat, lng: result.lng })
           });
-          
+
           const solarData = await solarResp.json();
-          
+
           // Calculate solar score
           let solarScore = 0;
           let solarCategory: 'poor' | 'solid' | 'good' | 'great' = 'poor';
           let hasSouthFacing = false;
-          
+
           if (solarData.solarPotential) {
             const sunshineHours = solarData.solarPotential.maxSunshineHoursPerYear || 0;
             const maxPanels = solarData.solarPotential.maxArrayPanelsCount || 0;
-            
+
             // Check for south-facing roof
             if (solarData.solarPotential.roofSegmentStats) {
               for (const segment of solarData.solarPotential.roofSegmentStats) {
@@ -260,7 +260,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
                 }
               }
             }
-            
+
             // Calculate score based on sun hours
             if (sunshineHours < 1300) {
               solarScore = Math.round((sunshineHours / 1300) * 25);
@@ -276,7 +276,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               solarCategory = 'great';
             }
           }
-          
+
           // Only include leads with good solar scores
           if (solarCategory !== 'poor') {
             // If updating existing lead, preserve some fields
@@ -306,7 +306,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               solarTestedAt: new Date(),
               propertyType: result.propertyType || 'unknown', // From geocoding API
             };
-            
+
             // Only add optional fields if they exist (for new leads) or update them (for existing)
             if (!existingLead) {
               // New lead - only add if provided in CSV
@@ -322,13 +322,13 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             if (solarData.solarPotential?.maxSunshineHoursPerYear) {
               leadData.solarSunshineHours = solarData.solarPotential.maxSunshineHoursPerYear;
             }
-            
+
             newLeads.push(leadData as Lead);
           }
-          
+
         } catch (e) {
           logToFile('WARN', 'UploadModal', 'Solar fetch failed', { address: result.row.address, error: e });
-          
+
           // If this was going to be an update (upgrade to solar-data), skip it
           // We don't want to upgrade without solar data
           if (existingLead) {
@@ -336,7 +336,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             skippedDuplicates.push(result.row.address || 'Unknown');
             continue;
           }
-          
+
           // Still add NEW lead without solar data (clean undefined fields)
           const leadData: any = {
             id: generateId(),
@@ -350,16 +350,16 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             status: 'unclaimed',
             createdAt: new Date(),
           };
-          
+
           // Only add optional fields if they exist
           if (result.row.phone) leadData.phone = result.row.phone;
           if (result.row.email) leadData.email = result.row.email;
           if (result.row.estimatedBill) leadData.estimatedBill = result.row.estimatedBill;
           if (selectedTags.length > 0) leadData.tags = selectedTags;
-          
+
           newLeads.push(leadData as Lead);
         }
-        
+
         // Update progress
         if (leadType !== 'customer') {
           setProgress({ current: rows.length + i + 1, total: rows.length * 2 });
@@ -370,22 +370,22 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       const poorCount = geocodedSuccess.length - newLeads.length;
       const failedCount = geocodedFailed.length;
 
-      logToFile('INFO', 'UploadModal', 'Final results', { 
-        good: newLeads.length, 
-        poor: poorCount, 
-        geocodeFailed: failedCount 
+      logToFile('INFO', 'UploadModal', 'Final results', {
+        good: newLeads.length,
+        poor: poorCount,
+        geocodeFailed: failedCount
       });
 
       // Save all good leads to Firestore in batches
       logToFile('INFO', 'UploadModal', 'Saving leads to Firestore', { count: newLeads.length });
-      
+
       await batchSaveLeadsAsync(newLeads, (saved, total) => {
         // Update progress during save
         const percentageSaved = Math.round((saved / total) * 100);
         const base = leadType === 'customer' ? rows.length : rows.length * 2;
-        setProgress({ 
-          current: base + saved, 
-          total: base + total 
+        setProgress({
+          current: base + saved,
+          total: base + total
         });
         console.log(`[UploadModal] Saved ${saved}/${total} leads (${percentageSaved}%)`);
       });
@@ -395,15 +395,15 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
       try {
         const territories = await getTerritoriesAsync();
         console.log('[UploadModal] Territories loaded:', territories.length, territories.map(t => ({ id: t.id, userId: t.userId, userName: t.userName })));
-        
+
         if (territories.length > 0) {
           const assignableLeads = newLeads.filter(l => (l as any).leadType !== 'customer' && (l as any).leadType !== 'sale');
           const assignments = autoAssignLeadsByTerritories(assignableLeads as any, territories);
           console.log('[UploadModal] Territory assignments found:', assignments.length, assignments.map(a => ({ leadId: a.lead.id, territoryUserId: a.territory.userId })));
-          
+
           if (assignments.length > 0) {
             logToFile('INFO', 'UploadModal', 'Auto-assigning leads by territory', { count: assignments.length });
-            
+
             // Save the auto-assigned leads
             for (const { lead, territory } of assignments) {
               const updatedLead: Lead = {
@@ -414,7 +414,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               };
               await saveLeadAsync(updatedLead);
             }
-            
+
             logToFile('INFO', 'UploadModal', 'Territory auto-assignment complete', { assigned: assignments.length });
           } else {
             console.log('[UploadModal] No territory matches - leads may be outside all territory boundaries');
@@ -433,13 +433,13 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
         ...(poorCount > 0 ? [`${poorCount} leads had poor solar (<1300 hrs)`] : []),
         ...(skippedDuplicates.length > 0 ? [`${skippedDuplicates.length} duplicates skipped (existing leads preserved)`] : [])
       ];
-      
+
       setSuccessCount(newLeads.length);
       setFailedAddresses(failedAddresses.length > 0 ? failedAddresses : []);
 
       setStep('complete');
       onComplete(newLeads.length);
-      
+
     } catch (err: any) {
       logToFile('ERROR', 'UploadModal', 'Upload failed', { error: err.message, stack: err.stack });
       setError('Failed to process leads. Please try again.');
@@ -464,7 +464,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div 
+      <div
         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
         onClick={handleClose}
       />
@@ -476,7 +476,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
           <h2 className="text-lg font-semibold text-gray-900">
             Upload Lead Data
           </h2>
-          <button 
+          <button aria-label="Close"
             onClick={handleClose}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
           >
@@ -489,7 +489,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
           {step === 'upload' && (
             <>
               {/* Upload Area */}
-              <div 
+              <div
                 className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer"
                 onClick={() => fileInputRef.current?.click()}
               >
@@ -500,7 +500,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
                   onChange={handleFileChange}
                   className="hidden"
                 />
-                
+
                 {file ? (
                   <div className="flex items-center justify-center gap-3">
                     <File className="w-8 h-8 text-blue-500" />
@@ -684,7 +684,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
             <div className="text-center py-8">
               <div className="w-16 h-16 mx-auto mb-4 relative">
                 <div className="absolute inset-0 border-4 border-gray-200 rounded-full" />
-                <div 
+                <div
                   className="absolute inset-0 border-4 border-blue-500 rounded-full"
                   style={{
                     borderTopColor: 'transparent',
@@ -694,21 +694,21 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
                 />
                 <MapPin className="absolute inset-0 m-auto w-6 h-6 text-blue-500" />
               </div>
-              
+
               <h3 className="text-lg font-semibold text-gray-900 mb-2">
                 Processing Leads
               </h3>
               <p className="text-gray-500 mb-4">
                 Geocoding {rows.length} addresses & fetching solar data...
               </p>
-              
+
               <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
+                <div
                   className="bg-blue-500 h-2 rounded-full transition-all duration-300"
                   style={{ width: `${(progress.current / progress.total) * 100}%` }}
                 />
               </div>
-              
+
               <p className="text-sm text-gray-400 mt-4">
                 {Math.round((progress.current / progress.total) * 100)}% complete
               </p>
@@ -720,7 +720,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
               <div className="w-16 h-16 mx-auto mb-4 bg-green-100 rounded-full flex items-center justify-center">
                 <CheckCircle className="w-8 h-8 text-green-500" />
               </div>
-              
+
               <h3 className="text-lg font-semibold text-gray-900 mb-2">
                 Upload Complete!
               </h3>

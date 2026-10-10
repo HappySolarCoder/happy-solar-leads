@@ -36,7 +36,7 @@ export default function ObjectionTracker({ lead, currentUserId, onSave, onClose 
               <AlertCircle className="w-6 h-6" />
               <h2 className="text-2xl font-bold">Record Objection</h2>
             </div>
-            <button
+            <button aria-label="Close" data-raydar-back-close
               onClick={onClose}
               className="p-1 hover:bg-white/20 rounded-lg transition-colors"
             >

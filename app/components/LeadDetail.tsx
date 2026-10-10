@@ -1,5 +1,7 @@
 'use client';
 
+import { HomeownerSection } from '@/app/homeowners/Details';
+import type { Homeowner } from '@/app/homeowners/model';
 import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
 import DoorstepMemory from './DoorstepMemory';
 import DictateButton from '@/app/field/DictateButton';
@@ -40,6 +42,7 @@ import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 
 interface LeadDetailProps {
+  homeowner?: Homeowner;
   fieldMemory?: boolean;
   dispositionOptions?: Disposition[];
   dispositionsLoading?: boolean;
@@ -105,7 +108,7 @@ const ICON_MAP: Record<string, any> = {
   'arrow-left': ArrowLeft,
 };
 
-export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false, dispositionOptions, dispositionsLoading = false }: LeadDetailProps) {
+export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false, homeowner, dispositionOptions, dispositionsLoading = false }: LeadDetailProps) {
   const mobile = useOptionalMobileData();
   const field = fieldMemory ? mobile?.field : undefined;
   lead = field?.leads.find(item => item.id === lead.id) || lead;
@@ -544,12 +547,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
               <span className="text-lg">🙂</span>
               <span className="font-semibold text-[#2D3748]">Customer</span>
             </div>
-            <button onClick={onClose} aria-label="Close lead details" className="p-2 hover:bg-white rounded-lg transition-colors">
+            <button data-raydar-back-close onClick={onClose} aria-label="Close lead details" className="p-2 hover:bg-white rounded-lg transition-colors">
               <X className="w-5 h-5 text-[#718096]" />
             </button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <HomeownerSection homeowner={homeowner} />
             <div>
               <h2 className="text-xl font-bold text-[#2D3748]">{displayName}</h2>
               <p className="text-sm text-[#718096] mt-1">{lead.address}</p>
@@ -634,7 +638,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
             </span>
           </div>
           <button
-            onClick={onClose}
+            data-raydar-back-close onClick={onClose}
             aria-label="Close lead details"
             className="p-2 hover:bg-white rounded-lg transition-colors"
           >
@@ -644,6 +648,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4">
+          <HomeownerSection homeowner={homeowner} />
           {/* Name & Status */}
           <div className="mb-6">
             <h2 className="text-xl font-bold text-[#2D3748]">{lead.name}</h2>

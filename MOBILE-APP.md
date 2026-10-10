@@ -1,3 +1,5 @@
+For **v12.2**, start with [the release and installation guide](docs/mobile-next/FIELD-V12.2.md). The [page audit](docs/mobile-next/AUDIT-V12.2.md) lists verification and device checks.
+
 # Raydar mobile app — team distribution
 
 Raydar now has Capacitor 8 iOS and Android projects. The existing Next.js screens,

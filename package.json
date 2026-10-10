@@ -42,6 +42,7 @@
     "date-fns": "^4.1.0",
     "firebase": "^12.9.0",
     "firebase-admin": "^13.6.1",
+    "geofire-common": "6.0.0",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "lucide-react": "^0.563.0",
