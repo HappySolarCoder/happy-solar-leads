@@ -1,4 +1,4 @@
-For **v12.3**, start with [the map visibility update and installation guide](docs/mobile-next/FIELD-V12.3.md). The earlier [v12.2 page audit](docs/mobile-next/AUDIT-V12.2.md) lists broader verification and device checks.
+For **v14.2**, start with [the iPhone installation guide](docs/mobile-next/IPHONE-V14.2.md) and [the sign-in fix and verification report](docs/mobile-next/IPHONE-REVIEW-V14.2.md). The previous [feature review](docs/mobile-next/IPHONE-REVIEW-V14.1.md) and [data and reporting verification report](docs/mobile-next/FIELD-V12.6.md) remain applicable.
 
 # Raydar mobile app — team distribution
 
@@ -13,7 +13,7 @@ UI rewrite. There is no remote `server.url`, embedded server, or iframe.
 
 ## Current implementation and limits
 
-- App ID: `com.happyslr.raydar`; display name: **Raydar**. Confirm this ID is available
+- App ID: `com.happyslr.raydar.next`; display name: **Raydar Next**. Confirm this ID is available
   under Happy Solar's developer accounts before the first signed distribution.
 - Native foreground precise-location permission, GPS watches, pause/resume cleanup.
 - Existing map, territory, lead, stats and administrative screens are bundled.
@@ -21,23 +21,25 @@ UI rewrite. There is no remote `server.url`, embedded server, or iframe.
 - Screen insets, keyboard resizing, native network status, branded icon and splash.
 - Home-screen install prompts and web service-worker updates are disabled in native.
 - Required-proximity users cannot bypass verification when GPS fails. Existing
-  role and per-user proximity exemptions remain. This also fixes the web path.
+  role and per-user proximity exemptions remain.
 - No background GPS or push notifications have been implemented.
-- A network connection is still required for login, map tiles, API data and reliable
-  saves. The offline banner is not a durable offline sync queue. Do not promise
-  offline lead collection until a separately tested queue/conflict policy exists.
+- A connection is required for initial login, uncached map tiles, remote data and
+  Scheduling Manager requests. Native knocks use a durable account-scoped outbox
+  with an unsynced count; sync resumes when the app is open and connected. Physical
+  iPhone/Android acceptance is still pending. Preserve app storage until sync finishes.
 - The legacy browser Gemini key is deliberately excluded from mobile builds.
   Move that AI feature behind an authenticated server API before enabling it on phones.
-- Native HTTP changes only `/api/*` calls. Any configured third-party notification
-  webhook must allow the app's origin, or be moved behind an authenticated backend
-  endpoint. Check this before relying on homeowner/manager notifications.
+- Native HTTP supports `/api/*`, the configured Scheduling Manager webhook, and
+  create-only lead commits. Existing lead updates use Firestore SDK transactions.
+  Native field capture is forced off; knocking does not depend on `/api/field-work`.
 
 ## Configure and build
 
 Use Node 22+ and `npm ci`. Copy `mobile.env.example` to `.env.local` and fill it
 with the **existing Firebase web app's public configuration**. Set
-`NEXT_PUBLIC_API_BASE_URL` to the Raydar production or staging HTTPS origin (no path).
-Use a staging Firebase project/backend for device QA when available.
+`NEXT_PUBLIC_API_BASE_URL=https://happy-solar-leads.vercel.app` and use Firebase
+project `gen-lang-client-0395385938`. The real mobile build enforces this production
+target. Isolated test exports are synthetic and must not be installed as production.
 
 Do not ship service-account JSON, Firebase admin credentials, signing material or
 private API keys. The public Firebase API key identifies the Firebase project;
@@ -56,7 +58,7 @@ npm run mobile:sync
 The build uses `.mobile-build/` as an isolated static-export workspace, excludes
 `app/api`, and copies the result to `out/`. It never moves source routes or copies
 `.env` files. Generated bundles and platform PNG assets are ignored by git. `mobile:build`
-regenerates icons and splash screens from the committed `resources/logo.png`. Missing required configuration
+regenerates icons and splash screens from the committed `resources/raydar-v5/logo.svg`. Missing required configuration
 fails the build. Rebuild and sync after any UI, configuration or plugin change.
 
 ### iPhone pilot with TestFlight
@@ -128,7 +130,7 @@ Location permission descriptions are included for both platforms. Background
 location permissions/modes are not enabled. Complete Apple privacy and Google Data
 Safety disclosures from the app's actual data flows before distribution/review.
 
-## Validation recorded for this change
+## Original native foundation validation (historical)
 
 - Static mobile export built successfully with **synthetic public configuration**;
   this validates compilation, not production login, connectivity or lead writes.

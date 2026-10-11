@@ -3,6 +3,7 @@ import { Lead, User, LeadStatus } from '@/app/types';
 import { isKnockStatus } from '@/app/types/disposition';
 import { 
   getAllLeads as firestoreGetAllLeads,
+  getLead as firestoreGetLead,
   getLeadsForUser as firestoreGetLeadsForUser,
   getLeadsInBounds as firestoreGetLeadsInBounds,
   getLeadsInBoundsForUser as firestoreGetLeadsInBoundsForUser,
@@ -404,29 +405,17 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus, userI
 }
 
 export async function claimLead(leadId: string, userId: string): Promise<void> {
-  const leads = await getLeadsAsync();
-  const lead = leads.find(l => l.id === leadId);
-  
-  if (lead && (lead.status === 'unclaimed' || lead.status === 'not-home')) {
-    await updateLeadAsync(leadId, {
-      status: 'claimed',
-      claimedBy: userId,
-      claimedAt: new Date(),
-    });
-  }
+  const lead = await firestoreGetLead(leadId);
+  if (!lead) throw Error('This lead could not be loaded. Try again.');
+  if (lead.claimedBy && lead.claimedBy !== userId) throw Error('This lead is already claimed by another rep.');
+  if (lead.status !== 'unclaimed' && lead.status !== 'not-home') throw Error('This lead cannot be claimed in its current status.');
+  await updateLeadAsync(leadId, { status: 'claimed', claimedBy: userId, claimedAt: new Date() });
 }
 
 export async function unclaimLead(leadId: string): Promise<void> {
-  const leads = await getLeadsAsync();
-  const lead = leads.find(l => l.id === leadId);
-  
-  if (lead && lead.status === 'claimed') {
-    await updateLeadAsync(leadId, {
-      status: 'unclaimed',
-      claimedBy: undefined,
-      claimedAt: undefined,
-    });
-  }
+  const lead = await firestoreGetLead(leadId);
+  if (!lead?.claimedBy) throw Error('This lead is no longer claimed. Refresh and try again.');
+  await updateLeadAsync(leadId, { status: 'unclaimed', claimedBy: undefined, claimedAt: undefined });
 }
 
 export function getLeadsByStatus(status: LeadStatus): Lead[] {

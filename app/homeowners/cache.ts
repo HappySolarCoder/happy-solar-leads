@@ -1,5 +1,8 @@
 import type { HomeTile } from "./model";
 const NAME = "raydar-homeowners-v12";
+// One-time invalidation for the Oct 11, 2026 coordinate correction. Keep this
+// version on later releases: ordinary launches must retain the 30-day cache.
+const VERSION = 2;
 const MAX_DOCS = 25000,
   MAX_BYTES = 24 * 1024 * 1024,
   MAX_TILES = 64;
@@ -7,10 +10,19 @@ let opened: Promise<IDBDatabase> | undefined;
 function database() {
   if (!opened)
     opened = new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open(NAME, 1);
-      r.onupgradeneeded = () => {
-        r.result.createObjectStore("tiles");
-        r.result.createObjectStore("meta");
+      const r = indexedDB.open(NAME, VERSION);
+      r.onupgradeneeded = ({ oldVersion }) => {
+        if (oldVersion === 0) {
+          r.result.createObjectStore("tiles");
+          r.result.createObjectStore("meta");
+        } else {
+          // Clear pins AND coverage receipts for every cached account. Keeping
+          // receipts would wrongly mark the corrected viewport as already read.
+          // IndexedDB commits the clears and version change atomically. This
+          // never touches lead history, pending field work or Firebase.
+          r.transaction!.objectStore("tiles").clear();
+          r.transaction!.objectStore("meta").clear();
+        }
       };
       r.onsuccess = () => {
         r.result.onversionchange = () => {

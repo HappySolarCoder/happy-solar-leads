@@ -16,8 +16,10 @@ export function useGeolocation(options?: PositionOptions & { watch?: boolean }) 
     let disposed = false;
     let generation = 0;
     let stopWatch: (() => Promise<void>) | undefined;
+    let firstFixTimer: ReturnType<typeof setTimeout> | undefined;
     const stop = () => {
       generation += 1;
+      clearTimeout(firstFixTimer);
       if (stopWatch) void stopWatch().catch(() => {});
       stopWatch = undefined;
     };
@@ -27,16 +29,23 @@ export function useGeolocation(options?: PositionOptions & { watch?: boolean }) 
       const isCurrent = () => !disposed && current === generation;
       const success = (pos: LocationPosition) => {
         if (!isCurrent()) return;
+        clearTimeout(firstFixTimer);
         setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp });
         setError(null);
         setIsLoading(false);
       };
       const failure = (err: LocationError) => {
         if (!isCurrent()) return;
+        clearTimeout(firstFixTimer);
         setError(err);
         setIsLoading(false);
       };
       setIsLoading(true);
+      // Some iOS simulators never emit a first watch result until a location
+      // is supplied. Stop the spinner, but retain the watch for a later fix.
+      firstFixTimer = setTimeout(() => failure({ code: 3,
+        message: 'Location is taking longer than expected. You can keep browsing the map.' }),
+        Number.isFinite(timeout) ? Math.max(timeout, 1000) : 10_000);
       const settings = { enableHighAccuracy, timeout, maximumAge };
       if (watch) {
         const cleanup = await watchLocation(success, failure, settings);

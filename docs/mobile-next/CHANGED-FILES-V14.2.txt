@@ -1,0 +1,19 @@
+Changes relative to delivered v14.1 (58c7b26)
+
+MOBILE-APP.md
+android/app/build.gradle
+app/mobile/_lib/release.json
+app/utils/firebase.ts
+app/utils/firebaseAuth.ts
+docs/mobile-next/CHANGED-FILES-V14.2.txt
+docs/mobile-next/IPHONE-REVIEW-V14.2.md
+docs/mobile-next/IPHONE-V14.2.md
+docs/mobile-next/VERIFICATION-V14.2.json
+ios/App/App.xcodeproj/project.pbxproj
+scripts/mobile/check-ios-startup.mjs
+scripts/mobile/check-native-auth.mjs
+scripts/mobile/fixtures/auth.mjs
+scripts/mobile/install-android.sh
+scripts/mobile/install-ios.sh
+scripts/mobile/ios-simulator.mjs
+tests/mobile/ios-simulator.test.ts

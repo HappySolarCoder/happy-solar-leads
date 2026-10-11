@@ -8,6 +8,7 @@ import { Capacitor, SystemBars, SystemBarsStyle, type PluginListenerHandle } fro
 import { App } from '@capacitor/app';
 import { Network } from '@capacitor/network';
 import { SplashScreen } from '@capacitor/splash-screen';
+import { startupEvent } from '@/app/mobile/_lib/startupDiagnostics';
 
 /** Installed-app lifecycle only. The website continues using its existing PWA. */
 export default function NativeRuntime() {
@@ -15,6 +16,7 @@ export default function NativeRuntime() {
   const pathname = usePathname();
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
+    startupEvent(`route ${pathname}`);
     const path = pathname.replace(/\/$/, '');
     let target = '';
     if (path === '/admin/users') target = '/mobile/workspace/users';
@@ -42,7 +44,18 @@ export default function NativeRuntime() {
         if (!disposed) { setOffline(!status.connected); updateNativeConnectivity(status.connected); }
       }));
       const status = await Network.getStatus();
+      startupEvent(status.connected ? 'network-online' : 'network-offline');
       if (!disposed) { setOffline(!status.connected); updateNativeConnectivity(status.connected); }
+      keep(await App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive && !disposed) {
+          // WKWebView visibility events are not guaranteed on every resume.
+          // Wake the existing outbox using the same connectivity event; no
+          // extra polling loop, database listener, or background writes.
+          void Network.getStatus().then(next => {
+            if (!disposed) { setOffline(!next.connected); updateNativeConnectivity(next.connected); }
+          }).catch(error => console.warn('Could not refresh native connectivity', error));
+        }
+      }));
       if (Capacitor.getPlatform() === 'android') {
         keep(await App.addListener('backButton', ({ canGoBack }) => {
           if (dismissMobileOverlay()) return;

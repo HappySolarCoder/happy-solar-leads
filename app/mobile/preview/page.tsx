@@ -18,7 +18,6 @@ import AppointmentOutcomeCard, {
   AppointmentOutcomeBadge,
 } from "@/app/components/AppointmentOutcomeBadge";
 import { getAppointmentOutcome } from "@/app/utils/appointmentOutcome";
-import DoorstepMemory from "@/app/components/DoorstepMemory";
 import ReturnVisitReminder from "../_components/ReturnVisitReminder";
 import DoorCoach from "../_components/DoorCoach";
 import FieldCompass from "../_components/FieldCompass";
@@ -313,7 +312,6 @@ export default function DesignPreview() {
                 {selected.name} · {selected.city}, {selected.state}
               </p>
               <div className="mt-5">
-                <DoorstepMemory lead={selected} onNote={(note) => setNoteDraft(current => current.includes(note) ? current : [current, note].filter(Boolean).join('\n'))} />
                 <label className="block text-sm">Sample note draft<textarea aria-label="Sample note draft" className="block w-full border rounded-lg p-3 mt-2" value={noteDraft} onChange={event => setNoteDraft(event.target.value)} /></label>
                 <small>Preview only — nothing is saved.</small>
                 <AppointmentOutcomeCard lead={selected} />

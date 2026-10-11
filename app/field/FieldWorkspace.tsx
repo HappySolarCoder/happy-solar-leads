@@ -28,6 +28,7 @@ import {
   streetKey,
 } from "./analysis";
 import { getAppointmentOutcome } from "@/app/utils/appointmentOutcome";
+import { DIRECT_MOBILE_WRITES } from './directWrites';
 import PersonPicker from "@/app/mobile/_components/PersonPicker";
 import { MobileHeader, MobileNav } from "@/app/mobile/_components/MobileShell";
 const rate = (n: number, d: number) =>
@@ -237,7 +238,7 @@ export default function FieldWorkspace(p: Props) {
             {message || p.error}
           </p>
         )}
-        {!p.flags.capture && (
+        {!p.flags.capture && !DIRECT_MOBILE_WRITES && (
           <div className="rf-card">
             <h2>Ready for a field pilot</h2>
             <p>
@@ -389,7 +390,7 @@ export default function FieldWorkspace(p: Props) {
             </p>
             <button
               className="rf-button"
-              disabled={busy || p.offline || !p.flags.capture}
+              disabled={busy || p.offline || (!DIRECT_MOBILE_WRITES && !p.flags.capture)}
               onClick={() =>
                 void action(async () => {
                   const targets = p.leads.filter(

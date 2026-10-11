@@ -109,6 +109,29 @@ test("renter boolean overrides raw estimate including false; parser exposes only
   assert.equal(p.geohash5, p.geohash.slice(0, 5));
   assert.equal(parseHomeowner("bad", { ...h, geohash: "invalid" }), null);
 });
+test("corrected coordinates win; original and correction metadata never become map coordinates", () => {
+  const current = home("corrected");
+  const record = {
+    ...current,
+    latOriginal: 43.1,
+    lngOriginal: -77.7,
+    geohashOriginal: geohashForLocation([43.1, -77.7], 9),
+    coordSourceOriginal: "assessor_grid_epsg32017",
+    coordSource: "nys_address_point",
+    correctionSource: "fixture",
+    coordCorrectedAt: "2026-10-11T00:00:00Z",
+    apPointType: "1",
+    apMatch: "fixture",
+    apDistToParcelM: 10,
+    _moveM: 10,
+  };
+  const parsed = parseHomeowner(current.id, record)!;
+  assert.deepEqual(parsed, current);
+  // Bad/missing current coordinates must not revive the obsolete originals.
+  assert.equal(parseHomeowner(current.id, { ...record, lat: undefined }), null);
+  assert.equal(parseHomeowner(current.id, { ...record, lng: NaN }), null);
+  assert.equal(parseHomeowner(current.id, { ...record, geohash: undefined }), null);
+});
 test("exact normalization, latest visit, proximity fallback and unmatched pins stay immutable", () => {
   assert.equal(normalized("100 N. Main Street, # 2", true), "100 N MAIN ST");
   assert.equal(normalized("100 North Main St UNIT B", true), "100 N MAIN ST");
@@ -300,11 +323,14 @@ test("property marks remain distinct and roof-sized without changing worked-pin 
   const before = fieldPinArtwork(lead(), undefined, 18).url;
   const owner = homeownerPinArtwork(false, 18),
     renter = homeownerPinArtwork(true, 18);
-  assert.ok(owner.size <= 8);
+  assert.equal(owner.size, 14);
+  assert.equal(homeownerPinArtwork(false, 19).size, 18);
+  assert.equal(homeownerPinArtwork(false, 15).size, 7);
   assert.equal(owner.anchorX, owner.size / 2);
   assert.equal(owner.anchorY, owner.height / 2);
-  assert.notEqual(owner.url, renter.url);
-  assert.ok(decodeURIComponent(renter.url).includes("data-renter"));
+  assert.equal(owner.url, renter.url);
+  assert.ok(decodeURIComponent(owner.url).includes('#476E88'));
+  assert.ok(!decodeURIComponent(owner.url).includes("<path"));
   assert.ok(decodeURIComponent(owner.url).includes("<circle"));
   assert.ok(homeownerPinArtwork(false, 18, true).size > owner.size);
   assert.equal(fieldPinArtwork(lead(), undefined, 18).url, before);

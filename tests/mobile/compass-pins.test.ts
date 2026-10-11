@@ -18,15 +18,15 @@ test('imported solar leads are distinct from manual, ordinary and historical pin
 });
 test('warm badge coexists with disposition, solar score, outcome and selection',()=>{
   const warm={...lead,status:'appointment',solarCategory:'great' as const,appointmentOutcome:'Sold'};
-  const marked=fieldPinArtwork(warm,undefined,18,true);
+  const marked=fieldPinArtwork(warm,undefined,19,true);
   assert.equal(marked.style.kind,'appointment');
   assert.match(marked.label,/warm lead/);
   assert.match(marked.label,/GHL Sold/);
   assert.match(marked.label,/great roof/);
   assert.match(decodeURIComponent(marked.url),/data-warm-lead="true"/);
-  assert.notEqual(marked.url,fieldPinArtwork({...warm,source:'manual'},undefined,18,true).url);
-  assert.equal(marked.url,fieldPinArtwork(warm,undefined,18,true).url);
-  assert.ok(fieldPinArtwork(warm,undefined,18).size<fieldPinArtwork(warm,undefined,17).size);
+  assert.notEqual(marked.url,fieldPinArtwork({...warm,source:'manual'},undefined,19,true).url);
+  assert.equal(marked.url,fieldPinArtwork(warm,undefined,19,true).url);
+  assert.ok(fieldPinArtwork(warm,undefined,17).size<fieldPinArtwork(warm,undefined,18).size);
   assert.equal(fieldPinArtwork(warm,undefined,19).size,20);
   assert.notEqual(fieldPinZoomTier(17),fieldPinZoomTier(18));
 });
@@ -51,4 +51,14 @@ test('heading smoothing crosses north without swinging south',()=>{
   assert.equal(compassDirection(360),'N');
   assert.equal(compassDirection(45),'NE');
   assert.equal(compassDirection(225),'SW');
+});
+
+// Neighborhood pins leave roofs visible and share the homeowner circle footprint.
+test('worked pins are compact colored dots through neighborhood zoom with centered coordinates',()=>{
+ for(const zoom of [15,16,17,18]){
+  const p=fieldPinArtwork({status:'not-home',solarCategory:'great'} as Lead,undefined,zoom);
+  assert.ok(p.size<=14);assert.equal(p.size,p.height);assert.equal(p.anchorY,p.height/2);
+  assert.ok(!decodeURIComponent(p.url).includes('data-warm-lead'));
+  assert.notEqual(p.url,fieldPinArtwork({status:'not-interested'} as Lead,undefined,zoom).url);
+ }
 });

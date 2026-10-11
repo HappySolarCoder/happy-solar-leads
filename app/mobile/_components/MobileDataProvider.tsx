@@ -33,6 +33,8 @@ import {
 
 import { useFieldData } from '@/app/field/useFieldData';
 import { readArea } from '@/app/field/deviceStore';
+import UnsyncedNotice from './UnsyncedNotice';
+import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
 
 const EMPTY_LEADS: Lead[] = [];
 const MobileDataContext = createContext<ReturnType<
@@ -155,6 +157,8 @@ function MobileDataProvider({ children }: { children: ReactNode }) {
         <button className="rm-primary" onClick={data.retry}>
           Try again
         </button>
+        <button className="rm-secondary" onClick={() => window.location.reload()}>Reload app</button>
+        <small>{MOBILE_BUILD_LABEL}</small>
       </div>
     ) : (
       <MobileLoading />
@@ -165,6 +169,8 @@ function MobileDataProvider({ children }: { children: ReactNode }) {
         key={data.user ? `${data.user.id}:${data.user.role}` : "signed-out"}
       >
         {children}
+        <UnsyncedNotice drafts={data.field.drafts} syncing={data.field.syncing}
+          error={data.field.error} onSync={data.field.retrySync} />
       </Fragment>
     </MobileDataContext.Provider>
   );

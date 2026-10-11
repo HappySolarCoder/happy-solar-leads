@@ -7,21 +7,26 @@ import { Lead, ObjectionType, OBJECTION_LABELS, OBJECTION_COLORS } from '@/app/t
 interface ObjectionTrackerProps {
   lead: Lead;
   currentUserId: string;
-  onSave: (objectionType: ObjectionType, notes: string) => void;
+  onSave: (objectionType: ObjectionType, notes: string) => void | Promise<void>;
   onClose: () => void;
 }
 
 export default function ObjectionTracker({ lead, currentUserId, onSave, onClose }: ObjectionTrackerProps) {
-  console.log('[DEBUG] ObjectionTracker component mounted/rendered');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [selectedType, setSelectedType] = useState<ObjectionType | ''>(lead.objectionType || '');
   const [notes, setNotes] = useState(lead.objectionNotes || '');
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;
     if (!selectedType) {
       alert('Please select an objection type');
       return;
     }
-    onSave(selectedType as ObjectionType, notes);
+    setSaving(true); setError('');
+    try { await onSave(selectedType as ObjectionType, notes); }
+    catch (e) { setError((e as Error).message || 'Could not save. Please retry.'); }
+    finally { setSaving(false); }
   };
 
   const objectionTypes = Object.keys(OBJECTION_LABELS) as ObjectionType[];
@@ -135,6 +140,7 @@ export default function ObjectionTracker({ lead, currentUserId, onSave, onClose 
           )}
 
           {/* Action Buttons */}
+          {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
           <div className="flex gap-3 pt-4 border-t">
             <button
               onClick={onClose}
@@ -144,7 +150,7 @@ export default function ObjectionTracker({ lead, currentUserId, onSave, onClose 
             </button>
             <button
               onClick={handleSave}
-              disabled={!selectedType}
+              disabled={!selectedType || saving}
               className={`
                 flex-1 px-4 py-3 font-semibold rounded-lg transition-colors
                 ${selectedType
@@ -153,7 +159,7 @@ export default function ObjectionTracker({ lead, currentUserId, onSave, onClose 
                 }
               `}
             >
-              Save Objection
+              {saving ? 'Saving…' : 'Save Objection'}
             </button>
           </div>
         </div>

@@ -28,7 +28,7 @@ export default function FieldToolsPage() {
         prepared={field.area?.at}
         onSelect={setSelected}
         onPrepare={field.prepare}
-        onSync={field.sync}
+        onSync={field.retrySync}
         onDiscard={field.discard}
         onHandoff={async (lead, state) => {
           await field.enqueue({

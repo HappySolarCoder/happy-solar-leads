@@ -1,0 +1,80 @@
+{
+  "release": "14.1/141",
+  "unitTests": {
+    "passed": 100,
+    "failed": 0,
+    "skipped": 0
+  },
+  "pages": {
+    "count": 48,
+    "issues": [],
+    "kind": "isolated Chromium"
+  },
+  "startup": {
+    "currentBrandAndVersion": true,
+    "oneProfileReadAfterLogin": true,
+    "profileTimeoutAndRetry": true,
+    "lateProfileIgnored": true,
+    "signInTimeoutWithoutDuplicateRequest": true,
+    "lateSignInRecovers": true,
+    "invalidCredentialRecovery": true,
+    "nativeResumeEvent": true,
+    "liveRequests": 0,
+    "errors": []
+  },
+  "layout": {
+    "simulatedInsets": {
+      "top": 59,
+      "bottom": 34
+    },
+    "routes": [
+      "/mobile/",
+      "/mobile/follow-ups/",
+      "/mobile/stats/",
+      "/mobile/more/",
+      "/mobile/field-tools/",
+      "/mobile/field-tools/settings/"
+    ],
+    "offlinePreparationEnabled": true,
+    "prepared": {
+      "uid": "audit-user",
+      "count": 90,
+      "capture": false
+    },
+    "captureOff": true,
+    "noFieldApiCalls": true,
+    "errors": [],
+    "limitation": "Chromium with synthetic iPhone insets; not an actual iPhone keyboard or WKWebView test."
+  },
+  "reporting": {
+    "commonDispositions": 7,
+    "typedTimestamps": true,
+    "repIdentityAndGps": true,
+    "ownershipUnchangedOnUpdate": true,
+    "offlineReloadAutoSync": true,
+    "originalKnockTime": true,
+    "lostAcknowledgementRetryWithoutDuplicate": true,
+    "visibleUnsyncedCount": true,
+    "schedulerPayloadAndSaveBeforeSend": true,
+    "explicitClaimUnclaim": true,
+    "compactNeighborhoodPins": true,
+    "forbiddenApiRequests": [],
+    "liveWrites": 0,
+    "fixtureWrites": 12,
+    "createAttempts": 5,
+    "errors": []
+  },
+  "productionExport": true,
+  "iosAssets": true,
+  "iosSync": true,
+  "bundledReleaseVerified": true,
+  "physicalDeviceTested": false,
+  "nativeXcodeCompiledHere": false,
+  "productionWrites": 0,
+  "productionDeployments": 0,
+  "blockers": [
+    "Manage Users endpoint HTTP 404",
+    "Advanced field pilots intentionally inactive",
+    "Real iPhone hardware and signed build acceptance pending"
+  ]
+}

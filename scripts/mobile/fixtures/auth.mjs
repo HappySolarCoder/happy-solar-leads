@@ -2,6 +2,10 @@
 const identity={uid:'audit-user',email:'fixture0@example.invalid',getIdToken:async()=> 'FICTIONAL-AUDIT-TOKEN'};
 let current=identity;
 export const getAuth=()=>({get currentUser(){return current;}});
+export const initializeAuth=getAuth;
+export const indexedDBLocalPersistence={type:'LOCAL'};
+export const browserLocalPersistence={type:'LOCAL'};
+export const browserSessionPersistence={type:'SESSION'};
 export function onAuthStateChanged(a,cb){let alive=true;queueMicrotask(()=>{if(alive)cb(current);});return()=>{alive=false;};}
 export async function signOut(){current=null;}
 export async function signInWithEmailAndPassword(){current=identity;return {user:identity};}

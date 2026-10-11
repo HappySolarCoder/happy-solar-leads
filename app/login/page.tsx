@@ -1,13 +1,17 @@
 'use client';
 
 import { Capacitor } from '@capacitor/core';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchSignInMethodsForEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/app/utils/firebase';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { saveCurrentUser } from '@/app/utils/storage';
 import { ArrowRight, Mail, Lock, AlertCircle } from 'lucide-react';
+import { MOBILE_BUILD_LABEL, startupEvent } from '@/app/mobile/_lib/startupDiagnostics';
+import { withDeadline } from '@/app/utils/withDeadline';
+
+const nativeBuild = process.env.NEXT_PUBLIC_NATIVE_BUILD === '1';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -15,9 +19,14 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const pendingLogin = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (pendingLogin.current) return;
+    pendingLogin.current = true;
     setError('');
     setIsLoading(true);
 
@@ -26,7 +35,26 @@ export default function LoginPage() {
         throw new Error('Firebase not initialized');
       }
 
-      await signInWithEmailAndPassword(auth, email, password);
+      const startedAt = Date.now();
+      if (nativeBuild) startupEvent('login-start');
+      const signIn = signInWithEmailAndPassword(auth, email.trim(), password);
+      if (nativeBuild) {
+        // One sign-in request, including after a UI timeout. If the network
+        // eventually succeeds, open Today while this screen is still mounted.
+        const completion = signIn.then(() => {
+          startupEvent('login-ready', startedAt);
+          if (mounted.current) router.replace('/mobile');
+        }).finally(() => {
+          pendingLogin.current = false;
+          if (mounted.current) setIsLoading(false);
+        });
+        await withDeadline(completion, 15_000,
+          'Sign-in is taking longer than expected. Waiting for the connection. You can reload the app to retry.');
+        // MobileDataProvider reads the profile once and checks approval/role.
+        // Do not block login on a duplicate Firestore profile read here.
+        return;
+      }
+      await signIn;
       
       // Get user from Firestore and save to localStorage
       const user = await getCurrentAuthUser();
@@ -38,7 +66,10 @@ export default function LoginPage() {
       // Redirect to main app
       router.replace(Capacitor.isNativePlatform() ? '/mobile' : '/');
     } catch (err: any) {
-      console.error('Login error:', err);
+      if (!mounted.current) return;
+      if (err.code !== 'raydar/timeout') pendingLogin.current = false;
+      if (nativeBuild) startupEvent('login-error', undefined, err);
+      else console.error('Login error:', err);
       
       if (err.code === 'auth/user-disabled') {
         setError('This account is disabled. Contact an admin.');
@@ -47,6 +78,10 @@ export default function LoginPage() {
       } else if (err.code === 'auth/wrong-password') {
         setError('Incorrect password.');
       } else if (err.code === 'auth/invalid-credential') {
+        if (nativeBuild) {
+          setError('Invalid email or password.');
+          return;
+        }
         // Firebase often collapses wrong-password + user-not-found into invalid-credential.
         // Probe sign-in methods to show a clearer message.
         try {
@@ -61,11 +96,16 @@ export default function LoginPage() {
         }
       } else if (err.code === 'auth/invalid-email') {
         setError('Invalid email address.');
+      } else if (err.code === 'raydar/timeout') {
+        setError(err.message);
       } else {
         setError('Login failed. Please try again.');
       }
     } finally {
-      setIsLoading(false);
+      if (!nativeBuild || !pendingLogin.current) {
+        pendingLogin.current = false;
+        if (mounted.current) setIsLoading(false);
+      }
     }
   };
 
@@ -81,6 +121,7 @@ export default function LoginPage() {
           />
           <h1 className="text-2xl font-bold text-[#2D3748]">Welcome Back</h1>
           <p className="text-[#718096] mt-2">Sign in to your account</p>
+          {nativeBuild && <p className="text-xs text-[#587E98] mt-3">{MOBILE_BUILD_LABEL}</p>}
         </div>
 
         {/* Login Form */}
@@ -88,13 +129,17 @@ export default function LoginPage() {
           <form onSubmit={handleLogin} className="space-y-6">
             {/* Email */}
             <div>
-              <label className="block text-sm font-semibold text-[#2D3748] mb-2">
+              <label htmlFor="login-email" className="block text-sm font-semibold text-[#2D3748] mb-2">
                 Email Address
               </label>
               <div className="relative">
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#718096]" />
                 <input
                   type="email"
+                  id="login-email"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@company.com"
@@ -106,13 +151,15 @@ export default function LoginPage() {
 
             {/* Password */}
             <div>
-              <label className="block text-sm font-semibold text-[#2D3748] mb-2">
+              <label htmlFor="login-password" className="block text-sm font-semibold text-[#2D3748] mb-2">
                 Password
               </label>
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#718096]" />
                 <input
                   type="password"
+                  id="login-password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
@@ -124,7 +171,7 @@ export default function LoginPage() {
 
             {/* Error Message */}
             {error && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+              <div role="alert" className="p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                 <p className="text-sm text-red-700">{error}</p>
               </div>
@@ -149,6 +196,8 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+          {nativeBuild && error && <button type="button" onClick={() => window.location.reload()}
+            className="w-full mt-4 text-sm text-[#476E88] underline">Reload app</button>}
 
           {/* Divider */}
           <div className="relative my-6">

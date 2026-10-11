@@ -16,11 +16,11 @@ if (
     "The backend must be an HTTPS origin without a path or credentials."
   );
 let ready = true;
-for (const [path, expected] of [
-  ["/api/territory-management", "Sign in again to manage territories."],
-  ["/api/mobile-user-management", "Sign in again to manage users."],
-  ["/api/field-config", "Sign in to use field tools."],
-  ["/api/field-work", "Sign in to use field tools."],
+for (const [path, expected, required] of [
+  ["/api/territory-management", "Sign in again to manage territories.", true],
+  ["/api/mobile-user-management", "Sign in again to manage users.", false],
+  ["/api/field-config", "Sign in to use field tools.", false],
+  ["/api/field-work", "Sign in to use field tools.", false],
 ]) {
   const url = new URL(path, origin);
   console.log(`Checking ${url.href} (no login credentials sent)`);
@@ -37,23 +37,23 @@ for (const [path, expected] of [
     if (response.status === 401 && json?.error === expected) {
       console.log(`READY: ${path} is deployed and requires authentication.`);
     } else {
-      ready = false;
+      if (required) ready = false;
       console.error(
-        `NOT READY: ${path} returned HTTP ${response.status}. Expected its JSON 401 authentication response.`
+        `${required ? "NOT READY" : "OPTIONAL / UNAVAILABLE"}: ${path} returned HTTP ${response.status}. This does not block direct mobile knock saves.`
       );
     }
   } catch (error) {
-    ready = false;
+    if (required) ready = false;
     console.error(`Could not reach ${url.href}: ${error.message}`);
   }
 }
 if (!ready) {
   console.error(
-    "The corresponding backend companion needs review/deployment. Installing the app does not deploy API routes. See docs/mobile-next/FIELD-V12.2.md."
+    "Territory management needs backend review. Mobile v12.6 saves knocks directly to Firestore; do not deploy field routes to enable knocking. See docs/mobile-next/FIELD-V12.6.md."
   );
   process.exitCode = 1;
 } else {
   console.log(
-    "All four management/field routes are available. Signed-in requests also validate server Firebase credentials and your account access."
+    "Territory route is available. Optional user-management/field services may still be unavailable. Mobile knocks do not use these services."
   );
 }

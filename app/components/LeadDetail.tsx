@@ -2,8 +2,11 @@
 
 import { HomeownerSection } from '@/app/homeowners/Details';
 import type { Homeowner } from '@/app/homeowners/model';
+import { homeownerKnockGps } from '@/app/homeowners/knockGps';
+import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
+import { knockPatch } from '@/app/field/knockPatch';
+import { isDeviceOnline } from '@/app/utils/connectivity';
 import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
-import DoorstepMemory from './DoorstepMemory';
 import DictateButton from '@/app/field/DictateButton';
 import FieldDoorPanel, { type VisitDraft } from '@/app/field/FieldDoorPanel';
 import { useOptionalMobileData } from '@/app/mobile/_components/MobileDataProvider';
@@ -15,7 +18,7 @@ import { getLocation } from '@/app/utils/geolocation';
 
 import { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
-import { Lead, User, ObjectionType, LeadDispositionHistoryEntry } from '@/app/types';
+import { Lead, User, ObjectionType } from '@/app/types';
 import { 
   X, MapPin, Phone, Mail, Clock, User as UserIcon, 
   CheckCircle, Circle, AlertCircle, Calendar, DollarSign,
@@ -42,6 +45,9 @@ import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 
 interface LeadDetailProps {
+  unvisitedHome?: boolean;
+  saveLeadPatch?: (patch: Partial<Lead>) => Promise<void>;
+  prepareLead?: () => Promise<void>;
   homeowner?: Homeowner;
   fieldMemory?: boolean;
   dispositionOptions?: Disposition[];
@@ -49,7 +55,7 @@ interface LeadDetailProps {
   lead: Lead;
   currentUser: User | null;
   onClose: () => void;
-  onUpdate: () => void;
+  onUpdate: (updatedLead?: Lead) => void;
 }
 
 // Icon map for dispositions
@@ -108,12 +114,27 @@ const ICON_MAP: Record<string, any> = {
   'arrow-left': ArrowLeft,
 };
 
-export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false, homeowner, dispositionOptions, dispositionsLoading = false }: LeadDetailProps) {
+const QUICK_ACTION_LABELS: Record<string, string> = {
+  'not-home': 'NH', 'not-interested': 'NI', 'go-back': 'GB',
+};
+
+export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false, homeowner, dispositionOptions, dispositionsLoading = false, unvisitedHome = false, saveLeadPatch, prepareLead }: LeadDetailProps) {
   const mobile = useOptionalMobileData();
-  const field = fieldMemory ? mobile?.field : undefined;
+  const field = fieldMemory || DIRECT_MOBILE_WRITES ? mobile?.field : undefined;
   lead = field?.leads.find(item => item.id === lead.id) || lead;
+  homeowner = homeowner || lead.homeowner;
   const hasPendingFieldWork = !!field?.drafts.some(d => d.leadId === lead.id);
-  const pausedWithDrafts = hasPendingFieldWork && !field?.flags.capture;
+  const pausedWithDrafts = !DIRECT_MOBILE_WRITES && hasPendingFieldWork && !field?.flags.capture;
+  const capture = !DIRECT_MOBILE_WRITES && !!field?.flags.capture;
+  async function saveReportingPatch(patch: Partial<Lead>) {
+    if (saveLeadPatch) await saveLeadPatch(patch);
+    else if (DIRECT_MOBILE_WRITES) {
+      if (!field) throw Error('Open the mobile Knock screen to save this action safely.');
+      await field.enqueueDirect(lead, patch);
+    }
+    else { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, patch); }
+    if (DIRECT_MOBILE_WRITES) setFieldMessage('Saved on this device. The unsynced count clears after Firestore confirms it.');
+  }
   const [visit, setVisit] = useState<VisitDraft>({});
   const [fieldMessage, setFieldMessage] = useState('');
   async function recordField(kind: FieldMutation['kind'], patch: Partial<FieldMutation> = {}) {
@@ -129,13 +150,19 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       ...(patch.objectionType ? { objections: [patch.objectionType] } : {}),
     };
     if (kind === 'knock' && disposition?.countsAsDoorKnock) {
-      try {
+      if (prepareLead) {
+        const gps = await homeownerKnockGps(lead, currentUser);
+        if (gps.knockGpsLat != null && gps.knockGpsLng != null) observation.gps = {
+          lat: gps.knockGpsLat, lng: gps.knockGpsLng, accuracy: gps.knockGpsAccuracy!, timestamp: gps.knockGpsTimestamp!.toISOString(),
+        };
+      } else try {
         const position = await getLocation({ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
         observation.gps = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, timestamp: new Date().toISOString() };
       } catch {
         if (isProximityRequired(currentUser)) throw Error('Your location could not be verified. Enable precise location and retry.');
       }
     }
+    await prepareLead?.();
     await field.enqueue({id,userId:currentUser.id,leadId:lead.id,createdAt:at.toISOString(),kind,baseStatus:lead.status,baseNotes:lead.notes||'',...(kind==='knock'?{observation,disposition:disposition?.name||status}:{}),...patch});
     setFieldMessage('Saved on this device. Sync status is in Field tools.');
     if (kind === 'knock') setVisit({});
@@ -143,6 +170,12 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
   }
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
+  const savedNotes = useRef(lead.notes || '');
+  useEffect(() => {
+    const previous = savedNotes.current, next = lead.notes || '';
+    setNotes(draft => draft === previous ? next : draft);
+    savedNotes.current = next;
+  }, [lead.notes]);
   const noteInput = useRef<HTMLTextAreaElement>(null);
   const [notesSaving, setNotesSaving] = useState(false);
   const [showAllStatuses, setShowAllStatuses] = useState(false);
@@ -217,6 +250,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser || actionsLoading) return;
+    const knockedAt = new Date();
     if (pausedWithDrafts) { setFieldMessage('Field capture is paused. Sync or review this pin’s pending drafts in Field tools before changing it.'); return; }
     
     // Check for special behavior dispositions
@@ -241,7 +275,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       return;
     }
     
-    if (field?.flags.capture && !['claimed','unclaimed'].includes(newStatus)) {
+    if (capture && !['claimed','unclaimed'].includes(newStatus)) {
       setIsUpdating(true);
       try { await recordField('knock', { status: newStatus }); }
       catch (e) { setFieldMessage((e as Error).message); }
@@ -251,89 +285,32 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
     setIsUpdating(true);
     
     try {
-      // Capture GPS for knock verification (if disposition counts as door knock)
       const disposition = dispositions.find(d => d.id === newStatus);
-      let gpsData = {};
-      
-      if (disposition?.countsAsDoorKnock) {
-        try {
-          const position = await getLocation({
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0,
-          });
-          
-          // Calculate distance from lead address
-          let distanceFromAddress: number | undefined;
-          if (lead.lat && lead.lng) {
-            const R = 6371000; // Earth's radius in meters
-            const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
-            const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
-            const a = 
-              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(position.coords.latitude * Math.PI / 180) * 
-              Math.cos(lead.lat * Math.PI / 180) *
-              Math.sin(dLng / 2) * Math.sin(dLng / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            distanceFromAddress = R * c;
-          }
-          
-          // Distance verification for setter, manager, sales (not admin).
-          // Per-user opt-out: users.features.proximityEnforcement === false
-          if (isProximityRequired(currentUser) && distanceFromAddress && distanceFromAddress > PROXIMITY_MAX_DISTANCE_METERS) {
-            setIsUpdating(false);
-            const distanceFeet = Math.round(distanceFromAddress * 3.281); // Convert to feet
-            alert(
-              `You are not close enough to this address to disposition it.\n\n` +
-              `Distance: ${distanceFeet} feet away\n` +
-              `Required: Within 100 feet\n\n` +
-              `Please move closer to the address and try again.`
-            );
-            return;
-          }
-          
-          gpsData = {
-            knockGpsLat: position.coords.latitude,
-            knockGpsLng: position.coords.longitude,
-            knockGpsAccuracy: position.coords.accuracy,
-            knockGpsTimestamp: new Date(),
-            knockDistanceFromAddress: distanceFromAddress,
-          };
-        } catch (err) {
-          console.warn('GPS capture failed:', err);
-          if (isProximityRequired(currentUser)) {
-            alert('Your location could not be verified. Enable precise location and try again.');
-            return;
-          }
-        }
+      const gpsData = disposition?.countsAsDoorKnock
+        ? await homeownerKnockGps(lead, currentUser) : {};
+
+      if (DIRECT_MOBILE_WRITES && ['claimed', 'unclaimed'].includes(newStatus)) {
+        if (!isDeviceOnline()) throw Error('Connect before claiming or unclaiming a lead. Your offline knocks remain saved.');
+        await field?.ensureLeadSynced(lead.id);
       }
-      
       if (newStatus === 'claimed') {
         // Handle claim
-        claimLead(lead.id, currentUser.id);
-      } else if (newStatus === 'unclaimed' && isClaimedByMe) {
+        await claimLead(lead.id, currentUser.id);
+      } else if (newStatus === 'unclaimed') {
         // Handle unclaim
-        unclaimLead(lead.id);
+        if (!isClaimedByMe) throw Error('Only the rep who claimed this lead can unclaim it.');
+        await unclaimLead(lead.id);
+        onUpdate({ ...lead, status: 'unclaimed', claimedBy: undefined, claimedAt: undefined });
+        onClose();
+        return;
       } else {
         // Handle status change with GPS data
         // IMPORTANT: use partial update so we don't accidentally send ownership fields that could trip rules.
-        const { updateLeadAsync } = await import('@/app/utils/storage');
-
-        // Add to disposition history
-        const historyEntry: LeadDispositionHistoryEntry = {
-          disposition: disposition?.name || newStatus,
-          timestamp: new Date(),
-          userId: currentUser.id,
-          userName: currentUser.name,
-        };
-
-        await updateLeadAsync(lead.id, {
-          status: newStatus,
-          dispositionedAt: new Date(),
-          dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-          ...gpsData,
-        });
+        if (!disposition) throw Error('Reload your dispositions before saving.');
+        await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, knockedAt, gpsData));
       }
+
+      if (DIRECT_MOBILE_WRITES) { onUpdate(); return; }
       
       // Check for Easter Egg win!
       try {
@@ -387,7 +364,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
     if (pausedWithDrafts) { setFieldMessage('Review pending drafts in Field tools before changing these notes.'); return; }
     
     setNotesSaving(true);
-    if (field?.flags.capture) {
+    if (capture) {
       try { await recordField('notes', { notes }); }
       catch (e) { setFieldMessage((e as Error).message); }
       finally { setNotesSaving(false); }
@@ -399,10 +376,14 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
         ...lead,
         notes,
       };
-      await saveLeadAsync(updatedLead);
+      if (DIRECT_MOBILE_WRITES) await saveReportingPatch({ notes });
+      else if (saveLeadPatch) await saveLeadPatch({ notes });
+      else await saveLeadAsync(updatedLead);
+      if (!DIRECT_MOBILE_WRITES) setFieldMessage('Notes saved.');
       if (onUpdate) onUpdate();
     } catch (error) {
       console.error('Error saving notes:', error);
+      setFieldMessage((error as Error).message || 'Notes could not be saved. Please retry.');
     } finally {
       setNotesSaving(false);
     }
@@ -429,95 +410,46 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       ...lead,
       photos: updatedPhotos,
     };
-    if (fieldMemory) { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, { photos: updatedPhotos }); } else await saveLeadAsync(updatedLead);
+    if (DIRECT_MOBILE_WRITES) await saveReportingPatch({ photos: updatedPhotos });
+    else if (saveLeadPatch) await saveLeadPatch({ photos: updatedPhotos });
+    else if (fieldMemory) { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, { photos: updatedPhotos }); } else await saveLeadAsync(updatedLead);
     if (onUpdate) onUpdate();
   };
 
   const handleObjectionSave = async (objectionType: ObjectionType, objectionNotes: string) => {
     if (!currentUser) return;
-    
+    const at = new Date();
     setIsUpdating(true);
-    
     try {
-      if (field?.flags.capture) { await recordField('knock', { status: 'not-interested', objectionType, objectionNotes }); setShowObjectionTracker(false); return; }
-      // Update lead with objection data using async Firestore
-      const { saveLeadAsync } = await import('@/app/utils/storage');
-      
-      // Add to disposition history
-      const historyEntry: LeadDispositionHistoryEntry = {
-        disposition: 'Not Interested',
-        timestamp: new Date(),
-        userId: currentUser.id,
-        userName: currentUser.name,
-      };
-      
-      const updatedLead: Lead = {
-        ...lead,
-        status: 'not-interested',
-        objectionType,
-        objectionNotes,
-        objectionRecordedAt: new Date(),
-        objectionRecordedBy: currentUser.id,
-        // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
-        claimedBy: lead.claimedBy,
-        assignedTo: lead.assignedTo,
-        dispositionedAt: new Date(),
-        dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-      };
-      
-      await saveLeadAsync(updatedLead);
-      
-      setShowObjectionTracker(false);
-      onUpdate();
-    } catch (e) { setFieldMessage((e as Error).message); } finally {
-      setIsUpdating(false);
-    }
+      if (capture) { await recordField('knock', { status: 'not-interested', objectionType, objectionNotes }); setShowObjectionTracker(false); return; }
+      const disposition = dispositions.find(d => d.id === 'not-interested');
+      if (!disposition) throw Error('Reload your dispositions before saving.');
+      const gps = disposition.countsAsDoorKnock ? await homeownerKnockGps(lead, currentUser) : {};
+      await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, at, {
+        objectionType, objectionNotes, objectionRecordedAt: at, objectionRecordedBy: currentUser.id, ...gps,
+      }));
+      setShowObjectionTracker(false); onUpdate();
+    } catch (e) { setFieldMessage((e as Error).message); throw e; }
+    finally { setIsUpdating(false); }
   };
 
   const handleGoBackSave = async (scheduleData: GoBackScheduleData) => {
     if (!currentUser) return;
-    
+    const at = new Date();
     setIsUpdating(true);
-    
     try {
-      if (field?.flags.capture) { await recordField('knock', { status: pendingGoBackStatus || 'go-back', goBackScheduledDate: new Date(scheduleData.date).toISOString(), goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes }); setShowGoBackSchedule(false); return; }
-      // Update lead with go back schedule data using async Firestore
-      const { saveLeadAsync } = await import('@/app/utils/storage');
-      
-      const scheduledDisposition = dispositions.find((d) => d.id === pendingGoBackStatus);
-      const statusId = pendingGoBackStatus || 'go-back';
-      const statusName = scheduledDisposition?.name || (statusId === 'house-for-sale' ? 'House for Sale' : 'Go Back');
-
-      // Add to disposition history
-      const historyEntry: LeadDispositionHistoryEntry = {
-        disposition: statusName,
-        timestamp: new Date(),
-        userId: currentUser.id,
-        userName: currentUser.name,
-      };
-      
-      const updatedLead: Lead = {
-        ...lead,
-        status: statusId,
-        disposition: statusName,
-        dispositionedAt: new Date(),
-        // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
-        claimedBy: lead.claimedBy,
-        assignedTo: lead.assignedTo,
-        goBackScheduledDate: scheduleData.date,
-        goBackScheduledTime: scheduleData.time,
-        goBackNotes: scheduleData.notes,
-        goBackScheduledBy: currentUser.id,
-        dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-      };
-      
-      await saveLeadAsync(updatedLead);
-      
-      setShowGoBackSchedule(false);
-      onUpdate();
-    } catch (e) { setFieldMessage((e as Error).message); } finally {
-      setIsUpdating(false);
-    }
+      if (capture) { await recordField('knock', { status: pendingGoBackStatus || 'go-back', goBackScheduledDate: new Date(scheduleData.date).toISOString(), goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes }); setShowGoBackSchedule(false); return; }
+      const disposition = dispositions.find(d => d.id === pendingGoBackStatus);
+      if (!disposition) throw Error('Reload your dispositions before saving.');
+      const gps = disposition.countsAsDoorKnock ? await homeownerKnockGps(lead, currentUser) : {};
+      await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, at, {
+        disposition: disposition.name, goBackScheduledDate: scheduleData.date,
+        goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes,
+        goBackScheduledBy: currentUser.id, ...gps,
+      }));
+      setShowGoBackSchedule(false); onUpdate();
+    } catch (e) { setFieldMessage((e as Error).message); throw e; }
+    finally { setIsUpdating(false); }
   };
 
   if (actionsLoading && !fieldMemory) {
@@ -631,10 +563,10 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
           <div className="flex items-center gap-3">
             <div 
               className="w-3 h-3 rounded-full"
-              style={{ backgroundColor: currentDisposition?.color || '#6B7280' }}
+              style={{ backgroundColor: unvisitedHome ? '#476E88' : currentDisposition?.color || '#6B7280' }}
             />
             <span className="font-semibold text-[#2D3748]">
-              {currentDisposition?.name || lead.status}
+              {unvisitedHome ? 'Ready to knock' : currentDisposition?.name || lead.status}
             </span>
           </div>
           <button
@@ -648,11 +580,11 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4">
-          <HomeownerSection homeowner={homeowner} />
+          <HomeownerSection homeowner={homeowner} compact />
           {/* Name & Status */}
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-[#2D3748]">{lead.name}</h2>
-            {isClaimed && lead.claimedBy && (
+          <div className={homeowner?.ownerName === lead.name ? 'mb-2' : 'mb-6'}>
+            {homeowner?.ownerName !== lead.name && <h2 className="text-xl font-bold text-[#2D3748]">{lead.name}</h2>}
+            {!unvisitedHome && isClaimed && lead.claimedBy && (
               <p className="text-sm text-[#718096] mt-1">
                 Claimed by {isClaimedByMe ? 'you' : 'another rep'}
                 {lead.claimedAt && (
@@ -687,12 +619,6 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
 
           {fieldMessage && <p className="rf-sync-status" role="status">{fieldMessage}</p>}
           {fieldMemory && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
-          {fieldMemory && <DoorstepMemory lead={lead} onNote={(note) => {
-            setNotes(current => current.includes(note) ? current : [current.trim(), note].filter(Boolean).join('\n'));
-            noteInput.current?.scrollIntoView({ block: 'center' });
-            noteInput.current?.focus({ preventScroll: true });
-          }} />}
-
           {/* Contact Info */}
           {(lead.phone || lead.email) && (
             <div className="mb-4 space-y-2">
@@ -754,6 +680,11 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
           <div className="mb-6">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Quick Actions</h3>
             {actionsLoading && <p role="status" className="text-sm text-[#718096] mb-3">Loading actions. You can still read this lead and close the panel.</p>}
+            {fieldMemory && <button type="button" aria-label="CSM — Call Scheduling Manager" title="Call Scheduling Manager" onClick={() => setShowLeadEditor(true)}
+              disabled={isUpdating || actionsLoading}
+              className="mb-3 w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#476E88] text-white rounded-lg font-semibold disabled:opacity-50">
+              <Phone className="w-4 h-4" /> CSM
+            </button>}
             
             {/* Admin: Assign to user dropdown */}
             {currentUser?.role === 'admin' && (
@@ -775,7 +706,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
             )}
             
             <div className="grid grid-cols-2 gap-2">
-              {!isClaimed && (
+              {!unvisitedHome && !isClaimed && (
                 <button
                   onClick={() => handleStatusChange('claimed')}
                   disabled={isUpdating || actionsLoading}
@@ -786,7 +717,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
                 </button>
               )}
               
-              {isClaimedByMe && (
+              {!unvisitedHome && isClaimedByMe && (
                 <button
                   onClick={() => handleStatusChange('unclaimed')}
                   disabled={isUpdating || actionsLoading}
@@ -799,16 +730,19 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
 
               {quickActionDispositions.map(dispo => {
                 const Icon = ICON_MAP[dispo.icon] || Circle;
+                const shortLabel = fieldMemory ? QUICK_ACTION_LABELS[dispo.id] : undefined;
                 return (
                   <button
                     key={dispo.id}
+                    aria-label={shortLabel ? `${shortLabel} — ${dispo.name}` : dispo.name}
+                    title={dispo.name}
                     onClick={() => handleStatusChange(dispo.id)}
                     disabled={isUpdating || actionsLoading}
                     className="flex items-center justify-center gap-2 px-4 py-3 text-white rounded-lg font-medium transition-all disabled:opacity-50 hover:opacity-90"
                     style={{ backgroundColor: dispo.color }}
                   >
                     <Icon className="w-4 h-4" />
-                    {dispo.name}
+                    {shortLabel || dispo.name}
                   </button>
                 );
               })}
@@ -820,7 +754,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
             <div className="mb-6">
               <h3 className="text-sm font-semibold text-[#2D3748] mb-3">All Dispositions</h3>
               <div className="space-y-2">
-                {dispositions.map(dispo => {
+                {dispositions.filter(dispo => !unvisitedHome || !['claimed', 'unclaimed'].includes(dispo.id)).map(dispo => {
                   const Icon = ICON_MAP[dispo.icon] || Circle;
                   return (
                     <button
@@ -1016,10 +950,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       {/* Lead Editor Modal (Scheduling Manager) */}
       {showLeadEditor && (
         <LeadEditorModal
+          signedInRep={currentUser}
+          saveLeadPatch={DIRECT_MOBILE_WRITES ? saveReportingPatch : saveLeadPatch}
+          beforeSend={DIRECT_MOBILE_WRITES && field ? () => field.ensureLeadSynced(lead.id) : undefined}
           mobileMode={fieldMemory}
-          pendingFieldWork={hasPendingFieldWork}
-          fieldContext={field?.flags.capture ? [visit.openerId ? `Opener: ${field.config.openers.find(o => o.id === visit.openerId)?.label || visit.openerId}` : "", visit.previewShown ? "Company-approved savings illustration shown; not a quote." : "", visit.proofShown ? "Approved local proof shown." : ""].filter(Boolean).join("\n") : undefined}
-          onInfoSent={field?.flags.show ? async () => { try { await recordField("handoff", { handoff: "sent" }); } catch (e) { setFieldMessage(`Info sent; tracking needs attention: ${(e as Error).message}`); } } : undefined}
+          pendingFieldWork={!DIRECT_MOBILE_WRITES && hasPendingFieldWork}
+          fieldContext={capture ? [visit.openerId ? `Opener: ${field.config.openers.find(o => o.id === visit.openerId)?.label || visit.openerId}` : "", visit.previewShown ? "Company-approved savings illustration shown; not a quote." : "", visit.proofShown ? "Approved local proof shown." : ""].filter(Boolean).join("\n") : undefined}
+          onInfoSent={!DIRECT_MOBILE_WRITES && field?.flags.show ? async () => { try { await recordField("handoff", { handoff: "sent" }); } catch (e) { setFieldMessage(`Info sent; tracking needs attention: ${(e as Error).message}`); } } : undefined}
           lead={lead}
           onClose={() => setShowLeadEditor(false)}
           onSave={() => {

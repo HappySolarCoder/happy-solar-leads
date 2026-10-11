@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 interface GoBackScheduleModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (data: GoBackScheduleData) => void;
+  onSave: (data: GoBackScheduleData) => void | Promise<void>;
   leadAddress: string;
   currentDisposition?: string; // The disposition that triggered this go-back
 }
@@ -38,10 +38,12 @@ export default function GoBackScheduleModal({
   const [selectedTime, setSelectedTime] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   const [error, setError] = useState<string>('');
+  const [saving, setSaving] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;
     // Validate date is required
     if (!selectedDate) {
       setError('Please select a date');
@@ -60,8 +62,10 @@ export default function GoBackScheduleModal({
       notes: notes || undefined,
     };
 
-    onSave(scheduleData);
-    handleClose();
+    setSaving(true); setError('');
+    try { await onSave(scheduleData); handleClose(); }
+    catch (e) { setError((e as Error).message || 'Could not save. Please retry.'); }
+    finally { setSaving(false); }
   };
 
   const handleClose = () => {
@@ -179,9 +183,10 @@ export default function GoBackScheduleModal({
           </button>
           <button
             onClick={handleSave}
+            disabled={saving}
             className="flex-1 px-4 py-2 bg-[#FF5F5A] text-white rounded-lg hover:bg-[#E54E49] transition-colors font-medium"
           >
-            {currentDisposition === 'house-for-sale' ? 'Schedule House for Sale' : 'Schedule Go Back'}
+            {saving ? 'Saving…' : currentDisposition === 'house-for-sale' ? 'Schedule House for Sale' : 'Schedule Go Back'}
           </button>
         </div>
       </div>

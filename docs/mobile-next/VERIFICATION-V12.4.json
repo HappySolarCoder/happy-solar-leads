@@ -1,0 +1,101 @@
+{
+  "version": "12.4",
+  "unitTests": 81,
+  "staticExport": true,
+  "typecheck": true,
+  "actualKnockPage": {
+    "zeroWritesOnOpen": true,
+    "firstOutcomeCreatesOneLead": true,
+    "notesPartialUpdate": true,
+    "reopenRetainsNameAndNotes": true,
+    "goBackFailureRetainsInputs": true,
+    "offlineHonestRetry": true,
+    "schedulerSendAndCall": true,
+    "homeownersWrites": 0,
+    "totalWrites": 5,
+    "errors": []
+  },
+  "homeownerCache": {
+    "firstCacheRun": "81 saved homes \u00b7 2 queries \u00b7 399 reads",
+    "repeatReads": 0,
+    "offlineReads": 0,
+    "canvasCount": 1,
+    "duplicateWorkedMarkers": 0,
+    "errors": [],
+    "api": []
+  },
+  "canvasBenchmark": {
+    "homes": 2000,
+    "medianDrawMs": 11.099999999627471,
+    "p95DrawMs": 17.600000000558794,
+    "pausedDraws": 0,
+    "resumed": true,
+    "exactHit": true,
+    "panHit": true,
+    "canvasCount": 1,
+    "cpuThrottle": 4,
+    "errors": []
+  },
+  "pinSelectionAndDensity": {
+    "results": [
+      {
+        "zoom": 17,
+        "coverage": 0.013327831648442335,
+        "solid": 0.011041193865621347,
+        "width": 786,
+        "height": 1480
+      },
+      {
+        "zoom": 18,
+        "coverage": 0.005608280035760952,
+        "solid": 0.005018568186507118,
+        "width": 786,
+        "height": 1480
+      },
+      {
+        "zoom": 15,
+        "coverage": 0.08778625954198473,
+        "solid": 0.07109466336565573,
+        "width": 786,
+        "height": 1480
+      }
+    ],
+    "errors": [],
+    "remote": []
+  },
+  "lintComparison": [
+    {
+      "file": "app/components/LeadDetail.tsx",
+      "baselineErrors": 6,
+      "currentErrors": 6,
+      "newErrors": []
+    },
+    {
+      "file": "app/components/LeadEditorModal.tsx",
+      "baselineErrors": 2,
+      "currentErrors": 2,
+      "newErrors": []
+    },
+    {
+      "file": "app/components/GoBackScheduleModal.tsx",
+      "baselineErrors": 0,
+      "currentErrors": 0,
+      "newErrors": []
+    },
+    {
+      "file": "app/components/ObjectionTracker.tsx",
+      "baselineErrors": 3,
+      "currentErrors": 3,
+      "newErrors": []
+    },
+    {
+      "file": "app/mobile/knocking/page.tsx",
+      "baselineErrors": 12,
+      "currentErrors": 12,
+      "newErrors": []
+    }
+  ],
+  "noLiveWrites": true,
+  "nativeDeviceTested": false,
+  "cloudQueryDefinitionChanged": false
+}

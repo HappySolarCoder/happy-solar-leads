@@ -24,6 +24,7 @@ import {
   MobileNotice,
 } from "../_components/MobileShell";
 import { useMobileData } from "../_components/useMobileData";
+import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
 
 export default function MorePage() {
   const { user, loading } = useMobileData();
@@ -122,7 +123,7 @@ export default function MorePage() {
           <LogOut size={18} />
           {signingOut ? "Signing out…" : "Sign out"}
         </button>
-        <p className="rm-version">Raydar Next · v12.3 · Field ready</p>
+        <p className="rm-version">{MOBILE_BUILD_LABEL}</p>
       </main>
       <MobileNav />
     </div>

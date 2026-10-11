@@ -1887,8 +1887,8 @@ function createCustomIcon(
     const top = hitSize - pin.height;
     return L.divIcon({
       className: 'field-pin',
-      html: `<img src="${pin.url}" width="${pin.size}" height="${pin.height}" alt="" draggable="false" style="display:block;pointer-events:none;position:absolute;left:${left}px;top:${top}px"/>`,
-      iconSize: [hitSize, hitSize], iconAnchor: [hitSize / 2, zoom < 14 ? top + pin.height / 2 : hitSize - (pin.height * 3 / 56)], popupAnchor: [0, -pin.height],
+      html: `<img src="${pin.url}" width="${pin.size}" height="${pin.height}" alt="" draggable="false" style="display:block;width:${pin.size}px;height:${pin.height}px;pointer-events:none;position:absolute;left:${left}px;top:${top}px"/>`,
+      iconSize: [hitSize, hitSize], iconAnchor: [hitSize / 2, top + pin.anchorY], popupAnchor: [0, -pin.height],
     });
   }
 

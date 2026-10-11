@@ -3,6 +3,9 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import nextEnv from '@next/env';
+import { assertProductionConfig } from './production-config.mjs';
+import { createHash } from 'node:crypto';
+import { verifyMobileBundle } from './check-bundle.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const stage = path.join(root, '.mobile-build');
@@ -14,6 +17,7 @@ const required = [
 ];
 const missing = required.filter(key => !process.env[key]);
 if (missing.length) throw new Error(`Missing mobile configuration: ${missing.join(', ')}. See MOBILE-APP.md.`);
+assertProductionConfig(process.env);
 const origin = new URL(process.env.NEXT_PUBLIC_API_BASE_URL);
 if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash || origin.username || origin.password) {
   throw new Error('NEXT_PUBLIC_API_BASE_URL must be an HTTPS origin without a path.');
@@ -50,4 +54,12 @@ const result = spawnSync(process.execPath, [path.join(root, 'node_modules/next/d
 });
 if (result.status !== 0) process.exit(result.status ?? 1);
 await cp(path.join(stage, 'out'), path.join(root, 'out'), { recursive: true });
+const release = JSON.parse(await readFile(path.join(root, 'app/mobile/_lib/release.json'), 'utf8'));
+const logo = await readFile(path.join(root, 'public/brand/raydar-v5/raydar-primary-v5.svg'));
+await writeFile(path.join(root, 'out/raydar-build.json'), JSON.stringify({
+  ...release, native: true, builtAt: new Date().toISOString(),
+  apiOrigin: origin.origin, firebaseProject: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  brandSha256: createHash('sha256').update(logo).digest('hex'),
+}, null, 2));
+await verifyMobileBundle(path.join(root, 'out'));
 console.log('Mobile screens exported to out/. Run npm run mobile:sync next.');

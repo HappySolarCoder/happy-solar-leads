@@ -11,6 +11,7 @@ import {
 import { FEATURE_KEYS, type FieldConfig } from "@/app/field/types";
 import { fieldRequest } from "@/app/field/useFieldData";
 import { cleanConfig } from "@/app/field/config";
+import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
 const labels = {
   capture: [
     "Visit observations",
@@ -43,6 +44,17 @@ const labels = {
 export default function FieldSettings() {
   const data = useMobileData();
   if (!data.user) return <MobileLoading />;
+  if (DIRECT_MOBILE_WRITES) return (
+    <div className="rm-shell">
+      <main className="rm-content">
+        <Link className="rm-back" href="/mobile/field-tools"><ArrowLeft size={18} />Field tools</Link>
+        <h1>Field settings</h1>
+        <p className="rf-notice">Advanced pilot settings are currently unavailable in the mobile app.</p>
+        <p>Knocks, notes, follow-ups, and offline sync are available. You can prepare doors offline from Field tools.</p>
+      </main>
+      <MobileNav />
+    </div>
+  );
   if (data.user.role !== "admin")
     return (
       <main className="rm-content">

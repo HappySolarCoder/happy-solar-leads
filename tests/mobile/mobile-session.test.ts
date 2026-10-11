@@ -6,7 +6,7 @@ import {
 } from "../../app/mobile/_lib/mobileSession";
 import type { User } from "../../app/types";
 
-function harness() {
+function harness(timeoutMs?: number) {
   let change: (id: string | null) => void = () => {};
   let fail: () => void = () => {};
   let unsubscribed = false;
@@ -25,7 +25,8 @@ function harness() {
     },
     (id) =>
       new Promise((resolve, reject) => pending.set(id, { resolve, reject })),
-    (state) => states.push(state)
+    (state) => states.push(state),
+    timeoutMs,
   );
   return {
     change: (id: string | null) => change(id),
@@ -80,5 +81,46 @@ test("profile and auth errors leave loading and do not look like a signed-out su
   await flush();
   assert.equal(h.states.at(-1)?.user, null);
   assert.match(h.states.at(-1)?.error || "", /could not be loaded/);
+  h.stop();
+});
+
+test('a missing authentication callback has a deadline, and unmount cancels it', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness();
+  t.mock.timers.tick(12_000);
+  assert.equal(h.states.at(-1)?.loading, false);
+  assert.match(h.states.at(-1)?.error || '', /Sign-in is taking too long/);
+  h.stop();
+  const stopped = harness();
+  stopped.stop();
+  t.mock.timers.tick(12_000);
+  assert.equal(stopped.states.length, 0);
+});
+
+test('a hanging profile exits the spinner and ignores its late result', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness();
+  h.change('alice');
+  t.mock.timers.tick(12_000);
+  assert.match(h.states.at(-1)?.error || '', /profile is taking too long/);
+  h.pending.get('alice')!.resolve(profile('alice'));
+  await flush();
+  assert.equal(h.states.at(-1)?.user, null);
+  h.change('bob');
+  h.pending.get('bob')!.resolve(profile('bob'));
+  await flush();
+  assert.equal(h.states.at(-1)?.user?.id, 'bob');
+  t.mock.timers.tick(12_000);
+  assert.equal(h.states.at(-1)?.user?.id, 'bob');
+  h.stop();
+});
+
+test('a missing user profile shows an actionable error instead of a login loop', async () => {
+  const h = harness();
+  h.change('alice');
+  h.pending.get('alice')!.resolve(null as unknown as User);
+  await flush();
+  assert.equal(h.states.at(-1)?.loading, false);
+  assert.match(h.states.at(-1)?.error || '', /profile was not found/);
   h.stop();
 });

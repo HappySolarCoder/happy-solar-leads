@@ -12,6 +12,7 @@ import {
 } from "./types";
 import { cleanConfig } from "./config";
 import { pilotFlags } from "./analysis";
+import { DIRECT_MOBILE_WRITES, commitDirectMutation, directPatch, reportingPatch } from './directWrites';
 import {
   putArea,
   readArea,
@@ -23,6 +24,7 @@ import {
 } from "./deviceStore";
 
 export async function fieldRequest(path: string, body?: unknown) {
+  if (DIRECT_MOBILE_WRITES) throw Error('This optional field service is unavailable in the production mobile app. Knocks sync directly to Firestore.');
   const token = await auth?.currentUser?.getIdToken();
   if (!token) throw Error("Sign in to use field tools.");
   const response = await apiFetch(path, {
@@ -51,7 +53,7 @@ export async function fieldRequest(path: string, body?: unknown) {
   return data;
 }
 import { syncOutbox } from "./syncOutbox";
-const locks = new Set<string>();
+const locks = new Map<string, Promise<void>>();
 export function useFieldData(user: User | null, liveLeads: Lead[]) {
   const uid = user?.id || "",
     active = useRef(uid);
@@ -108,30 +110,40 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     if (uid) update({ drafts: await readDrafts(uid) });
   }, [uid, update]);
   const loadConfig = useCallback(async () => {
+    if (DIRECT_MOBILE_WRITES) {
+      update({ config: DEFAULT_FIELD_CONFIG, ready: true });
+      return;
+    }
     if (!uid || !isDeviceOnline()) return;
     try {
       const data = await fieldRequest("/api/field-config");
       update({ config: cleanConfig(data.config), ready: true, error: "" });
     } catch (e) {
-      update({ error: (e as Error).message });
+      update({ config: DEFAULT_FIELD_CONFIG, error: (e as Error).message });
     }
   }, [uid, update]);
   const sync = useCallback(async () => {
     if (
       !uid ||
-      locks.has(uid) ||
       !isDeviceOnline() ||
       auth?.currentUser?.uid !== uid
     )
       return;
-    locks.add(uid);
-    setSyncing(true);
+    const ongoing = locks.get(uid);
+    if (ongoing) return ongoing;
+    const task = (async () => {
     try {
+      if (!(await readDrafts(uid)).length) return;
+      setSyncing(true);
       const result = await syncOutbox({
         read: () => readDrafts(uid),
         send: async m => {
-          const result = await fieldRequest('/api/field-work', m);
-          if (m.kind === 'knock' && !result.replayed && active.current === uid) {
+          const actor = latest.current.user;
+          if (!actor || actor.id !== uid) throw Error('Sign in again to sync your work.');
+          const result = DIRECT_MOBILE_WRITES
+            ? await commitDirectMutation(m, actor)
+            : await fieldRequest('/api/field-work', m);
+          if (!DIRECT_MOBILE_WRITES && m.kind === 'knock' && !result.replayed && active.current === uid) {
             // Existing rewards run only after a confirmed write, never for a pending draft.
             void (async () => {
               let egg, madness;
@@ -146,26 +158,40 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         block: putDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid && isDeviceOnline(),
       });
-      if (result.error) update({ error: result.error });
+      update({ error: result.error || '' });
       await reloadDrafts();
     } catch (e) {
       update({ error: (e as Error).message });
     } finally {
-      locks.delete(uid);
       if (active.current === uid) setSyncing(false);
     }
+    })();
+    locks.set(uid, task);
+    try { await task; } finally { if (locks.get(uid) === task) locks.delete(uid); }
   }, [uid, update, reloadDrafts]);
   useEffect(() => {
     if (!uid) return;
     let alive = true;
     setOffline(!isDeviceOnline());
     void Promise.all([readArea(uid), readDrafts(uid)])
-      .then(([area, drafts]) => {
+      .then(async ([area, drafts]) => {
+        // Recover existing API-backed knock/notes drafts exactly once. Preserve
+        // their original time and rep; Firestore rules still authorize every write.
+        const actor = latest.current.user;
+        if (DIRECT_MOBILE_WRITES && actor?.id === uid && auth?.currentUser?.uid === uid) {
+          for (const m of drafts) if (!m.direct && m.kind !== 'handoff') {
+            try {
+              await putDraft({ ...m, userName: m.userName || actor.name,
+                direct: { patch: reportingPatch(m, actor), legacy: true }, blocked: false, error: undefined });
+            } catch (e) { await putDraft({ ...m, blocked: true, error: (e as Error).message }); }
+          }
+          drafts = await readDrafts(uid);
+        }
         if (alive) {
           update({
             area,
             drafts,
-            ...(!isDeviceOnline() && area
+            ...(!DIRECT_MOBILE_WRITES && !isDeviceOnline() && area
               ? { config: area.config, ready: true }
               : {}),
           });
@@ -193,12 +219,15 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       if (document.visibilityState === "visible") online();
     };
     document.addEventListener("visibilitychange", visible);
+    // The app retries transient failures while open. No reads when the queue is empty.
+    const retryTimer = setInterval(() => { if (isDeviceOnline()) void sync(); }, 30000);
     return () => {
       alive = false;
       window.removeEventListener("online", online);
       window.removeEventListener("raydar-network-change", online);
       window.removeEventListener("offline", online);
       document.removeEventListener("visibilitychange", visible);
+      clearInterval(retryTimer);
     };
   }, [uid, update, loadConfig, sync]);
   const enqueue = useCallback(
@@ -229,6 +258,38 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     },
     [uid, reloadDrafts],
   );
+  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead) => {
+    const actor = latest.current.user;
+    if (!DIRECT_MOBILE_WRITES || !actor || actor.id !== uid || auth?.currentUser?.uid !== uid)
+      throw Error('Sign in with the rep who is recording this action.');
+    const clean = directPatch(patch), entry = clean.dispositionHistory?.[0];
+    if (entry) clean.dispositionHistory = [entry];
+    if (entry && (entry.userId !== uid || entry.userName !== actor.name))
+      throw Error('The knock identity does not match the signed-in rep.');
+    if (!current.area || !current.area.leads.some(l => l.id === lead.id)) {
+      const area = { userId: uid, user: actor, at: Date.now(), config: DEFAULT_FIELD_CONFIG,
+        leads: [lead, ...(current.area?.leads || latest.current.liveLeads).filter(l => l.id !== lead.id).slice(0, 24)] };
+      await putArea(area); update({ area });
+    }
+    await enqueue({ id: crypto.randomUUID(), userId: uid, userName: actor.name,
+      leadId: lead.id, createdAt: (entry ? new Date(entry.timestamp) : new Date()).toISOString(),
+      kind: entry ? 'knock' : 'notes', baseStatus: lead.status, baseNotes: lead.notes || '',
+      ...(entry ? { status: clean.status, disposition: entry.disposition } : {}),
+      direct: { patch: clean, ...(create ? { create } : {}) } });
+  }, [uid, enqueue, current.area, update]);
+  const ensureLeadSynced = useCallback(async (leadId: string) => {
+    if (!isDeviceOnline()) throw Error('Connect before sending the scheduling request.');
+    await sync();
+    if ((await readDrafts(uid)).some(m => m.leadId === leadId))
+      throw Error('This lead is still unsynced. Wait for sync or review its error before sending.');
+  }, [uid, sync]);
+  const retrySync = useCallback(async () => {
+    if (auth?.currentUser?.uid !== uid) return;
+    for (const m of await readDrafts(uid)) if (m.direct && m.blocked)
+      await putDraft({ ...m, blocked: false, error: undefined });
+    await reloadDrafts();
+    await sync();
+  }, [uid, sync, reloadDrafts]);
   const prepare = useCallback(
     async (leads: Lead[]) => {
       if (!user || !current.ready || !isDeviceOnline())
@@ -257,11 +318,14 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
   );
   return {
     ...current,
-    ...pilotFlags(current.config, uid),
+    ...pilotFlags(DIRECT_MOBILE_WRITES ? DEFAULT_FIELD_CONFIG : current.config, uid),
     leads,
     offline,
     syncing,
     enqueue,
+    enqueueDirect,
+    ensureLeadSynced,
+    retrySync,
     sync,
     discard,
     prepare,

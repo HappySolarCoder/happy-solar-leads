@@ -1,0 +1,68 @@
+{
+  "version": "12.5",
+  "date": "2026-10-11",
+  "mobileTests": {
+    "passed": 82,
+    "failed": 0,
+    "command": "npm run mobile:test"
+  },
+  "staticMobileExport": {
+    "passed": true,
+    "typescriptPassed": true,
+    "syntheticConfiguration": true,
+    "command": "node scripts/mobile/check-export.mjs"
+  },
+  "focusedLint": {
+    "passed": true,
+    "files": [
+      "app/homeowners/cache.ts",
+      "tests/mobile/homeowners.test.ts"
+    ]
+  },
+  "browserCacheUpgrade": {
+    "version": "12.5",
+    "browserMigration": true,
+    "allAccountCachesCleared": true,
+    "receiptsCleared": true,
+    "pendingWorkPreserved": true,
+    "firstViewportQueries": 2,
+    "repeatViewportQueries": 0,
+    "offlineQueries": 0,
+    "correctedCoordinateDrawing": {
+      "hit": "fixture-coordinate-correction",
+      "oldHit": false,
+      "alpha": 255
+    },
+    "liveFirebaseReads": 0,
+    "remoteRequests": [],
+    "errors": []
+  },
+  "unchangedDatabaseAccess": {
+    "collection": "homeowners",
+    "queryLimit": 500,
+    "maxViewReads": 2000,
+    "maxViewQueries": 12,
+    "ttlDays": 30,
+    "canonicalFields": [
+      "lat",
+      "lng",
+      "geohash"
+    ],
+    "clientHomeownerWrites": 0,
+    "bulkRereads": 0,
+    "backfills": 0,
+    "rulesIndexSchemaChanges": 0
+  },
+  "liveSpotCheck": {
+    "document": "homeowners/91-edgebrook-ln-irondequoit-ny",
+    "project": "gen-lang-client-0395385938",
+    "attempt": "one exact read without credentials",
+    "httpStatus": 403,
+    "error": "PERMISSION_DENIED",
+    "rooftopAlignmentVerified": false,
+    "reason": "No authenticated Firebase session available"
+  },
+  "nativeDeviceBuild": "Not performed in this environment",
+  "productionDeployment": false,
+  "githubPublication": false
+}

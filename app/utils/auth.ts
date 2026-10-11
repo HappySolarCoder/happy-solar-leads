@@ -3,12 +3,37 @@ import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { User } from '@/app/types';
+import { observeMobileSession } from '@/app/mobile/_lib/mobileSession';
 
 // Get currently authenticated user from Firestore
 export async function getCurrentAuthUser(): Promise<User | null> {
   if (!auth || !db) {
     console.warn('Firebase not initialized');
     return null;
+  }
+
+  // Auxiliary mobile pages (territories/users/team) need the same bounded
+  // profile loading as Today. Keep the website's existing path below.
+  if (process.env.NEXT_PUBLIC_NATIVE_BUILD === '1') {
+    return new Promise((resolve, reject) => {
+      let stop = () => {};
+      stop = observeMobileSession(
+        (next, error) => onAuthStateChanged(auth!, user => next(user?.uid || null), error),
+        async id => {
+          const snapshot = await getDoc(doc(db!, 'users', id));
+          if (!snapshot.exists()) return null;
+          const data = snapshot.data();
+          return { ...data, id, createdAt: data.createdAt?.toDate?.() || new Date(),
+            lastLogin: data.lastLogin?.toDate?.() } as User;
+        },
+        session => {
+          if (session.loading) return;
+          stop();
+          if (session.error) reject(new Error(session.error));
+          else resolve(session.user);
+        },
+      );
+    });
   }
 
   return new Promise((resolve) => {

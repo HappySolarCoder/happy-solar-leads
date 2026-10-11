@@ -64,6 +64,8 @@ export type LeadType = 'prospect' | 'customer' | 'sale';
 
 export interface Lead {
   id: string;
+  /** Snapshot of the imported home, retained with this visit; import stays read-only. */
+  homeowner?: import('@/app/homeowners/model').Homeowner;
   leadType?: LeadType; // default: prospect
   name: string;
   address: string;

@@ -134,6 +134,9 @@ export const DEFAULT_FIELD_CONFIG: FieldConfig = {
   schedulingPhone: "",
 };
 export type FieldMutation = {
+  // Device-only queue payload. Never written as a new Firestore document/field.
+  userName?: string;
+  direct?: { patch: Partial<Lead>; create?: Lead; legacy?: boolean };
   id: string;
   userId: string;
   leadId: string;

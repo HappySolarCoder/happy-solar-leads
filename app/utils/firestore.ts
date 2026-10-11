@@ -7,6 +7,7 @@ import {
   setDoc, 
   updateDoc, 
   deleteDoc,
+  deleteField,
   query,
   where,
   orderBy,
@@ -446,7 +447,11 @@ export async function updateLead(id: string, updates: Partial<Lead>): Promise<vo
     if (data.assignedAt) data.assignedAt = toTimestamp(data.assignedAt);
     if (data.solarTestedAt) data.solarTestedAt = toTimestamp(data.solarTestedAt);
     if (data.objectionRecordedAt) data.objectionRecordedAt = toTimestamp(data.objectionRecordedAt);
-    
+    // unclaimLead intentionally clears these fields. Firestore rejects undefined;
+    // deletion preserves the existing rules' unchanged-or-missing ownership check.
+    for (const field of ['claimedBy', 'claimedAt']) {
+      if (Object.prototype.hasOwnProperty.call(data, field) && data[field] === undefined) data[field] = deleteField();
+    }
     await updateDoc(leadRef, data);
   } catch (error) {
     console.error('Error updating lead:', error);

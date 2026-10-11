@@ -94,7 +94,7 @@ export function isSolarWarmLead(lead: Lead): boolean {
 }
 
 export function fieldPinZoomTier(zoom: number): number {
-  return zoom < 12 ? 0 : zoom < 14 ? 1 : zoom < 16 ? 2 : zoom < 18 ? 3 : 4;
+  return zoom < 12 ? 0 : zoom < 14 ? 1 : zoom < 17 ? 2 : zoom < 18 ? 3 : zoom < 19 ? 4 : 5;
 }
 
 // Signal R is inline vector geometry: no per-pin asset requests or bitmap decoding.
@@ -108,10 +108,12 @@ export function fieldPinArtwork(
   const style = fieldPinStyle(lead, disposition);
   const tier = fieldPinZoomTier(zoom);
   // Tap targets stay 44px in LeadMap; these are visual dimensions only.
-  const size = [10, 14, 18, 24, 20][tier];
+  const compact = zoom < 19;
+  const size = [6, 7, 7, 9, 14, 20][tier] + (selected && compact ? 6 : 0);
   const warm = isSolarWarmLead(lead);
   const key = [
     size,
+    compact,
     style.kind,
     style.color,
     style.solar,
@@ -122,9 +124,9 @@ export function fieldPinArtwork(
   ].join(":");
   let url = cache.get(key);
   if (!url) {
-    const small = zoom < 14;
+    const small = compact;
     let svg = small
-      ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 56"><circle cx="24" cy="28" r="18" fill="${style.color}" stroke="${style.outcome?.color || style.solar}" stroke-width="5"/><circle cx="24" cy="28" r="7" fill="white"/>${selected ? '<circle cx="24" cy="28" r="23" fill="none" stroke="#0bcbdd" stroke-width="2"/>' : ""}</svg>`
+      ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">${selected ? '<circle cx="10" cy="10" r="9" fill="none" stroke="#F4C84A" stroke-width="2"/>' : ''}<circle cx="10" cy="10" r="7.5" fill="${style.color}" stroke="#fffcf5" stroke-width="1.5"/>${style.outcome ? `<circle cx="10" cy="10" r="5.5" fill="none" stroke="${style.outcome.color}" stroke-width="1.5"/>` : ''}</svg>`
       : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 56">${selected ? '<path d="M2 15V3h12m20 0h12v12M2 31v12h9m26 0h9V31" fill="none" stroke="#00d4de" stroke-width="2"/>' : ""}<path d="M24 53 8 35V13l7-7h18l7 7v22z" fill="#173240" stroke="white" stroke-width="2"/><path d="M24 47 12 33V15l5-5h14l5 5v18z" fill="${style.color}"/><path d="M17 11h14" stroke="${style.solar}" stroke-width="3" stroke-linecap="round"/><g transform="translate(12 16)" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${glyphs[style.kind]}</g>${style.outcome ? `<rect x="29" y="0" width="19" height="18" rx="6" fill="${style.outcome.color}" stroke="white" stroke-width="1.5"/><text x="38.5" y="13" text-anchor="middle" fill="white" font-family="Arial,sans-serif" font-weight="bold" font-size="12">${escape(style.outcome.symbol)}</text>` : ""}</svg>`;
     if (warm && !small) {
       // Keep the main disposition glyph and the opposite-side GHL outcome badge.
@@ -135,6 +137,6 @@ export function fieldPinArtwork(
     cache.set(key, url);
   }
   const label = `${style.label}${warm ? ' · Raydar solar-rated warm lead' : ''}${style.outcome ? ` · GHL ${style.outcome.label}` : ""}${lead.solarCategory ? ` · ${lead.solarCategory} roof` : ""}`;
-  const height = Math.round((size * 56) / 48);
-  return { url, size, height, label, style };
+  const height = compact ? size : Math.round((size * 56) / 48);
+  return { url, size, height, anchorY: compact ? height / 2 : height * 53 / 56, label, style };
 }

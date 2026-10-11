@@ -1,14 +1,12 @@
-/** Quiet, centered property marks keep roofs visible. Selection expands only one home. */
+/** Compact at neighborhood zoom; a clearer circle at roof zoom. No roof polygons are available. */
 export function homeownerPinArtwork(
-  renter: boolean,
+  _renter: boolean,
   zoom: number,
   selected = false,
 ) {
-  const size = selected ? 16 : zoom < 17 ? 6 : zoom < 18 ? 7 : 8;
-  const shape = renter
-    ? '<path data-renter="true" d="m10 3 7 7-7 7-7-7z"'
-    : '<circle cx="10" cy="10" r="6"';
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">${selected ? '<circle cx="10" cy="10" r="9" fill="none" stroke="#00c4d0" stroke-width="2"/>' : ''}${shape} fill="none" stroke="#fffcf5" stroke-width="4"/>${shape} fill="#e6edf2" fill-opacity=".35" stroke="#617182" stroke-width="1.8"/></svg>`;
+  const normal = zoom < 17 ? 7 : zoom < 18 ? 9 : zoom < 19 ? 14 : 18;
+  const size = selected ? normal + 6 : normal;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">${selected ? '<circle cx="10" cy="10" r="9" fill="none" stroke="#F4C84A" stroke-width="2"/>' : ''}<circle cx="10" cy="10" r="7.5" fill="#476E88" stroke="#fffcf5" stroke-width="1.5"/></svg>`;
   return {
     url: "data:image/svg+xml," + encodeURIComponent(svg),
     size,

@@ -1,0 +1,47 @@
+{
+  "release": "14.2/142",
+  "unitTests": {
+    "passed": 103,
+    "failed": 0,
+    "skipped": 0
+  },
+  "nativeAuth": {
+    "sdkVersion": "12.9.0",
+    "engine": "Chromium with iPhone user agent; remote Auth responses are fixtures",
+    "liveRequests": 0,
+    "oldBrowserInitializerStallsPastSessionDeadline": true,
+    "freshIPhoneSessionReadyMs": 13,
+    "emailPasswordAndIndexedDBSessionRestore": true,
+    "signOutPersists": true,
+    "existingLocalStorageSessionRetained": true,
+    "androidSessionRestore": true,
+    "nativePopupRequests": 0,
+    "errors": []
+  },
+  "reactStartup": {
+    "currentBrandAndVersion": true,
+    "oneProfileReadAfterLogin": true,
+    "profileTimeoutAndRetry": true,
+    "lateProfileIgnored": true,
+    "signInTimeoutWithoutDuplicateRequest": true,
+    "lateSignInRecovers": true,
+    "invalidCredentialRecovery": true,
+    "nativeResumeEvent": true,
+    "liveRequests": 0,
+    "errors": []
+  },
+  "productionExport": true,
+  "iosAssets": true,
+  "iosSync": true,
+  "bundledReleaseVerified": true,
+  "nativeXcodeCompiledHere": false,
+  "physicalDeviceTested": false,
+  "liveMacSignInVerified": false,
+  "productionWrites": 0,
+  "productionDeployments": 0,
+  "limitations": [
+    "Chromium auth test uses an iPhone user agent and intercepted fictional API responses, not WKWebView.",
+    "The user confirmed the v14.1 native build and supplied a v14.1 session-timeout screenshot; v14.2 still needs Mac acceptance.",
+    "Existing Manage Users backend 404 and physical-device reporting proof are not resolved by this source-only patch."
+  ]
+}

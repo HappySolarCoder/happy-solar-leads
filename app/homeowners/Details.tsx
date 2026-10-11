@@ -5,10 +5,10 @@ import MobileDialog from "@/app/mobile/_components/MobileDialog";
 import { occupancyLabel, suspectedRenter, type Homeowner } from "./model";
 import type { HomeownerState } from "./loader";
 import { homeownerPinArtwork } from "./artwork";
-export function HomeownerSection({ homeowner: h }: { homeowner?: Homeowner }) {
+export function HomeownerSection({ homeowner: h, compact = false }: { homeowner?: Homeowner; compact?: boolean }) {
   if (!h) return null;
   return (
-    <section className="rh-info" aria-label="Homeowner information">
+    <section className={`rh-info${compact ? ' rh-info-compact' : ''}`} aria-label="Homeowner information">
       <div className="rh-info-top">
         <Home size={20} />
         <span>Homeowner record</span>
@@ -17,12 +17,13 @@ export function HomeownerSection({ homeowner: h }: { homeowner?: Homeowner }) {
       <span className={`rh-occupancy ${suspectedRenter(h) ? "rh-renter" : ""}`}>
         {occupancyLabel(h)}
       </span>
-      <p className="rh-note">
+      {!compact && <p className="rh-note">
         Occupancy is an estimate from property records. Confirm it in
         conversation.
-      </p>
+      </p>}
       <details>
         <summary>Property details</summary>
+        {compact && <p className="rh-note">Occupancy is estimated from property records. Confirm it in conversation.</p>}
         <dl>
           <dt>Address</dt>
           <dd>{h.address}</dd>
@@ -165,7 +166,7 @@ export function HomeownerStatus({
               </button>
             </div>
             <p className="rh-note">
-              Gray pins show property records. Existing visit pins keep their
+              Slate-blue circles show property records. Existing visit pins keep their
               colors and outcomes.
             </p>
             {state.error && <p role="status">{state.error}</p>}

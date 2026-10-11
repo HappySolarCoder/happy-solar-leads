@@ -1,7 +1,11 @@
 // Firebase Configuration and Initialization
 import { initializeApp, getApps, getApp, FirebaseApp, deleteApp } from 'firebase/app';
-import { getFirestore, Firestore } from 'firebase/firestore';
-import { getAuth, Auth } from 'firebase/auth';
+import { getFirestore, initializeFirestore, Firestore } from 'firebase/firestore';
+import type { Auth } from 'firebase/auth';
+import { Capacitor } from '@capacitor/core';
+import { nativeFirestoreSettings } from './firestoreTransport';
+import { initializeClientAuth } from './firebaseAuth';
+import { startupEvent } from '@/app/mobile/_lib/startupDiagnostics';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -20,8 +24,12 @@ let auth: Auth | null = null;
 
 if (typeof window !== 'undefined' && firebaseConfig.apiKey) {
   app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-  db = getFirestore(app);
-  auth = getAuth(app);
+  const nativeBuild = process.env.NEXT_PUBLIC_NATIVE_BUILD === '1';
+  const platform = Capacitor.getPlatform();
+  auth = initializeClientAuth(app, nativeBuild, platform);
+  startupEvent(nativeBuild && platform !== 'web' ? 'auth-config-native' : 'auth-config-browser');
+  const settings = nativeFirestoreSettings(nativeBuild, platform);
+  db = settings ? initializeFirestore(app, settings) : getFirestore(app);
 }
 
 // Helper to create secondary app for privileged actions (e.g., admin creating users)
@@ -29,7 +37,7 @@ export async function createSecondaryAuth() {
   if (typeof window === 'undefined' || !firebaseConfig.apiKey) return null;
   const name = `secondary-${Date.now()}`;
   const secondaryApp = initializeApp(firebaseConfig, name);
-  const secondaryAuth = getAuth(secondaryApp);
+  const secondaryAuth = initializeClientAuth(secondaryApp, process.env.NEXT_PUBLIC_NATIVE_BUILD === '1', Capacitor.getPlatform());
   return {
     auth: secondaryAuth,
     dispose: async () => {

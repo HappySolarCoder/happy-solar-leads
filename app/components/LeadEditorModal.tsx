@@ -5,12 +5,17 @@ import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
+import { sendSchedulingWebhook } from '@/app/utils/schedulingWebhook';
+import { auth } from '@/app/utils/firebase';
 import {
   FALLBACK_SCHEDULING_MANAGER_PHONE,
   schedulingManagerTelDigits,
 } from '@/app/utils/schedulingManagerTel';
 
 interface LeadEditorModalProps {
+  signedInRep?: User | null;
+  beforeSend?: () => Promise<void>;
+  saveLeadPatch?: (patch: Partial<Lead>) => Promise<void>;
   mobileMode?: boolean;
   pendingFieldWork?: boolean;
   fieldContext?: string;
@@ -20,7 +25,7 @@ interface LeadEditorModalProps {
   onSave: () => void;
 }
 
-export default function LeadEditorModal({ lead, onClose, onSave, fieldContext, onInfoSent, mobileMode = false, pendingFieldWork = false }: LeadEditorModalProps) {
+export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, signedInRep, fieldContext, onInfoSent, mobileMode = false, pendingFieldWork = false, saveLeadPatch }: LeadEditorModalProps) {
   const [formData, setFormData] = useState({
     name: lead.name,
     address: lead.address,
@@ -44,7 +49,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, fieldContext, o
     let cancelled = false;
 
     async function loadUser() {
-      const user = await getCurrentUserAsync();
+      const user = signedInRep || await getCurrentUserAsync();
       if (!cancelled) setCurrentUser(user);
     }
 
@@ -60,7 +65,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, fieldContext, o
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [signedInRep]);
 
   const handleSave = async () => {
     if (mobileMode && pendingFieldWork) { alert('Sync or review this pin’s pending changes in Field tools before editing contact details. You can still send the scheduling information.'); return; }
@@ -80,12 +85,16 @@ export default function LeadEditorModal({ lead, onClose, onSave, fieldContext, o
         notes: formData.notes || undefined,
       };
 
-      if (mobileMode) {
+      if (saveLeadPatch) {
+        await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+      } else if (mobileMode) {
         const { updateLeadAsync } = await import('@/app/utils/storage');
         await updateLeadAsync(lead.id, { name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
       } else await saveLeadAsync(updatedLead);
       invalidateLeadsCache(); // Ensure fresh data after update
       onSave();
+    } catch (error) {
+      alert(`Changes could not be saved. ${(error as Error).message}`);
     } finally {
       setIsSaving(false);
     }
@@ -97,7 +106,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, fieldContext, o
     try {
       // 0. Validate required fields before doing anything
       const missing: string[] = [];
-      const isBlank = (v: any) => !String(v ?? '').trim();
+      const isBlank = (v: unknown) => !String(v ?? '').trim();
 
       if (isBlank(formData.name)) missing.push('Name');
       if (isBlank(formData.address)) missing.push('Street Address');
@@ -120,25 +129,23 @@ export default function LeadEditorModal({ lead, onClose, onSave, fieldContext, o
       }
 
       // 1. Get current user (fallback if state not loaded yet)
-      const user = currentUser || await getCurrentUserAsync();
+      const user = signedInRep || currentUser || await getCurrentUserAsync();
+      if (mobileMode && (!user || auth?.currentUser?.uid !== user.id)) throw Error('Sign in again before sending this request.');
       
-      console.log('=== USER DEBUG ===');
-      console.log('Current user from state:', currentUser);
-      console.log('User for message:', user);
-      console.log('User name:', user?.name);
 
       // 2. Get admin settings from Firestore (synced across devices)
       const settings = await getAdminSettingsAsync();
 
-      console.log('=== SETTINGS DEBUG ===');
-      console.log('Settings loaded from Firestore:', settings);
-      console.log('Webhook URL:', settings?.notificationWebhook);
 
       if (!settings?.notificationWebhook) {
-        console.error('Settings check failed:', { settings });
         alert(`Webhook not configured!\n\nGo to Admin → Settings and configure Discord webhook.\n\n(Settings are now synced via Firestore - works on all devices!)`);
         return;
       }
+
+      // A new imported home becomes a visit only on an explicit Save/Send action.
+      // Persist before the webhook so the scheduling request has a real lead.
+      if (saveLeadPatch) await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+      await beforeSend?.();
 
       // 3. Build and send webhook notification
       let solarSection = '';
@@ -150,9 +157,6 @@ export default function LeadEditorModal({ lead, onClose, onSave, fieldContext, o
 - South-Facing Roof: ${lead.hasSouthFacingRoof !== undefined ? (lead.hasSouthFacingRoof ? 'Yes ✅' : 'No ❌') : 'N/A'}`;
       }
 
-      console.log('=== FORM DATA DEBUG ===');
-      console.log('Form data:', formData);
-      console.log('Lead name:', formData.name);
 
       const leadInfo = `
 📞 **Scheduling Manager Request**
@@ -165,13 +169,12 @@ export default function LeadEditorModal({ lead, onClose, onSave, fieldContext, o
 📧 Email: ${formData.email || 'N/A'}
 💰 Est. Bill: ${formData.estimatedBill ? `$${formData.estimatedBill}/mo` : 'N/A'}${solarSection}
 
-📝 Notes: ${formData.notes || 'None'}
-${fieldContext ? `Field context: ${fieldContext}` : ''}
+📝 Notes: ${formData.notes || 'None'}${fieldContext ? `\nField context: ${fieldContext}` : ''}
 
 🎯 **Action Required:** Call customer to schedule appointment
       `.trim();
 
-      const payload = settings.notificationType === 'discord'
+      const payload: Record<string, string> = settings.notificationType === 'discord'
         ? { content: leadInfo }
         : settings.notificationType === 'googlechat'
         ? { text: leadInfo }
@@ -179,26 +182,20 @@ ${fieldContext ? `Field context: ${fieldContext}` : ''}
         ? { text: leadInfo }
         : { message: leadInfo };
 
-      console.log('Sending webhook to:', settings.notificationWebhook);
 
       // Send webhook
-      const response = await fetch(settings.notificationWebhook, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const response = await sendSchedulingWebhook(settings.notificationWebhook, payload);
 
       if (response.ok) {
-        console.log('✅ Webhook sent successfully');
         setInfoSent(true);
         void onInfoSent?.().catch(() => {});
       } else {
         console.error('❌ Webhook failed:', response.status, response.statusText);
         alert(`Failed to send notification: ${response.status} ${response.statusText}`);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('❌ Webhook error:', err);
-      alert(`Error sending notification: ${err.message}`);
+      alert(`Error sending notification: ${(err as Error).message}`);
     } finally {
       setIsSending(false);
     }

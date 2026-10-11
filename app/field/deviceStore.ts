@@ -1,5 +1,6 @@
 import type { Lead, User } from "@/app/types";
 import type { FieldConfig, PendingMutation } from "./types";
+import { mergeReportingPatch, reportingPatch } from './directWrites';
 export type PreparedArea = {
   userId: string;
   at: number;
@@ -68,6 +69,19 @@ export function overlayDrafts(
   leads: Lead[],
   drafts: PendingMutation[],
 ): Lead[] {
+  if (drafts.some(m => m.direct)) {
+    const map = new Map(leads.map(l => [l.id, l]));
+    for (const m of drafts) {
+      if (!m.direct) continue;
+      const lead = map.get(m.leadId) || m.direct.create;
+      if (!lead) continue;
+      try {
+        const patch = reportingPatch(m, { id: m.userId, name: m.userName || 'Pending sync' } as User);
+        map.set(lead.id, { ...lead, ...mergeReportingPatch(lead, patch).patch });
+      } catch { /* The visible queue error keeps malformed drafts reviewable. */ }
+    }
+    return overlayDrafts([...map.values()], drafts.filter(m => !m.direct));
+  }
   const byId = new Map<string, PendingMutation[]>(),
     blocked = new Set<string>();
   for (const m of drafts) {

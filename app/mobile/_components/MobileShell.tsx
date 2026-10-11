@@ -17,6 +17,7 @@ import {
   Crosshair,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
 
 export const mobileTabs = [
   { href: "/mobile", label: "Today", icon: Home },
@@ -129,6 +130,7 @@ export function MobileLoading() {
       <h1>Getting your day ready</h1>
       <LoaderCircle className="rm-spin" size={22} />
       <span>Loading your Raydar workspace</span>
+      <small>{MOBILE_BUILD_LABEL}</small>
     </div>
   );
 }

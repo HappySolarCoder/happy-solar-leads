@@ -1,0 +1,77 @@
+{
+  "version": "12.6",
+  "baseCommit": "1602aef",
+  "overallLiveAcceptance": "FAIL - incomplete: physical devices, signed-in production readback and reporting endpoint unavailable",
+  "automated": {
+    "unitTests": {
+      "passed": 90,
+      "failed": 0
+    },
+    "typescriptAndStaticExport": {
+      "audit": "PASS",
+      "productionFirebaseSDK": "PASS",
+      "routes": 51
+    },
+    "focusedLint": "PASS - zero errors/warnings in new direct-write modules and edited modal",
+    "browserKnockPage": {
+      "commonDispositions": 7,
+      "typedTimestamps": true,
+      "repIdentityAndGps": true,
+      "ownershipUnchangedOnUpdate": true,
+      "offlineReloadAutoSync": true,
+      "originalKnockTime": true,
+      "lostAcknowledgementRetryWithoutDuplicate": true,
+      "visibleUnsyncedCount": true,
+      "schedulerPayloadAndSaveBeforeSend": true,
+      "explicitClaimUnclaim": true,
+      "compactNeighborhoodPins": true,
+      "forbiddenApiRequests": [],
+      "liveWrites": 0,
+      "fixtureWrites": 12,
+      "createAttempts": 5,
+      "errors": []
+    }
+  },
+  "productionConfig": {
+    "apiBase": "https://happy-solar-leads.vercel.app",
+    "firebaseProject": "gen-lang-client-0395385938",
+    "database": "(default)",
+    "guard": "PASS - reject wrong API/project before export"
+  },
+  "physicalDevices": {
+    "iPhone": "FAIL - not available, no test performed",
+    "Android": "FAIL - not available, no test performed"
+  },
+  "productionLeadReadback": "FAIL - no authenticated rep session/test lead IDs",
+  "productionFieldSettings": "FAIL - unauthenticated read returned 403; document contents not inferred",
+  "productionReporting": "FAIL - supplied deployment returned 404 DEPLOYMENT_NOT_FOUND",
+  "publicReadOnlyProbes": {
+    "checkedAt": "2026-10-11T20:49:29.135635+00:00",
+    "credentialsSent": false,
+    "writes": 0,
+    "results": [
+      {
+        "url": "https://happy-solar-leads.vercel.app/api/field-work",
+        "status": 404,
+        "body": "<!DOCTYPE html><!--8n9QGYQYgqGrW_s3n0pN0--><html lang=\"en\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"stylesheet\" href=\"/_next/static/chunks/b62f052f2c63a26c.css?dpl=dpl_DWyMRfBdVVCqJMncqTnTUNfcMgub\" data-precedence=\"next\"/><link rel=\"preload\" as=\"script\" fetchPriority=\"low\" href=\"/_next/static/chunks/cac5d456dc7f52db.js?dpl=dpl_DWyMRfBdVVCqJMncqTnTUNfcMgub\"/><script src=\"/_next/static/chunks/8e5e45a2aff579b5.js?dpl=dpl_DWyMRfBdVVCqJMncqTnTUNfcMgub\" async=\"\"></script><script src=\"/_next/static/chunks/aee6c7720838f8a2.js?dpl=dpl_DWyMRfBdVVCqJMncqTnTUNfcMgub\" async=\"\"></script><script src=\"/_next/static/chunks/7d6514a90169e63d.j"
+      },
+      {
+        "url": "https://firestore.googleapis.com/v1/projects/gen-lang-client-0395385938/databases/(default)/documents/field_settings/v11",
+        "status": 403,
+        "body": "{\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Missing or insufficient permissions.\",\n    \"status\": \"PERMISSION_DENIED\"\n  }\n}\n"
+      },
+      {
+        "url": "https://happy-solar-reporting.vercel.app/api/metrics/raydar_doors_knocked?period=today&format=json",
+        "status": 404,
+        "body": "The deployment could not be found on Vercel.\n\nDEPLOYMENT_NOT_FOUND\n\ncle1::w2422-1791751769090-a50b3233bd44\n"
+      }
+    ]
+  },
+  "productionWrites": 0,
+  "productionWebDeployments": 0,
+  "homeownerWrites": 0,
+  "rulesOrIndexChanges": false,
+  "mapQueriesChanged": false,
+  "mapRendering": "PASS - browser measured actual compact dimensions, forced CSS defeats Leaflet width:auto",
+  "costNote": "Existing-lead sync adds a targeted transaction read, with possible retry/rule-dependent reads. Map changes add no reads. No bulk re-reads."
+}

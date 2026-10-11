@@ -1,6 +1,9 @@
 'use client';
 
-import { HomeownerDetail } from '@/app/homeowners/Details';
+import { createHomeownerVisit, homeownerVisitDraft, type HomeownerVisit } from '@/app/homeowners/visit';
+import { auth, db } from '@/app/utils/firebase';
+import { isDeviceOnline } from '@/app/utils/connectivity';
+import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
 import type { Homeowner } from '@/app/homeowners/model';
 import { useDeviceValue } from '../_components/useDeviceValue';
 
@@ -21,9 +24,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, List, Navigation, Filter, MapPin, Settings, Search, X, Route, Clock, Footprints, Car } from 'lucide-react';
-import { getUsersAsync } from '@/app/utils/storage';
+import { getUsersAsync, saveLeadAsync, updateLeadAsync } from '@/app/utils/storage';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
 const LeadDetail = dynamic(() => import('@/app/components/LeadDetail'), { ssr: false });
+const HomeownerKnockDetail = dynamic(() => import('@/app/homeowners/KnockDetail'), { ssr: false });
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
@@ -50,7 +54,16 @@ const EMPTY_LEADS: Lead[] = [];
 export default function KnockingPage() {
   const router = useRouter();
 
-  const { user: currentUser, live, leads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dataUnavailable, error: sessionError } = useMobileData();
+  const { user: currentUser, field, live, leads: liveLeads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dataUnavailable, error: sessionError } = useMobileData();
+  const directSave = useRef(field.enqueueDirect); directSave.current = field.enqueueDirect;
+  const homeVisits = useRef(new Map<string, HomeownerVisit>());
+  const [savedHomeVisits, setSavedHomeVisits] = useState<Lead[]>([]);
+  const leads = useMemo(() => {
+    if (!savedHomeVisits.length) return liveLeads;
+    const ids = new Set(liveLeads.map(l => l.id));
+    const extra = savedHomeVisits.filter(l => !ids.has(l.id));
+    return extra.length ? [...liveLeads, ...extra] : liveLeads;
+  }, [liveLeads, savedHomeVisits]);
   const [selectedHomeowner, setSelectedHomeowner] = useState<Homeowner | undefined>();
   const [homePreference, setHomePreference] = useDeviceValue(`raydar-homeowners:${currentUser?.id || ""}`, "localStorage");
   const showHomeowners = homePreference !== "off";
@@ -174,7 +187,12 @@ export default function KnockingPage() {
   }, [currentUser]);
 
   // Successful writes arrive on the existing listener without refetching every lead.
-  const refreshLeads = useCallback(async () => setWriteError(null), []);
+  const refreshLeads = useCallback(async (updatedLead?: Lead) => {
+    setWriteError(null);
+    // Keep the acknowledged manual record visible after explicit unclaim removes
+    // it from the claimed-leads subscription. This does not fetch extra leads.
+    if (updatedLead) setSavedHomeVisits(previous => [...previous.filter(l => l.id !== updatedLead.id), updatedLead]);
+  }, []);
   const handleLeadSelect = useCallback((lead: Lead, homeowner?: Homeowner) => {
     setSelectedHomeowner(homeowner);
     setSelectedLeadId(lead.id);
@@ -403,7 +421,27 @@ export default function KnockingPage() {
     ? [gpsPosition.lat, gpsPosition.lng] : undefined, [gpsPosition?.lat, gpsPosition?.lng]);
 
   const homeownerLeads = useMemo(() => mergeHistoricalTerritoryPins(leads, historicalPins, currentUser?.id), [leads, historicalPins, currentUser?.id]);
-  const handleHomeownerSelect = useCallback((homeowner: Homeowner) => { setSelectedLeadId(undefined); setSelectedHomeowner(homeowner); setShowLeadDetail(true); }, []);
+  const handleHomeownerSelect = useCallback((homeowner: Homeowner) => {
+    if (!currentUser) return;
+    if (!homeVisits.current.has(homeowner.id)) {
+      // Keep retries on the same ID. Merely inspecting a home performs no write.
+      if (homeVisits.current.size >= 64) {
+        const first = homeVisits.current.keys().next().value;
+        if (first) homeVisits.current.delete(first);
+      }
+      const uid = currentUser.id;
+      homeVisits.current.set(homeowner.id, createHomeownerVisit(
+        homeownerVisitDraft(homeowner, currentUser, crypto.randomUUID()), {
+          create: DIRECT_MOBILE_WRITES ? async lead => directSave.current(lead, lead, lead) : saveLeadAsync,
+          update: DIRECT_MOBILE_WRITES ? async (id, patch) => directSave.current({ id } as Lead, patch) : updateLeadAsync,
+          online: isDeviceOnline, durableOffline: DIRECT_MOBILE_WRITES,
+          active: () => !!db && auth?.currentUser?.uid === uid,
+        },
+      ));
+    }
+    setSelectedLeadId(undefined); setSelectedHomeowner(homeowner); setShowLeadDetail(true);
+  }, [currentUser]);
+  const selectedHomeVisit = selectedHomeowner && homeVisits.current.get(selectedHomeowner.id);
 
   // Get selected lead
   const selectedLead = leads.find(l => l.id === selectedLeadId);
@@ -1055,7 +1093,15 @@ export default function KnockingPage() {
 
       <MobileNav />
 
-      {selectedHomeowner && !selectedLeadId && showLeadDetail && <HomeownerDetail homeowner={selectedHomeowner} onClose={() => {setSelectedHomeowner(undefined);setShowLeadDetail(false);}} />}
+      {selectedHomeVisit && currentUser && !selectedLeadId && showLeadDetail && <HomeownerKnockDetail
+        key={selectedHomeVisit.lead.id} visit={selectedHomeVisit} currentUser={currentUser}
+        dispositions={dispositions} loading={dataLoading || dataUnavailable}
+        onClose={() => { setSelectedHomeowner(undefined); setShowLeadDetail(false); }}
+        onUpdate={(updatedLead) => {
+          if (updatedLead) { void refreshLeads(updatedLead); return; }
+          if (selectedHomeVisit.saved) setSavedHomeVisits(previous => [...previous.filter(l => l.id !== selectedHomeVisit.lead.id), selectedHomeVisit.lead]);
+          void refreshLeads();
+        }} />}
       {/* Lead Detail Panel */}
       {selectedLead && showLeadDetail && (
         <LeadDetail

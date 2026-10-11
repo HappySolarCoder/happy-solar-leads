@@ -38,6 +38,9 @@
   font-weight: 700;
   margin: 9px 0;
 }
+.rh-info-compact { margin: 0 0 14px; padding: 12px; }
+.rh-info-compact h3 { margin: 6px 0; }
+.rh-info-compact summary { padding: 6px 0 0; }
 .rh-occupancy {
   display: inline-block;
   font-size: 12px;
