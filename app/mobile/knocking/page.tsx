@@ -54,7 +54,7 @@ const EMPTY_LEADS: Lead[] = [];
 export default function KnockingPage() {
   const router = useRouter();
 
-  const { user: currentUser, field, live, leads: liveLeads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dataUnavailable, error: sessionError } = useMobileData();
+  const { user: currentUser, field, live, leads: liveLeads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dataUnavailable, error: sessionError, refresh } = useMobileData();
   const directSave = useRef(field.enqueueDirect); directSave.current = field.enqueueDirect;
   const homeVisits = useRef(new Map<string, HomeownerVisit>());
   const [savedHomeVisits, setSavedHomeVisits] = useState<Lead[]>([]);
@@ -635,7 +635,7 @@ export default function KnockingPage() {
           filterCount={solarFilter.length + Number(dispositionFilter !== 'all') + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly)}
           accuracy={gpsPosition?.accuracy} gpsError={!!gpsError} gpsLoading={gpsLoading} knocks={dataLoading || dataUnavailable ? undefined : todaysKnocks}
           onLocate={() => { if (gpsPosition) { setMapCenter([gpsPosition.lat, gpsPosition.lng]); setMapZoom(17); } }} />
-        {live?.error && <MobileNotice>{live.error}</MobileNotice>}
+        {live?.error && <MobileNotice>{live.error}<button className="ml-2 underline font-semibold" onClick={() => void refresh()}>Retry data</button></MobileNotice>}
         {live?.cached && !live.error && <MobileNotice>Showing cached leads. Checking for latest outcomes.</MobileNotice>}
         {writeError && (
           <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">

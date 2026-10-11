@@ -1,6 +1,8 @@
 // Firestore-backed storage (replacing localStorage)
 import { Lead, User, LeadStatus } from '@/app/types';
 import { isKnockStatus } from '@/app/types/disposition';
+import { auth } from './firebase';
+import { startupEvent } from '@/app/mobile/_lib/startupDiagnostics';
 import { 
   getAllLeads as firestoreGetAllLeads,
   getLead as firestoreGetLead,
@@ -93,6 +95,7 @@ export async function getLeadsAsync(): Promise<Lead[]> {
     cacheTimestamp = Date.now();
     return leadsCache;
   } catch (error) {
+    startupEvent('get-leads-error', undefined, error);
     console.error('Firestore getLeads failed:', error);
     // Stale-while-error fallback (only if cache exists)
     return leadsCache || [];
@@ -211,6 +214,8 @@ export function deleteLead(id: string): void {
 
 let usersCache: User[] | null = null;
 let usersCacheTimestamp = 0;
+let mobileUsersAccount: object | null = null;
+let mobileUsersRequest: { account: object; promise: Promise<User[]> } | null = null;
 
 export function getUsers(): User[] {
   if (typeof window === 'undefined') return [];
@@ -238,6 +243,32 @@ export function getUsers(): User[] {
 }
 
 export async function getUsersAsync(): Promise<User[]> {
+  // Native screens already have a verified profile. Reading the directory only
+  // requires Firebase authentication, not another users/{uid} profile read.
+  if (process.env.NEXT_PUBLIC_NATIVE_BUILD === '1') {
+    if (!auth) return [];
+    await auth.authStateReady();
+    const account = auth.currentUser;
+    if (!account) { usersCache = null; mobileUsersAccount = null; return []; }
+    if (mobileUsersAccount === account && usersCache && Date.now() - usersCacheTimestamp < CACHE_TTL) return usersCache;
+    if (mobileUsersRequest?.account === account) return mobileUsersRequest.promise;
+    const startedAt = Date.now();
+    const promise = firestoreGetAllUsers().then(users => {
+      if (auth?.currentUser !== account) return [];
+      usersCache = users;
+      mobileUsersAccount = account;
+      usersCacheTimestamp = Date.now();
+      startupEvent('directory-ready', startedAt);
+      return users;
+    }).catch(error => {
+      startupEvent('directory-error', startedAt, error);
+      throw error;
+    }).finally(() => {
+      if (mobileUsersRequest?.promise === promise) mobileUsersRequest = null;
+    });
+    mobileUsersRequest = { account, promise };
+    return promise;
+  }
   if (usersCache && usersCache.length > 0 && Date.now() - usersCacheTimestamp < CACHE_TTL) {
     return usersCache;
   }
@@ -442,6 +473,6 @@ export async function getLeadsByUserAsync(userId: string): Promise<Lead[]> {
 
 // Warm users only. Do not eager-fetch getLeadsAsync() — that dumps the whole
 // leads collection for admins and was the hung await on /lead-management.
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_NATIVE_BUILD !== '1') {
   getUsersAsync().catch(console.error);
 }

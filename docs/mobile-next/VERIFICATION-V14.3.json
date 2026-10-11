@@ -1,0 +1,53 @@
+{
+  "release": "14.3",
+  "build": {
+    "version": "14.3",
+    "build": 143,
+    "brand": "Signal R / slate blue + yellow",
+    "native": true,
+    "builtAt": "2026-10-11T23:54:24.956Z",
+    "apiOrigin": "https://happy-solar-leads.vercel.app",
+    "firebaseProject": "gen-lang-client-0395385938",
+    "brandSha256": "c89285e5d1366b45c7b3088c126bcfe845cb642325c77a60c32be018140cc7ab"
+  },
+  "unitTests": {
+    "passed": 103,
+    "failed": 0
+  },
+  "dataLoadingHarness": {
+    "oneStartupProfileRead": true,
+    "noDuplicateGoalLeadRead": true,
+    "noEagerDirectoryRead": true,
+    "liveGoalUpdates": true,
+    "permissionFailureClearsLeads": true,
+    "manualRetryRecovers": true,
+    "healthyReconnectKeepsListener": true,
+    "transientReconnectRecovers": true,
+    "directoryDeduplicatedAndScoped": true,
+    "accountSwitchClearsOldLeads": true,
+    "errorCodeLoggedWithoutRawMessage": true,
+    "remoteRequests": 0,
+    "errors": []
+  },
+  "startupHarness": {
+    "currentBrandAndVersion": true,
+    "oneProfileReadAfterLogin": true,
+    "profileTimeoutAndRetry": true,
+    "lateProfileIgnored": true,
+    "signInTimeoutWithoutDuplicateRequest": true,
+    "lateSignInRecovers": true,
+    "invalidCredentialRecovery": true,
+    "nativeResumeEvent": true,
+    "liveRequests": 0,
+    "errors": []
+  },
+  "iosCapacitorSync": "passed",
+  "notVerified": [
+    "Native Xcode build on Linux",
+    "Production live-listener error cause",
+    "Real iPhone or Android acceptance",
+    "Production knocks/webhooks/reporting"
+  ],
+  "databaseMutationsDuringVerification": 0,
+  "knownDependencyAudit": "42 unresolved advisories from v14.2; dependency versions unchanged"
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
@@ -14,6 +14,7 @@ import { useDeviceNow } from "./_components/useDeviceNow";
 import { useMobileData } from "./_components/useMobileData";
 import { personalOutcomeLeads } from "./_lib/fieldUpdates";
 import { dayStart, summarizeActivity } from "./_lib/metrics";
+import { countWorkdaysElapsedAndRemaining } from '@/app/utils/goals';
 
 const LeadDetail = dynamic(() => import("@/app/components/LeadDetail"), {
   ssr: false,
@@ -47,31 +48,17 @@ export default function MobilePage() {
       try {
         const {
           getMyGoalViaApiAsync,
-          getMyMonthlyKnocksAsync,
-          countWorkdaysElapsedAndRemaining,
         } = await import("@/app/utils/goals");
-        const [monthlyGoal, knocks] = await Promise.all([
-          getMyGoalViaApiAsync(
+        const monthlyGoal = await getMyGoalViaApiAsync(
             `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
               2,
               "0"
             )}`
-          ),
-          getMyMonthlyKnocksAsync(now, user!),
-        ]);
-        const remaining = Math.max(
-          1,
-          countWorkdaysElapsedAndRemaining(now).remaining
         );
         if (active)
           setGoal({
             loading: false,
-            target: monthlyGoal?.doorKnocksGoal
-              ? Math.ceil(
-                  Math.max(0, Number(monthlyGoal.doorKnocksGoal) - knocks) /
-                    remaining
-                )
-              : null,
+            target: monthlyGoal?.doorKnocksGoal ?? null,
           });
       } catch {
         if (active) setGoal({ loading: false, target: null });
@@ -82,6 +69,16 @@ export default function MobilePage() {
       active = false;
     };
   }, [user, localDay]);
+  // Reuse the live feed. A second getLeadsAsync() fetched the whole collection
+  // for admins and reloaded the profile before this screen could show its goal.
+  const dailyTarget = useMemo(() => {
+    if (!user || !goal.target) return null;
+    const month = new Date(now.getFullYear(), now.getMonth(), 1);
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const knocks = summarizeActivity(leads, user.id, dispositions, month, nextMonth).knocks;
+    const remaining = Math.max(1, countWorkdaysElapsedAndRemaining(now).remaining);
+    return Math.ceil(Math.max(0, goal.target - knocks) / remaining);
+  }, [user, leads, dispositions, goal.target, now]);
   if (loading) return <MobileLoading />;
   if (!user)
     return (
@@ -95,7 +92,7 @@ export default function MobilePage() {
   return (
     <div className="rm-shell">
       <MobileHeader name={user.name} />
-      {error && <MobileNotice>{error}</MobileNotice>}
+      {error && <MobileNotice>{error}{dataUnavailable && <button className="ml-2 underline font-semibold" onClick={() => void refresh()}>Retry data</button>}</MobileNotice>}
       <TodayView
         canManageTerritories={user.role === "admin" || user.role === "manager"}
         liveNavigation
@@ -113,7 +110,7 @@ export default function MobilePage() {
         )}
         followUps={followUps}
         outcomeLeads={personalOutcomeLeads(leads, user.id)}
-        dailyTarget={goal.target}
+        dailyTarget={dailyTarget}
         goalLoading={goal.loading}
         onNavigate={router.push}
         onLead={(lead) => setSelectedId(lead.id)}

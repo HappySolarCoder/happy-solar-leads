@@ -30,6 +30,7 @@ if (typeof window !== 'undefined' && firebaseConfig.apiKey) {
   startupEvent(nativeBuild && platform !== 'web' ? 'auth-config-native' : 'auth-config-browser');
   const settings = nativeFirestoreSettings(nativeBuild, platform);
   db = settings ? initializeFirestore(app, settings) : getFirestore(app);
+  if (settings?.experimentalForceLongPolling) startupEvent('firestore-long-polling');
 }
 
 // Helper to create secondary app for privileged actions (e.g., admin creating users)

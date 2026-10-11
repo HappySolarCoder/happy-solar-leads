@@ -8,6 +8,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -49,6 +50,8 @@ function useSharedMobileData() {
     error: "",
   });
   const [attempt, setAttempt] = useState(0);
+  const [dataAttempt, setDataAttempt] = useState(0);
+  const lastDataRetry = useRef(0);
   const [settings, setSettings] = useState<{
     scope: string;
     dispositions: Disposition[];
@@ -103,7 +106,7 @@ function useSharedMobileData() {
       active = false;
     };
   }, [scope]);
-  const live = useLiveLeads(user);
+  const live = useLiveLeads(user, dataAttempt);
   const field = useFieldData(user, live?.leads || EMPTY_LEADS);
   const leads = field.leads;
   const preparedOffline = field.offline && !!field.area;
@@ -120,7 +123,14 @@ function useSharedMobileData() {
         : EMPTY_LEADS,
     [user, leads]
   );
-  const refresh = useCallback(async () => {}, []);
+  const refresh = useCallback(async () => {
+    // Successful writes already reach the existing listener. Only a failed
+    // listener needs restarting; do not refetch all leads after every knock.
+    if (live?.error && Date.now() - lastDataRetry.current >= 4000) {
+      lastDataRetry.current = Date.now();
+      setDataAttempt(value => value + 1);
+    }
+  }, [live?.error]);
   const retry = useCallback(() => {
     setSession({ user: null, loading: true, error: "" });
     setAttempt((value) => value + 1);

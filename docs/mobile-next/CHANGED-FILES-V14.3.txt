@@ -1,0 +1,17 @@
+MOBILE-APP.md
+android/app/build.gradle
+app/hooks/useLiveLeads.ts
+app/mobile/_components/MobileDataProvider.tsx
+app/mobile/_lib/release.json
+app/mobile/knocking/page.tsx
+app/mobile/page.tsx
+app/utils/firebase.ts
+app/utils/firestoreFailure.ts
+app/utils/storage.ts
+docs/mobile-next/CHANGED-FILES-V14.3.txt
+docs/mobile-next/IPHONE-REVIEW-V14.3.md
+docs/mobile-next/IPHONE-V14.3.md
+docs/mobile-next/VERIFICATION-V14.3.json
+ios/App/App.xcodeproj/project.pbxproj
+scripts/mobile/check-data-loading.mjs
+scripts/mobile/install-ios.sh
