@@ -19,9 +19,9 @@ import { auth, db } from "@/app/utils/firebase";
 import { useLiveLeads } from "@/app/hooks/useLiveLeads";
 import {
   getDispositionsAsync,
-  isScheduledGoBackLead,
 } from "@/app/utils/dispositions";
-import { canSeeAllLeads, type Lead, type User } from "@/app/types";
+import { type Lead, type User } from "@/app/types";
+import { isOwnFollowUp } from '../_lib/followUps';
 import {
   DEFAULT_DISPOSITIONS,
   type Disposition,
@@ -113,13 +113,7 @@ function useSharedMobileData() {
   const followUps = useMemo(
     () =>
       user
-        ? leads.filter(
-            (lead) =>
-              isScheduledGoBackLead(lead) &&
-              (canSeeAllLeads(user.role) ||
-                lead.claimedBy === user.id ||
-                lead.goBackScheduledBy === user.id)
-          )
+        ? leads.filter(lead => isOwnFollowUp(lead, user.id))
         : EMPTY_LEADS,
     [user, leads]
   );

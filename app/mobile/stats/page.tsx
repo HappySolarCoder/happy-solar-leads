@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   MobileHeader,
@@ -70,7 +69,6 @@ export default function MobileStatsPage() {
         />
       )}
 
-      <div className="rf-progress-link"><Link href="/mobile/field-tools" className="rf-button">Contact, engagement & set insights →</Link></div>
       <MobileNav />
     </div>
   );

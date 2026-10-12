@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import MobileDialog from './MobileDialog';
+import { followUpRevision } from '../_lib/followUps';
 import OutcomeFeed from "./OutcomeFeed";
 import {
   ArrowRight,
@@ -101,10 +103,14 @@ export function LeadRow({
   lead,
   now,
   onSelect,
+  selecting = false,
+  selected = false,
 }: {
   lead: Lead;
   now: Date;
   onSelect: (lead: Lead) => void;
+  selecting?: boolean;
+  selected?: boolean;
 }) {
   const bucket = followUpBucket(lead, now);
   const date = lead.goBackScheduledDate
@@ -122,11 +128,14 @@ export function LeadRow({
           day: "numeric",
         });
   return (
-    <button className="rm-lead-row" onClick={() => onSelect(lead)}>
+    <button className="rm-lead-row" onClick={() => onSelect(lead)}
+      role={selecting ? 'checkbox' : undefined}
+      aria-checked={selecting ? selected : undefined}
+      aria-label={selecting ? `Select follow-up at ${lead.address}` : undefined}>
       <span
         className={`rm-lead-symbol ${bucket === "overdue" ? "is-overdue" : ""}`}
       >
-        <MapPin size={21} />
+        {selecting ? <span className={`rm-lead-checkbox${selected ? ' is-checked' : ''}`}>{selected && <Check size={18} />}</span> : <MapPin size={21} />}
       </span>
       <span className="rm-lead-copy">
         <strong>{lead.address || "Address not provided"}</strong>
@@ -379,20 +388,32 @@ export function TodayView({
 }
 
 export function FollowUpsView({
-  leads,
+  leads: sourceLeads,
   now,
   onLead,
   onNavigate,
+  onRemove,
 }: {
   leads: Lead[];
   now: Date;
   onLead: (lead: Lead) => void;
   onNavigate: Navigate;
+  onRemove?: (leads: Lead[], onRemoved: (ids: string[]) => void) => Promise<{ skipped: number }>;
 }) {
   const [filter, setFilter] = useState<
     "all" | "today" | "overdue" | "upcoming"
   >("all");
   const [search, setSearch] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [removedRevisions, setRemovedRevisions] = useState<Set<string>>(new Set());
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [page, setPage] = useState(0);
+  const lock = useRef(false);
+  const leads = sourceLeads.filter(lead => !removedRevisions.has(followUpRevision(lead)));
   const filtered = leads.filter(
     (lead) =>
       (filter === "all" || followUpBucket(lead, now) === filter) &&
@@ -400,6 +421,32 @@ export function FollowUpsView({
         .toLowerCase()
         .includes(search.trim().toLowerCase())
   );
+  const selected = filtered.filter(lead => selectedIds.has(lead.id));
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 50) - 1));
+  const visible = [...filtered].sort((a, b) =>
+    new Date(a.goBackScheduledDate || 0).getTime() - new Date(b.goBackScheduledDate || 0).getTime() ||
+    (a.goBackScheduledTime || '').localeCompare(b.goBackScheduledTime || '')).slice(currentPage * 50, currentPage * 50 + 50);
+  function toggle(lead: Lead) {
+    setSelectedIds(prev => { const next = new Set(prev); if (next.has(lead.id)) next.delete(lead.id); else next.add(lead.id); return next; });
+  }
+  async function removeSelected() {
+    if (!onRemove || !selected.length || lock.current) return;
+    lock.current = true; setBusy(true); setError(''); setMessage('');
+    const revisions = new Map(selected.map(lead => [lead.id, followUpRevision(lead)]));
+    let count = 0;
+    try {
+      const result = await onRemove(selected, ids => {
+        count += ids.length;
+        setRemovedRevisions(prev => new Set([...prev, ...ids.map(id => revisions.get(id)!).filter(Boolean)]));
+        setSelectedIds(prev => new Set([...prev].filter(id => !ids.includes(id))));
+        setMessage(`${count} follow-up${count === 1 ? '' : 's'} removed. Pins and history kept.`);
+      });
+      setMessage(`${count} follow-up${count === 1 ? '' : 's'} removed. Pins and history kept.${result.skipped ? ` ${result.skipped} changed since selection and were kept. Review the list before retrying.` : ''}`);
+      setConfirm(false); setSelecting(false); setSelectedIds(new Set());
+    } catch (e) {
+      setError(`${e instanceof Error ? e.message : 'Could not remove follow-ups.'} Any remaining selections have been kept.`);
+    } finally { lock.current = false; setBusy(false); }
+  }
   const groups = ["overdue", "today", "upcoming", "unscheduled"] as const;
   return (
     <main className="rm-content rm-enter">
@@ -408,15 +455,29 @@ export function FollowUpsView({
         <h1>
           Follow-ups<span className="rm-heading-dot">.</span>
         </h1>
-        <p>Your go-backs, in one clear place.</p>
+        <p>Only your follow-ups, in one clear place.</p>
       </div>
+      {onRemove && leads.length > 0 && <div className="rm-cleanup-toolbar">
+        <button onClick={() => { setSelecting(!selecting); setSelectedIds(new Set()); setError(''); }}>
+          {selecting ? 'Done selecting' : 'Select to clean up'}
+        </button>
+        {selecting && <>
+          <button onClick={() => setSelectedIds(selected.length === filtered.length ? new Set() : new Set(filtered.map(lead => lead.id)))}>
+            {selected.length === filtered.length && filtered.length ? 'Deselect all' : `Select all (${filtered.length})`}
+          </button>
+          <button className="rm-cleanup-remove" disabled={!selected.length} onClick={() => { setConfirm(true); setError(''); setMessage(''); }}>
+            Remove ({selected.length})
+          </button>
+        </>}
+      </div>}
+      {!confirm && message && <p className="rm-cleanup-message" role="status">{message}</p>}
       <label className="rm-search rm-search-input">
         <Search size={19} />
         <input
           aria-label="Search follow-ups"
           placeholder="Search name or address"
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => { setSearch(event.target.value); setSelectedIds(new Set()); setPage(0); }}
         />
       </label>
       <div className="rm-filter-tabs" aria-label="Follow-up filters">
@@ -424,7 +485,7 @@ export function FollowUpsView({
           <button
             key={value}
             aria-pressed={filter === value}
-            onClick={() => setFilter(value)}
+            onClick={() => { setFilter(value); setSelectedIds(new Set()); setPage(0); }}
           >
             {value === "all"
               ? "All"
@@ -445,7 +506,7 @@ export function FollowUpsView({
       </div>
       {filtered.length ? (
         groups.map((group) => {
-          const entries = filtered
+          const entries = visible
             .filter((l) => followUpBucket(l, now) === group)
             .sort(
               (a, b) =>
@@ -474,7 +535,9 @@ export function FollowUpsView({
                     key={lead.id}
                     lead={lead}
                     now={now}
-                    onSelect={onLead}
+                    onSelect={selecting ? toggle : onLead}
+                    selecting={selecting}
+                    selected={selectedIds.has(lead.id)}
                   />
                 ))}
               </div>
@@ -503,6 +566,25 @@ export function FollowUpsView({
           </button>
         </div>
       )}
+      {filtered.length > 50 && <div className="rm-follow-pagination" aria-label="Follow-up pages">
+        <button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>
+        <span>{currentPage * 50 + 1}–{Math.min((currentPage + 1) * 50, filtered.length)} of {filtered.length}</span>
+        <button disabled={(currentPage + 1) * 50 >= filtered.length} onClick={() => setPage(currentPage + 1)}>Next</button>
+      </div>}
+      {confirm && <MobileDialog title="Remove selected follow-ups" onClose={() => { if (!lock.current) setConfirm(false); }}>
+        <div className="rm-cleanup-dialog">
+          <h2>Remove {selected.length} follow-up{selected.length === 1 ? '' : 's'}?</h2>
+          <p>This removes the scheduled reminders. Homeowner pins, knock results, notes, appointments and history are kept.</p>
+          {message && <p role="status">{message}</p>}
+          {error && <p role="alert">{error}</p>}
+          <div className="rm-cleanup-toolbar">
+            <button disabled={busy} onClick={() => setConfirm(false)}>Cancel</button>
+            <button className="rm-cleanup-remove" disabled={busy || !selected.length} onClick={removeSelected}>
+              {busy ? 'Removing…' : 'Remove follow-ups'}
+            </button>
+          </div>
+        </div>
+      </MobileDialog>}
     </main>
   );
 }
@@ -645,6 +727,9 @@ export function ProgressView({
       >
         Back to the doors
         <ArrowRight size={19} />
+      </button>
+      <button className="rm-insights-link" onClick={() => onNavigate('/mobile/field-tools')}>
+        Contact, engagement &amp; set insights <ArrowRight size={18} />
       </button>
     </main>
   );

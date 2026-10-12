@@ -27,6 +27,7 @@ import { rectangleCorners, type DrawingTool } from "./drawing";
 import PersonPicker from "../_components/PersonPicker";
 import TerritorySheet from "./TerritorySheet";
 import MobileDialog from "../_components/MobileDialog";
+import { deleteUserTerritories } from './deleteTerritories';
 const TerritoryMap = dynamic(() => import("./TerritoryMap"), {
   ssr: false,
   loading: () => (
@@ -70,6 +71,7 @@ export default function TerritoryWorkspace({
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("rectangle");
   const [territoryPage, setTerritoryPage] = useState(0);
   const [deleteAll, setDeleteAll] = useState(false);
+  const deleteOperations = useRef(new Map<string, string>());
   const [collapsed, setCollapsed] = useState(false);
   const [boundaryComplete, setBoundaryComplete] = useState(false);
   const [searchPlace, setSearchPlace] = useState<Place | null>(null);
@@ -251,28 +253,15 @@ export default function TerritoryWorkspace({
   async function removeAll() {
     await run(async () => {
       const targets = data.territories.filter((t) => t.userId === repFilter);
-      let removed = 0;
-      for (let i = 0; i < targets.length; i += 50) {
-        const chunk = targets.slice(i, i + 50),
-          body = {
-            action: "archive-many",
-            userId: repFilter,
-            territories: chunk.map((t) => ({ id: t.id, version: t.version })),
-          };
-        const key = JSON.stringify(body);
-        if (pending.current?.key !== key)
-          pending.current = { key, requestId: crypto.randomUUID() };
-        await request({ ...body, requestId: pending.current.requestId });
-        const ids = new Set(chunk.map((t) => t.id));
-        removed += chunk.length;
+      await deleteUserTerritories(repFilter, targets, request, deleteOperations.current, (id, removed) => {
         setData((d) => ({
           ...d,
-          territories: d.territories.filter((t) => !ids.has(t.id)),
+          territories: d.territories.filter((t) => t.id !== id),
         }));
-        setNotice(`${removed} territories deleted. Pin history is kept.`);
+        setNotice(`${removed} of ${targets.length} territories deleted. Pin history is kept.`);
         setSelected("");
         setTerritoryPage(0);
-      }
+      });
       setDeleteAll(false);
       pending.current = null;
     });
@@ -477,6 +466,7 @@ export default function TerritoryWorkspace({
                     disabled={busy || !mapAreas.length}
                     onClick={() => {
                       setError("");
+                      setNotice("");
                       setDeleteAll(true);
                     }}
                   >

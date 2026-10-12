@@ -1,0 +1,89 @@
+{
+  "release": "14.5",
+  "build": {
+    "version": "14.5",
+    "build": 145,
+    "brand": "Signal R / slate blue + yellow",
+    "native": true,
+    "builtAt": "2026-10-12T01:32:42.614Z",
+    "apiOrigin": "https://happy-solar-leads.vercel.app",
+    "firebaseProject": "gen-lang-client-0395385938",
+    "brandSha256": "c89285e5d1366b45c7b3088c126bcfe845cb642325c77a60c32be018140cc7ab"
+  },
+  "unitTests": {
+    "passed": 107,
+    "failed": 0
+  },
+  "fieldFixes": {
+    "engine": "Chromium with simulated iPhone/Android safe areas; not native device acceptance",
+    "results": [
+      {
+        "platform": "ios",
+        "quickActionsSingleRow": true,
+        "personalFollowUpsAllRoles": true,
+        "bulkCancellationAndRetry": true,
+        "concurrentReschedulePreserved": true,
+        "paginationAndSelectAll": true,
+        "progressSafeArea": true,
+        "territoryLegacyBackendAndPartialRetry": true,
+        "fixtureFollowUpWrites": 54,
+        "productionWrites": 0
+      },
+      {
+        "platform": "android",
+        "quickActionsSingleRow": true,
+        "personalFollowUpsAllRoles": true,
+        "bulkCancellationAndRetry": true,
+        "concurrentReschedulePreserved": true,
+        "paginationAndSelectAll": true,
+        "progressSafeArea": true,
+        "territoryLegacyBackendAndPartialRetry": true,
+        "fixtureFollowUpWrites": 54,
+        "productionWrites": 0
+      }
+    ],
+    "errors": [],
+    "forbidden": []
+  },
+  "reportingContract": {
+    "commonDispositions": 7,
+    "typedTimestamps": true,
+    "repIdentityAndGps": true,
+    "ownershipUnchangedOnUpdate": true,
+    "offlineReloadAutoSync": true,
+    "originalKnockTime": true,
+    "lostAcknowledgementRetryWithoutDuplicate": true,
+    "visibleUnsyncedCount": true,
+    "schedulerPayloadAndSaveBeforeSend": true,
+    "explicitClaimUnclaim": true,
+    "compactNeighborhoodPins": true,
+    "forbiddenApiRequests": [],
+    "liveWrites": 0,
+    "fixtureWrites": 12,
+    "createAttempts": 5,
+    "errors": []
+  },
+  "dataLoading": {
+    "oneStartupProfileRead": true,
+    "noDuplicateGoalLeadRead": true,
+    "noEagerDirectoryRead": true,
+    "liveGoalUpdates": true,
+    "permissionFailureClearsLeads": true,
+    "manualRetryRecovers": true,
+    "healthyReconnectKeepsListener": true,
+    "transientReconnectRecovers": true,
+    "directoryDeduplicatedAndScoped": true,
+    "accountSwitchClearsOldLeads": true,
+    "errorCodeLoggedWithoutRawMessage": true,
+    "remoteRequests": 0,
+    "errors": []
+  },
+  "staticBuild": "passed",
+  "iosBundleSyncAndCheck": "passed",
+  "androidBundleSyncAndCheck": "passed",
+  "nativeManifestsIdentical": true,
+  "androidAssetDensityCheck": "passed",
+  "liveWrites": 0,
+  "nativeDeviceAcceptance": "not run",
+  "nativeCompilation": "not available in this environment"
+}

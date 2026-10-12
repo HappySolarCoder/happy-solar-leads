@@ -1,4 +1,4 @@
-For **v14.4**, start with [the iPhone installation guide](docs/mobile-next/IPHONE-V14.4.md) and [the transport changes and verification report](docs/mobile-next/IPHONE-REVIEW-V14.4.md). The previous [authentication repair](docs/mobile-next/IPHONE-REVIEW-V14.2.md), [feature review](docs/mobile-next/IPHONE-REVIEW-V14.1.md), and [data/reporting verification](docs/mobile-next/FIELD-V12.6.md) remain applicable.
+For **v14.5 (Android and iPhone)**, start with [installation and testing commands](docs/mobile-next/FIELD-V14.5.md) and [the verification report](docs/mobile-next/REVIEW-V14.5.md). Both downloads use the same source and preserve the v14.4 iPhone transport repair.
 
 # Raydar mobile app — team distribution
 

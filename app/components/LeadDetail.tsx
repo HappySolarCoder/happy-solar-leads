@@ -680,11 +680,24 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
           <div className="mb-6">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Quick Actions</h3>
             {actionsLoading && <p role="status" className="text-sm text-[#718096] mb-3">Loading actions. You can still read this lead and close the panel.</p>}
-            {fieldMemory && <button type="button" aria-label="CSM — Call Scheduling Manager" title="Call Scheduling Manager" onClick={() => setShowLeadEditor(true)}
-              disabled={isUpdating || actionsLoading}
-              className="mb-3 w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#476E88] text-white rounded-lg font-semibold disabled:opacity-50">
-              <Phone className="w-4 h-4" /> CSM
-            </button>}
+            {fieldMemory && <div className="rm-quick-actions" role="group" aria-label="Quick knock actions">
+              {(['not-home', 'not-interested'] as const).map(id => {
+                const dispo = dispositions.find(item => item.id === id);
+                const Icon = id === 'not-home' ? Home : XCircle;
+                return <button key={id} type="button"
+                  aria-label={`${QUICK_ACTION_LABELS[id]} — ${dispo?.name || (id === 'not-home' ? 'Not Home' : 'Not Interested')}`}
+                  title={dispo?.name}
+                  onClick={() => handleStatusChange(id)}
+                  disabled={isUpdating || actionsLoading || !dispo}
+                  style={{ backgroundColor: dispo?.color || '#617382' }}>
+                  <Icon size={18} />{QUICK_ACTION_LABELS[id]}
+                </button>;
+              })}
+              <button type="button" aria-label="CSM — Call Scheduling Manager" title="Call Scheduling Manager"
+                onClick={() => setShowLeadEditor(true)} disabled={isUpdating || actionsLoading}>
+                <Phone size={18} />CSM
+              </button>
+            </div>}
             
             {/* Admin: Assign to user dropdown */}
             {currentUser?.role === 'admin' && (
@@ -728,7 +741,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
                 </button>
               )}
 
-              {quickActionDispositions.map(dispo => {
+              {quickActionDispositions.filter(dispo => !fieldMemory ||
+                (!['not-home', 'not-interested'].includes(dispo.id) && dispo.specialBehavior !== 'scheduling-manager')).map(dispo => {
                 const Icon = ICON_MAP[dispo.icon] || Circle;
                 const shortLabel = fieldMemory ? QUICK_ACTION_LABELS[dispo.id] : undefined;
                 return (

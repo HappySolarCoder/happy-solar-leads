@@ -574,12 +574,6 @@
   }
 }
 
-.rf-progress-link {
-  padding: 0 20px calc(100px + env(safe-area-inset-bottom));
-  max-width: 760px;
-  margin: auto;
-}
-
 .rf-demo-controls {
   padding: 16px 20px;
   border-bottom: 1px dashed #9aabc0;

@@ -2,6 +2,7 @@ import type { Lead } from '@/app/types';
 import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { isScheduledGoBackStatus } from '@/app/types/disposition';
 import { calculateDistance, type GpsPosition } from '@/app/hooks/useGeolocation';
+import { isOwnFollowUp } from './followUps';
 
 export function isPersonalLead(lead: Lead, userId: string): boolean {
   return !lead.historicalTerritoryPin &&
@@ -34,7 +35,7 @@ export function nearbyReturns(leads: Lead[], userId: string, position: GpsPositi
       !Number.isFinite(position.timestamp) || Math.abs(now.getTime() - position.timestamp) > 120000 ||
       !Number.isFinite(position.lat) || !Number.isFinite(position.lng)) return [];
   return leads.flatMap(lead => {
-    if (!isPersonalLead(lead, userId) || !isScheduledGoBackStatus(lead.status) ||
+    if (!isOwnFollowUp(lead, userId) || !isScheduledGoBackStatus(lead.status) ||
         !lead.goBackScheduledDate || !Number.isFinite(lead.lat) || !Number.isFinite(lead.lng)) return [];
     const outcome = getAppointmentOutcome(lead)?.key;
     if (outcome === 'sold' || outcome === 'scheduled' || lead.leadType === 'sale' || lead.leadType === 'customer') return [];

@@ -12,6 +12,7 @@ import {
 import { FollowUpsView } from "../_components/MobileViews";
 import { useDeviceNow } from "../_components/useDeviceNow";
 import { useMobileData } from "../_components/useMobileData";
+import { clearFollowUps } from '../_lib/clearFollowUps';
 const LeadDetail = dynamic(() => import("@/app/components/LeadDetail"), {
   ssr: false,
 });
@@ -29,6 +30,7 @@ export default function FollowUpsPage() {
     dataUnavailable,
     error,
     refresh,
+    field,
   } = useMobileData();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   if (loading) return <MobileLoading />;
@@ -48,10 +50,18 @@ export default function FollowUpsPage() {
         </main>
       ) : (
         <FollowUpsView
+          key={user?.id}
           leads={followUps}
           now={now}
           onLead={(lead) => setSelectedId(lead.id)}
           onNavigate={router.push}
+          onRemove={async (targets, onRemoved) => {
+            if (!user) throw Error('Sign in again to remove follow-ups.');
+            const ids = new Set(targets.map(lead => lead.id));
+            if (field.drafts.some(draft => ids.has(draft.leadId)))
+              throw Error('Sync the selected pins before removing their follow-ups.');
+            return clearFollowUps(user.id, targets, onRemoved);
+          }}
         />
       )}
 

@@ -104,6 +104,23 @@
   overscroll-behavior-y: contain;
 }
 .rm-shell > .rm-notice { flex-shrink: 0; }
+.rm-quick-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:16px; }
+.rm-quick-actions button { min-width:0; min-height:48px; display:flex; align-items:center; justify-content:center; gap:7px; border-radius:10px; padding:12px 6px; background:var(--rm-primary); color:white; font-weight:700; }
+.rm-quick-actions svg { flex-shrink:0; }
+.rm-insights-link { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; min-height:48px; margin-top:16px; padding:12px; border:1px solid var(--rm-line); border-radius:14px; color:var(--rm-primary); background:white; font-weight:600; font-size:13px; }
+.rm-insights-link svg { flex-shrink:0; }
+.rm-cleanup-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 16px; }
+.rm-cleanup-toolbar button,.rm-follow-pagination button { min-height:44px; padding:10px 12px; border:1px solid var(--rm-line); border-radius:10px; background:white; font-weight:600; font-size:12px; }
+.rm-cleanup-toolbar .rm-cleanup-remove { background:var(--rm-primary); color:white; border-color:var(--rm-primary); }
+.rm-cleanup-message { padding:12px; margin-bottom:16px; background:#ebf1f5; border-radius:12px; font-size:13px; line-height:1.5; }
+.rm-lead-checkbox { display:grid; place-items:center; width:24px; height:24px; border:2px solid var(--rm-primary); border-radius:6px; }
+.rm-lead-checkbox.is-checked { background:var(--rm-primary); color:white; }
+.rm-follow-pagination { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:18px; font-size:12px; }
+.rm-cleanup-dialog { padding:24px; }
+.rm-cleanup-dialog h2 { font-size:22px; font-weight:700; margin-bottom:12px; }
+.rm-cleanup-dialog p { line-height:1.6; margin-bottom:18px; color:var(--rm-muted); }
+.rm-cleanup-dialog [role=alert] { color:#a3342d; }
+.rm-cleanup-dialog .rm-cleanup-toolbar { justify-content:flex-end; margin-bottom:0; }
 .rm-eyebrow {
   font-size: 10px;
   letter-spacing: 1.6px;

@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 if [ ! -f .env.local ]; then
-  for version in 14.1 14 13 12.7 12.6 12.5 12.4 12.3 12.2 12.1 12 11 10 9 8 7 6 5 4 3; do
+  for version in 14.5-ios 14.5-android 14.4 14.3 14.2 14.1 14 13 12.7 12.6 12.5 12.4 12.3 12.2 12.1 12 11 10 9 8 7 6 5 4 3; do
     previous="$HOME/Downloads/happy-solar-leads-codex-raydar-mobile-redesign-v$version/.env.local"
     if [ -f "$previous" ] && [ "$previous" != "$PWD/.env.local" ]; then
       cp "$previous" .env.local
