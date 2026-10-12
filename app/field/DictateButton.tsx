@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { Mic } from "lucide-react";
-const speech = registerPlugin<{ dictate(): Promise<{ text: string }> }>(
+const speech = registerPlugin<{ dictate(): Promise<{ text: string }>; cancel(): Promise<void> }>(
   "RaydarDictation",
 );
 export default function DictateButton({
@@ -19,10 +19,11 @@ export default function DictateButton({
     active.current = true;
     return () => {
       active.current = false;
+      if (Capacitor.getPlatform() === "ios") void speech.cancel().catch(() => {});
     };
   }, []);
   async function dictate() {
-    if (Capacitor.getPlatform() !== "android") {
+    if (!Capacitor.isNativePlatform()) {
       onKeyboard();
       setMessage(
         "Tap the microphone on your keyboard to dictate. Review your words before saving.",
@@ -35,7 +36,7 @@ export default function DictateButton({
       const result = await speech.dictate();
       if (active.current && result.text) {
         onText(result.text);
-        setMessage("Added to your draft. Review it, then save.");
+        setMessage("Added to your notes. Review, then save.");
       }
     } catch (e) {
       if (active.current) setMessage((e as Error).message);

@@ -1,3 +1,5 @@
+For **v14.6 (Android and iPhone)**, start with [installation and testing](docs/mobile-next/FIELD-V14.6.md), [verification](docs/mobile-next/REVIEW-V14.6.md), and the [required territory server companion](docs/mobile-next/SERVER-V14.6.md). Nothing is uploaded to TestFlight by the installers.
+
 For **v14.5 (Android and iPhone)**, start with [installation and testing commands](docs/mobile-next/FIELD-V14.5.md) and [the verification report](docs/mobile-next/REVIEW-V14.5.md). Both downloads use the same source and preserve the v14.4 iPhone transport repair.
 
 # Raydar mobile app — team distribution

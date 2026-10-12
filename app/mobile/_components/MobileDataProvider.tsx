@@ -34,6 +34,7 @@ import {
 
 import { useFieldData } from '@/app/field/useFieldData';
 import { readArea } from '@/app/field/deviceStore';
+import { FeedbackSync } from "./VoiceFeedback";
 import UnsyncedNotice from './UnsyncedNotice';
 import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
 
@@ -118,8 +119,8 @@ function useSharedMobileData() {
     [user, leads]
   );
   const refresh = useCallback(async () => {
-    // Successful writes already reach the existing listener. Only a failed
-    // listener needs restarting; do not refetch all leads after every knock.
+    // Acknowledged writes update the shared local cache. Only a failed
+    // activity refresh needs retrying; do not refetch all leads after every knock.
     if (live?.error && Date.now() - lastDataRetry.current >= 4000) {
       lastDataRetry.current = Date.now();
       setDataAttempt(value => value + 1);
@@ -141,14 +142,12 @@ function useSharedMobileData() {
       settings?.scope === scope ? settings.dispositions : DEFAULT_DISPOSITIONS,
     loading: session.loading,
     leadsLoading: !!user && !live && !preparedOffline,
+    dispositionsLoading: !!user && settings?.scope !== scope,
     dataLoading: !!user && !preparedOffline && (!live || settings?.scope !== scope),
     dataUnavailable: !preparedOffline && !!live?.error,
     error:
       session.error ||
-      live?.error ||
-      (live?.cached
-        ? "Showing cached leads. Checking for the latest appointment outcomes."
-        : ""),
+      live?.error || "",
   };
 }
 
@@ -173,6 +172,7 @@ function MobileDataProvider({ children }: { children: ReactNode }) {
         key={data.user ? `${data.user.id}:${data.user.role}` : "signed-out"}
       >
         {children}
+        {data.user && <FeedbackSync uid={data.user.id} />}
         <UnsyncedNotice drafts={data.field.drafts} syncing={data.field.syncing}
           error={data.field.error} onSync={data.field.retrySync} />
       </Fragment>

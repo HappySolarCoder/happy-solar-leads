@@ -1,6 +1,7 @@
 "use client";
 import { isDeviceOnline } from "@/app/utils/connectivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { acknowledgeMobileLead } from '@/app/hooks/useLiveLeads';
 import { auth } from "@/app/utils/firebase";
 import { apiFetch } from "@/app/utils/apiFetch";
 import type { Lead, User } from "@/app/types";
@@ -53,12 +54,20 @@ export async function fieldRequest(path: string, body?: unknown) {
   return data;
 }
 import { syncOutbox } from "./syncOutbox";
+import { unreflectedKnocks } from "./confirmedKnocks";
 const locks = new Map<string, Promise<void>>();
 export function useFieldData(user: User | null, liveLeads: Lead[]) {
   const uid = user?.id || "",
     active = useRef(uid);
   active.current = uid;
   const latest = useRef({user,liveLeads});latest.current={user,liveLeads};
+  const [confirmedKnocks, setConfirmedKnocks] = useState<PendingMutation[]>([]);
+  useEffect(() => {
+    setConfirmedKnocks(previous => {
+      const next = unreflectedKnocks(previous, liveLeads, uid);
+      return next.length === previous.length ? previous : next;
+    });
+  }, [liveLeads, uid]);
   const [state, setState] = useState<{
     uid: string;
     config: FieldConfig;
@@ -143,6 +152,10 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
           const result = DIRECT_MOBILE_WRITES
             ? await commitDirectMutation(m, actor)
             : await fieldRequest('/api/field-work', m);
+          if (DIRECT_MOBILE_WRITES && result.lead && active.current === uid) acknowledgeMobileLead(actor, result.lead);
+          if (DIRECT_MOBILE_WRITES && m.kind === 'knock' && active.current === uid) {
+            setConfirmedKnocks(previous => [...unreflectedKnocks(previous, latest.current.liveLeads, uid).filter(item => item.leadId !== m.leadId), m]);
+          }
           if (!DIRECT_MOBILE_WRITES && m.kind === 'knock' && !result.replayed && active.current === uid) {
             // Existing rewards run only after a confirmed write, never for a pending draft.
             void (async () => {
@@ -311,10 +324,15 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     },
     [user, uid, current.ready, current.config, update],
   );
-  const source = offline && current.area ? current.area.leads : liveLeads;
+  const source = useMemo(() => {
+    if (offline && current.area) return current.area.leads;
+    const ids = new Set(liveLeads.map(l => l.id)), pending = new Set(current.drafts.map(m => m.leadId));
+    const extra = (current.area?.leads || []).filter(l => pending.has(l.id) && !ids.has(l.id));
+    return extra.length ? [...liveLeads, ...extra] : liveLeads;
+  }, [offline, current.area, liveLeads, current.drafts]);
   const leads = useMemo(
-    () => overlayDrafts(source, current.drafts),
-    [source, current.drafts],
+    () => overlayDrafts(source, [...unreflectedKnocks(confirmedKnocks, source, uid), ...current.drafts]),
+    [source, current.drafts, confirmedKnocks, uid],
   );
   return {
     ...current,

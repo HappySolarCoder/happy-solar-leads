@@ -16,7 +16,7 @@ import {
   Map,
   Crosshair,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
 
 export const mobileTabs = [
@@ -146,31 +146,42 @@ export function MobileNotice({ children }: { children: ReactNode }) {
 export function FieldToolbar({
   showTeamAreas,
   onToggleTeamAreas,
+  areaMode, onAreaMode, onZoomMine, areasLoading,
   onSearch,
   onFilter,
   filterCount,
-  accuracy,
-  gpsError,
-  gpsLoading,
+  name = "Team",
   knocks,
-  onLocate,
 }: {
+  areaMode?: "off" | "mine" | "team";
+  onAreaMode?: (mode: "off" | "mine" | "team") => void;
+  onZoomMine?: () => void;
+  areasLoading?: boolean;
   showTeamAreas: boolean;
   onToggleTeamAreas: () => void;
   onSearch: () => void;
   onFilter: () => void;
   filterCount: number;
-  accuracy?: number;
-  gpsError: boolean;
-  gpsLoading: boolean;
+  name?: string;
   knocks?: number;
-  onLocate: () => void;
+  // Retained for existing preview callers; GPS lives on the map.
+  accuracy?: number; gpsError?: boolean; gpsLoading?: boolean; onLocate?: () => void;
 }) {
+  const [areasOpen, setAreasOpen] = useState(false);
+  const areaRoot = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!areasOpen) return;
+    const close = (e: PointerEvent) => { if (!areaRoot.current?.contains(e.target as Node)) setAreasOpen(false); };
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setAreasOpen(false); };
+    document.addEventListener('pointerdown', close); document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', escape); };
+  }, [areasOpen]);
   return (
     <div className="rm-field-toolbar" aria-label="Knocking controls">
-      <button className="rm-search" onClick={onSearch}>
+      <Image className="rm-toolbar-brand" src="/brand/raydar-v5/raydar-mark-v5.svg" alt="Raydar" width={26} height={30} />
+      <button className="rm-search-icon" aria-label="Search address" onClick={onSearch}>
         <Search size={19} />
-        <span>Search</span>
+
       </button>
       <span
         className="rm-knock-counter"
@@ -185,18 +196,20 @@ export function FieldToolbar({
             : `${knocks} doors knocked today`
         }
       >
-        <DoorOpen size={16} />
-        <b>{knocks ?? "—"}</b>
+        <DoorOpen size={19} />
+        <b>{knocks ?? "—"}</b><span className="rm-doors-label">Doors</span>
       </span>
-      <button
-        className="rm-areas-toggle"
-        onClick={onToggleTeamAreas}
-        aria-label={showTeamAreas ? "Hide team areas" : "Show team areas"}
-        aria-pressed={showTeamAreas}
-      >
-        <Map size={18} />
-        <span>Areas</span>
-      </button>
+      <div className="rm-areas-control" ref={areaRoot}>
+        <button className="rm-areas-toggle" onClick={()=>onAreaMode?setAreasOpen(v=>!v):onToggleTeamAreas()}
+          aria-label="Areas" aria-expanded={areasOpen} aria-controls="field-area-options" aria-pressed={showTeamAreas}>
+          <Map size={18}/><span>Areas</span>
+        </button>
+        {areasOpen && <div className="rm-areas-menu" id="field-area-options" role="group" aria-label="Territory visibility">
+          {([['mine','My territories'],['team','Team territories'],['off','Off']] as const).map(([mode,label])=><button key={mode} aria-pressed={areaMode===mode} onClick={()=>{onAreaMode?.(mode);setAreasOpen(false);}}>{label}{areaMode===mode?' ✓':''}</button>)}
+          <button onClick={()=>{onZoomMine?.();setAreasOpen(false);}}>Zoom to mine</button>
+          {areasLoading && <small role="status">Loading areas…</small>}
+        </div>}
+      </div>
       <button
         className={`rm-filter ${filterCount ? "is-active" : ""}`}
         onClick={onFilter}
@@ -205,33 +218,9 @@ export function FieldToolbar({
         <SlidersHorizontal size={19} />
         {filterCount > 0 && <span>{filterCount}</span>}
       </button>
-      <button
-        className={`rm-gps ${
-          gpsError || (accuracy !== undefined && accuracy > 50)
-            ? "is-warning"
-            : ""
-        }`}
-        onClick={onLocate}
-        disabled={gpsError || accuracy === undefined}
-        aria-label={
-          gpsError
-            ? "Location unavailable"
-            : gpsLoading || accuracy === undefined
-            ? "Finding GPS"
-            : `Center map on my location, GPS accuracy ${Math.round(
-                accuracy
-              )} meters`
-        }
-        title={
-          gpsError
-            ? "Location unavailable"
-            : accuracy === undefined
-            ? "Finding GPS…"
-            : `GPS ±${Math.round(accuracy)} m`
-        }
-      >
-        <Crosshair size={20} />
-      </button>
+      <Link className="rm-toolbar-account" href="/mobile/more" aria-label="Open account and tools">
+        {name.trim().split(/\s+/).filter(Boolean).slice(0,2).map(part=>part[0]).join('').toUpperCase() || '?'}
+      </Link>
     </div>
   );
 }

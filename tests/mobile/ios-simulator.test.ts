@@ -54,8 +54,8 @@ test('simulated GPS accepts only explicit presets, valid coordinates or clear', 
 test('Xcode 27 opens Device Hub without legacy Simulator-only arguments', () => {
   const calls: string[][] = [];
   assert.equal(openSimulatorWindow('/Xcode/Contents/Developer', 'phone', {
-    exists: (name: string) => name.endsWith('/DeviceHub.app'),
-    run: (program: string, args: string[]) => { calls.push([program, ...args]); },
+    exists: (name: any) => String(name).endsWith('/DeviceHub.app'),
+    run: (program: string, args: string[]) => { calls.push([program, ...args]); return ''; },
   }), true);
   assert.deepEqual(calls, [['open', '-a', '/Xcode/Contents/Developer/Applications/DeviceHub.app']]);
 });
@@ -63,8 +63,8 @@ test('Xcode 27 opens Device Hub without legacy Simulator-only arguments', () => 
 test('older Xcode still opens its Simulator and selects the chosen phone', () => {
   const calls: string[][] = [];
   openSimulatorWindow('/Xcode/Contents/Developer', 'phone', {
-    exists: (name: string) => name.endsWith('/Simulator.app'),
-    run: (program: string, args: string[]) => { calls.push([program, ...args]); },
+    exists: (name: any) => String(name).endsWith('/Simulator.app'),
+    run: (program: string, args: string[]) => { calls.push([program, ...args]); return ''; },
   });
   assert.deepEqual(calls, [['open', '-a', '/Xcode/Contents/Developer/Applications/Simulator.app', '--args', '-CurrentDeviceUDID', 'phone']]);
 });

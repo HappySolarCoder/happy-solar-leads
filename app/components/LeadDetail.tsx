@@ -9,6 +9,8 @@ import { isDeviceOnline } from '@/app/utils/connectivity';
 import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
 import DictateButton from '@/app/field/DictateButton';
 import FieldDoorPanel, { type VisitDraft } from '@/app/field/FieldDoorPanel';
+import { acknowledgeMobileLead } from '@/app/hooks/useLiveLeads';
+import { overlayDrafts } from '@/app/field/deviceStore';
 import { useOptionalMobileData } from '@/app/mobile/_components/MobileDataProvider';
 import type { FieldMutation, FieldObservation } from '@/app/field/types';
 import { localParts } from '@/app/field/analysis';
@@ -35,7 +37,10 @@ import LeadEditorModal from './LeadEditorModal';
 import { Disposition, getDispositionsAsync, isScheduledGoBackStatus } from '@/app/utils/dispositions';
 import { checkEasterEggTrigger } from '@/app/utils/easterEggs';
 import { awardSolarMadnessAsync } from '@/app/utils/solarMadness';
-import { auth } from '@/app/utils/firebase';
+import { auth, db } from '@/app/utils/firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { mapLeadDoc } from '@/app/utils/firestore';
+import MobileDialog from '@/app/mobile/_components/MobileDialog';
 import type { SolarMadnessAwardResponse } from '@/app/types/solarMadness';
 import SolarMadnessWinModal from './SolarMadnessWinModal';
 import { EasterEgg } from '@/app/types/easterEgg';
@@ -118,10 +123,14 @@ const QUICK_ACTION_LABELS: Record<string, string> = {
   'not-home': 'NH', 'not-interested': 'NI', 'go-back': 'GB',
 };
 
-export default function LeadDetail({ lead, currentUser, onClose, onUpdate, fieldMemory = false, homeowner, dispositionOptions, dispositionsLoading = false, unvisitedHome = false, saveLeadPatch, prepareLead }: LeadDetailProps) {
+function LeadDetailContent({ lead, currentUser, onClose, onUpdate, fieldMemory = false, homeowner, dispositionOptions, dispositionsLoading = false, unvisitedHome = false, saveLeadPatch, prepareLead }: LeadDetailProps) {
   const mobile = useOptionalMobileData();
   const field = fieldMemory || DIRECT_MOBILE_WRITES ? mobile?.field : undefined;
-  lead = field?.leads.find(item => item.id === lead.id) || lead;
+  const shared = field?.leads.find(item => item.id === lead.id);
+  // A lightweight map row must never replace the selected door's full notes.
+  if (shared && !(shared as Lead & {mobileSummary?:boolean}).mobileSummary) lead = shared;
+  if (field?.drafts.length) lead = overlayDrafts([lead], field.drafts)[0];
+  const summaryOnly = Boolean((lead as Lead & {mobileSummary?:boolean}).mobileSummary);
   homeowner = homeowner || lead.homeowner;
   const hasPendingFieldWork = !!field?.drafts.some(d => d.leadId === lead.id);
   const pausedWithDrafts = !DIRECT_MOBILE_WRITES && hasPendingFieldWork && !field?.flags.capture;
@@ -133,7 +142,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       await field.enqueueDirect(lead, patch);
     }
     else { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, patch); }
-    if (DIRECT_MOBILE_WRITES) setFieldMessage('Saved on this device. The unsynced count clears after Firestore confirms it.');
+    if (DIRECT_MOBILE_WRITES) setFieldMessage('');
   }
   const [visit, setVisit] = useState<VisitDraft>({});
   const [fieldMessage, setFieldMessage] = useState('');
@@ -164,7 +173,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
     }
     await prepareLead?.();
     await field.enqueue({id,userId:currentUser.id,leadId:lead.id,createdAt:at.toISOString(),kind,baseStatus:lead.status,baseNotes:lead.notes||'',...(kind==='knock'?{observation,disposition:disposition?.name||status}:{}),...patch});
-    setFieldMessage('Saved on this device. Sync status is in Field tools.');
+    setFieldMessage('');
     if (kind === 'knock') setVisit({});
     onUpdate();
   }
@@ -295,12 +304,15 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
       }
       if (newStatus === 'claimed') {
         // Handle claim
-        await claimLead(lead.id, currentUser.id);
+        const updated = await claimLead(lead.id, currentUser.id);
+        if (mobile) acknowledgeMobileLead(currentUser, updated);
+        onUpdate(updated);
       } else if (newStatus === 'unclaimed') {
         // Handle unclaim
         if (!isClaimedByMe) throw Error('Only the rep who claimed this lead can unclaim it.');
-        await unclaimLead(lead.id);
-        onUpdate({ ...lead, status: 'unclaimed', claimedBy: undefined, claimedAt: undefined });
+        const updated = await unclaimLead(lead.id);
+        if (mobile) acknowledgeMobileLead(currentUser, updated);
+        onUpdate(updated);
         onClose();
         return;
       } else {
@@ -360,6 +372,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
 
   // Handle saving notes
   const handleSaveNotes = async () => {
+    if (summaryOnly) return;
     if (!currentUser) return;
     if (pausedWithDrafts) { setFieldMessage('Review pending drafts in Field tools before changing these notes.'); return; }
     
@@ -618,7 +631,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
           </a>
 
           {fieldMessage && <p className="rf-sync-status" role="status">{fieldMessage}</p>}
-          {fieldMemory && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
+          {fieldMemory && !summaryOnly && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
           {/* Contact Info */}
           {(lead.phone || lead.email) && (
             <div className="mb-4 space-y-2">
@@ -694,7 +707,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
                 </button>;
               })}
               <button type="button" aria-label="CSM — Call Scheduling Manager" title="Call Scheduling Manager"
-                onClick={() => setShowLeadEditor(true)} disabled={isUpdating || actionsLoading}>
+                onClick={() => setShowLeadEditor(true)} disabled={summaryOnly || isUpdating || actionsLoading}>
                 <Phone size={18} />CSM
               </button>
             </div>}
@@ -846,11 +859,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
               </div>
             )}
           </div>
+          {summaryOnly && <p role="status">Saved door summary. You can log a knock offline. Reconnect and reopen this door to edit notes and details.</p>}
           {/* Notes Section */}
           <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Notes</h3>
-            {fieldMemory && <DictateButton onText={text => setNotes(current => [current.trim(), text].filter(Boolean).join("\n"))} onKeyboard={() => noteInput.current?.focus()} />}
+            {fieldMemory && !summaryOnly && <DictateButton onText={text => setNotes(current => [current.trim(), text].filter(Boolean).join("\n"))} onKeyboard={() => noteInput.current?.focus()} />}
             <textarea
+              disabled={summaryOnly}
               ref={noteInput}
               aria-label="Lead notes"
               value={notes}
@@ -861,7 +876,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
             />
             <button
               onClick={handleSaveNotes}
-              disabled={notesSaving}
+              disabled={notesSaving || summaryOnly}
               className="mt-2 px-4 py-2 bg-[#FF5F5A] text-white rounded-lg text-sm font-semibold hover:bg-[#F27141] disabled:opacity-50"
             >
               {notesSaving ? 'Saving...' : 'Save Notes'}
@@ -869,7 +884,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
           </div>
 
           {/* Photos Section */}
-          <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
+          {!summaryOnly && <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Photos</h3>
             {photos && photos.length > 0 && (
               <div className="grid grid-cols-3 gap-2 mb-3">
@@ -912,7 +927,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate, field
                 Add
               </button>
             </div>
-          </div>
+          </div>}
 
           {/* Disposition History */}
           {lead.dispositionHistory && lead.dispositionHistory.length > 0 && (
@@ -1020,4 +1035,30 @@ function formatTimeAgo(date: Date): string {
   if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
   
   return date.toLocaleDateString();
+}
+
+/** Map/activity summaries deliberately omit large note/history fields. Fetch the
+ * selected door before editing so saving notes cannot erase existing content. */
+export default function LeadDetail(props: LeadDetailProps) {
+  const summary = Boolean((props.lead as Lead & {mobileSummary?:boolean}).mobileSummary);
+  const [full,setFull] = useState<Lead | null>(null);
+  const [error,setError] = useState('');
+  const [attempt,setAttempt] = useState(0);
+  const uid=props.currentUser?.id, id=props.lead.id;
+  useEffect(() => {
+    if (!summary || !uid || !db) return;
+    let active=true;
+    setFull(null);setError('');
+    void getDoc(doc(db,'leads',id)).then(snapshot => {
+      if(!active || auth?.currentUser?.uid!==uid)return;
+      if(!snapshot.exists())throw Error('This door is no longer available.');
+      setFull(mapLeadDoc(snapshot));
+    }).catch(()=>{if(active)setError('Full door details could not load. Reconnect and retry. Your saved knocks are safe.');});
+    return()=>{active=false;};
+  },[id,uid,summary,attempt]);
+  if(summary && (!full || full.id!==id) && !error && isDeviceOnline())return <MobileDialog title="Door details" onClose={props.onClose}>
+    <p role="status">{error || 'Loading door details…'}</p><button className="rm-secondary" onClick={props.onClose}>Close door details</button>
+    {error && <button className="rm-primary" onClick={()=>setAttempt(v=>v+1)}>Retry</button>}
+  </MobileDialog>;
+  return <LeadDetailContent {...props} lead={summary && full?.id===id ? full : props.lead} />;
 }

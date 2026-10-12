@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { getLocation, watchLocation, type LocationPosition, type LocationError } from '@/app/utils/geolocation';
@@ -8,6 +8,9 @@ export type GeolocationError = LocationError;
 
 export function useGeolocation(options?: PositionOptions & { watch?: boolean }) {
   const [position, setPosition] = useState<GpsPosition | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt(v => v + 1), []);
+  const [activation, setActivation] = useState(0);
   const [error, setError] = useState<GeolocationError | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const { enableHighAccuracy = true, timeout = 10000, maximumAge = 0, watch = true } = options ?? {};
@@ -27,10 +30,12 @@ export function useGeolocation(options?: PositionOptions & { watch?: boolean }) 
       stop();
       const current = generation;
       const isCurrent = () => !disposed && current === generation;
+      let first = true;
       const success = (pos: LocationPosition) => {
         if (!isCurrent()) return;
         clearTimeout(firstFixTimer);
-        setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp });
+        if (first) { first = false; setActivation(value => value + 1); }
+        setPosition(previous => previous && previous.lat === pos.coords.latitude && previous.lng === pos.coords.longitude && previous.accuracy === pos.coords.accuracy ? previous : { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp });
         setError(null);
         setIsLoading(false);
       };
@@ -61,14 +66,17 @@ export function useGeolocation(options?: PositionOptions & { watch?: boolean }) 
     const listener = Capacitor.isNativePlatform()
       ? App.addListener('appStateChange', ({ isActive }) => { if (isActive && !disposed) void start(); else stop(); })
       : null;
+    const visible = () => { if (document.visibilityState === 'visible') void start(); else stop(); };
+    if (!Capacitor.isNativePlatform()) document.addEventListener('visibilitychange', visible);
     return () => {
+      document.removeEventListener('visibilitychange', visible);
       disposed = true;
       stop();
       if (listener) void listener.then(handle => handle.remove()).catch(() => {});
     };
-  }, [enableHighAccuracy, timeout, maximumAge, watch]);
+  }, [enableHighAccuracy, timeout, maximumAge, watch, attempt]);
 
-  return { position, error, isLoading };
+  return { position, error, isLoading, activation, retry };
 }
 
 // Helper: Calculate distance between two points (Haversine formula)

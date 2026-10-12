@@ -109,7 +109,7 @@ export function fieldPinArtwork(
   const tier = fieldPinZoomTier(zoom);
   // Tap targets stay 44px in LeadMap; these are visual dimensions only.
   const compact = zoom < 19;
-  const size = [6, 7, 7, 9, 14, 20][tier] + (selected && compact ? 6 : 0);
+  const size = [6, 7, 7, 13.5, 21, 30][tier] + (selected && compact ? 6 : 0);
   const warm = isSolarWarmLead(lead);
   const key = [
     size,

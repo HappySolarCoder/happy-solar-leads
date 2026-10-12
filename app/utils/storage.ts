@@ -435,18 +435,22 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus, userI
   await updateLeadAsync(leadId, updates);
 }
 
-export async function claimLead(leadId: string, userId: string): Promise<void> {
+export async function claimLead(leadId: string, userId: string): Promise<Lead> {
   const lead = await firestoreGetLead(leadId);
   if (!lead) throw Error('This lead could not be loaded. Try again.');
   if (lead.claimedBy && lead.claimedBy !== userId) throw Error('This lead is already claimed by another rep.');
   if (lead.status !== 'unclaimed' && lead.status !== 'not-home') throw Error('This lead cannot be claimed in its current status.');
-  await updateLeadAsync(leadId, { status: 'claimed', claimedBy: userId, claimedAt: new Date() });
+  const patch = { status: 'claimed', claimedBy: userId, claimedAt: new Date() };
+  await updateLeadAsync(leadId, patch);
+  return { ...lead, ...patch };
 }
 
-export async function unclaimLead(leadId: string): Promise<void> {
+export async function unclaimLead(leadId: string): Promise<Lead> {
   const lead = await firestoreGetLead(leadId);
   if (!lead?.claimedBy) throw Error('This lead is no longer claimed. Refresh and try again.');
-  await updateLeadAsync(leadId, { status: 'unclaimed', claimedBy: undefined, claimedAt: undefined });
+  const patch = { status: 'unclaimed', claimedBy: undefined, claimedAt: undefined };
+  await updateLeadAsync(leadId, patch);
+  return { ...lead, ...patch };
 }
 
 export function getLeadsByStatus(status: LeadStatus): Lead[] {

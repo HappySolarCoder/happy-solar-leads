@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { territoryV2, validTerritoryId } from "./territoryManagementV2";
 import { createHash } from "node:crypto";
 import { type DocumentSnapshot } from "firebase-admin/firestore";
 import type { adminAuth, adminDb } from "../firebase-admin";
@@ -79,7 +80,8 @@ export function createTerritoryHandlers(dependencies: {
       userColor: d.userColor || "#587E98",
       polygon: d.polygon || [],
       leadIds: summary ? [] : d.leadIds || [],
-      leadCount: Array.isArray(d.leadIds) ? d.leadIds.length : 0,
+      leadCount: d.leadCount ?? (Array.isArray(d.leadIds) ? d.leadIds.length : 0),
+      assignment: d.assignment ? {id:d.assignment.id, done:d.assignment.done, changed:d.assignment.changed, scanned:d.assignment.scanned, targetId:d.assignment.targetId} : null,
       version: version(doc),
     };
   }
@@ -89,13 +91,8 @@ export function createTerritoryHandlers(dependencies: {
         db = adminDb();
       const [people, areas] = await Promise.all([
         db.collection("users").get(),
-        db.collection("territories").limit(501).get(),
+        db.collection("territories").get(),
       ]);
-      if (areas.size > 500)
-        fail(
-          "This workspace has more than 500 areas. Ask an admin to reduce the number of active areas before loading this editor.",
-          409
-        );
       const allMembers = people.docs.map(member);
       const scope = new Set(
         allMembers.filter((m) => inManagerTeam(actor, m)).map((m) => m.id)
@@ -103,6 +100,7 @@ export function createTerritoryHandlers(dependencies: {
       return NextResponse.json(
         {
           actor,
+          capabilities: {pagedAssignments: true},
           members: allMembers.filter((m) => scope.has(m.id)),
           territories: areas.docs
             .filter((d) => !d.data().archived && scope.has(d.data().userId))
@@ -127,6 +125,9 @@ export function createTerritoryHandlers(dependencies: {
         return fail("Invalid request.");
       }
       const action = body?.action;
+      if (["preview-v2", "begin-assignment", "continue-assignment"].includes(action)) {
+        return NextResponse.json(await territoryV2(db, actor, body), {headers:{"Cache-Control":"no-store"}});
+      }
       if (
         ![
           "preview",
@@ -211,8 +212,7 @@ export function createTerritoryHandlers(dependencies: {
           items.length > 50 ||
           items.some(
             (x) =>
-              typeof x?.id !== "string" ||
-              !/^[\w-]{1,128}$/.test(x.id) ||
+              !validTerritoryId(x?.id) ||
               typeof x.version !== "string"
           ) ||
           new Set(items.map((x) => x.id)).size !== items.length
@@ -280,7 +280,7 @@ export function createTerritoryHandlers(dependencies: {
         return NextResponse.json({ success: true, ...result });
       }
       const id = action === "create" ? body.requestId : body.id;
-      if (typeof id !== "string" || !/^[\w-]{1,128}$/.test(id))
+      if (!validTerritoryId(id))
         fail("Choose a saved territory.");
       const ref = db.collection("territories").doc(id);
       const fingerprint = createHash("sha256")
@@ -326,6 +326,8 @@ export function createTerritoryHandlers(dependencies: {
             "Someone changed this area while you were editing. Refresh before trying again.",
             409
           );
+        if (data?.assignment && !data.assignment.done && action !== "archive")
+          fail("Resume the unfinished assignment before changing this territory.", 409);
         const targetId =
           action === "create" || action === "transfer"
             ? body.userId

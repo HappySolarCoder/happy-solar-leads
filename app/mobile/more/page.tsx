@@ -1,5 +1,6 @@
 "use client";
 
+import VoiceFeedback from "../_components/VoiceFeedback";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -115,6 +116,7 @@ export default function MorePage() {
             </Link>
           ))}
         </div>
+        {user && <VoiceFeedback uid={user.id} admin={user.role === "admin"} />}
         {user && ["admin", "manager"].includes(user.role) && (
           <AppointmentSyncPanel />
         )}

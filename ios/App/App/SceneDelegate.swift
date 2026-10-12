@@ -7,8 +7,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
 
-        window = UIWindow(windowScene: windowScene)
-        window?.rootViewController = CAPBridgeViewController()
+        // UIKit may already have loaded Main.storyboard. Reuse that bridge so
+        // one scene never starts two WebViews and two sets of native listeners.
+        if window == nil { window = UIWindow(windowScene: windowScene) }
+        if !(window?.rootViewController is RaydarViewController) {
+            window?.rootViewController = RaydarViewController()
+        }
         window?.makeKeyAndVisible()
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)

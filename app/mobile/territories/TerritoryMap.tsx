@@ -5,7 +5,7 @@ import "leaflet/dist/leaflet.css";
 import { Crosshair, Layers } from "lucide-react";
 import { getLocation } from "@/app/utils/geolocation";
 import type { Place } from "./PlaceSearch";
-import type { DrawingTool } from "./drawing";
+import { cleanFingerTrace, type DrawingTool } from "./drawing";
 import type { TerritoryPoint } from "@/app/types/territory";
 import type {
   ManagedTerritory,
@@ -22,6 +22,7 @@ type Props = {
   points: TerritoryPoint[];
   candidates: TerritoryCandidate[];
   onPoint: (p: TerritoryPoint) => void;
+  onEdit: (points: TerritoryPoint[]) => void;
   onSelect: (id: string) => void;
 };
 export default function TerritoryMap(props: Props) {
@@ -56,13 +57,13 @@ export default function TerritoryMap(props: Props) {
     const container = root.current;
     let tap: { id: number; x: number; y: number } | null = null;
     const pointerDown = (e: PointerEvent) => {
+      tap = null;
       if (!e.isPrimary) {
-        tap = null;
         return;
       }
       if (
         e.button !== 0 ||
-        (e.target as HTMLElement).closest(".leaflet-control")
+        (e.target as HTMLElement).closest(".leaflet-control, .rt-edit-corner")
       )
         return;
       tap = { id: e.pointerId, x: e.clientX, y: e.clientY };
@@ -155,7 +156,7 @@ export default function TerritoryMap(props: Props) {
         e.button !== 0 ||
         !e.isPrimary ||
         pointer !== null ||
-        (e.target as HTMLElement).closest(".leaflet-control")
+        (e.target as HTMLElement).closest(".leaflet-control, .rt-edit-corner")
       )
         return;
       e.preventDefault();
@@ -175,7 +176,7 @@ export default function TerritoryMap(props: Props) {
       if (e.pointerId !== pointer) return;
       if (e.type !== "pointercancel") {
         collect(e);
-        let simplified = L.LineUtil.simplify(samples, 3);
+        let simplified = L.LineUtil.simplify(cleanFingerTrace(samples).map(p=>L.point(p.x,p.y)), 3);
         if (simplified.length > 80)
           simplified = Array.from(
             { length: 80 },
@@ -301,39 +302,33 @@ export default function TerritoryMap(props: Props) {
     if (!draft.current) return;
     draft.current.clearLayers();
     const coords = props.points.map((p) => L.latLng(p.lat, p.lng));
-    if (coords.length > 1)
-      draft.current.addLayer(
-        coords.length > 2
+    const outline = coords.length > 1 ? (coords.length > 2
           ? L.polygon(coords, {
               color: "#F0BC18",
               weight: 3,
               fillOpacity: 0.12,
+              smoothFactor: 0,
               interactive: false,
             })
           : L.polyline(coords, {
               color: "#F0BC18",
               weight: 3,
+              smoothFactor: 0,
               interactive: false,
-            })
-      );
-    if (props.drawingTool !== "freehand")
-      coords.forEach((p, i) => {
-        const marker = L.circleMarker(p, {
-          radius: 6,
-          color: "#304B5E",
-          fillColor: "#F0BC18",
-          fillOpacity: 1,
-          weight: 2,
-          interactive: false,
-        });
-        marker.bindTooltip(String(i + 1), {
-          permanent: true,
-          direction: "top",
-          className: "rt-corner",
-        });
-        draft.current!.addLayer(marker);
+            })) : null;
+    if (outline) draft.current.addLayer(outline);
+    coords.forEach((p, i) => {
+      const marker = L.marker(p, { draggable: true, title: `Move boundary point ${i + 1}`, alt: `Boundary point ${i + 1}`, icon:L.divIcon({
+        className:'rt-edit-corner',html:'<span aria-hidden="true"></span>',iconSize:[44,44],iconAnchor:[22,22],
+      }) });
+      marker.on('drag',()=>{ const live = coords.map((point,index)=>index===i?marker.getLatLng():point); outline?.setLatLngs(live); });
+      marker.on('dragend',()=>{
+        const ll=marker.getLatLng();
+        propsRef.current.onEdit(propsRef.current.points.map((point,index)=>index===i?{lat:ll.lat,lng:ll.lng}:point));
       });
-    props.candidates.forEach((p) =>
+      draft.current!.addLayer(marker);
+    });
+    props.candidates.slice(0,2000).forEach((p) =>
       draft.current!.addLayer(
         L.circleMarker([p.lat, p.lng], {
           radius: 4,

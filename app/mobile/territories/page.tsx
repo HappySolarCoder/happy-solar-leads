@@ -31,7 +31,7 @@ async function request<T = TerritoryData>(
       error: "The territory service is unavailable. Please try again.",
     }));
   if (!response.ok)
-    throw new Error(result.error || "Territories could not be loaded.");
+    throw Object.assign(new Error(result.error || `Territories could not be loaded (HTTP ${response.status}).`), {status:response.status});
   return result;
 }
 export default function TerritoriesPage() {

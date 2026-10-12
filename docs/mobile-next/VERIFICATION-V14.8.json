@@ -1,0 +1,110 @@
+{
+  "version": "14.8",
+  "build": 148,
+  "unitTests": {
+    "pass": 123,
+    "fail": 0
+  },
+  "productionExport": true,
+  "iosBundleVerified": true,
+  "androidBundleVerified": true,
+  "nativeCompilation": false,
+  "nativeDevicesTested": false,
+  "productionWrites": 0,
+  "productionNewRoutes": "404 / companion not deployed",
+  "saveChecks": {
+    "commonDispositions": 7,
+    "typedTimestamps": true,
+    "repIdentityAndGps": true,
+    "ownershipUnchangedOnUpdate": true,
+    "offlineReloadAutoSync": true,
+    "originalKnockTime": true,
+    "lostAcknowledgementRetryWithoutDuplicate": true,
+    "quietNormalSave": true,
+    "offlineAttention": true,
+    "pinUpdatedWithDelayedListener": true,
+    "schedulerPayloadAndSaveBeforeSend": true,
+    "explicitClaimUnclaim": true,
+    "notesRetainedAfterAcknowledgement": true,
+    "followUpCleanupAfterNavigation": true,
+    "compactNeighborhoodPins": true,
+    "forbiddenApiRequests": [],
+    "liveWrites": 0,
+    "fixtureWrites": 14,
+    "createAttempts": 5,
+    "errors": []
+  },
+  "territoryUI": {
+    "results": [
+      {
+        "device": "ios",
+        "focusGoalsAndPersistence": true,
+        "dateDispositionFilters": true,
+        "myTeamOffAndZoom": true,
+        "gpsStartupPanAndResume": true,
+        "create450RenameTransfer": true,
+        "partialDeleteAndRetry": true,
+        "alignedToolbarAndAccount": true,
+        "gpsBottomRight": true,
+        "unnumberedHandles": true,
+        "missingCompanionExplained": true,
+        "productionWrites": 0
+      },
+      {
+        "device": "android",
+        "focusGoalsAndPersistence": true,
+        "dateDispositionFilters": true,
+        "myTeamOffAndZoom": true,
+        "gpsStartupPanAndResume": true,
+        "create450RenameTransfer": true,
+        "partialDeleteAndRetry": true,
+        "alignedToolbarAndAccount": true,
+        "gpsBottomRight": true,
+        "unnumberedHandles": true,
+        "missingCompanionExplained": true,
+        "productionWrites": 0
+      }
+    ],
+    "errors": []
+  },
+  "navigationStability": {
+    "results": [
+      {
+        "role": "admin",
+        "cycles": 12,
+        "personalCalls": 4,
+        "mapCalls": 2,
+        "retainedHeapGrowthBytes": 3104528,
+        "uniqueMapAndControls": true,
+        "gpsRetry": true,
+        "zoomToMineTwice": true,
+        "voiceRetry": true
+      },
+      {
+        "role": "manager",
+        "cycles": 12,
+        "personalCalls": 3,
+        "mapCalls": 2,
+        "retainedHeapGrowthBytes": 3842692,
+        "uniqueMapAndControls": true,
+        "gpsRetry": true,
+        "zoomToMineTwice": true,
+        "voiceRetry": "covered in admin run"
+      },
+      {
+        "role": "setter",
+        "cycles": 12,
+        "personalCalls": 3,
+        "mapCalls": 2,
+        "retainedHeapGrowthBytes": 3171632,
+        "uniqueMapAndControls": true,
+        "gpsRetry": true,
+        "zoomToMineTwice": true,
+        "voiceRetry": "covered in admin run"
+      }
+    ],
+    "errors": [],
+    "liveWrites": 0,
+    "nativeDevicesTested": false
+  }
+}

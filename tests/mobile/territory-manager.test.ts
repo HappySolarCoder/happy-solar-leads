@@ -15,17 +15,17 @@ const square = [
   { lat: 0.01, lng: 0.01 },
   { lat: 0.01, lng: 0 },
 ];
-test("validates geographic boundaries and refuses crossing, duplicate, oversized or invalid coordinates", () => {
+test("validates geographic boundaries and refuses crossing, duplicate or invalid coordinates", () => {
   assert.equal(validateTerritoryPolygon(square).length, 4);
   assert.equal(validateTerritoryPolygon([...square, square[0]]).length, 4);
   for (const p of [
     square.slice(0, 2),
     [square[0], square[2], square[1], square[3]],
     [...square, square[1]],
-    square.map((p) => ({ ...p, lat: p.lat * 1000 })),
     [{ lat: NaN, lng: 0 }, ...square],
   ])
     assert.throws(() => validateTerritoryPolygon(p));
+  assert.equal(validateTerritoryPolygon(square.map(p=>({lat:p.lat*1000,lng:p.lng*1000}))).length,4);
   assert.equal(insideTerritory(0.005, 0.005, square), true);
   assert.equal(insideTerritory(0, 0, square), true);
   assert.equal(insideTerritory(0.02, 0.005, square), false);

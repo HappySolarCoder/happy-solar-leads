@@ -47,7 +47,7 @@ export async function readTile(scope: string, tile: string): Promise<HomeTile> {
       .objectStore("tiles")
       .get(key(scope, tile));
     r.onsuccess = () =>
-      resolve(r.result || { tile, docs: {}, receipts: [], touched: 0 });
+      resolve(r.result ? { ...r.result, receipts: r.result.receipts.filter((receipt: {complete:boolean;progressive?:boolean}) => receipt.complete || receipt.progressive !== undefined) } : { tile, docs: {}, receipts: [], touched: 0 });
     r.onerror = () => reject(r.error);
   });
 }

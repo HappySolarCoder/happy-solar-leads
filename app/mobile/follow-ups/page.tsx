@@ -12,6 +12,7 @@ import {
 import { FollowUpsView } from "../_components/MobileViews";
 import { useDeviceNow } from "../_components/useDeviceNow";
 import { useMobileData } from "../_components/useMobileData";
+import { acknowledgeMobileLead } from '@/app/hooks/useLiveLeads';
 import { clearFollowUps } from '../_lib/clearFollowUps';
 const LeadDetail = dynamic(() => import("@/app/components/LeadDetail"), {
   ssr: false,
@@ -60,7 +61,13 @@ export default function FollowUpsPage() {
             const ids = new Set(targets.map(lead => lead.id));
             if (field.drafts.some(draft => ids.has(draft.leadId)))
               throw Error('Sync the selected pins before removing their follow-ups.');
-            return clearFollowUps(user.id, targets, onRemoved);
+            return clearFollowUps(user.id, targets, removed => {
+              for (const id of removed) {
+                const lead = targets.find(item => item.id === id);
+                if (lead) acknowledgeMobileLead(user, {...lead, goBackScheduledDate: undefined, goBackScheduledTime: ''});
+              }
+              onRemoved(removed);
+            });
           }}
         />
       )}

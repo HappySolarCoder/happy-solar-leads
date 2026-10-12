@@ -27,6 +27,7 @@ import { rectangleCorners, type DrawingTool } from "./drawing";
 import PersonPicker from "../_components/PersonPicker";
 import TerritorySheet from "./TerritorySheet";
 import MobileDialog from "../_components/MobileDialog";
+import { reviewAllPins, continueAssignment, type AssignmentResult } from './assignment';
 import { deleteUserTerritories } from './deleteTerritories';
 const TerritoryMap = dynamic(() => import("./TerritoryMap"), {
   ssr: false,
@@ -35,6 +36,7 @@ const TerritoryMap = dynamic(() => import("./TerritoryMap"), {
   ),
 });
 export type TerritoryData = {
+  capabilities?: {pagedAssignments?: boolean};
   actor: TerritoryMember;
   members: TerritoryMember[];
   territories: ManagedTerritory[];
@@ -176,12 +178,14 @@ export default function TerritoryWorkspace({
   }
   function finishBoundary(next = points) {
     try {
-      if (next.length < (drawingTool === "freehand" ? 3 : 4)) return;
+      if (next.length < 3) return;
       setPoints(validateTerritoryPolygon(next));
       setBoundaryComplete(true);
       setError("");
     } catch (e) {
       setPoints(next);
+      setDrawingTool("corners");
+      setBoundaryComplete(false);
       setError(
         e instanceof Error ? e.message : "Redraw the boundary and try again."
       );
@@ -208,13 +212,17 @@ export default function TerritoryWorkspace({
       const polygon = validateTerritoryPolygon(points);
       if (!name.trim()) throw new Error("Give your territory a short name.");
       if (!rep) throw new Error("Choose the rep who will work this area.");
-      setReview(
-        await request<TerritoryReview>({
-          action: "preview",
-          polygon,
-          userId: rep,
-        })
-      );
+      // Never silently fall back to the retired size-limited assignment API.
+      // Refresh capabilities so installing the companion does not require an app restart.
+      const latest = await request();
+      setData(latest);
+      if (!latest.capabilities?.pagedAssignments)
+        throw new Error('Territory assignment needs a service update from your administrator. Your drawing is unchanged; retry after the update.');
+      const body = {polygon,userId:rep};
+      setNotice('Checking available pins…');
+      const reviewed = await reviewAllPins(request, body, (scanned,eligible)=>setNotice(`Checked ${scanned.toLocaleString()} pins · ${eligible.toLocaleString()} available`));
+      setReview(reviewed);
+      setNotice('');
       setMode("review");
       pending.current = null;
     });
@@ -223,11 +231,19 @@ export default function TerritoryWorkspace({
     const key = JSON.stringify(body);
     if (pending.current?.key !== key)
       pending.current = { key, requestId: crypto.randomUUID() };
-    const result = await request<{
-      id: string;
-      changed: number;
-      skipped?: number;
-    }>({ ...body, requestId: pending.current.requestId });
+    let result: {id:string;changed:number;skipped?:number};
+    if (data.capabilities?.pagedAssignments && ['create','transfer'].includes(String(body.action))) {
+      const began = await request<AssignmentResult>({action:'begin-assignment',kind:body.action,
+        ...(body.action==='transfer'?{id:body.id,version:body.version}:{}),
+        name:body.name,userId:body.userId,polygon:body.polygon,requestId:pending.current.requestId});
+      try {
+        result = await continueAssignment(request,began,r=>setNotice(`Assigning territory · ${r.changed.toLocaleString()} pins saved · ${r.scanned.toLocaleString()} checked`));
+      } catch (e) {
+        setDialog(null); cancel(); setSelected(began.id);
+        try {await reload();} catch {/* Keep original error. */}
+        throw new Error(`${e instanceof Error?e.message:'Assignment interrupted.'} Completed batches are kept. Select the territory and tap Resume assignment.`);
+      }
+    } else result = await request<{id:string;changed:number;skipped?:number}>({...body,requestId:pending.current.requestId});
     // A save may succeed even if the following refresh fails. Report that
     // accurately and retain the operation id for an idempotent retry.
     setNotice(
@@ -240,6 +256,7 @@ export default function TerritoryWorkspace({
           } worked or changed pins stayed with their current rep.`
     );
     setDialog(null);
+    if (body.action === "transfer" && repFilter) setRepFilter(String(body.userId));
     cancel();
     setSelected(body.action === "archive" ? "" : result.id);
     try {
@@ -253,7 +270,7 @@ export default function TerritoryWorkspace({
   async function removeAll() {
     await run(async () => {
       const targets = data.territories.filter((t) => t.userId === repFilter);
-      await deleteUserTerritories(repFilter, targets, request, deleteOperations.current, (id, removed) => {
+      try { await deleteUserTerritories(repFilter, targets, request, deleteOperations.current, (id, removed) => {
         setData((d) => ({
           ...d,
           territories: d.territories.filter((t) => t.id !== id),
@@ -262,6 +279,7 @@ export default function TerritoryWorkspace({
         setSelected("");
         setTerritoryPage(0);
       });
+      } catch(e) { try { await reload(); } catch {/* Keep failed items for retry. */} throw e; }
       setDeleteAll(false);
       pending.current = null;
     });
@@ -314,6 +332,7 @@ export default function TerritoryWorkspace({
             points={points}
             candidates={review?.candidates || NO_CANDIDATES}
             onPoint={addPoint}
+            onEdit={finishBoundary}
             onSelect={(id) => {
               if (mode === "list") {
                 setSelected(id);
@@ -373,7 +392,7 @@ export default function TerritoryWorkspace({
                 {drawingTool === "corners" && (
                   <button
                     className="rt-primary"
-                    disabled={points.length < 4 || busy}
+                    disabled={points.length < 3 || busy}
                     onClick={() => finishBoundary()}
                   >
                     Done <Check size={16} />
@@ -401,6 +420,7 @@ export default function TerritoryWorkspace({
               {error}
             </div>
           )}
+          {!data.capabilities?.pagedAssignments && <p className="rt-help">A company server update is needed for large territory assignments and resumable saves. Existing territory tools remain available.</p>}
           {notice && (
             <div className="rt-success" role="status">
               <Check size={18} />
@@ -412,6 +432,7 @@ export default function TerritoryWorkspace({
               <div className="rt-panel-heading">
                 <div>
                   <h2>Your team’s areas</h2>
+                  <p>Assign, reassign, rename, or remove areas for your team.</p>
                   <p>
                     {data.territories.length} territories · {recipients.length}{" "}
                     available reps
@@ -483,14 +504,22 @@ export default function TerritoryWorkspace({
                     {selectedArea.leadCount ?? selectedArea.leadIds.length}{" "}
                     assigned pins at last save
                   </p>
+                  {selectedArea.assignment && !selectedArea.assignment.done && <div className="rt-pending">
+                    <p>Assignment paused · {selectedArea.assignment.changed} pins saved. Resume to finish.</p>
+                    <button className="rt-primary" disabled={busy} onClick={()=>run(async()=>{
+                      const a=selectedArea.assignment!;
+                      const result=await continueAssignment(request,{id:selectedArea.id,operationId:a.id,changed:a.changed,scanned:a.scanned,done:false},r=>setNotice(`Assigning · ${r.changed} pins saved · ${r.scanned} checked`));
+                      setNotice(`Assignment complete. ${result.changed} pins assigned.`); await reload();
+                    })}>Resume assignment</button>
+                  </div>}
                   <div className="rt-row-actions">
-                    <button onClick={() => openEdit("rename")} disabled={busy}>
+                    <button onClick={() => openEdit("rename")} disabled={busy || !!selectedArea.assignment && !selectedArea.assignment.done}>
                       <Pencil size={15} />
                       Rename
                     </button>
                     <button
                       onClick={() => openEdit("transfer")}
-                      disabled={busy}
+                      disabled={busy || !!selectedArea.assignment && !selectedArea.assignment.done}
                     >
                       <ArrowRight size={15} />
                       Transfer
@@ -647,8 +676,8 @@ export default function TerritoryWorkspace({
                       {drawingTool === "rectangle"
                         ? "Tap two opposite corners to make a rectangle with four corners. Drag the map to move or pinch to zoom."
                         : drawingTool === "freehand"
-                        ? "Trace the boundary with one finger or your mouse. Lift to finish. Use Move map to reposition; drawing again replaces the outline."
-                        : "Tap at least 4 corners around your area. Drag to move or pinch to zoom."}
+                        ? "Trace with one finger and lift. The boundary closes automatically. Drag a corner to adjust the outline."
+                        : "Tap at least 3 corners around your area. Drag to move or pinch to zoom."}
                     </p>
                   )}
                   <div className="rt-actions">
@@ -657,7 +686,7 @@ export default function TerritoryWorkspace({
                       onClick={inspect}
                       disabled={
                         !boundaryComplete ||
-                        points.length < (drawingTool === "freehand" ? 3 : 4) ||
+                        points.length < 3 ||
                         !rep ||
                         !name.trim() ||
                         busy
@@ -693,9 +722,7 @@ export default function TerritoryWorkspace({
                   </p>
                   {review?.truncated && (
                     <p className="rt-alert" role="alert">
-                      This area is too large to check completely. Draw a smaller
-                      area; nothing has been assigned. Limit: 400 available pins
-                      per territory.
+                      Your company server needs the v14.6 territory update to review this entire area. Nothing has been assigned. Keep the boundary and retry after that update.
                     </p>
                   )}
                   <div className="rt-actions">
@@ -812,14 +839,6 @@ export default function TerritoryWorkspace({
                   Claimed pins, appointments, notes, and worked leads stay with
                   their current rep.
                 </p>
-                {(selectedArea.leadCount ?? selectedArea.leadIds.length) >
-                  400 && (
-                  <p className="rt-alert">
-                    This legacy area exceeds 400 pins. It cannot be transferred
-                    here; remove its boundary and create smaller areas without
-                    changing existing pin owners.
-                  </p>
-                )}
               </>
             ) : (
               <p>
@@ -843,9 +862,7 @@ export default function TerritoryWorkspace({
                   busy ||
                   !editValue.trim() ||
                   (dialog === "transfer" &&
-                    (editValue === selectedArea.userId ||
-                      (selectedArea.leadCount ?? selectedArea.leadIds.length) >
-                        400))
+                    (editValue === selectedArea.userId))
                 }
                 onClick={() =>
                   run(() =>

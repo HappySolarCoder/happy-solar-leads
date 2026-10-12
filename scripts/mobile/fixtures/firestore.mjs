@@ -22,7 +22,7 @@ export const getDocsFromServer=getDocs;
 export function onSnapshot(ref,options,next){const cb=typeof options==='function'?options:next;let alive=true,previous=new Map();const emit=()=>void getDocs(ref).then(s=>{if(!alive)return;const now=new Map(s.docs.map(d=>[d.id,d]));const changes=[...s.docs.map(doc=>({type:previous.has(doc.id)?'modified':'added',doc})),...[...previous].filter(([id])=>!now.has(id)).map(([,doc])=>({type:'removed',doc}))];previous=now;cb({...s,docChanges:()=>changes});});listeners.add(emit);emit();return()=>{alive=false;listeners.delete(emit);};}
 export const Timestamp=FixtureTimestamp;
 const noWrite=async()=>{throw Error('Database writes are disabled in the fictional page audit.');};
-async function testWrite(kind,ref,data){const s=testState();if(!s)return noWrite();if(s.fail)throw Error('Fictional save failed');if(!ref.path.startsWith('leads/'))throw Error('Unexpected fixture collection write');const id=ref.path.split('/')[1];if(kind==='update'&&!s.leads[id]&&!records('leads').some(l=>l.id===id))throw Error('Missing lead');s.writes.push({kind,path:ref.path,data});s.leads[id]={...(kind==='update'?(s.leads[id]||records('leads').find(l=>l.id===id)):{}),...data,id};for(const [k,v]of Object.entries(s.leads[id]))if(v?.auditDelete)delete s.leads[id][k];listeners.forEach(emit=>emit());localStorage.setItem('raydar-fixture-backend',JSON.stringify(s));}
+async function testWrite(kind,ref,data){const s=testState();if(!s)return noWrite();if(s.fail)throw Error('Fictional save failed');if(!ref.path.startsWith('leads/'))throw Error('Unexpected fixture collection write');const id=ref.path.split('/')[1];if(kind==='update'&&!s.leads[id]&&!records('leads').some(l=>l.id===id))throw Error('Missing lead');s.writes.push({kind,path:ref.path,data});s.leads[id]={...(kind==='update'?(s.leads[id]||records('leads').find(l=>l.id===id)):{}),...data,id};for(const [k,v]of Object.entries(s.leads[id]))if(v?.auditDelete)delete s.leads[id][k];if(!window.__raydarDelaySnapshots)listeners.forEach(emit=>emit());localStorage.setItem('raydar-fixture-backend',JSON.stringify(s));}
 export const updateDoc=(ref,data)=>testWrite('update',ref,data),setDoc=(ref,data)=>testWrite('create',ref,data),addDoc=noWrite,deleteDoc=noWrite;
 export const deleteField=()=>({auditDelete:true});export const arrayUnion=(...values)=>values;
 export const writeBatch=()=>({set:noWrite,update:noWrite,delete:noWrite,commit:noWrite});
@@ -66,3 +66,5 @@ if(typeof window!=='undefined')window.__raydarFixtureRestCommit=async payload=>{
  try{await testWrite('create',{path},data);return {status:200,json:{writeResults:[{}]}};}
  catch(e){return {status:503,json:{error:{status:'UNAVAILABLE'}}};}
 };
+
+if(typeof window!=="undefined")window.__raydarFlushSnapshots=()=>{window.__raydarDelaySnapshots=false;listeners.forEach(emit=>emit());};

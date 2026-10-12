@@ -43,7 +43,7 @@ test('cleanup preserves a concurrently rescheduled, reassigned or dispositioned 
 });
 
 const areas = ['a','b','c','other'].map(id=>({id,version:'v1',userId:id==='other'?'other':'rep'} as ManagedTerritory));
-test('bulk territory deletion uses deployed archive action, stops on failure, and retries the same operation id', async () => {
+test('bulk territory deletion uses deployed archive action, continues after a failure, and retries the same operation id', async () => {
   const operations=new Map<string,string>(), calls:Record<string,unknown>[]=[];
   const removed:string[]=[];
   let fail=true;
@@ -54,13 +54,13 @@ test('bulk territory deletion uses deployed archive action, stops on failure, an
     if(body.id==='b'&&fail)throw Error('Lost acknowledgement');
   };
   await assert.rejects(deleteUserTerritories('rep',areas,request,operations,id=>removed.push(id)),/Lost acknowledgement/);
-  assert.deepEqual(removed,['a']);
-  assert.deepEqual(calls.map(c=>c.id),['a','b']);
+  assert.deepEqual(removed,['a','c']);
+  assert.deepEqual(calls.map(c=>c.id),['a','b','c']);
   const failedId=calls[1].requestId;
   fail=false;
   await deleteUserTerritories('rep',areas.filter(a=>!removed.includes(a.id)),request,operations,id=>removed.push(id));
-  assert.equal(calls[2].requestId,failedId);
-  assert.deepEqual(removed,['a','b','c']);
+  assert.equal(calls[3].requestId,failedId);
+  assert.deepEqual(removed,['a','c','b']);
   assert.equal(operations.size,0);
   assert.ok(calls.every(c=>c.version==='v1'&&c.id!=='other'));
 });

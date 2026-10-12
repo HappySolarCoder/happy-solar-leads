@@ -70,5 +70,9 @@
 	<string>Raydar uses your precise location while the app is open to show nearby leads and verify door-knock visits.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Raydar uses your precise location while the app is open to show nearby leads and verify door-knock visits.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Raydar uses the microphone when you tap Dictate notes or Record feedback. Feedback recordings are sent to your Raydar admins only when you choose Send.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Raydar uses Apple speech recognition to turn your spoken notes into text. Audio may be processed by Apple when on-device recognition is unavailable.</string>
 </dict>
 </plist>

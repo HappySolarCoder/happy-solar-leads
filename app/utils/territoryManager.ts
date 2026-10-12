@@ -24,6 +24,7 @@ export type ManagedTerritory = {
   leadIds: string[];
   leadCount?: number;
   version: string;
+  assignment?: {id:string;done:boolean;changed:number;scanned:number;targetId:string}|null;
 };
 export type TerritoryCandidate = {
   id: string;
@@ -37,6 +38,8 @@ export type TerritoryReview = {
   eligible: number;
   skipped: number;
   truncated: boolean;
+  nextCursor?: {lat:number;id:string}|null;
+  scanned?: number;
 };
 
 export function mayManageTerritories(user: {
@@ -124,9 +127,6 @@ export function validateTerritoryPolygon(value: unknown): TerritoryPoint[] {
     points.length < 3
   )
     throw new Error("Use different corners for your boundary.");
-  const b = territoryBounds(points);
-  if (b.north - b.south > 0.2 || b.east - b.west > 0.3)
-    throw new Error("Choose a neighborhood-sized area.");
   let area = 0;
   for (let i = 0; i < points.length; i++) {
     const a = points[i],
@@ -138,7 +138,7 @@ export function validateTerritoryPolygon(value: unknown): TerritoryPoint[] {
       if (j === i + 1 || (i === 0 && j === points.length - 1)) continue;
       if (intersects(a, b, points[j], points[(j + 1) % points.length]))
         throw new Error(
-          "Boundary lines must not cross. Undo a corner and try again."
+          "Two boundary lines cross. Drag a corner or undo the last corner to fix that section."
         );
     }
   }

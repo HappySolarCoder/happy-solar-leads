@@ -323,8 +323,8 @@ test("property marks remain distinct and roof-sized without changing worked-pin 
   const before = fieldPinArtwork(lead(), undefined, 18).url;
   const owner = homeownerPinArtwork(false, 18),
     renter = homeownerPinArtwork(true, 18);
-  assert.equal(owner.size, 14);
-  assert.equal(homeownerPinArtwork(false, 19).size, 18);
+  assert.equal(owner.size, 21);
+  assert.equal(homeownerPinArtwork(false, 19).size, 27);
   assert.equal(homeownerPinArtwork(false, 15).size, 7);
   assert.equal(owner.anchorX, owner.size / 2);
   assert.equal(owner.anchorY, owner.height / 2);

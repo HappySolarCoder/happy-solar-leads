@@ -1,3 +1,4 @@
+import { scopedViews, inPinScope, type PinScope } from "@/app/mobile/_lib/pinScope";
 import type { Lead } from "@/app/types";
 import { distanceBetween, geohashQueryBounds } from "geofire-common";
 import type { ViewportBounds } from "@/app/utils/mapViewport";
@@ -28,14 +29,14 @@ export type Homeowner = {
   geohash5: string;
 };
 export type Range = { lo: number; hi: number }; // Half-open integer ranges of 9-character hashes.
-export type Receipt = Range & { at: number; complete: boolean; zoom: number };
+export type Receipt = Range & { at: number; complete: boolean; zoom: number; progressive?: boolean };
 export type HomeTile = {
   tile: string;
   docs: Record<string, Homeowner>;
   receipts: Receipt[];
   touched: number;
 };
-export type View = ViewportBounds & { zoom: number };
+export type View = ViewportBounds & { zoom: number; polygons?: PinScope };
 const str = (x: unknown, max = 200) =>
   typeof x === "string" ? x.slice(0, max) : "";
 export function parseHomeowner(
@@ -147,6 +148,11 @@ export function viewCircle(v: View) {
 /** Always bounded to a street-level circle and clipped at geohash5 tile boundaries. */
 export function planRanges(v: View): Map<string, Range[]> {
   const output = new Map<string, Range[]>();
+  if (v.polygons) {
+    for (const clipped of scopedViews(v, v.polygons)) for (const [tile, ranges] of planRanges(clipped))
+      output.set(tile, unionRanges([...(output.get(tile) || []), ...ranges]));
+    return output;
+  }
   if (
     v.zoom < MIN_ZOOM ||
     ![v.south, v.north, v.west, v.east].every(Number.isFinite) ||
@@ -189,7 +195,7 @@ export function missingRanges(
   let dense = false;
   const result = missing.flatMap((r) => {
     const skip = blocked.filter(
-      (b) => !(zoom > b.zoom && r.hi - r.lo < b.hi - b.lo),
+      (b) => !((zoom > b.zoom || b.progressive) && r.hi - r.lo < b.hi - b.lo),
     );
     if (skip.some((b) => b.lo < r.hi && b.hi > r.lo)) dense = true;
     return subtractRanges([r], skip);
@@ -225,7 +231,12 @@ export function applyRead(
     (r) => now - r.at < TTL && !(r.lo === range.lo && r.hi === range.hi),
   );
   // Don't create false coverage by merging timestamps. Oldest receipt wins.
-  receipts.push({ ...range, at: now, complete: rawCount < QUERY_LIMIT, zoom });
+  const cutoff = docs.length ? Math.max(...docs.map(h => hashNumber(h.geohash))) : range.lo;
+  if (rawCount >= QUERY_LIMIT && cutoff > range.lo && cutoff < range.hi) {
+    // Do not mark the final hash complete: several records can share it.
+    receipts.push({lo:range.lo,hi:cutoff,at:now,complete:true,zoom,progressive:true});
+    receipts.push({...range,at:now,complete:false,zoom,progressive:true});
+  } else receipts.push({ ...range, at: now, complete: rawCount < QUERY_LIMIT, zoom, progressive:rawCount < QUERY_LIMIT });
   if (receipts.length > 300) receipts = receipts.slice(-300);
   return { ...tile, docs: merged, receipts, touched: now };
 }

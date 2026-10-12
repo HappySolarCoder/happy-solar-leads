@@ -1,3 +1,4 @@
+import { inPinScope } from "@/app/mobile/_lib/pinScope";
 import { distanceBetween } from "geofire-common";
 import {
   applyRead,
@@ -69,11 +70,11 @@ export class HomeownerLoader {
     if (old) this.memoryRecords -= this.records(old).length;
     this.memory.delete(tile.tile);
     const count = this.records(tile).length;
-    if (count <= 12000) {
+    if (count <= 6000) {
       this.memory.set(tile.tile, tile);
       this.memoryRecords += count;
     }
-    while (this.memory.size > 12 || this.memoryRecords > 12000) {
+    while (this.memory.size > 12 || this.memoryRecords > 6000) {
       const oldest = this.memory.keys().next().value!;
       this.memoryRecords -= this.records(this.memory.get(oldest)!).length;
       this.memory.delete(oldest);
@@ -106,7 +107,7 @@ export class HomeownerLoader {
       }
       for (let i = lo; i < docs.length && docs[i].lat <= north; i++) {
         const h = docs[i];
-        if (inView(h, view, 25) && distanceBetween(circle.center, [h.lat, h.lng]) * 1000 <= circle.radius + 35)
+        if (inPinScope(h.lat, h.lng, view.polygons) && inView(h, view, 25) && distanceBetween(circle.center, [h.lat, h.lng]) * 1000 <= circle.radius + 35)
           all.set(h.id, h);
       }
     }
@@ -224,7 +225,8 @@ export class HomeownerLoader {
         for (const r of missing.ranges) work.push({ tile: key, r });
       }
       publish(this.deps.online() && work.length > 0);
-      for (const { tile, r } of work) {
+      for (let index = 0; index < work.length; index++) {
+        const { tile, r } = work[index];
         if (!active() || !this.deps.online()) break;
         if (
           queries >= MAX_VIEW_QUERIES ||
@@ -247,7 +249,13 @@ export class HomeownerLoader {
         this.remember(updated);
         // Store all bounded results, including geohash false positives. Filter only at render time.
         // This is essential: a coverage receipt cannot discard homes outside the old viewport.
-        if (result.rawCount >= QUERY_LIMIT) partial = true;
+        if (result.rawCount >= QUERY_LIMIT) {
+          partial = true;
+          const remainder = missingRanges(updated, [r], view.zoom).ranges;
+          // Continue only the uncovered portion of this viewport, under the same
+          // 500-document request and 2,000-read/12-query per-view budgets.
+          for (const next of remainder) if (next.hi-next.lo < r.hi-r.lo) work.push({tile,r:next});
+        }
         publish(true);
         // Show results before waiting on device storage. Persist before another remote query.
         await this.deps.save(updated);
@@ -260,6 +268,10 @@ export class HomeownerLoader {
             ? "Homeowner access is not enabled for this account."
             : x.message || "Homeowner records are temporarily unavailable.";
     }
+    if (!error) partial = [...plan].some(([key,ranges]) => {
+      const tile=tiles.get(key);if(!tile)return true;
+      const remaining=missingRanges(tile,ranges,view.zoom);return remaining.dense || remaining.ranges.length>0;
+    });
     publish(false);
   }
 }

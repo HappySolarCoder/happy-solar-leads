@@ -1,7 +1,8 @@
 "use client";
 import { isDeviceOnline } from "@/app/utils/connectivity";
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useState, useMemo } from "react";
 import type L from "leaflet";
+import { inPinScope, type PinScope } from "@/app/mobile/_lib/pinScope";
 import type { User } from "@/app/types";
 import { firebaseConfig } from "@/app/utils/firebase";
 import { HomeownerLoader, EMPTY_HOMES, type HomeownerState } from "./loader";
@@ -12,6 +13,7 @@ export function useHomeowners(
   map: L.Map | null,
   user: User | null,
   enabled: boolean,
+  polygons?: PinScope,
 ) {
   const scope = `${firebaseConfig.projectId || "unset"}:${user?.id || ""}`;
   const [state, setState] = useState<{ scope: string; value: HomeownerState }>({
@@ -19,6 +21,7 @@ export function useHomeowners(
     value: EMPTY_HOMES,
   });
   const uid = user?.id;
+  const territoryKey = JSON.stringify(polygons);
   useEffect(() => {
     if (!map || !uid || !enabled) return;
     let alive = true,
@@ -32,7 +35,7 @@ export function useHomeowners(
         online: () => isDeviceOnline(),
       });
       loaders.set(scope, loader);
-      while (loaders.size > 3) {
+      while (loaders.size > 1) {
         const oldest = loaders.keys().next().value!;
         loaders.get(oldest)?.cancel();
         loaders.delete(oldest);
@@ -54,13 +57,13 @@ export function useHomeowners(
       const b = map.getBounds();
       const view = {
         south: b.getSouth(), north: b.getNorth(),
-        west: b.getWest(), east: b.getEast(), zoom: map.getZoom(),
+        west: b.getWest(), east: b.getEast(), zoom: map.getZoom(), polygons,
       };
       // Saved homes do not wait for the network debounce or an older in-flight request.
       void loader!.preview(view, receive);
       timer = setTimeout(() => {
         loader!.request(view, receive);
-      }, 500);
+      }, 300);
     };
     map.on("movestart zoomstart", cancel);
     map.on("moveend zoomend", schedule);
@@ -77,6 +80,7 @@ export function useHomeowners(
       window.removeEventListener("raydar-network-change", schedule);
       window.removeEventListener("offline", schedule);
     };
-  }, [map, uid, scope, enabled]);
-  return enabled && state.scope === scope ? state.value : EMPTY_HOMES;
+  }, [map, uid, scope, enabled, territoryKey]);
+  const scoped = useMemo(() => polygons ? {...state.value,homes:state.value.homes.filter(h=>inPinScope(h.lat,h.lng,polygons))} : state.value, [state.value,territoryKey]);
+  return enabled && state.scope === scope ? scoped : EMPTY_HOMES;
 }

@@ -5,6 +5,8 @@ import { auth, db } from '@/app/utils/firebase';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
 import type { Homeowner } from '@/app/homeowners/model';
+import { KNOCK_PERIODS, matchesMapFilters, type KnockPeriod } from '../_lib/mapFilters';
+import { useDeviceNow } from '../_components/useDeviceNow';
 import { useDeviceValue } from '../_components/useDeviceValue';
 
 import { FieldToolbar, MobileNav, MobileNotice, MobileLoading } from '../_components/MobileShell';
@@ -23,7 +25,7 @@ import { apiFetch } from '@/app/utils/apiFetch';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { ArrowLeft, List, Navigation, Filter, MapPin, Settings, Search, X, Route, Clock, Footprints, Car } from 'lucide-react';
+import { Crosshair, ArrowLeft, List, Navigation, Filter, MapPin, Settings, Search, X, Route, Clock, Footprints, Car } from 'lucide-react';
 import { getUsersAsync, saveLeadAsync, updateLeadAsync } from '@/app/utils/storage';
 import { Lead, User, canSeeAllLeads, canAssignLeads } from '@/app/types';
 const LeadDetail = dynamic(() => import('@/app/components/LeadDetail'), { ssr: false });
@@ -31,9 +33,10 @@ const HomeownerKnockDetail = dynamic(() => import('@/app/homeowners/KnockDetail'
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
+import { useViewportLeads } from "@/app/hooks/useViewportLeads";
+import { inPinScope } from "../_lib/pinScope";
+import type { View } from "@/app/homeowners/model";
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
-import { useHistoricalTerritoryPins } from '@/app/hooks/useHistoricalTerritoryPins';
-import { mergeHistoricalTerritoryPins } from '@/app/utils/historicalTerritoryPins';
 import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
 
 // Dynamic import for map (client-side only)
@@ -54,7 +57,7 @@ const EMPTY_LEADS: Lead[] = [];
 export default function KnockingPage() {
   const router = useRouter();
 
-  const { user: currentUser, field, live, leads: liveLeads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dataUnavailable, error: sessionError, refresh } = useMobileData();
+  const { user: currentUser, field, live, leads: liveLeads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dispositionsLoading, dataUnavailable, error: sessionError, refresh } = useMobileData();
   const directSave = useRef(field.enqueueDirect); directSave.current = field.enqueueDirect;
   const homeVisits = useRef(new Map<string, HomeownerVisit>());
   const [savedHomeVisits, setSavedHomeVisits] = useState<Lead[]>([]);
@@ -72,10 +75,15 @@ export default function KnockingPage() {
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode] = useState<'map' | 'list'>('map');
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
-  const [hasInitializedMap, setHasInitializedMap] = useState(false);
+  const centeredActivation = useRef('');
+  const [cameraRevision,setCameraRevision] = useState(0);
+  const [fitAreaBounds, setFitAreaBounds] = useState<[number, number][] | undefined>();
+  const [zoomMinePending, setZoomMinePending] = useState(false);
+  const [areaNotice, setAreaNotice] = useState('');
+  const deviceNow = useDeviceNow();
   const [mapZoom, setMapZoom] = useState(15);
-  const [solarFilter, setSolarFilter] = useState<string[]>([]);
-  const [dispositionFilter, setDispositionFilter] = useState<string>('all');
+  const [knockPeriod, setKnockPeriod] = useState<KnockPeriod>('all');
+  const [dispositionFilter, setDispositionFilter] = useState<string[]>([]);
   const [setterFilter, setSetterFilter] = useState<string>('all');
   const [freshPinsOnly, setFreshPinsOnly] = useState<boolean>(false);
   const [leadTypeFilter, setLeadTypeFilter] = useState<'all' | 'prospects' | 'customers'>('all');
@@ -87,12 +95,14 @@ export default function KnockingPage() {
   const [searchLocation, setSearchLocation] = useState<{ lat: number; lng: number } | null>(null);
   const searchSequence = useRef(0);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => () => { searchSequence.current++; if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); }, []);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [showSearchSheet, setShowSearchSheet] = useState(false);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [showGoalsModal, setShowGoalsModal] = useState(false);
   const [showHeat, setShowHeat] = useState(false);
-  const [showTeamAreas, setShowTeamAreas] = useState(false);
+  const [areaMode, setAreaMode] = useState<'off'|'mine'|'team'>('mine');
+  const showTeamAreas = areaMode !== 'off';
   
   // Route optimization state
   const [showRoute, setShowRoute] = useState(false);
@@ -105,19 +115,26 @@ export default function KnockingPage() {
   const [showWeatherPopup, setShowWeatherPopup] = useState(false);
 
   // GPS tracking - continuous updates
-  const { position: gpsPosition, error: gpsError, isLoading: gpsLoading } = useGeolocation({
+  const { position: gpsPosition, error: gpsError, isLoading: gpsLoading, activation: gpsActivation, retry: retryGps } = useGeolocation({
     enableHighAccuracy: true,
     watch: true, // Continuous tracking
   });
-  const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
-  const historicalPins = useHistoricalTerritoryPins(currentUser?.id);
+  const { territories: overlayTerritories, members: overlayMembers, loading: areasLoading, ready: areasReady, error: areasError, retry: retryAreas } = useTeamAreasOverlay(true, currentUser?.id);
+  const [viewport, setViewport] = useState<View | null>(null);
+  const pinPolygons = useMemo(() => currentUser && ['admin','manager'].includes(currentUser.role) ? undefined : overlayTerritories.filter(t => t.userId === currentUser?.id).map(t => t.polygon), [currentUser?.id, currentUser?.role, overlayTerritories]);
+  const viewportPins = useViewportLeads(currentUser, viewport, pinPolygons, areasReady);
+  const mapSource = useMemo(() => {
+    const records = new Map(viewportPins.leads.map(l => [l.id,l]));
+    for (const l of leads) if (l.lat != null && l.lng != null && inPinScope(l.lat,l.lng,pinPolygons)) records.set(l.id,l);
+    return [...records.values()];
+  }, [viewportPins.leads,leads,pinPolygons]);
   const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
   const teamAreaTerritories = useMemo(
-    () => (showTeamAreas ? colorTerritories(overlayTerritories, coloredUsers) : []),
-    [showTeamAreas, overlayTerritories, coloredUsers]
+    () => (showTeamAreas ? colorTerritories(areaMode === 'mine' ? overlayTerritories.filter(t=>t.userId===currentUser?.id) : overlayTerritories, coloredUsers) : []),
+    [showTeamAreas, areaMode, currentUser?.id, overlayTerritories, coloredUsers]
   );
   const teamMembersForMap = useMemo(() => {
-    if (!showTeamAreas) return [];
+    if (areaMode !== 'team') return [];
     if (overlayMembers.length > 0) {
       return overlayMembers.map((member) => ({
         ...member,
@@ -125,23 +142,25 @@ export default function KnockingPage() {
       }));
     }
     return membersFromTerritories(overlayTerritories, coloredUsers);
-  }, [showTeamAreas, overlayTerritories, overlayMembers, coloredUsers]);
+  }, [areaMode, overlayTerritories, overlayMembers, coloredUsers]);
 
-  // Set map center based on user role
+  // A fresh foreground GPS fix centers every account once. Later fixes move the
+  // blue dot only, so a rep can inspect another street without camera snap-back.
   useEffect(() => {
-    if (!currentUser || hasInitializedMap) return;
-    
-    // Admins: center on Rochester for full market oversight
-    if (currentUser.role === 'admin') {
-      setMapCenter([43.1566, -77.6088]); // Rochester, NY
-      setHasInitializedMap(true);
-    }
-    // Everyone else (managers, setters, closers): center on GPS location
-    else if (gpsPosition) {
-      setMapCenter([gpsPosition.lat, gpsPosition.lng]);
-      setHasInitializedMap(true);
-    }
-  }, [gpsPosition, currentUser, hasInitializedMap]);
+    const key = `${currentUser?.id}:${gpsActivation}`;
+    if (!currentUser || !gpsPosition || !gpsActivation || centeredActivation.current === key) return;
+    centeredActivation.current = key;
+    setFitAreaBounds(undefined);
+    setCameraRevision(v=>v+1);
+    setMapCenter([gpsPosition.lat, gpsPosition.lng]); setMapZoom(18);
+  }, [currentUser?.id, gpsActivation, gpsPosition]);
+  useEffect(() => {
+    if (!zoomMinePending || !areasReady || areasLoading || areasError) return;
+    const points = overlayTerritories.filter(t=>t.userId===currentUser?.id).flatMap(t=>t.polygon).map(p=>[p.lat,p.lng] as [number,number]);
+    if (points.length) { setFitAreaBounds(points); setAreaNotice(''); }
+    else setAreaNotice('You do not have an assigned territory yet.');
+    setZoomMinePending(false);
+  }, [zoomMinePending, areasReady, areasLoading, areasError, overlayTerritories, currentUser?.id]);
 
   // Fetch weather when GPS position is available
   useEffect(() => {
@@ -177,21 +196,14 @@ export default function KnockingPage() {
     return () => clearInterval(interval);
   }, [gpsPosition ? Math.round(gpsPosition.lat * 100) : null, gpsPosition ? Math.round(gpsPosition.lng * 100) : null]);
 
-  // Only managers need the directory. Ignore responses after an account change.
-  useEffect(() => {
-    let active = true;
-    if (currentUser && canSeeAllLeads(currentUser.role)) {
-      void getUsersAsync().then((items) => { if (active) setUsers(items); }).catch(() => {});
-    }
-    return () => { active = false; };
-  }, [currentUser]);
+  // The area response already contains names/colors; avoid a second full users download.
+  useEffect(() => { setUsers(overlayMembers.map(m => ({...m,role:'setter',email:'',createdAt:new Date(0)} as User))); }, [overlayMembers]);
 
-  // Successful writes arrive on the existing listener without refetching every lead.
   const refreshLeads = useCallback(async (updatedLead?: Lead) => {
     setWriteError(null);
     // Keep the acknowledged manual record visible after explicit unclaim removes
     // it from the claimed-leads subscription. This does not fetch extra leads.
-    if (updatedLead) setSavedHomeVisits(previous => [...previous.filter(l => l.id !== updatedLead.id), updatedLead]);
+    if (updatedLead) setSavedHomeVisits(previous => [...previous.filter(l => l.id !== updatedLead.id), updatedLead].slice(-100));
   }, []);
   const handleLeadSelect = useCallback((lead: Lead, homeowner?: Homeowner) => {
     setSelectedHomeowner(homeowner);
@@ -244,12 +256,15 @@ export default function KnockingPage() {
     if (location) {
       const lat = location.lat || location.latitude;
       const lng = location.lng || location.longitude;
+      setFitAreaBounds(undefined);
+      setCameraRevision(v=>v+1);
       setMapCenter([lat, lng]);
       setMapZoom(16); // Moderate zoom - user can zoom in more themselves
       setSearchLocation({ lat, lng }); // Place search marker
     }
     setAddressSearch('');
     setSearchResults([]);
+    setShowSearchSheet(false);
   };
 
   // Calculate optimized route using nearest neighbor algorithm
@@ -309,12 +324,7 @@ export default function KnockingPage() {
   // Estimate driving time (average 25 mph in city = 0.42 miles per minute)
   const drivingTimeMinutes = Math.round(routeDistance / 0.42);
 
-  // Role-based visibility: setters/closers only see their claimed OR territory-assigned leads
-  const roleFilteredLeads = useMemo(() => currentUser
-    ? (currentUser.role === 'setter' || currentUser.role === 'closer')
-      ? leads.filter(l => l.claimedBy === currentUser.id || l.assignedTo === currentUser.id)
-      : leads
-    : EMPTY_LEADS, [leads, currentUser]);
+  const roleFilteredLeads = useMemo(() => mapSource.filter(l => inPinScope(l.lat,l.lng,pinPolygons)), [mapSource,pinPolygons]);
 
   // Generate route when button is clicked
   const handleGenerateRoute = useCallback(() => {
@@ -347,7 +357,7 @@ export default function KnockingPage() {
 
   const filteredLeads = useMemo(() => {
   // Prospects baseline (exclude poor solar leads). Customers are unaffected by solar filters.
-  let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l) && (l.solarCategory !== 'poor' || !!getAppointmentOutcome(l)));
+  let prospects = leadTypeFilteredLeads.filter(l => !isCustomerLead(l));
   let customers = leadTypeFilteredLeads.filter(isCustomerLead);
 
   // Filter by setter if selected (Admin/Manager only) — prospects only
@@ -355,32 +365,8 @@ export default function KnockingPage() {
     prospects = prospects.filter(l => l.claimedBy === setterFilter);
   }
 
-  // Filter by solar category if selected — prospects only
-  if (solarFilter.length > 0) {
-    prospects = prospects.filter(l => solarFilter.includes(l.solarCategory || ''));
-  }
-
-  // Filter by disposition if selected — apply to both prospects and customers
-  if (dispositionFilter !== 'all') {
-    const normalize = (v: unknown) => String(v || '').trim().toLowerCase();
-    const dispositionsById = new Map(dispositions.map((d: any) => [String(d.id), d]));
-    const selectedId = String(dispositionFilter);
-    const selectedName = normalize(dispositionsById.get(selectedId)?.name);
-
-    const matchesDisposition = (l: Lead) => {
-      const statusNorm = normalize(l.status).replace(/\s+/g, '-');
-      const selectedNorm = normalize(selectedId).replace(/\s+/g, '-');
-      const latestHistoryName = normalize(l.dispositionHistory?.[0]?.disposition);
-      const byId = statusNorm === selectedNorm;
-      const byLegacyName = selectedName && normalize(l.disposition) === selectedName;
-      const byHistoryName = selectedName && latestHistoryName === selectedName;
-
-      return Boolean(byId || byLegacyName || byHistoryName);
-    };
-
-    prospects = prospects.filter(matchesDisposition);
-    customers = customers.filter(matchesDisposition);
-  }
+  prospects = prospects.filter(l => matchesMapFilters(l, knockPeriod, dispositionFilter, dispositions, deviceNow));
+  customers = customers.filter(l => matchesMapFilters(l, knockPeriod, dispositionFilter, dispositions, deviceNow));
 
   // Fresh Pins: only show leads NOT dispositioned in the last 30 days — prospects only
   if (freshPinsOnly) {
@@ -399,7 +385,7 @@ export default function KnockingPage() {
 
   return outcomesOnly ? typeFilteredLeads.filter(l => getAppointmentOutcome(l)) : typeFilteredLeads;
 
-  }, [leadTypeFilteredLeads, isCustomerLead, setterFilter, solarFilter, dispositionFilter, dispositions, freshPinsOnly, leadTypeFilter, outcomesOnly]);
+  }, [leadTypeFilteredLeads, isCustomerLead, setterFilter, knockPeriod, dispositionFilter, dispositions, deviceNow, freshPinsOnly, leadTypeFilter, outcomesOnly]);
 
   // Calculate distances and sort by nearest if GPS available
   const leadsWithDistance = useMemo(() => {
@@ -414,13 +400,11 @@ export default function KnockingPage() {
   }, [filteredLeads, viewMode, showFilters, gpsPosition?.lat, gpsPosition?.lng]);
 
   // Keep original lead objects stable: GPS movement must not recreate every pin.
-  const mapLeads = useMemo(() => mergeHistoricalTerritoryPins(
-    filteredLeads, outcomesOnly ? EMPTY_LEADS : historicalPins, currentUser?.id,
-  ), [filteredLeads, outcomesOnly, historicalPins, currentUser?.id]);
+  const mapLeads = filteredLeads;
   const userPosition = useMemo<[number, number] | undefined>(() => gpsPosition
     ? [gpsPosition.lat, gpsPosition.lng] : undefined, [gpsPosition?.lat, gpsPosition?.lng]);
 
-  const homeownerLeads = useMemo(() => mergeHistoricalTerritoryPins(leads, historicalPins, currentUser?.id), [leads, historicalPins, currentUser?.id]);
+  const homeownerLeads = mapSource;
   const handleHomeownerSelect = useCallback((homeowner: Homeowner) => {
     if (!currentUser) return;
     if (!homeVisits.current.has(homeowner.id)) {
@@ -444,7 +428,7 @@ export default function KnockingPage() {
   const selectedHomeVisit = selectedHomeowner && homeVisits.current.get(selectedHomeowner.id);
 
   // Get selected lead
-  const selectedLead = leads.find(l => l.id === selectedLeadId);
+  const selectedLead = mapSource.find(l => l.id === selectedLeadId);
 
   // Helper: Calculate compass direction from user to lead
   function getDirection(userLat: number, userLng: number, leadLat: number, leadLng: number): string {
@@ -629,14 +613,16 @@ export default function KnockingPage() {
       {showGoalsModal && <MobileDialog title="Daily pace" onClose={() => setShowGoalsModal(false)}><div className="rm-coach-panel"><div className="rm-panel-heading"><h2>Daily pace</h2><button onClick={() => setShowGoalsModal(false)} aria-label="Close daily pace"><X size={22}/></button></div><p>{monthlyKnocks} of {monthlyGoal} monthly knocks completed.</p><h2>{dailyTarget ?? '—'} knocks per remaining workday</h2><p>Based on your company goal and the latest recorded disposition per door.</p></div></MobileDialog>}
 
       <header className={`relative flex-shrink-0 ${showSearchSheet ? 'z-[70]' : 'z-50'}`}>
-        <FieldToolbar showTeamAreas={showTeamAreas} onToggleTeamAreas={() => setShowTeamAreas(v => !v)}
+        <FieldToolbar showTeamAreas={showTeamAreas} onToggleTeamAreas={() => setAreaMode(v=>v==='off'?'mine':'off')}
+          areaMode={areaMode} onAreaMode={mode=>{setAreaMode(mode);setAreaNotice('');setZoomMinePending(false);}}
+          areasLoading={areasLoading} onZoomMine={()=>{setAreaMode('mine');setZoomMinePending(true);}}
           onSearch={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
           onFilter={() => setShowFilters(!showFilters)}
-          filterCount={solarFilter.length + Number(dispositionFilter !== 'all') + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly)}
-          accuracy={gpsPosition?.accuracy} gpsError={!!gpsError} gpsLoading={gpsLoading} knocks={dataLoading || dataUnavailable ? undefined : todaysKnocks}
-          onLocate={() => { if (gpsPosition) { setMapCenter([gpsPosition.lat, gpsPosition.lng]); setMapZoom(17); } }} />
+          filterCount={Number(knockPeriod !== 'all') + Number(dispositionFilter.length > 0) + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly)}
+          name={currentUser.name} knocks={dataLoading || dataUnavailable ? undefined : todaysKnocks} />
+        {areasError && showTeamAreas && <MobileNotice>{areasError}<button className="ml-2 underline" onClick={retryAreas}>Retry areas</button></MobileNotice>}
+        {areaNotice && <MobileNotice>{areaNotice}</MobileNotice>}
         {live?.error && <MobileNotice>{live.error}<button className="ml-2 underline font-semibold" onClick={() => void refresh()}>Retry data</button></MobileNotice>}
-        {live?.cached && !live.error && <MobileNotice>Showing cached leads. Checking for latest outcomes.</MobileNotice>}
         {writeError && (
           <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
             Save failed: {writeError}
@@ -705,174 +691,22 @@ export default function KnockingPage() {
 
         {/* Filters Panel */}
         {showFilters && (
-          <MobileDialog title="Map filters and tools" onClose={() => setShowFilters(false)}>
+          <MobileDialog title="Map filters" onClose={() => setShowFilters(false)}>
           <div className="rm-mobile-filters px-4 py-3 bg-[#F7FAFC]">
-            <div className="rm-panel-heading"><h2>Map filters & tools</h2><button onClick={() => setShowFilters(false)} aria-label="Close map filters"><X size={22} /></button></div>
-        <div className="rm-map-shortcuts"><button disabled={!nextBest} onClick={() => { if (nextBest) { setShowFilters(false); handleLeadSelect(nextBest); } }}>Nearest great roof{nextBest ? ` · ${nextBestIsFar ? 'farther away' : nextBestDistance}` : ' · none nearby'}</button>{dailyTarget !== null && <button onClick={() => { setShowFilters(false); setShowGoalsModal(true); }}>Daily pace · {dailyTarget}</button>}</div>
-        <div className="rm-map-summary"><button aria-pressed={showHomeowners} onClick={() => setHomePreference(showHomeowners ? "off" : "on")}>Homeowner pins{showHomeowners ? " ✓" : ""}</button><span>Small gray circles = owners · diamonds = suspected renters. Tap for details.</span></div>
-        <div className="rm-map-summary"><span>{filteredLeads.length} pins{isRefreshing ? ' · Updating…' : ''}</span><button aria-pressed={outcomesOnly} onClick={() => setOutcomesOnly(!outcomesOnly)}>GHL outcomes{outcomesOnly ? ' ✓' : ''}</button><button aria-pressed={showHeat} onClick={() => setShowHeat(!showHeat)}>Heat map</button></div>
-        {outcomesOnly && <div className="rm-pin-legend" aria-label="Appointment outcome colors">{appointmentOutcomeLegend.map(outcome => <span key={outcome.key}><i style={{ background: outcome.color }} />{outcome.label}</span>)}</div>}
-
-            <details className="rm-pin-key"><summary>Pin guide</summary><div>{['assigned','interested','not-home','go-back','appointment','sale','not-interested'].map(status => { const lead = {status} as Lead; const pin = fieldPinArtwork(lead, dispositions.find(d => d.id === status), 17); return <span key={status}><img src={pin.url} alt="" width={30} height={35}/>{pin.style.label}</span>; })}</div><p>The Signal R badge marks pre-uploaded solar-rated warm leads. The top accent shows roof quality; the opposite corner badge shows the GHL result. Cyan brackets mark your selected door. Pins shrink at roof-level zoom while keeping a larger tap area.</p></details>
-            {/* Lead Type Filter (mobile) */}
-            <div className="mb-3">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-base">🙂</span>
-                <label className="text-xs font-semibold text-[#2D3748]">Lead Type</label>
-              </div>
-              <div className="inline-flex w-full rounded-xl bg-white border border-[#E2E8F0] p-1">
-                {(
-                  [
-                    { key: 'all' as const, label: 'All' },
-                    { key: 'prospects' as const, label: 'Prospects' },
-                    { key: 'customers' as const, label: 'Customers' },
-                  ]
-                ).map(opt => (
-                  <button
-                    key={opt.key}
-                    onClick={() => setLeadTypeFilter(opt.key)}
-                    className={`flex-1 h-9 rounded-lg text-xs font-semibold transition-colors ${
-                      leadTypeFilter === opt.key
-                        ? 'bg-[#476E88] text-white'
-                        : 'bg-transparent text-[#2D3748] hover:bg-gray-50'
-                    }`}
-                    type="button"
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Setter Filter - Admin/Manager only */}
-            {currentUser && canSeeAllLeads(currentUser.role) && (
-              <div className="mb-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-base">👥</span>
-                  <label className="text-xs font-semibold text-[#2D3748]">
-                    Filter by Setter
-                  </label>
-                </div>
-                <select
-                  value={setterFilter}
-                  onChange={(e) => setSetterFilter(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#476E88] focus:ring-2 focus:ring-[#476E88]/10"
-                >
-                  <option value="all">All Setters</option>
-                  {users.map(user => (
-                    <option key={user.id} value={user.id}>
-                      {user.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            
-            {/* Solar Score Filter - Multi-select */}
-            <div className="mb-3">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-base">☀️</span>
-                <label className="text-xs font-semibold text-[#2D3748]">
-                  Solar Score Filter
-                </label>
-              </div>
-              <div className="space-y-1">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={solarFilter.length === 0}
-                    onChange={(e) => {
-                      if (e.target.checked) setSolarFilter([]);
-                    }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
-                  />
-                  <span className="text-xs text-[#2D3748]">All</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={solarFilter.includes('solid')}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSolarFilter([...solarFilter, 'solid']);
-                      } else {
-                        setSolarFilter(solarFilter.filter(f => f !== 'solid'));
-                      }
-                    }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
-                  />
-                  <span className="text-xs text-[#2D3748]">⭐ Solid (60-74)</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={solarFilter.includes('good')}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSolarFilter([...solarFilter, 'good']);
-                      } else {
-                        setSolarFilter(solarFilter.filter(f => f !== 'good'));
-                      }
-                    }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
-                  />
-                  <span className="text-xs text-[#2D3748]">⭐⭐ Good (75-84)</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={solarFilter.includes('great')}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSolarFilter([...solarFilter, 'great']);
-                      } else {
-                        setSolarFilter(solarFilter.filter(f => f !== 'great'));
-                      }
-                    }}
-                    className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
-                  />
-                  <span className="text-xs text-[#2D3748]">⭐⭐⭐ Great (85+)</span>
-                </label>
-              </div>
-            </div>
-            
-            {/* Fresh Pins */}
-            <div className="mt-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={freshPinsOnly}
-                  onChange={(e) => setFreshPinsOnly(e.target.checked)}
-                  className="w-3 h-3 rounded border-gray-300 text-[#476E88]"
-                />
-                <span className="text-xs text-[#2D3748] font-semibold">Fresh Pins</span>
-                <span className="text-[11px] text-[#718096]">(not dispositioned in last 30 days)</span>
-              </label>
-            </div>
-
-            {/* Disposition Filter */}
-            <div className="mt-3">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-base">📋</span>
-                <label className="text-xs font-semibold text-[#2D3748]">
-                  Disposition Filter
-                </label>
-              </div>
-              <select
-                value={dispositionFilter}
-                onChange={(e) => setDispositionFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-[#E2E8F0] rounded-lg text-sm font-medium text-[#2D3748] focus:outline-none focus:border-[#476E88] focus:ring-2 focus:ring-[#476E88]/10"
-              >
-                <option value="all">All Dispositions</option>
-                {dispositions.map(dispo => (
-                  <option key={dispo.id} value={dispo.id}>
-                    {dispo.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            
-            <button className="w-full mt-3 py-3 text-sm text-[#476E88]" onClick={() => { setSolarFilter([]); setDispositionFilter('all'); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); }}>Reset all filters</button>
+            <div className="rm-panel-heading"><h2>Map filters</h2><button onClick={() => setShowFilters(false)} aria-label="Close map filters"><X size={22} /></button></div>
+            <p className="rm-filter-count" role="status">{mapLeads.length} matching pins</p>
+            <fieldset className="rm-map-filter-group"><legend>Last knocked</legend><div className="rm-filter-options">
+              {KNOCK_PERIODS.map(p=><button key={p.id} aria-pressed={knockPeriod===p.id} onClick={()=>setKnockPeriod(p.id)}>{p.label}</button>)}
+            </div><p>Uses each door’s most recent knock. Unworked doors appear with All time.</p></fieldset>
+            <fieldset className="rm-map-filter-group"><legend>Dispositions</legend><div className="rm-filter-options">
+              <button aria-pressed={!dispositionFilter.length} onClick={()=>setDispositionFilter([])}>All dispositions</button>
+              {dispositions.map(d=><button key={d.id} aria-pressed={dispositionFilter.includes(d.id)} onClick={()=>setDispositionFilter(prev=>prev.includes(d.id)?prev.filter(id=>id!==d.id):[...prev,d.id])}>{d.name}</button>)}
+            </div></fieldset>
+            <button className="w-full mt-3 py-3 text-sm text-[#476E88]" onClick={() => { setKnockPeriod('all'); setDispositionFilter([]); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); }}>Reset all filters</button>
+            <details className="rm-pin-key"><summary>Map display</summary>
+              <div className="rm-map-summary"><button aria-pressed={showHomeowners} onClick={()=>setHomePreference(showHomeowners?'off':'on')}>Homeowner pins{showHomeowners?' ✓':''}</button><button aria-pressed={showHeat} onClick={()=>setShowHeat(!showHeat)}>Heat map{showHeat?' ✓':''}</button></div>
+              <p>Date and disposition filters hide unworked homeowner pins.</p>
+            </details>
             {/* Apply Button - Closes filter panel */}
             <button
               onClick={() => setShowFilters(false)}
@@ -1004,7 +838,9 @@ export default function KnockingPage() {
         <main className="rm-knocking-map flex-1 relative overflow-hidden" aria-label="Knocking map">
           <LeadMap
             leads={mapLeads}
-            showHomeowners={showHomeowners && !outcomesOnly && dispositionFilter === "all" && leadTypeFilter !== "customers" && solarFilter.length === 0 && !freshPinsOnly && setterFilter === "all"}
+            pinPolygons={pinPolygons}
+            onViewportChange={setViewport}
+            showHomeowners={areasReady && showHomeowners && !outcomesOnly && dispositionFilter.length === 0 && leadTypeFilter !== "customers" && knockPeriod === 'all' && !freshPinsOnly && setterFilter === "all"}
             homeownerLeads={homeownerLeads}
             selectedHomeownerId={selectedHomeowner?.id}
             onHomeownerClick={handleHomeownerSelect}
@@ -1017,7 +853,10 @@ export default function KnockingPage() {
             userPosition={userPosition}
             showLocateControl={false}
             showZoomControl={false}
-            center={mapCenter} // Set ONCE on GPS load, then only on manual recenter
+            cameraRevision={cameraRevision}
+            autoFitLeads={false}
+            fitAreaBounds={fitAreaBounds}
+            center={mapCenter}
             zoom={mapZoom} // Closer zoom for mobile
             onLeadAdded={refreshLeads}
             searchLocation={searchLocation}
@@ -1028,10 +867,18 @@ export default function KnockingPage() {
             teamMembers={teamMembersForMap}
           />
           <FieldCompass />
-          {currentUser && !dataLoading && !dataUnavailable && <DoorCoach key={currentUser.id} leads={leads} userId={currentUser.id} dispositions={dispositions} />}
-          {currentUser && !isRefreshing && !dataUnavailable && !showLeadDetail && <ReturnVisitReminder key={currentUser.id} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
-          {isRefreshing && <div className="rm-map-loading" role="status">Loading your pins…</div>}
-          {/* GPS Locate button is now built into LeadMap component */}
+          {gpsError && <div className="rm-gps-notice" role="status">{gpsError.code === 1 ? "Enable Raydar location access in your phone Settings, then tap GPS to retry." : "Location unavailable. Tap GPS to try again."}</div>}
+          {currentUser && !dataLoading && !dataUnavailable && <DoorCoach key={`focus:${currentUser.id}`} leads={leads} userId={currentUser.id} dispositions={dispositions} />}
+          {currentUser && !isRefreshing && !dataUnavailable && !showLeadDetail && <ReturnVisitReminder key={`reminder:${currentUser.id}`} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
+          {viewportPins.loading && <div className="rm-map-loading" role="status">Loading nearby pins…</div>}
+          {viewportPins.error && <div className="rm-map-loading" role="status">{viewportPins.error} <button onClick={viewportPins.retry}>Retry pins</button></div>}
+          {viewportPins.partial && !viewportPins.loading && <div className="rm-map-loading" role="status">Zoom closer to see every pin in this busy area.</div>}
+          <button type="button" className={`rm-map-locate${gpsError ? ' is-warning' : ''}`} aria-label="Center map on my location"
+            title={gpsError ? 'Location unavailable — enable location access' : 'Center map on my location'}
+            aria-busy={gpsLoading} onClick={() => {
+              if (!gpsPosition || gpsError) { retryGps(); return; }
+              if (gpsPosition) { setCameraRevision(v=>v+1); setFitAreaBounds(undefined); setMapCenter([gpsPosition.lat,gpsPosition.lng]); setMapZoom(18); }
+            }}><Crosshair size={24}/></button>
         </main>
       )}
 
@@ -1095,7 +942,7 @@ export default function KnockingPage() {
 
       {selectedHomeVisit && currentUser && !selectedLeadId && showLeadDetail && <HomeownerKnockDetail
         key={selectedHomeVisit.lead.id} visit={selectedHomeVisit} currentUser={currentUser}
-        dispositions={dispositions} loading={dataLoading || dataUnavailable}
+        dispositions={dispositions} loading={dispositionsLoading}
         onClose={() => { setSelectedHomeowner(undefined); setShowLeadDetail(false); }}
         onUpdate={(updatedLead) => {
           if (updatedLead) { void refreshLeads(updatedLead); return; }
@@ -1108,7 +955,7 @@ export default function KnockingPage() {
           key={selectedLead.id}
           fieldMemory
           dispositionOptions={dispositions}
-          dispositionsLoading={dataLoading}
+          dispositionsLoading={dispositionsLoading}
           lead={selectedLead}
           homeowner={selectedHomeowner}
           currentUser={currentUser}

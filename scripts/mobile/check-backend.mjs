@@ -17,6 +17,8 @@ if (
   );
 let ready = true;
 for (const [path, expected, required] of [
+  ["/api/mobile-leads", "Sign in to load your pins.", true],
+  ["/api/mobile-feedback", "Sign in to send feedback.", true],
   ["/api/territory-management", "Sign in again to manage territories.", true],
   ["/api/mobile-user-management", "Sign in again to manage users.", false],
   ["/api/field-config", "Sign in to use field tools.", false],
@@ -39,7 +41,7 @@ for (const [path, expected, required] of [
     } else {
       if (required) ready = false;
       console.error(
-        `${required ? "NOT READY" : "OPTIONAL / UNAVAILABLE"}: ${path} returned HTTP ${response.status}. This does not block direct mobile knock saves.`
+        `${required ? "NOT READY" : "OPTIONAL / UNAVAILABLE"}: ${path} returned HTTP ${response.status}. See the v14.8 server companion before distributing this build.`
       );
     }
   } catch (error) {
@@ -49,7 +51,7 @@ for (const [path, expected, required] of [
 }
 if (!ready) {
   console.error(
-    "Territory management needs backend review. Mobile v12.6 saves knocks directly to Firestore; do not deploy field routes to enable knocking. See docs/mobile-next/FIELD-V12.6.md."
+    "The v14.8 server companion is not fully deployed. See docs/mobile-next/SERVER-V14.8.md. Knocks still write directly to Firestore; leave capture disabled."
   );
   process.exitCode = 1;
 } else {

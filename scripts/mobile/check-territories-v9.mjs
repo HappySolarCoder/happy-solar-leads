@@ -90,7 +90,7 @@ try {
   await expect(show()).toBeVisible();
   await page.getByRole("button",{name:"Corners",exact:true}).click();
   for(const [x,y] of [[.3,.27],[.7,.27],[.7,.47]]) await corner(x,y);
-  await expect(page.getByRole("button",{name:"Done",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"Done",exact:true})).toBeEnabled();
   await corner(.3,.47);
   await expect(show()).toBeVisible();
   await page.getByRole("button",{name:"Done",exact:true}).click();
@@ -117,7 +117,7 @@ try {
   await page.getByRole("button",{name:"Corners",exact:true}).click();
   for(const [x,y] of [[.3,.26],[.7,.46],[.3,.46],[.7,.26]]) await corner(x,y);
   await page.getByRole("button",{name:"Done",exact:true}).click();
-  await expect(sheet.getByRole("alert")).toContainText("must not cross");
+  await expect(sheet.getByRole("alert")).toContainText("lines cross");
   await expect(page.getByRole("button",{name:"Review pins",exact:true})).toBeDisabled();
   await page.getByRole("button",{name:"Open full map",exact:true}).click();
   await page.getByRole("button",{name:"Rectangle",exact:true}).click();

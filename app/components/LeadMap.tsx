@@ -1,4 +1,6 @@
 'use client';
+import type { View } from '@/app/homeowners/model';
+import type { PinScope } from '@/app/mobile/_lib/pinScope';
 
 import { useHomeowners } from '@/app/homeowners/useHomeowners';
 import { buildHouseIndex, mergeHomeowners, type Homeowner } from '@/app/homeowners/model';
@@ -42,6 +44,8 @@ interface UserRoute {
 
 interface LeadMapProps {
   leads: Lead[];
+  pinPolygons?: PinScope;
+  onViewportChange?: (view: View) => void;
   dispositionOptions?: Disposition[];
   currentUser: User | null;
   users?: User[]; // All users for territory color mapping
@@ -56,6 +60,9 @@ interface LeadMapProps {
   userRoutes?: UserRoute[]; // Multiple routes (one per user) for activity tracking
   center?: [number, number];
   zoom?: number;
+  autoFitLeads?: boolean;
+  cameraRevision?: number;
+  fitAreaBounds?: [number, number][];
   onMapMove?: (center: [number, number], zoom: number) => void; // Callback when map moves
   onMapTypeChange?: (mapType: 'street' | 'satellite') => void; // Callback when map type changes
   assignmentMode?: 'none' | 'manual' | 'territory';
@@ -76,6 +83,7 @@ interface LeadMapProps {
   onToggleTeamAreas?: (next: boolean) => void;
 }
 
+const DEFAULT_CENTER: [number, number] = [43.1566, -77.6088];
 const EMPTY_USERS: User[] = [];
 const EMPTY_IDS: string[] = [];
 const EMPTY_ROUTES: UserRoute[] = [];
@@ -93,6 +101,8 @@ function markPinSelected(entry: PinEntry, selected: boolean) {
 
 export default function LeadMap({ 
   leads: leadsProp,
+  pinPolygons,
+  onViewportChange,
   dispositionOptions,
   currentUser,
   users = EMPTY_USERS,
@@ -105,8 +115,11 @@ export default function LeadMap({
   selectedLeadId,
   routeWaypoints,
   userRoutes = EMPTY_ROUTES,
-  center = [43.1566, -77.6088], // Rochester, NY - default for admin oversight
+  center = DEFAULT_CENTER, // Rochester, NY - default for admin oversight
   zoom = 11,
+  autoFitLeads = true,
+  cameraRevision = 0,
+  fitAreaBounds,
   onMapMove,
   onMapTypeChange,
   assignmentMode = 'none',
@@ -127,10 +140,17 @@ export default function LeadMap({
   onToggleTeamAreas,
 }: LeadMapProps) {
   const [homeownerMap, setHomeownerMap] = useState<L.Map | null>(null);
+  const viewportCallback = useRef(onViewportChange); viewportCallback.current = onViewportChange;
+  useEffect(() => {
+    if (!homeownerMap) return;
+    const report = () => { const b = homeownerMap.getBounds().pad(.05); viewportCallback.current?.({south:b.getSouth(),north:b.getNorth(),west:b.getWest(),east:b.getEast(),zoom:homeownerMap.getZoom()}); };
+    homeownerMap.on('moveend', report); report();
+    return () => { homeownerMap.off('moveend', report); };
+  }, [homeownerMap]);
   const homeLayer = useRef<HomeownerCanvas | null>(null);
   const homeClickRef = useRef(onHomeownerClick);
   useEffect(() => { homeClickRef.current = onHomeownerClick; }, [onHomeownerClick]);
-  const liveHomeowners = useHomeowners(homeownerMap, currentUser, showHomeowners && !homeownerFixture);
+  const liveHomeowners = useHomeowners(homeownerMap, currentUser, showHomeowners && !homeownerFixture, pinPolygons);
   const homeState = homeownerFixture ? {...EMPTY_HOMES, homes: homeownerFixture} : liveHomeowners;
   const houseIndex = useMemo(() => buildHouseIndex(showHomeowners ? homeownerLeads || leadsProp : []), [showHomeowners, homeownerLeads, leadsProp]);
   const homeMerge = useMemo(() => mergeHomeowners(homeState.homes, houseIndex), [homeState.homes, houseIndex]);
@@ -491,35 +511,17 @@ export default function LeadMap({
     };
   }, [isClient]);
 
-  // Handle center and zoom changes from parent (e.g., address search)
+  // One camera owner: explicit requests are honored even at the same GPS
+  // coordinates. User drags do not change these props or trigger recentering.
   useEffect(() => {
-    if (!mapInstanceRef.current) return;
-    
-    const map = mapInstanceRef.current;
-    
-    // Get current center and zoom
-    const currentCenter = map.getCenter();
-    const currentZoom = map.getZoom();
-    
-    // Calculate target values
-    const targetLat = center?.[0] ?? 43.1566;
-    const targetLng = center?.[1] ?? -77.6088;
-    const targetZoom = zoom ?? 11;
-    
-    // Only fly if there's a significant difference
-    const latDiff = Math.abs(currentCenter.lat - targetLat);
-    const lngDiff = Math.abs(currentCenter.lng - targetLng);
-    const zoomDiff = Math.abs(currentZoom - targetZoom);
-    
-    // Fly to new center and zoom if needed (threshold: >0.001 lat/lng or >0.5 zoom)
-    if (latDiff > 0.001 || lngDiff > 0.001 || zoomDiff > 0.5) {
-      console.log('[LeadMap] Flying to:', [targetLat, targetLng], 'zoom:', targetZoom);
-      map.flyTo([targetLat, targetLng], targetZoom, { 
-        duration: 1.0,
-        animate: true,
-      });
-    }
-  }, [center?.[0], center?.[1], zoom]);
+    if (!mapInstanceRef.current || !isClient || !center) return;
+    mapInstanceRef.current.stop().setView(center, zoom, {animate: false});
+  }, [center?.[0], center?.[1], zoom, isClient, cameraRevision]);
+  useEffect(() => {
+    if (!mapInstanceRef.current || !isClient || !fitAreaBounds?.length) return;
+    const valid = fitAreaBounds.filter(p=>p.every(Number.isFinite));
+    if(valid.length) mapInstanceRef.current.stop().fitBounds(L.latLngBounds(valid), {padding:[36,64],maxZoom:18,animate:false});
+  }, [fitAreaBounds, isClient]);
 
   // Handle search marker placement
   useEffect(() => {
@@ -845,14 +847,14 @@ export default function LeadMap({
     // On /mobile/knocking we want to default to GPS location (not last knocked pin / small lead set).
     const preferGpsCenter = currentUser?.role !== 'admin' && hasUserPosition;
 
-    if (goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current && !userInteractedRef.current && !preferGpsCenter) {
+    if (autoFitLeads && goodLeads.length > 0 && goodLeads.length <= 50 && !hasFitLeadsBoundsRef.current && !userInteractedRef.current && !preferGpsCenter) {
       const bounds = L.latLngBounds(goodLeads.map(l => [l.lat!, l.lng!]));
       map.fitBounds(bounds, { padding: [50, 50] });
       hasFitLeadsBoundsRef.current = true;
     }
 
     return () => { cancelled = true; cancelAnimationFrame(frame); };
-  }, [leads, viewportIndex, currentUser, routeWaypoints, userRoutes, isClient, dispositions, zoomTier, viewportKey, hasUserPosition, users, viewMode, selectedLeadIdsForAssignment]);
+  }, [leads, viewportIndex, currentUser, routeWaypoints, userRoutes, isClient, dispositions, zoomTier, viewportKey, hasUserPosition, autoFitLeads, users, viewMode, selectedLeadIdsForAssignment]);
 
   // Handle territory drawing mode
   useEffect(() => {
@@ -1123,24 +1125,6 @@ export default function LeadMap({
       }
     };
   }, [userPosition, isClient]);
-
-  // Handle manual recenter when center prop changes
-  const prevCenterRef = useRef<[number, number] | undefined>(undefined);
-  useEffect(() => {
-    if (!mapInstanceRef.current || !center) return;
-    
-    // Only recenter if center actually changed (not just re-rendered with same value)
-    const prevCenter = prevCenterRef.current;
-    const centerChanged = !prevCenter || 
-      prevCenter[0] !== center[0] || 
-      prevCenter[1] !== center[1];
-    
-    if (centerChanged) {
-      const map = mapInstanceRef.current;
-      map.setView(center, map.getZoom());
-      prevCenterRef.current = center;
-    }
-  }, [center]);
 
   // Render territory polygons (assignments view only)
   const territoriesLayerRef = useRef<L.LayerGroup | null>(null);

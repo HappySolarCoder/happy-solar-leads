@@ -2,6 +2,7 @@ import { Timestamp, doc, runTransaction } from 'firebase/firestore';
 import { auth, db } from '@/app/utils/firebase';
 import type { Lead, User } from '@/app/types';
 import type { PendingMutation } from './types';
+import { mapLeadDoc } from '@/app/utils/firestore';
 import { createLeadOnce } from './createLeadOnce';
 import { distanceBetween } from 'geofire-common';
 
@@ -84,7 +85,7 @@ export async function commitDirectMutation(m: PendingMutation, user: User) {
     if (seed) {
       if (seed.id !== m.leadId || seed.setterId !== m.userId || seed.claimedBy !== m.userId || seed.source !== 'manually-added')
         throw Object.assign(Error('New lead ownership must match the signed-in rep.'), { status: 403 });
-      if (await createLeadOnce(m.leadId, m.userId, { ...seed, ...patch })) return { replayed: false };
+      if (await createLeadOnce(m.leadId, m.userId, { ...seed, ...patch })) return { replayed: false, lead: { ...seed, ...patch } as Lead };
     }
     return await runTransaction(db, async tx => {
       check();
@@ -101,7 +102,7 @@ export async function commitDirectMutation(m: PendingMutation, user: User) {
         throw Object.assign(Error('Notes changed on another device. Review this draft.'), { status: 409 });
       const merged = mergeReportingPatch(current, patch);
       if (!merged.replayed) tx.update(ref, firestoreValue(merged.patch) as Record<string, unknown>);
-      return { replayed: merged.replayed };
+      return { replayed: merged.replayed, lead: mapLeadDoc({id:m.leadId, data:()=>({...current, ...merged.patch})}) };
     });
   } catch (error) {
     const e = error as Error & { code?: string; status?: number };
