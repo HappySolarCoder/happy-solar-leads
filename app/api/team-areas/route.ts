@@ -36,7 +36,7 @@ async function requireRaydarUid(request: NextRequest): Promise<string> {
     throw Object.assign(new Error('Missing credentials'), { status: 401 });
   }
 
-  const decoded = await adminAuth().verifyIdToken(idToken);
+  const decoded = await adminAuth().verifyIdToken(idToken, true);
   const userDoc = await adminDb().collection('users').doc(decoded.uid).get();
   if (!userDoc.exists) {
     throw Object.assign(new Error('User not found'), { status: 403 });
@@ -46,11 +46,15 @@ async function requireRaydarUid(request: NextRequest): Promise<string> {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRaydarUid(request);
+    const uid = await requireRaydarUid(request);
+    const summary = request.nextUrl.searchParams.get('summary') === '1';
+    const caller = summary ? (await adminDb().collection('users').doc(uid).get()).data() : null;
+    if (summary && (!caller || caller.deleted || caller.deletionPending || caller.isActive === false || caller.approved === false || caller.approvalStatus === 'pending')) return NextResponse.json({error:'This account cannot load territories.'},{status:403});
+    const ownOnly = summary && !['admin','manager'].includes(caller?.role || '');
 
     const [territorySnap, userSnap] = await Promise.all([
-      adminDb().collection('territories').get(),
-      adminDb().collection('users').get(),
+      (summary ? (ownOnly ? adminDb().collection('territories').where('userId','==',uid) : adminDb().collection('territories')).select('userId','userName','userColor','polygon','archived','createdAt','createdBy','leadCount') : adminDb().collection('territories')).get(),
+      (summary ? (ownOnly ? adminDb().collection('users').where('__name__','==',uid) : adminDb().collection('users')).select('name','color','currentLocation') : adminDb().collection('users')).get(),
     ]);
 
     const users = userSnap.docs.map((doc) => {
@@ -64,7 +68,8 @@ export async function GET(request: NextRequest) {
     });
 
     const territories = territorySnap.docs
-      .map((doc) => serializeTerritory(doc.id, doc.data() as Record<string, unknown>))
+      .filter(doc => !doc.data().archived)
+      .map((doc) => serializeTerritory(doc.id, summary ? {...doc.data(),leadIds:[]} : doc.data() as Record<string, unknown>))
       .filter((territory) => territory.polygon.length >= 3)
       .map((territory) => {
         const owner = users.find((user) => user.id === territory.userId);
