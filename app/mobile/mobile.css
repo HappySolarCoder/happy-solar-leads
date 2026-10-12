@@ -1879,3 +1879,9 @@ html[data-native] .raydar-mobile .rt-shell { height: var(--app-height); padding-
 .rm-feedback-actions { display:flex; gap:8px; flex-wrap:wrap; }
 
 @media(max-width:380px) { .rm-door-actions > button { gap:4px; font-size:11px; padding:0 6px; } .rm-door-actions > button > svg,.rm-focus-divider { display:none; } }
+
+/* Door sheets must never grow beyond the phone, even with long addresses. */
+.rm-lead-detail { max-width:100%; min-width:0; overflow-x:hidden; overscroll-behavior-x:none; }
+.rm-lead-detail * { min-width:0; box-sizing:border-box; }
+.rm-lead-detail .overflow-y-auto { overflow-x:hidden; overscroll-behavior-x:none; }
+.rm-lead-detail p, .rm-lead-detail h2, .rm-lead-detail h3, .rm-lead-detail span { overflow-wrap:anywhere; }

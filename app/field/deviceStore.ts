@@ -51,6 +51,21 @@ export const readDrafts = async (uid: string) =>
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 export const putDraft = (m: PendingMutation) =>
   request("drafts", "readwrite", (s) => s.put(m));
+/** GPS completion is a compare/update in one transaction: a discarded draft
+ * must never be recreated by an asynchronous location callback. */
+export async function updatePendingGpsDraft(m: PendingMutation) {
+  const db = await database();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('drafts', 'readwrite'), store = tx.objectStore('drafts');
+    const read = store.get(m.id);
+    read.onsuccess = () => {
+      const current = read.result as PendingMutation | undefined;
+      if (current?.userId === m.userId && current.direct?.gps) store.put(m);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = tx.onabort = () => reject(Error('Could not save GPS verification. The knock remains unsynced for review.'));
+  });
+}
 export const removeDraft = (id: string) =>
   request("drafts", "readwrite", (s) => s.delete(id));
 export const putArea = (a: PreparedArea) =>

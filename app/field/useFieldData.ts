@@ -19,6 +19,7 @@ import {
   readArea,
   readDrafts,
   putDraft,
+  updatePendingGpsDraft,
   removeDraft,
   overlayDrafts,
   type PreparedArea,
@@ -53,6 +54,8 @@ export async function fieldRequest(path: string, body?: unknown) {
     });
   return data;
 }
+import { resolveDraftGps } from './pendingGps';
+import { isProximityRequired } from '@/app/utils/proximityEnforcement';
 import { syncOutbox } from "./syncOutbox";
 import { unreflectedKnocks } from "./confirmedKnocks";
 const locks = new Map<string, Promise<void>>();
@@ -139,10 +142,20 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     )
       return;
     const ongoing = locks.get(uid);
-    if (ongoing) return ongoing;
+    if (ongoing) {
+      await ongoing;
+      if (locks.get(uid) === ongoing) locks.delete(uid);
+      return sync();
+    }
     const task = (async () => {
     try {
-      if (!(await readDrafts(uid)).length) return;
+      const queued = await readDrafts(uid);
+      if (!queued.length) return;
+      // GPS resolves independently of network availability and never blocks another door.
+      for (const m of queued) if (m.direct?.gps && !m.blocked) void resolveDraftGps(m, {
+        read: () => readDrafts(uid), put: updatePendingGpsDraft,
+        active: () => active.current === uid && auth?.currentUser?.uid === uid,
+      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => update({error: (e as Error).message}));
       setSyncing(true);
       const result = await syncOutbox({
         read: () => readDrafts(uid),
@@ -199,6 +212,10 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
             } catch (e) { await putDraft({ ...m, blocked: true, error: (e as Error).message }); }
           }
           drafts = await readDrafts(uid);
+          for (const m of drafts) if (m.direct?.gps && !m.blocked) void resolveDraftGps(m, {
+            read: () => readDrafts(uid), put: updatePendingGpsDraft,
+            active: () => active.current === uid && auth?.currentUser?.uid === uid,
+          }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => update({error:(e as Error).message}));
         }
         if (alive) {
           update({
@@ -258,9 +275,13 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         );
       await putDraft(m);
       await reloadDrafts();
+      if (m.direct?.gps) void resolveDraftGps(m, {
+        read: () => readDrafts(uid), put: updatePendingGpsDraft,
+        active: () => active.current === uid && auth?.currentUser?.uid === uid,
+      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => update({error: (e as Error).message}));
       void sync();
     },
-    [uid, reloadDrafts, sync],
+    [uid, reloadDrafts, sync, update],
   );
   const discard = useCallback(
     async (id: string) => {
@@ -271,7 +292,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     },
     [uid, reloadDrafts],
   );
-  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead) => {
+  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead, deferGps = false) => {
     const actor = latest.current.user;
     if (!DIRECT_MOBILE_WRITES || !actor || actor.id !== uid || auth?.currentUser?.uid !== uid)
       throw Error('Sign in with the rep who is recording this action.');
@@ -288,7 +309,10 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       leadId: lead.id, createdAt: (entry ? new Date(entry.timestamp) : new Date()).toISOString(),
       kind: entry ? 'knock' : 'notes', baseStatus: lead.status, baseNotes: lead.notes || '',
       ...(entry ? { status: clean.status, disposition: entry.disposition } : {}),
-      direct: { patch: clean, ...(create ? { create } : {}) } });
+      direct: { patch: clean, ...(create ? { create } : {}), ...(deferGps && entry ? {gps: {
+        ...(Number.isFinite(lead.lat) ? {lat:lead.lat} : {}), ...(Number.isFinite(lead.lng) ? {lng:lead.lng} : {}),
+        deadline: Date.now() + 15000, required: isProximityRequired(actor),
+      }} : {}) } });
   }, [uid, enqueue, current.area, update]);
   const ensureLeadSynced = useCallback(async (leadId: string) => {
     if (!isDeviceOnline()) throw Error('Connect before sending the scheduling request.');
@@ -298,7 +322,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
   }, [uid, sync]);
   const retrySync = useCallback(async () => {
     if (auth?.currentUser?.uid !== uid) return;
-    for (const m of await readDrafts(uid)) if (m.direct && m.blocked)
+    for (const m of await readDrafts(uid)) if (m.direct && m.blocked && !m.direct.gps)
       await putDraft({ ...m, blocked: false, error: undefined });
     await reloadDrafts();
     await sync();

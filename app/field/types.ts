@@ -136,7 +136,7 @@ export const DEFAULT_FIELD_CONFIG: FieldConfig = {
 export type FieldMutation = {
   // Device-only queue payload. Never written as a new Firestore document/field.
   userName?: string;
-  direct?: { patch: Partial<Lead>; create?: Lead; legacy?: boolean };
+  direct?: { patch: Partial<Lead>; create?: Lead; legacy?: boolean; gps?: { lat?: number; lng?: number; deadline: number; required: boolean } };
   id: string;
   userId: string;
   leadId: string;

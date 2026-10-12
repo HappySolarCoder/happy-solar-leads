@@ -55,10 +55,15 @@ test('heading smoothing crosses north without swinging south',()=>{
 
 // Neighborhood pins leave roofs visible and share the homeowner circle footprint.
 test('worked pins are compact colored dots through neighborhood zoom with centered coordinates',()=>{
- for(const zoom of [15,16,17,18]){
+ for(const zoom of [15,16]){
   const p=fieldPinArtwork({status:'not-home',solarCategory:'great'} as Lead,undefined,zoom);
   assert.ok(p.size<=(zoom<17?7:21));assert.equal(p.size,p.height);assert.equal(p.anchorY,p.height/2);
   assert.ok(!decodeURIComponent(p.url).includes('data-warm-lead'));
   assert.notEqual(p.url,fieldPinArtwork({status:'not-interested'} as Lead,undefined,zoom).url);
  }
+});
+
+test('worked icons appear two levels earlier without enlarging unworked pins',()=>{
+ for(const z of [17,18,19]){const p=fieldPinArtwork({status:'not-home'} as Lead,undefined,z);assert.ok(p.height>p.size);assert.ok(p.size<=30);}
+ assert.equal(fieldPinArtwork({status:'assigned'} as Lead,undefined,17).size,13.5);
 });

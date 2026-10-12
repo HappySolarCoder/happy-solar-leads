@@ -51,7 +51,7 @@ import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/
 
 interface LeadDetailProps {
   unvisitedHome?: boolean;
-  saveLeadPatch?: (patch: Partial<Lead>) => Promise<void>;
+  saveLeadPatch?: (patch: Partial<Lead>, deferGps?: boolean) => Promise<void>;
   prepareLead?: () => Promise<void>;
   homeowner?: Homeowner;
   fieldMemory?: boolean;
@@ -135,11 +135,11 @@ function LeadDetailContent({ lead, currentUser, onClose, onUpdate, fieldMemory =
   const hasPendingFieldWork = !!field?.drafts.some(d => d.leadId === lead.id);
   const pausedWithDrafts = !DIRECT_MOBILE_WRITES && hasPendingFieldWork && !field?.flags.capture;
   const capture = !DIRECT_MOBILE_WRITES && !!field?.flags.capture;
-  async function saveReportingPatch(patch: Partial<Lead>) {
-    if (saveLeadPatch) await saveLeadPatch(patch);
+  async function saveReportingPatch(patch: Partial<Lead>, deferGps = false) {
+    if (saveLeadPatch) await saveLeadPatch(patch, deferGps);
     else if (DIRECT_MOBILE_WRITES) {
       if (!field) throw Error('Open the mobile Knock screen to save this action safely.');
-      await field.enqueueDirect(lead, patch);
+      await field.enqueueDirect(lead, patch, undefined, deferGps);
     }
     else { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, patch); }
     if (DIRECT_MOBILE_WRITES) setFieldMessage('');
@@ -295,7 +295,7 @@ function LeadDetailContent({ lead, currentUser, onClose, onUpdate, fieldMemory =
     
     try {
       const disposition = dispositions.find(d => d.id === newStatus);
-      const gpsData = disposition?.countsAsDoorKnock
+      const gpsData = disposition?.countsAsDoorKnock && !DIRECT_MOBILE_WRITES
         ? await homeownerKnockGps(lead, currentUser) : {};
 
       if (DIRECT_MOBILE_WRITES && ['claimed', 'unclaimed'].includes(newStatus)) {
@@ -319,10 +319,10 @@ function LeadDetailContent({ lead, currentUser, onClose, onUpdate, fieldMemory =
         // Handle status change with GPS data
         // IMPORTANT: use partial update so we don't accidentally send ownership fields that could trip rules.
         if (!disposition) throw Error('Reload your dispositions before saving.');
-        await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, knockedAt, gpsData));
+        await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, knockedAt, gpsData), disposition.countsAsDoorKnock);
       }
 
-      if (DIRECT_MOBILE_WRITES) { onUpdate(); return; }
+      if (DIRECT_MOBILE_WRITES) { onUpdate(); onClose(); return; }
       
       // Check for Easter Egg win!
       try {
@@ -437,11 +437,11 @@ function LeadDetailContent({ lead, currentUser, onClose, onUpdate, fieldMemory =
       if (capture) { await recordField('knock', { status: 'not-interested', objectionType, objectionNotes }); setShowObjectionTracker(false); return; }
       const disposition = dispositions.find(d => d.id === 'not-interested');
       if (!disposition) throw Error('Reload your dispositions before saving.');
-      const gps = disposition.countsAsDoorKnock ? await homeownerKnockGps(lead, currentUser) : {};
+      const gps = disposition.countsAsDoorKnock && !DIRECT_MOBILE_WRITES ? await homeownerKnockGps(lead, currentUser) : {};
       await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, at, {
         objectionType, objectionNotes, objectionRecordedAt: at, objectionRecordedBy: currentUser.id, ...gps,
-      }));
-      setShowObjectionTracker(false); onUpdate();
+      }), disposition.countsAsDoorKnock);
+      setShowObjectionTracker(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
     } catch (e) { setFieldMessage((e as Error).message); throw e; }
     finally { setIsUpdating(false); }
   };
@@ -454,13 +454,13 @@ function LeadDetailContent({ lead, currentUser, onClose, onUpdate, fieldMemory =
       if (capture) { await recordField('knock', { status: pendingGoBackStatus || 'go-back', goBackScheduledDate: new Date(scheduleData.date).toISOString(), goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes }); setShowGoBackSchedule(false); return; }
       const disposition = dispositions.find(d => d.id === pendingGoBackStatus);
       if (!disposition) throw Error('Reload your dispositions before saving.');
-      const gps = disposition.countsAsDoorKnock ? await homeownerKnockGps(lead, currentUser) : {};
+      const gps = disposition.countsAsDoorKnock && !DIRECT_MOBILE_WRITES ? await homeownerKnockGps(lead, currentUser) : {};
       await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, at, {
         disposition: disposition.name, goBackScheduledDate: scheduleData.date,
         goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes,
         goBackScheduledBy: currentUser.id, ...gps,
-      }));
-      setShowGoBackSchedule(false); onUpdate();
+      }), disposition.countsAsDoorKnock);
+      setShowGoBackSchedule(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
     } catch (e) { setFieldMessage((e as Error).message); throw e; }
     finally { setIsUpdating(false); }
   };

@@ -1,0 +1,79 @@
+{
+  "release": "14.9",
+  "build": 149,
+  "unitTests": {
+    "passed": 133,
+    "failed": 0
+  },
+  "typescript": "pass",
+  "productionWebBuild": "pass",
+  "iosCapacitorSyncAndBundleCheck": "pass",
+  "androidCapacitorSyncAndBundleCheck": "pass",
+  "screenTests": {
+    "results": [
+      {
+        "device": "ios",
+        "focusGoalsAndPersistence": true,
+        "dateDispositionFilters": true,
+        "myTeamOffAndZoom": true,
+        "gpsStartupPanAndResume": true,
+        "create450RenameTransfer": true,
+        "partialDeleteAndRetry": true,
+        "alignedToolbarAndAccount": true,
+        "gpsBottomRight": true,
+        "unnumberedHandles": true,
+        "missingCompanionExplained": true,
+        "productionWrites": 0
+      },
+      {
+        "device": "android",
+        "focusGoalsAndPersistence": true,
+        "dateDispositionFilters": true,
+        "myTeamOffAndZoom": true,
+        "gpsStartupPanAndResume": true,
+        "create450RenameTransfer": true,
+        "partialDeleteAndRetry": true,
+        "alignedToolbarAndAccount": true,
+        "gpsBottomRight": true,
+        "unnumberedHandles": true,
+        "missingCompanionExplained": true,
+        "productionWrites": 0
+      }
+    ],
+    "errors": []
+  },
+  "knockTests": {
+    "commonDispositions": 7,
+    "typedTimestamps": true,
+    "repIdentityAndGps": true,
+    "ownershipUnchangedOnUpdate": true,
+    "offlineReloadAutoSync": true,
+    "originalKnockTime": true,
+    "lostAcknowledgementRetryWithoutDuplicate": true,
+    "quietNormalSave": true,
+    "offlineAttention": true,
+    "pinUpdatedWithDelayedListener": true,
+    "schedulerPayloadAndSaveBeforeSend": true,
+    "explicitClaimUnclaim": true,
+    "notesRetainedAfterAcknowledgement": true,
+    "followUpCleanupAfterNavigation": true,
+    "compactNeighborhoodPins": true,
+    "forbiddenApiRequests": [],
+    "liveWrites": 0,
+    "fixtureWrites": 14,
+    "createAttempts": 5,
+    "errors": []
+  },
+  "delayedGpsClosesDetailsBeforeWrite": true,
+  "detailHorizontalOverflow360And393": "pass",
+  "pendingGpsDiscardPersistence": "atomic IndexedDB compare/update",
+  "productionWritesDuringTesting": 0,
+  "notVerified": [
+    "Native Xcode/Gradle compilation and signing",
+    "Physical iPhone and Android GPS/dictation",
+    "Production Cloud Tasks configuration and delivery",
+    "Real scheduling webhook delivery",
+    "Reporting dashboard ingestion",
+    "TestFlight upload"
+  ]
+}

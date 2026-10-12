@@ -17,8 +17,8 @@ export type HomeownerVisit = ReturnType<typeof createHomeownerVisit>;
  * Failed writes retain the same ID and inputs. No imported record is ever modified.
  */
 export function createHomeownerVisit(initial: Lead, deps: {
-  create: (lead: Lead) => Promise<void>;
-  update: (id: string, patch: Partial<Lead>) => Promise<void>;
+  create: (lead: Lead, deferGps?: boolean) => Promise<void>;
+  update: (id: string, patch: Partial<Lead>, deferGps?: boolean) => Promise<void>;
   active: () => boolean;
   online: () => boolean;
   durableOffline?: boolean;
@@ -27,7 +27,7 @@ export function createHomeownerVisit(initial: Lead, deps: {
   return {
     get lead() { return lead; },
     get saved() { return saved; },
-    async save(patch: Partial<Lead> = {}) {
+    async save(patch: Partial<Lead> = {}, deferGps = false) {
       if (busy) throw Error('This home is still saving. Please wait.');
       if (!deps.active()) throw Error('Your account changed. Sign in again before saving.');
       if (!deps.durableOffline && !deps.online()) throw Error('Connect to save this home. Your entries stay in this panel; reconnect and try again.');
@@ -39,8 +39,8 @@ export function createHomeownerVisit(initial: Lead, deps: {
           value !== undefined && !['id', 'source', 'setterId', 'homeowner', 'createdAt', 'historicalTerritoryPin', 'historicalSetByName'].includes(key),
         )) as Partial<Lead>;
         const next = { ...lead, ...clean };
-        if (saved) await deps.update(lead.id, clean);
-        else await deps.create(next);
+        if (saved) await deps.update(lead.id, clean, deferGps);
+        else await deps.create(next, deferGps);
         lead = next;
         saved = true;
         return lead;

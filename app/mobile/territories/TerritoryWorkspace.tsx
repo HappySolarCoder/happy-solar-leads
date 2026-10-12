@@ -36,7 +36,7 @@ const TerritoryMap = dynamic(() => import("./TerritoryMap"), {
   ),
 });
 export type TerritoryData = {
-  capabilities?: {pagedAssignments?: boolean};
+  capabilities?: {pagedAssignments?: boolean; backgroundAssignments?: boolean};
   actor: TerritoryMember;
   members: TerritoryMember[];
   territories: ManagedTerritory[];
@@ -216,38 +216,26 @@ export default function TerritoryWorkspace({
       // Refresh capabilities so installing the companion does not require an app restart.
       const latest = await request();
       setData(latest);
-      if (!latest.capabilities?.pagedAssignments)
-        throw new Error('Territory assignment needs a service update from your administrator. Your drawing is unchanged; retry after the update.');
-      const body = {polygon,userId:rep};
-      setNotice('Checking available pins…');
-      const reviewed = await reviewAllPins(request, body, (scanned,eligible)=>setNotice(`Checked ${scanned.toLocaleString()} pins · ${eligible.toLocaleString()} available`));
-      setReview(reviewed);
-      setNotice('');
-      setMode("review");
-      pending.current = null;
+      if (!latest.capabilities?.backgroundAssignments)
+        throw new Error('Fast territory assignment needs the v14.9 backend setup. Your drawing is unchanged; retry after your administrator installs it.');
+      await mutate({action:'create',name:name.trim(),userId:rep,polygon}, true);
     });
   }
-  async function mutate(body: Record<string, unknown>) {
+  async function mutate(body: Record<string, unknown>, backgroundReady = data.capabilities?.backgroundAssignments) {
     const key = JSON.stringify(body);
     if (pending.current?.key !== key)
       pending.current = { key, requestId: crypto.randomUUID() };
-    let result: {id:string;changed:number;skipped?:number};
-    if (data.capabilities?.pagedAssignments && ['create','transfer'].includes(String(body.action))) {
-      const began = await request<AssignmentResult>({action:'begin-assignment',kind:body.action,
+    let result: {id:string;changed:number;skipped?:number;background?:boolean;queueError?:string};
+    if (['create','transfer'].includes(String(body.action))) {
+      if (!backgroundReady) throw Error('Fast territory assignment needs the v14.9 backend setup.');
+      result = await request({action:'save-background-assignment',kind:body.action,
         ...(body.action==='transfer'?{id:body.id,version:body.version}:{}),
         name:body.name,userId:body.userId,polygon:body.polygon,requestId:pending.current.requestId});
-      try {
-        result = await continueAssignment(request,began,r=>setNotice(`Assigning territory · ${r.changed.toLocaleString()} pins saved · ${r.scanned.toLocaleString()} checked`));
-      } catch (e) {
-        setDialog(null); cancel(); setSelected(began.id);
-        try {await reload();} catch {/* Keep original error. */}
-        throw new Error(`${e instanceof Error?e.message:'Assignment interrupted.'} Completed batches are kept. Select the territory and tap Resume assignment.`);
-      }
-    } else result = await request<{id:string;changed:number;skipped?:number}>({...body,requestId:pending.current.requestId});
+    } else result = await request({...body,requestId:pending.current.requestId});
     // A save may succeed even if the following refresh fails. Report that
     // accurately and retain the operation id for an idempotent retry.
     setNotice(
-      body.action === "archive"
+      result.background ? (result.queueError || "Territory saved. Pins are assigning in the background—you can draw the next area.") : body.action === "archive"
         ? "Territory deleted. Pin history and assignments are kept."
         : body.action === "rename"
         ? "Territory renamed."
@@ -505,12 +493,11 @@ export default function TerritoryWorkspace({
                     assigned pins at last save
                   </p>
                   {selectedArea.assignment && !selectedArea.assignment.done && <div className="rt-pending">
-                    <p>Assignment paused · {selectedArea.assignment.changed} pins saved. Resume to finish.</p>
+                    <p>Assigning in the background · {selectedArea.assignment.changed} pins saved. Tap Refresh for progress. If progress stops, retry below.</p>
                     <button className="rt-primary" disabled={busy} onClick={()=>run(async()=>{
-                      const a=selectedArea.assignment!;
-                      const result=await continueAssignment(request,{id:selectedArea.id,operationId:a.id,changed:a.changed,scanned:a.scanned,done:false},r=>setNotice(`Assigning · ${r.changed} pins saved · ${r.scanned} checked`));
-                      setNotice(`Assignment complete. ${result.changed} pins assigned.`); await reload();
-                    })}>Resume assignment</button>
+                      const result=await request<{queueError?:string}>({action:'retry-background-assignment',id:selectedArea.id});
+                      setNotice(result.queueError || 'Background assignment queued. You can leave this screen.'); await reload();
+                    })}>Retry background assignment</button>
                   </div>}
                   <div className="rt-row-actions">
                     <button onClick={() => openEdit("rename")} disabled={busy || !!selectedArea.assignment && !selectedArea.assignment.done}>
@@ -692,7 +679,7 @@ export default function TerritoryWorkspace({
                         busy
                       }
                     >
-                      {busy ? "Checking…" : "Review pins"}
+                      {busy ? "Saving…" : "Save territory"}
                       <ArrowRight size={18} />
                     </button>
                   </div>

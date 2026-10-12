@@ -79,6 +79,7 @@ export async function commitDirectMutation(m: PendingMutation, user: User) {
   const check = () => { if (auth?.currentUser?.uid !== m.userId || user.id !== m.userId)
     throw Error('Account changed. Reconnect with the rep who recorded this action.'); };
   check();
+  if (m.direct?.gps) throw Object.assign(Error('GPS verification is still pending. Your knock is saved on this phone.'), {status:409});
   const ref = doc(db, 'leads', m.leadId), patch = reportingPatch(m, user);
   try {
     const seed = m.direct?.create;

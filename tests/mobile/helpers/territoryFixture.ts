@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createTerritoryHandlers } from "../../../app/utils/server/territoryManagement";
 // In-memory adapter runs the real route handlers. No Firebase credentials/network.
-export function fixture() {
+export function fixture(queue?: Parameters<typeof createTerritoryHandlers>[0]["queue"]) {
   const records = new Map<
     string,
     { value: Record<string, any>; revision: number }
@@ -78,6 +78,7 @@ export function fixture() {
   seed("users/outsider", { name: "Other", role: "setter", team: "B" });
   seed("users/admin", { name: "Admin", role: "admin" });
   const handlers = createTerritoryHandlers({
+    queue,
     adminDb: () => db,
     adminAuth: () => ({
       verifyIdToken: async (token: string) => {

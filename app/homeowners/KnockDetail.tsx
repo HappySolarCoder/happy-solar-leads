@@ -12,9 +12,9 @@ export default function HomeownerKnockDetail({ visit, currentUser, dispositions,
   const [lead, setLead] = useState(visit.lead);
   return <LeadDetail lead={lead} homeowner={lead.homeowner} currentUser={currentUser}
     fieldMemory unvisitedHome={!visit.saved} dispositionOptions={dispositions} dispositionsLoading={loading}
-    saveLeadPatch={async patch => {
+    saveLeadPatch={async (patch, deferGps) => {
       if (loading) throw Error('Wait for your pins and actions to finish loading, then retry.');
-      setLead(await visit.save(patch)); onUpdate();
+      setLead(await visit.save(patch, deferGps)); onUpdate();
     }}
     prepareLead={async () => {
       if (loading) throw Error('Wait for your pins and actions to finish loading, then retry.');

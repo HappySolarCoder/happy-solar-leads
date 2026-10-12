@@ -416,8 +416,8 @@ export default function KnockingPage() {
       const uid = currentUser.id;
       homeVisits.current.set(homeowner.id, createHomeownerVisit(
         homeownerVisitDraft(homeowner, currentUser, crypto.randomUUID()), {
-          create: DIRECT_MOBILE_WRITES ? async lead => directSave.current(lead, lead, lead) : saveLeadAsync,
-          update: DIRECT_MOBILE_WRITES ? async (id, patch) => directSave.current({ id } as Lead, patch) : updateLeadAsync,
+          create: DIRECT_MOBILE_WRITES ? async (lead, deferGps) => directSave.current(lead, lead, lead, deferGps) : saveLeadAsync,
+          update: DIRECT_MOBILE_WRITES ? async (id, patch, deferGps) => directSave.current({ ...homeVisits.current.get(homeowner.id)?.lead, id } as Lead, patch, undefined, deferGps) : updateLeadAsync,
           online: isDeviceOnline, durableOffline: DIRECT_MOBILE_WRITES,
           active: () => !!db && auth?.currentUser?.uid === uid,
         },

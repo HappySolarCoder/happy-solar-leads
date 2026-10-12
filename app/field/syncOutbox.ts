@@ -7,7 +7,7 @@ export async function syncOutbox(deps:{read:()=>Promise<PendingMutation[]>;send:
     const batch=(await deps.read()).filter(m=>!seen.has(m.id));if(!batch.length)break;
     for(const m of batch){
       if(!deps.active())return {accepted};seen.add(m.id);
-      if(m.blocked||blocked.has(m.leadId)){blocked.add(m.leadId);continue;}
+      if(m.direct?.gps||m.blocked||blocked.has(m.leadId)){blocked.add(m.leadId);continue;}
       try{await deps.send(m);await deps.remove(m.id);accepted++;}
       catch(e){const error=e as Error&{status?:number};if([400,403,404,409,413].includes(error.status||0)){await deps.block({...m,blocked:true,error:error.message});blocked.add(m.leadId);}else return {accepted,error:error.message};}
     }
