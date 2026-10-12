@@ -21,6 +21,7 @@
     "mobile:ios:prepare": "bash scripts/mobile/install-ios.sh xcode",
     "mobile:ios:simulator": "node scripts/mobile/ios-simulator.mjs run",
     "mobile:ios:launch": "node scripts/mobile/ios-simulator.mjs launch",
+    "mobile:ios:debug": "bash scripts/mobile/debug-ios.sh",
     "mobile:ios:location": "node scripts/mobile/ios-simulator.mjs location",
     "mobile:build:ios": "node scripts/mobile/build.mjs && npm run mobile:assets:ios",
     "mobile:assets:ios": "node scripts/mobile/ios-assets.mjs",

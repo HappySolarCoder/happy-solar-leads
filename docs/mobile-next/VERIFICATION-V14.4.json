@@ -1,0 +1,56 @@
+{
+  "release": "14.4",
+  "build": {
+    "version": "14.4",
+    "build": 144,
+    "brand": "Signal R / slate blue + yellow",
+    "native": true,
+    "builtAt": "2026-10-12T00:45:09.077Z",
+    "apiOrigin": "https://happy-solar-leads.vercel.app",
+    "firebaseProject": "gen-lang-client-0395385938",
+    "brandSha256": "c89285e5d1366b45c7b3088c126bcfe845cb642325c77a60c32be018140cc7ab"
+  },
+  "unitTests": {
+    "passed": 103,
+    "failed": 0
+  },
+  "dataLoadingHarness": {
+    "oneStartupProfileRead": true,
+    "noDuplicateGoalLeadRead": true,
+    "noEagerDirectoryRead": true,
+    "liveGoalUpdates": true,
+    "permissionFailureClearsLeads": true,
+    "manualRetryRecovers": true,
+    "healthyReconnectKeepsListener": true,
+    "transientReconnectRecovers": true,
+    "directoryDeduplicatedAndScoped": true,
+    "accountSwitchClearsOldLeads": true,
+    "errorCodeLoggedWithoutRawMessage": true,
+    "remoteRequests": 0,
+    "errors": []
+  },
+  "iosCapacitorSync": "passed",
+  "iosBundleCheck": "passed",
+  "debugScript": "bash -n passed; macOS execution pending",
+  "transportChange": "iOS auto-detect long polling; no forced polling",
+  "nativeLogEvidence": {
+    "completedFirestoreHttpTransactions": 1482,
+    "allCompletedHttpStatus": 200,
+    "responseBodyBytes": 26795242,
+    "medianTransactionMs": 80,
+    "appLeadError": "deadline-exceeded",
+    "appLeadErrorMs": 130171
+  },
+  "databaseMutationsDuringVerification": 0,
+  "newDatabaseQueries": 0,
+  "notVerified": [
+    "Xcode native build and simulator performance on macOS",
+    "Physical iPhone or Android acceptance",
+    "Production test knocks, webhook delivery, document readback, reporting attribution"
+  ],
+  "knownLimitations": [
+    "Admin feed still queries all leads",
+    "Automatic transport detection can still fall back to long polling",
+    "42 dependency advisories from prior audit remain; dependencies unchanged"
+  ]
+}

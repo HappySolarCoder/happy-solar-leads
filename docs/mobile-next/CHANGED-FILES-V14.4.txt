@@ -1,0 +1,14 @@
+MOBILE-APP.md
+android/app/build.gradle
+app/mobile/_lib/release.json
+app/utils/firebase.ts
+app/utils/firestoreTransport.ts
+docs/mobile-next/CHANGED-FILES-V14.4.txt
+docs/mobile-next/IPHONE-REVIEW-V14.4.md
+docs/mobile-next/IPHONE-V14.4.md
+docs/mobile-next/VERIFICATION-V14.4.json
+ios/App/App.xcodeproj/project.pbxproj
+package.json
+scripts/mobile/debug-ios.sh
+scripts/mobile/install-ios.sh
+tests/mobile/ios-startup.test.ts

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { nativeFirestoreSettings } from '../../app/utils/firestoreTransport';
 import { withDeadline } from '../../app/utils/withDeadline';
 
-test('WebKit workaround is limited to the installed iOS build', () => {
-  assert.deepEqual(nativeFirestoreSettings(true, 'ios'), { experimentalForceLongPolling: true });
+test('iOS detects buffered connections without forcing slow long polling for every query', () => {
+  assert.deepEqual(nativeFirestoreSettings(true, 'ios'), { experimentalAutoDetectLongPolling: true });
   for (const [native, platform] of [[false, 'ios'], [true, 'android'], [true, 'web'], [false, 'web']] as const)
     assert.equal(nativeFirestoreSettings(native, platform), null);
 });
