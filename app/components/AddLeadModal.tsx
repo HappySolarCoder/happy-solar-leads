@@ -7,6 +7,7 @@ import { getDispositionsAsync } from '@/app/utils/dispositions';
 import type { Disposition } from '@/app/types/disposition';
 
 interface AddLeadModalProps {
+  mobileQueue?: boolean;
   isOpen: boolean;
   onClose: () => void;
   onSave: (lead: Partial<Lead>) => Promise<void>;
@@ -19,6 +20,7 @@ interface AddLeadModalProps {
 }
 
 export default function AddLeadModal({
+  mobileQueue = false,
   isOpen,
   onClose,
   onSave,
@@ -40,6 +42,12 @@ export default function AddLeadModal({
   const [isSaving, setIsSaving] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [selectedDisposition, setSelectedDisposition] = useState('');
+
+  // Reverse geocoding can finish after the form opens. Never overwrite typing.
+  useEffect(() => { if(initialAddress)setAddress(value=>value || initialAddress); },[initialAddress]);
+  useEffect(() => { if(initialCity)setCity(value=>value || initialCity); },[initialCity]);
+  useEffect(() => { if(initialState)setState(value=>value || initialState); },[initialState]);
+  useEffect(() => { if(initialZip)setZip(value=>value || initialZip); },[initialZip]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -295,7 +303,7 @@ export default function AddLeadModal({
 
             {/* Info Box */}
             <div className="p-3 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg text-xs text-[#718096]">
-              <p><strong>Note:</strong> Solar potential will be calculated automatically after saving.</p>
+              <p>{mobileQueue ? 'Your saved knock will appear on the map. You can add more details later.' : 'Solar potential will be calculated automatically after saving.'}</p>
             </div>
           </div>
 

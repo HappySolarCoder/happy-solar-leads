@@ -27,7 +27,7 @@ test('warm badge coexists with disposition, solar score, outcome and selection',
   assert.notEqual(marked.url,fieldPinArtwork({...warm,source:'manual'},undefined,19,true).url);
   assert.equal(marked.url,fieldPinArtwork(warm,undefined,19,true).url);
   assert.ok(fieldPinArtwork(warm,undefined,17).size<fieldPinArtwork(warm,undefined,18).size);
-  assert.equal(fieldPinArtwork(warm,undefined,19).size,30);
+  assert.equal(fieldPinArtwork(warm,undefined,19).size,60);
   assert.notEqual(fieldPinZoomTier(17),fieldPinZoomTier(18));
 });
 test('compass uses absolute north readings and correctly handles portrait/landscape',()=>{
@@ -57,13 +57,13 @@ test('heading smoothing crosses north without swinging south',()=>{
 test('worked pins are compact colored dots through neighborhood zoom with centered coordinates',()=>{
  for(const zoom of [15,16]){
   const p=fieldPinArtwork({status:'not-home',solarCategory:'great'} as Lead,undefined,zoom);
-  assert.ok(p.size<=(zoom<17?7:21));assert.equal(p.size,p.height);assert.equal(p.anchorY,p.height/2);
+  assert.ok(p.size===14);assert.equal(p.size,p.height);assert.equal(p.anchorY,p.height/2);
   assert.ok(!decodeURIComponent(p.url).includes('data-warm-lead'));
   assert.notEqual(p.url,fieldPinArtwork({status:'not-interested'} as Lead,undefined,zoom).url);
  }
 });
 
 test('worked icons appear two levels earlier without enlarging unworked pins',()=>{
- for(const z of [17,18,19]){const p=fieldPinArtwork({status:'not-home'} as Lead,undefined,z);assert.ok(p.height>p.size);assert.ok(p.size<=30);}
+ for(const z of [17,18,19]){const p=fieldPinArtwork({status:'not-home'} as Lead,undefined,z);assert.ok(p.height>p.size);assert.ok(p.size<=60);}
  assert.equal(fieldPinArtwork({status:'assigned'} as Lead,undefined,17).size,13.5);
 });

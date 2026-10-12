@@ -1,5 +1,6 @@
 "use client";
 
+import BusinessCardTool from "../_components/BusinessCardTool";
 import VoiceFeedback from "../_components/VoiceFeedback";
 import { useState } from "react";
 import Link from "next/link";
@@ -116,6 +117,7 @@ export default function MorePage() {
             </Link>
           ))}
         </div>
+        <BusinessCardTool />
         {user && <VoiceFeedback uid={user.id} admin={user.role === "admin"} />}
         {user && ["admin", "manager"].includes(user.role) && (
           <AppointmentSyncPanel />

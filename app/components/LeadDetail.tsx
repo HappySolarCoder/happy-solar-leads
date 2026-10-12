@@ -1,5 +1,6 @@
 'use client';
 
+import HouseHistory from '@/app/homeowners/HouseHistory';
 import { HomeownerSection } from '@/app/homeowners/Details';
 import type { Homeowner } from '@/app/homeowners/model';
 import { homeownerKnockGps } from '@/app/homeowners/knockGps';
@@ -50,6 +51,7 @@ import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 
 interface LeadDetailProps {
+  relatedLeads?: Lead[];
   unvisitedHome?: boolean;
   saveLeadPatch?: (patch: Partial<Lead>, deferGps?: boolean) => Promise<void>;
   prepareLead?: () => Promise<void>;
@@ -123,7 +125,7 @@ const QUICK_ACTION_LABELS: Record<string, string> = {
   'not-home': 'NH', 'not-interested': 'NI', 'go-back': 'GB',
 };
 
-function LeadDetailContent({ lead, currentUser, onClose, onUpdate, fieldMemory = false, homeowner, dispositionOptions, dispositionsLoading = false, unvisitedHome = false, saveLeadPatch, prepareLead }: LeadDetailProps) {
+function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate, fieldMemory = false, homeowner, dispositionOptions, dispositionsLoading = false, unvisitedHome = false, saveLeadPatch, prepareLead }: LeadDetailProps) {
   const mobile = useOptionalMobileData();
   const field = fieldMemory || DIRECT_MOBILE_WRITES ? mobile?.field : undefined;
   const shared = field?.leads.find(item => item.id === lead.id);
@@ -815,6 +817,8 @@ function LeadDetailContent({ lead, currentUser, onClose, onUpdate, fieldMemory =
             {showAllStatuses ? 'Show Less' : 'Show All Dispositions'}
           </button>
 
+          <HouseHistory key={`${currentUser?.id}:${lead.id}`} lead={lead} related={relatedLeads} uid={currentUser?.id} />
+
           {/* Go Back Section */}
           {(isScheduledGoBackStatus(lead.status) || !!lead.goBackScheduledDate) && (
             <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
@@ -928,28 +932,6 @@ function LeadDetailContent({ lead, currentUser, onClose, onUpdate, fieldMemory =
               </button>
             </div>
           </div>}
-
-          {/* Disposition History */}
-          {lead.dispositionHistory && lead.dispositionHistory.length > 0 && (
-            <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
-              <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Disposition History</h3>
-              <div className="space-y-2">
-                {lead.dispositionHistory.slice(0, 10).map((entry, index) => (
-                  <div key={index} className="flex items-start gap-2 text-xs">
-                    <div className="flex-shrink-0 w-2 h-2 rounded-full bg-[#CBD5E0] mt-1.5" />
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 text-[#2D3748]">
-                        <span className="font-medium">{entry.disposition}</span>
-                        <span className="text-[#718096]">•</span>
-                        <span className="text-[#718096]">{formatTimeAgo(new Date(entry.timestamp))}</span>
-                      </div>
-                      <div className="text-[#718096]">by {entry.userName}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Book Manually */}
           <div className="mt-6 pt-6 border-t border-[#E2E8F0]">

@@ -1,5 +1,6 @@
 'use client';
 
+import BusinessCardTool from '@/app/mobile/_components/BusinessCardTool';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Calendar, Map, Users, BarChart3, Settings, ShieldCheck, Layers, Sparkles } from 'lucide-react';
@@ -76,6 +77,7 @@ export default function ToolsPage() {
 
       {/* Content */}
       <div className="max-w-4xl mx-auto px-4 py-8">
+        <BusinessCardTool />
         {/* What's New */}
         <div className="mb-8">
           <div className="bg-gradient-to-r from-[#FF5F5A] to-[#F27141] rounded-lg shadow-md p-6 text-white cursor-pointer hover:shadow-lg transition-shadow"

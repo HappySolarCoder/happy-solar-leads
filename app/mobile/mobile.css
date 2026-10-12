@@ -1885,3 +1885,10 @@ html[data-native] .raydar-mobile .rt-shell { height: var(--app-height); padding-
 .rm-lead-detail * { min-width:0; box-sizing:border-box; }
 .rm-lead-detail .overflow-y-auto { overflow-x:hidden; overscroll-behavior-x:none; }
 .rm-lead-detail p, .rm-lead-detail h2, .rm-lead-detail h3, .rm-lead-detail span { overflow-wrap:anywhere; }
+
+/* Keep external tools at the same comfortable tap size as the workspace. */
+.rm-business-card-tool { display:flex; align-items:center; gap:12px; padding:16px; margin:12px 0; background:#fff; border:1px solid #DBE4E9; border-radius:16px; color:#304B5E; text-decoration:none; }
+.rm-business-card-tool > span:nth-child(2) { flex:1; min-width:0; }
+.rm-business-card-tool strong,.rm-business-card-tool small { display:block; }
+.rm-business-card-tool small { margin-top:4px; font-size:12px; color:#617788; }
+.rm-knocking-map .leaflet-container { -webkit-touch-callout:none; }

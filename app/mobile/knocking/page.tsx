@@ -71,6 +71,7 @@ export default function KnockingPage() {
   const [homePreference, setHomePreference] = useDeviceValue(`raydar-homeowners:${currentUser?.id || ""}`, "localStorage");
   const showHomeowners = homePreference !== "off";
   const [outcomesOnly, setOutcomesOnly] = useState(false);
+  const [selectedHouseLeads, setSelectedHouseLeads] = useState<Lead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [viewMode] = useState<'map' | 'list'>('map');
@@ -205,7 +206,8 @@ export default function KnockingPage() {
     // it from the claimed-leads subscription. This does not fetch extra leads.
     if (updatedLead) setSavedHomeVisits(previous => [...previous.filter(l => l.id !== updatedLead.id), updatedLead].slice(-100));
   }, []);
-  const handleLeadSelect = useCallback((lead: Lead, homeowner?: Homeowner) => {
+  const handleLeadSelect = useCallback((lead: Lead, homeowner?: Homeowner, related?: Lead[]) => {
+    setSelectedHouseLeads(related || []);
     setSelectedHomeowner(homeowner);
     setSelectedLeadId(lead.id);
     setShowLeadDetail(true);
@@ -858,6 +860,7 @@ export default function KnockingPage() {
             fitAreaBounds={fitAreaBounds}
             center={mapCenter}
             zoom={mapZoom} // Closer zoom for mobile
+            saveManualLead={DIRECT_MOBILE_WRITES ? async lead => directSave.current(lead, lead, lead, true) : undefined}
             onLeadAdded={refreshLeads}
             searchLocation={searchLocation}
             heatCells={heatCells}
@@ -958,6 +961,7 @@ export default function KnockingPage() {
           dispositionsLoading={dispositionsLoading}
           lead={selectedLead}
           homeowner={selectedHomeowner}
+          relatedLeads={selectedHouseLeads}
           currentUser={currentUser}
           onClose={() => {
             setShowLeadDetail(false);

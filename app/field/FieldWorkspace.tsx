@@ -1,4 +1,5 @@
 "use client";
+import BusinessCardTool from "@/app/mobile/_components/BusinessCardTool";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
@@ -223,6 +224,7 @@ export default function FieldWorkspace(p: Props) {
         <p className="rf-intro">
           Know where to return. Make the handoff count.
         </p>
+        <BusinessCardTool />
         {p.demo && (
           <div className="rf-notice">
             Design preview · fictional data · no changes are saved

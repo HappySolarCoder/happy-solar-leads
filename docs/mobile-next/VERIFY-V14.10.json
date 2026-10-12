@@ -1,0 +1,45 @@
+{
+  "version": "14.10",
+  "build": 150,
+  "unitTests": {
+    "passed": 137,
+    "failed": 0
+  },
+  "exportedUI": {
+    "results": [
+      {
+        "device": "ios",
+        "onePinFourRecords": true,
+        "latestOutcome": true,
+        "allEightHistoryEntries": true,
+        "homeownerInfo": true,
+        "homeownersOffDedup": true,
+        "workedSize": 14,
+        "holdJitter": true,
+        "panPinchCancel": true,
+        "businessCard": true,
+        "manualCreateTimestampGps": true,
+        "productionWrites": 0
+      },
+      {
+        "device": "android",
+        "onePinFourRecords": true,
+        "latestOutcome": true,
+        "allEightHistoryEntries": true,
+        "homeownerInfo": true,
+        "homeownersOffDedup": true,
+        "workedSize": 14,
+        "holdJitter": true,
+        "panPinchCancel": true,
+        "businessCard": true,
+        "manualCreateTimestampGps": true,
+        "productionWrites": 0
+      }
+    ],
+    "errors": []
+  },
+  "regressions": "check-saves-v149.mjs passed: common dispositions, GPS, offline replay, notes, claims, follow-ups, scheduling payload",
+  "physicalDeviceTested": false,
+  "nativeCompiledOrSigned": false,
+  "productionDataWritten": false
+}

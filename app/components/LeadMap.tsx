@@ -1,4 +1,5 @@
 'use client';
+import { attachMapLongPress } from '@/app/utils/mapLongPress';
 import type { View } from '@/app/homeowners/model';
 import type { PinScope } from '@/app/mobile/_lib/pinScope';
 
@@ -49,7 +50,7 @@ interface LeadMapProps {
   dispositionOptions?: Disposition[];
   currentUser: User | null;
   users?: User[]; // All users for territory color mapping
-  onLeadClick: (lead: Lead, homeowner?: Homeowner) => void;
+  onLeadClick: (lead: Lead, homeowner?: Homeowner, related?: Lead[]) => void;
   showHomeowners?: boolean;
   homeownerLeads?: Lead[];
   homeownerFixture?: Homeowner[];
@@ -72,7 +73,8 @@ interface LeadMapProps {
   viewMode?: 'map' | 'assignments' | 'territory'; // Show territories in assignments/territory view
   territories?: any[]; // Territory polygons to display
   onTerritoryDelete?: (territoryId: string) => void; // Callback when territory deleted
-  onLeadAdded?: () => void; // Callback when a new lead is added via map pin drop
+  saveManualLead?: (lead: Lead) => Promise<void>;
+  onLeadAdded?: (lead?: Lead) => void; // Callback when a new lead is added via map pin drop
   searchLocation?: { lat: number; lng: number } | null; // For address search marker
   heatCells?: { lat: number; lng: number; intensity: number; count: number }[]; // Optional heat overlay
   heatCellRadiusMeters?: number;
@@ -130,6 +132,7 @@ export default function LeadMap({
   territories = [],
   onTerritoryDelete,
   onLeadAdded,
+  saveManualLead,
   searchLocation,
   heatCells = [],
   heatCellRadiusMeters = 180,
@@ -152,7 +155,7 @@ export default function LeadMap({
   useEffect(() => { homeClickRef.current = onHomeownerClick; }, [onHomeownerClick]);
   const liveHomeowners = useHomeowners(homeownerMap, currentUser, showHomeowners && !homeownerFixture, pinPolygons);
   const homeState = homeownerFixture ? {...EMPTY_HOMES, homes: homeownerFixture} : liveHomeowners;
-  const houseIndex = useMemo(() => buildHouseIndex(showHomeowners ? homeownerLeads || leadsProp : []), [showHomeowners, homeownerLeads, leadsProp]);
+  const houseIndex = useMemo(() => buildHouseIndex(homeownerLeads || leadsProp), [homeownerLeads, leadsProp]);
   const homeMerge = useMemo(() => mergeHomeowners(homeState.homes, houseIndex), [homeState.homes, houseIndex]);
   const homeMergeRef = useRef(homeMerge);
   useEffect(() => { homeMergeRef.current = homeMerge; }, [homeMerge]);
@@ -166,8 +169,11 @@ export default function LeadMap({
   const selectListedHome = (h: Homeowner) => {
     const match = [...homeMerge.byLead].find(([, value]) => value.id === h.id);
     const lead = match && (homeownerLeads || leadsProp).find(l => l.id === match[0]);
-    if (lead) onLeadClick(lead, h); else onHomeownerClick?.(h);
+    if (lead) onLeadClick(lead, h, houseIndex.grouped.byLead.get(lead.id)); else onHomeownerClick?.(h);
   };
+  const houseIndexRef = useRef(houseIndex); houseIndexRef.current = houseIndex;
+  const dropPinRef = useRef<(point: L.LatLng) => void>(() => {});
+  const dropEnabledRef = useRef(true);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
@@ -187,6 +193,19 @@ export default function LeadMap({
   }, [selectedLeadId]);
   const clickRef = useRef(onLeadClick);
   useEffect(() => { clickRef.current = onLeadClick; }, [onLeadClick]);
+  const attachedHomeRef = useRef('');
+  useEffect(() => {
+    if (!selectedLeadId) { attachedHomeRef.current=''; return; }
+    const home=homeMerge.byLead.get(selectedLeadId);
+    const group=houseIndex.grouped.byLead.get(selectedLeadId);
+    const lead=group?.find(l=>l.id===selectedLeadId);
+    const key=`${selectedLeadId}:${home?.id}`;
+    // A rep may tap before the homeowner viewport finishes. Attach the record
+    // to the already-open door without another read or requiring a second tap.
+    if(home && lead && attachedHomeRef.current!==key){
+      attachedHomeRef.current=key;clickRef.current(lead,home,group);
+    }
+  }, [selectedLeadId,homeMerge,houseIndex]);
   const hasUserPosition = Boolean(userPosition);
   const routeLineRef = useRef<L.Polyline | null>(null);
   const drawControlRef = useRef<any>(null);
@@ -205,6 +224,8 @@ export default function LeadMap({
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [dropPinLocation, setDropPinLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [dropPinAddress, setDropPinAddress] = useState({ address: '', city: '', state: '', zip: '' });
+  const geocodeSequence = useRef(0);
+  const manualDraftId = useRef('');
   const tempPinRef = useRef<L.Marker | null>(null);
   const searchMarkerRef = useRef<L.Marker | null>(null);
   const heatLayerRef = useRef<L.LayerGroup | null>(null);
@@ -250,11 +271,14 @@ export default function LeadMap({
 
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
-  const hiddenLeadKey = JSON.stringify([...homeMerge.hiddenLeadIds].sort());
   const leads = useMemo(() => {
-    const hidden = new Set<string>(JSON.parse(hiddenLeadKey));
-    return hidden.size ? leadsProp.filter(l => !hidden.has(l.id)) : leadsProp;
-  }, [leadsProp, hiddenLeadKey]);
+    const visible = new Set(leadsProp.map(l=>l.id));
+    return houseIndex.grouped.pins.filter(l=>visible.has(l.id)).map(l=>{
+      const home=homeMerge.byLead.get(l.id);
+      // Display corrected rooftop coordinates without editing any saved lead.
+      return home && (home.lat!==l.lat || home.lng!==l.lng) ? {...l,lat:home.lat,lng:home.lng} : l;
+    });
+  }, [leadsProp, houseIndex, homeMerge]);
 
   const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
 
@@ -363,6 +387,7 @@ export default function LeadMap({
       zoom,
       zoomControl: showZoomControl,
       attributionControl: false,
+      tapHold: false, // One cross-platform DOM hold handler below.
     });
 
     // Initialize with satellite view
@@ -447,48 +472,11 @@ export default function LeadMap({
       }
     });
 
-    // Handle right-click to drop pin (desktop)
-    map.on('contextmenu', (e: L.LeafletMouseEvent) => {
-      handleDropPin(e.latlng);
-    });
-
-    // Handle long-press to drop pin (mobile)
-    let longPressTimer: NodeJS.Timeout;
-    let longPressStartPos: L.LatLng | null = null;
-    
-    map.on('mousedown', (e: L.LeafletMouseEvent) => {
-      longPressStartPos = e.latlng;
-      longPressTimer = setTimeout(() => {
-        if (longPressStartPos) {
-          console.log('[LeadMap] Long press detected, dropping pin');
-          handleDropPin(longPressStartPos);
-        }
-      }, 800); // 800ms for long-press
-    });
-    
-    map.on('touchstart', (e: any) => {
-      // Handle touch events - extract latlng from the event
-      const latlng = (e as any).latlng || e.latlng;
-      if (latlng) {
-        longPressStartPos = latlng;
-        longPressTimer = setTimeout(() => {
-          if (longPressStartPos) {
-            console.log('[LeadMap] Touch long press detected, dropping pin');
-            apiFetch('/api/debug-log', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ level: 'info', message: 'Touch long press triggered', data: { lat: longPressStartPos.lat, lng: longPressStartPos.lng } })
-            }).catch(() => {});
-            handleDropPin(longPressStartPos);
-          }
-        }, 800);
-      }
-    });
-    
-    map.on('mouseup touchend mousemove', () => {
-      clearTimeout(longPressTimer);
-      longPressStartPos = null;
-    });
+    const hold = attachMapLongPress(map.getContainer(), point => {
+      const rect=map.getContainer().getBoundingClientRect();
+      dropPinRef.current(map.containerPointToLatLng(L.point(point.clientX-rect.left,point.clientY-rect.top)));
+    },()=>dropEnabledRef.current);
+    map.on('zoomstart',hold.cancel); // DOM movement tolerance handles small finger jitter.
 
     // Close the past-pin popup only when the tap is on the map itself.
     // Marker taps, the popup (including X), and zoom controls do not count.
@@ -502,7 +490,7 @@ export default function LeadMap({
 
     return () => {
       stopObservingSize();
-      clearTimeout(longPressTimer);
+      hold.destroy();
       if (routeLineRef.current) routeLineRef.current.remove();
       map.remove();
       mapInstanceRef.current = null;
@@ -782,7 +770,7 @@ export default function LeadMap({
               showPersistentPopup(map, current);
               if (current.historicalTerritoryPin) return;
             } else if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
-            clickRef.current(current, homeMergeRef.current.byLead.get(current.id));
+            clickRef.current(current, homeMergeRef.current.byLead.get(current.id) || current.homeowner, houseIndexRef.current.grouped.byLead.get(current.id));
           });
           entry.marker.on('keydown', (event: L.LeafletKeyboardEvent) => {
             if (event.originalEvent.key === 'Enter' || event.originalEvent.key === ' ') {
@@ -1374,10 +1362,17 @@ export default function LeadMap({
       body: JSON.stringify({ level: 'info', message: 'Temp pin created, starting geocode', data: { lat: latlng.lat, lng: latlng.lng } })
     }).catch(() => {});
 
-    // Reverse geocode to get address
+    // Show the form immediately; address lookup must not block the hold gesture.
+    const sequence = ++geocodeSequence.current;
+    manualDraftId.current = crypto.randomUUID();
+    setDropPinAddress({ address: '', city: '', state: '', zip: '' });
+    setDropPinLocation({ lat: latlng.lat, lng: latlng.lng });
+    setShowAddLeadModal(true);
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), 8000);
     try {
       const response = await apiFetch(
-        `/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`
+        `/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`, { signal: controller.signal }
       );
       const data = await response.json();
       console.log('[LeadMap] Geocode result:', data);
@@ -1409,15 +1404,11 @@ export default function LeadMap({
           }
         });
 
-        setDropPinAddress({ address: street.trim(), city, state, zip });
+        if (sequence === geocodeSequence.current && mapInstanceRef.current) setDropPinAddress({ address: street.trim(), city, state, zip });
       }
     } catch (error) {
       console.error('Reverse geocoding failed:', error);
-      setDropPinAddress({ address: '', city: '', state: '', zip: '' });
-    }
-
-    setDropPinLocation({ lat: latlng.lat, lng: latlng.lng });
-    setShowAddLeadModal(true);
+    } finally { clearTimeout(deadline); }
     console.log('[LeadMap] Modal should show now');
     
     // Send debug log - modal state set
@@ -1436,10 +1427,13 @@ export default function LeadMap({
     }
   };
 
+  dropPinRef.current = handleDropPin;
+  dropEnabledRef.current = assignmentMode === 'none' && !showAddLeadModal;
+
   // Handle saving new lead from dropped pin
   const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
     try {
-      if (isProximityRequired(currentUser)) {
+      if (!saveManualLead && isProximityRequired(currentUser)) {
         try {
           const position = await getLocation({
             enableHighAccuracy: true,
@@ -1481,7 +1475,7 @@ export default function LeadMap({
       }
 
       // Generate ID
-      const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const id = manualDraftId.current || (manualDraftId.current = crypto.randomUUID());
 
       const firebaseUid = auth?.currentUser?.uid;
       if (!firebaseUid) {
@@ -1493,8 +1487,8 @@ export default function LeadMap({
       const historyEntry = manualDisposition
         ? [{
             disposition: manualDisposition,
-            timestamp: new Date(),
-            userId: currentUser?.id || firebaseUid,
+            timestamp: leadData.dispositionedAt || new Date(),
+            userId: firebaseUid,
             userName: currentUser?.name || 'User',
           }]
         : undefined;
@@ -1515,7 +1509,10 @@ export default function LeadMap({
         source: 'manually-added', // Mark as manually added via map pin drop
       } as Lead;
 
-      // Save to Firestore (create)
+      if (saveManualLead) {
+        await saveManualLead(newLead);
+      } else {
+      // Legacy web create path. Mobile saves use the durable queue above.
       const { saveLeadAsync, updateLeadAsync } = await import('@/app/utils/storage');
       await saveLeadAsync(newLead);
 
@@ -1571,6 +1568,8 @@ export default function LeadMap({
           .catch((err) => console.error('Solar API error:', err));
       }
 
+      }
+
       // Remove temp pin
       if (tempPinRef.current) {
         tempPinRef.current.remove();
@@ -1582,7 +1581,7 @@ export default function LeadMap({
 
       // Call parent callback to refresh leads (keeps map position)
       if (onLeadAdded) {
-        onLeadAdded();
+        onLeadAdded(newLead);
       }
     } catch (error: any) {
       console.error('Error saving dropped lead:', error);
@@ -1702,8 +1701,10 @@ export default function LeadMap({
       {/* Add Lead Modal */}
       {dropPinLocation && (
         <AddLeadModal
+          mobileQueue={!!saveManualLead}
           isOpen={showAddLeadModal}
           onClose={() => {
+            geocodeSequence.current++;
             setShowAddLeadModal(false);
             setDropPinLocation(null);
             if (tempPinRef.current) {
@@ -1807,6 +1808,7 @@ function createMutedHistoricalIcon(disposition: Disposition | undefined, zoom: n
     size = 14;
   }
 
+  size *= 2; // Past worked pins follow the same v14.10 visibility increase.
   const color = '#9CA3AF';
   const icon = disposition ? (ICON_TO_UNICODE[disposition.icon] || '●') : '●';
 

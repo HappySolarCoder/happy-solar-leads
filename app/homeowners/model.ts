@@ -1,3 +1,4 @@
+import { groupHouseLeads, houseStreet, compareHouseVisits, metersBetween } from "./houseIdentity";
 import { scopedViews, inPinScope, type PinScope } from "@/app/mobile/_lib/pinScope";
 import type { Lead } from "@/app/types";
 import { distanceBetween, geohashQueryBounds } from "geofire-common";
@@ -288,101 +289,55 @@ export function normalized(value: unknown, street = false) {
     : s;
 }
 const addressKey = (address: unknown, town: unknown) =>
-  `${normalized(address, true)}|${normalized(town)}`;
-const recent = (l: Lead) =>
-  Math.max(
-    0,
-    ...[
-      l.dispositionedAt,
-      ...(l.dispositionHistory || []).map((h) => h.timestamp),
-    ].map((x) => (x ? new Date(x).getTime() || 0 : 0)),
-  );
+  `${houseStreet(address)}|${normalized(town)}`;
 export type HouseIndex = {
   addresses: Map<string, Lead[]>;
+  streets: Map<string, Lead[]>;
   cells: Map<string, Lead[]>;
   leads: Lead[];
+  grouped: ReturnType<typeof groupHouseLeads>;
 };
 const cell = (lat: number, lng: number) =>
   `${Math.floor(lat / 0.0005)}:${Math.floor(lng / 0.0005)}`;
 export function buildHouseIndex(leads: Lead[]): HouseIndex {
-  const addresses = new Map<string, Lead[]>(),
-    cells = new Map<string, Lead[]>();
+  const addresses = new Map<string, Lead[]>(), streets = new Map<string, Lead[]>(), cells = new Map<string, Lead[]>();
   for (const l of leads) {
-    const key = addressKey(
-      l.address,
-      (l as Lead & { town?: string }).town || l.city,
-    );
-    if (normalized(l.address, true)) {
-      const group = addresses.get(key) || [];
-      group.push(l);
-      addresses.set(key, group);
-    }
-    if (
-      typeof l.lat === "number" &&
-      typeof l.lng === "number" &&
-      Number.isFinite(l.lat) &&
-      Number.isFinite(l.lng)
-    ) {
-      const k = cell(l.lat, l.lng);
-      const group = cells.get(k) || [];
-      group.push(l);
-      cells.set(k, group);
-    }
-  }
-  for (const group of addresses.values())
-    group.sort((a, b) => recent(b) - recent(a) || a.id.localeCompare(b.id));
-  return { addresses, cells, leads };
-}
-export function mergeHomeowners(homes: Homeowner[], index: HouseIndex) {
-  const gray: Homeowner[] = [],
-    byLead = new Map<string, Homeowner>(),
-    hiddenLeadIds = new Set<string>();
-  for (const h of homes) {
-    let group = index.addresses.get(
-      addressKey(h.addressNorm || h.address, h.municipality),
-    );
-    let match = group?.[0];
-    if (!match) {
-      const latCell = Math.floor(h.lat / 0.0005),
-        lngCell = Math.floor(h.lng / 0.0005);
-      let best = 25;
-      for (let a = -1; a <= 1; a++)
-        for (let b = -2; b <= 2; b++)
-          for (const l of index.cells.get(`${latCell + a}:${lngCell + b}`) ||
-            []) {
-            const d = distanceBetween([h.lat, h.lng], [l.lat!, l.lng!]) * 1000;
-            if (
-              d < best ||
-              (d === best && match && recent(l) > recent(match))
-            ) {
-              best = d;
-              match = l;
-            }
-          }
-      if (match) {
-        group = index.addresses.get(
-          addressKey(
-            match.address,
-            (match as Lead & { town?: string }).town || match.city,
-          ),
-        );
-        match = group?.[0] || match;
+    const street = houseStreet(l.address), key = addressKey(l.address,(l as Lead & {town?:string}).town || l.city);
+    if (street) {
+      for (const [map,k] of [[addresses,key],[streets,street]] as const) {
+        const group=map.get(k) || []; group.push(l); map.set(k,group);
       }
     }
-    if (match) {
-      const previous = byLead.get(match.id);
-      if (
-        !previous ||
-        distanceBetween([h.lat, h.lng], [match.lat!, match.lng!]) <
-          distanceBetween(
-            [previous.lat, previous.lng],
-            [match.lat!, match.lng!],
-          )
-      )
-        byLead.set(match.id, h);
-      for (const l of group || [])
-        if (l.id !== match.id) hiddenLeadIds.add(l.id);
-    } else gray.push(h);
+    if (typeof l.lat === 'number' && typeof l.lng === 'number' && Number.isFinite(l.lat) && Number.isFinite(l.lng)) {
+      const k=cell(l.lat,l.lng), group=cells.get(k) || []; group.push(l); cells.set(k,group);
+    }
   }
-  return { gray, byLead, hiddenLeadIds };
+  for (const group of addresses.values()) group.sort(compareHouseVisits);
+  return {addresses,streets,cells,leads,grouped:groupHouseLeads(leads)};
+}
+export function mergeHomeowners(homes: Homeowner[], index: HouseIndex) {
+  const gray: Homeowner[] = [], byLead = new Map<string, Homeowner>(), hiddenLeadIds = new Set<string>();
+  // Deduplication is independent of whether homeowner pins are enabled or loaded.
+  for (const group of index.grouped.groups) for (const l of group.slice(1)) hiddenLeadIds.add(l.id);
+  for (const h of homes) {
+    const street=houseStreet(h.addressNorm || h.address);
+    const sameState=(l:Lead) => !l.state || !h.state || normalized(l.state)===normalized(h.state);
+    let matches=(index.addresses.get(addressKey(street,h.municipality)) || []).filter(sameState);
+    if (!matches.length) matches=(index.streets.get(street) || []).filter(l=>sameState(l) && metersBetween(h,l)<75).sort(compareHouseVisits);
+    // Only address-less legacy pins may use a tight, unambiguous proximity match.
+    if (!matches.length) {
+      const a=Math.floor(h.lat / .0005), b=Math.floor(h.lng / .0005), nearby:Lead[]=[];
+      for(let x=-1;x<=1;x++) for(let y=-1;y<=1;y++)
+        for(const l of index.cells.get(`${a+x}:${b+y}`) || []) if(!houseStreet(l.address) && metersBetween(h,l)<12) nearby.push(l);
+      if(nearby.length===1) matches=nearby;
+    }
+    const match=matches[0];
+    if (!match) { gray.push(h); continue; }
+    const group=index.grouped.byLead.get(match.id) || [match];
+    for(const l of group) {
+      const previous=byLead.get(l.id);
+      if(!previous || metersBetween(h,l)<metersBetween(previous,l)) byLead.set(l.id,h);
+    }
+  }
+  return {gray,byLead,hiddenLeadIds};
 }
