@@ -6,19 +6,21 @@ import { mapLeadDoc } from '@/app/utils/firestore';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import type { Lead, User } from '@/app/types';
 import { startupEvent } from '@/app/mobile/_lib/startupDiagnostics';
+import { mergeLeadSnapshots } from '@/app/homeowners/houseIdentity';
 
 type Result = { userId:string; leads:Lead[]; error:string; cached:boolean; complete:boolean };
 const cache = new Map<string,{at:number; result:Result}>();
 const pending = new Map<string,Promise<Result>>();
 const TTL=15*60_000;
 const duringRead = new Map<string, Map<string, Lead>>();
-const upsert = (leads: Lead[], lead: Lead) => [...leads.filter(l => l.id !== lead.id), lead];
+const upsert = (leads: Lead[], lead: Lead) => mergeLeadSnapshots(leads,[lead]);
 /** Apply an acknowledged write without another billed query. In-flight reads
  * cannot overwrite a write acknowledged after they started. */
 export function acknowledgeMobileLead(user: Pick<User, 'id' | 'role'>, lead: Lead) {
   if (auth?.currentUser?.uid !== user.id) return;
   const key = `${user.id}:${user.role}`, saved = cache.get(key);
-  duringRead.get(key)?.set(lead.id, lead);
+  const updates=duringRead.get(key), previous=updates?.get(lead.id);
+  updates?.set(lead.id,upsert(previous?[previous]:[],lead)[0]);
   cache.set(key, saved ? {...saved, result: {...saved.result, leads: upsert(saved.result.leads, lead)}}
     : {at:0, result:{userId:user.id, leads:[lead], error:'', cached:true, complete:false}});
   window.dispatchEvent(new CustomEvent('raydar-lead-acknowledged', {detail: {key, lead}}));
@@ -42,13 +44,16 @@ function readPersonal(uid:string,role:string) {
         if(!response.ok)throw Error(response.status===404?'The company server needs the v14.8 data update. Your saved knocks are safe.':'Your activity could not refresh. Tap Retry data.');
         const data=await response.json();
         if(auth?.currentUser?.uid!==uid)throw Error('Account changed.');
-        for(const lead of data.leads||[])records.set(lead.id,mapLeadDoc({id:lead.id,data:()=>lead}));
+        for(const lead of data.leads||[]){
+          const previous=records.get(lead.id), incoming=mapLeadDoc({id:lead.id,data:()=>lead});
+          records.set(lead.id,mergeLeadSnapshots(previous?[previous]:[],[incoming])[0]);
+        }
         // Never present a partial result as complete totals.
         if(records.size>6000)throw Error('Your activity is too large to load safely. Contact your manager; saved knocks are safe.');
         cursor=data.nextCursor||null;afterSeconds=data.afterSeconds;afterNanos=data.afterNanos;
       }while(cursor);
     }
-    for (const lead of updates.values()) records.set(lead.id, lead);
+    for (const lead of updates.values()) records.set(lead.id,upsert(records.has(lead.id)?[records.get(lead.id)!]:[],lead)[0]);
     const result={userId:uid,leads:[...records.values()],error:'',cached:false,complete:true};
     cache.set(key,{at:Date.now(),result});while(cache.size>2)cache.delete(cache.keys().next().value!);
     startupEvent('personal-leads-ready',started);return result;

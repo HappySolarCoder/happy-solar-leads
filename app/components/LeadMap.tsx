@@ -1,5 +1,6 @@
 'use client';
 import { attachMapLongPress } from '@/app/utils/mapLongPress';
+import { latestKnockDisplay, latestVisit, sameHouse } from '@/app/homeowners/houseIdentity';
 import type { View } from '@/app/homeowners/model';
 import type { PinScope } from '@/app/mobile/_lib/pinScope';
 
@@ -157,6 +158,11 @@ export default function LeadMap({
   const homeState = homeownerFixture ? {...EMPTY_HOMES, homes: homeownerFixture} : liveHomeowners;
   const houseIndex = useMemo(() => buildHouseIndex(homeownerLeads || leadsProp), [homeownerLeads, leadsProp]);
   const homeMerge = useMemo(() => mergeHomeowners(homeState.homes, houseIndex), [homeState.homes, houseIndex]);
+  // Once a loaded house is anchored to corrected homeowner coordinates, an
+  // empty/loading homeowner viewport must not move it back to legacy coordinates.
+  const anchorScope = JSON.stringify([currentUser?.id,currentUser?.role,pinPolygons]);
+  const anchorCache = useMemo(() => ({scope:anchorScope,homes:new Map<string,Homeowner>()}), [anchorScope]);
+  const houseAnchors = anchorCache.homes;
   const homeMergeRef = useRef(homeMerge);
   useEffect(() => { homeMergeRef.current = homeMerge; }, [homeMerge]);
   useEffect(() => {
@@ -169,7 +175,7 @@ export default function LeadMap({
   const selectListedHome = (h: Homeowner) => {
     const match = [...homeMerge.byLead].find(([, value]) => value.id === h.id);
     const lead = match && (homeownerLeads || leadsProp).find(l => l.id === match[0]);
-    if (lead) onLeadClick(lead, h, houseIndex.grouped.byLead.get(lead.id)); else onHomeownerClick?.(h);
+    if (lead) onLeadClick(lead, h, homeMerge.groupedByLead.get(lead.id)); else onHomeownerClick?.(h);
   };
   const houseIndexRef = useRef(houseIndex); houseIndexRef.current = houseIndex;
   const dropPinRef = useRef<(point: L.LatLng) => void>(() => {});
@@ -197,7 +203,7 @@ export default function LeadMap({
   useEffect(() => {
     if (!selectedLeadId) { attachedHomeRef.current=''; return; }
     const home=homeMerge.byLead.get(selectedLeadId);
-    const group=houseIndex.grouped.byLead.get(selectedLeadId);
+    const group=homeMerge.groupedByLead.get(selectedLeadId);
     const lead=group?.find(l=>l.id===selectedLeadId);
     const key=`${selectedLeadId}:${home?.id}`;
     // A rep may tap before the homeowner viewport finishes. Attach the record
@@ -273,12 +279,15 @@ export default function LeadMap({
   // For large datasets, we only render what's passed in
   const leads = useMemo(() => {
     const visible = new Set(leadsProp.map(l=>l.id));
-    return houseIndex.grouped.pins.filter(l=>visible.has(l.id)).map(l=>{
-      const home=homeMerge.byLead.get(l.id);
+    return houseIndex.leads.filter(l=>visible.has(l.id) && !homeMerge.hiddenLeadIds.has(l.id)).map(l=>{
+      const matched=homeMerge.byLead.get(l.id) || l.homeowner;
+      if(matched){houseAnchors.delete(l.id);houseAnchors.set(l.id,matched);}
+      const home=matched || houseAnchors.get(l.id);
+      while(houseAnchors.size>6000)houseAnchors.delete(houseAnchors.keys().next().value!);
       // Display corrected rooftop coordinates without editing any saved lead.
       return home && (home.lat!==l.lat || home.lng!==l.lng) ? {...l,lat:home.lat,lng:home.lng} : l;
     });
-  }, [leadsProp, houseIndex, homeMerge]);
+  }, [leadsProp, houseIndex, homeMerge, houseAnchors]);
 
   const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
 
@@ -706,10 +715,18 @@ export default function LeadMap({
 
     // Reuse marker instances. A GPS tick or unchanged snapshot never rebuilds pins.
     const entries = pinEntriesRef.current;
-    const eligible = visibleLeads.filter(lead => lead.historicalTerritoryPin ||
+    const eligible = visibleLeads.filter(lead => lead.historicalTerritoryPin || latestVisit(lead) > 0 ||
       lead.solarCategory !== 'poor' || isKnockStatus(lead.status) || getAppointmentOutcome(lead) ||
       (currentUser && (lead.assignedTo === currentUser.id || lead.claimedBy === currentUser.id)));
     const visibleIds = new Set(eligible.map(lead => lead.id));
+    // A later visit can change the winning document ID for a house. Reuse its
+    // existing marker instead of removing it and adding a replacement next frame.
+    for (const lead of eligible) if(!entries.has(lead.id)) {
+      const group=homeMergeRef.current.groupedByLead.get(lead.id) || [lead];
+      const previous=group.map(l=>[l.id,entries.get(l.id)] as const).find(([id,entry])=>entry && !visibleIds.has(id))
+        || [...entries].find(([id,entry])=>!visibleIds.has(id) && sameHouse(entry.lead,lead));
+      if(previous?.[1]){entries.delete(previous[0]);entries.set(lead.id,previous[1]);}
+    }
     const removed: L.Marker[] = [];
     entries.forEach((entry, id) => {
       if (!visibleIds.has(id)) { removed.push(entry.marker); entries.delete(id); }
@@ -732,13 +749,14 @@ export default function LeadMap({
         const canClaim = lead.claimedBy == null || isClaimedByMe;
         const selectedForAssignment = assignedIds.has(lead.id);
         const selected = selectedForAssignment;
-        const disposition = byId.get(lead.status) || byName.get(String(lead.dispositionHistory?.[0]?.disposition || '').toLowerCase());
+        const displayLead = latestKnockDisplay(lead,dispositions);
+        const disposition = byId.get(displayLead.status) || byName.get(String(displayLead.disposition || '').toLowerCase());
         const styleKey = `${fieldPinZoomTier(currentZoom)}:${viewMode}:${selected}:${isClaimedByMe}:${canClaim}:${selectedForAssignment}`;
         let entry = entries.get(lead.id);
         if (entry && entry.lead === lead && entry.styleKey === styleKey && entry.users === users && entry.disposition === disposition) continue;
-        const icon = createCustomIcon(lead, users, viewMode, lead.solarCategory, lead.status, selected,
+        const icon = createCustomIcon(displayLead, users, viewMode, lead.solarCategory, displayLead.status, selected,
           isClaimedByMe, canClaim, !!lead.claimedBy, selectedForAssignment, disposition, currentZoom, lead.tags);
-        const title = `${lead.address} · ${fieldPinArtwork(lead, disposition, currentZoom).label}`;
+        const title = `${lead.address} · ${fieldPinArtwork(displayLead, disposition, currentZoom).label}`;
         if (!entry) {
           entry = { marker: L.marker([lead.lat!, lead.lng!], {icon, title, alt: title, zIndexOffset: lead.historicalTerritoryPin ? -300 : 0}), lead, styleKey, users, disposition };
           const liveEntry = entry;
@@ -770,7 +788,7 @@ export default function LeadMap({
               showPersistentPopup(map, current);
               if (current.historicalTerritoryPin) return;
             } else if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
-            clickRef.current(current, homeMergeRef.current.byLead.get(current.id) || current.homeowner, houseIndexRef.current.grouped.byLead.get(current.id));
+            clickRef.current(current, homeMergeRef.current.byLead.get(current.id) || current.homeowner, homeMergeRef.current.groupedByLead.get(current.id));
           });
           entry.marker.on('keydown', (event: L.LeafletKeyboardEvent) => {
             if (event.originalEvent.key === 'Enter' || event.originalEvent.key === ' ') {
@@ -789,7 +807,7 @@ export default function LeadMap({
             entry.marker.setLatLng([lead.lat!, lead.lng!]);
             added.push(entry.marker);
           }
-          entry.marker.setIcon(icon);
+          if((entry.marker.options.icon as L.DivIcon)?.options.html !== icon.options.html) entry.marker.setIcon(icon);
           entry.marker.setZIndexOffset(lead.historicalTerritoryPin ? -300 : selected ? 500 : 0);
           const element = entry.marker.getElement();
           element?.setAttribute('title', title);

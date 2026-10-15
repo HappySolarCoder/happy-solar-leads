@@ -1,4 +1,5 @@
 import type { Lead, LeadDispositionHistoryEntry } from '@/app/types';
+import { DEFAULT_DISPOSITIONS, type Disposition } from '@/app/types/disposition';
 
 const aliases: Record<string, string> = { STREET:'ST', ROAD:'RD', AVENUE:'AVE', DRIVE:'DR', LANE:'LN', COURT:'CT', PLACE:'PL', BOULEVARD:'BLVD', CIRCLE:'CIR', TERRACE:'TER', PARKWAY:'PKWY', HIGHWAY:'HWY', NORTH:'N', SOUTH:'S', EAST:'E', WEST:'W' };
 const clean = (v: unknown) => String(v || '').toUpperCase().replace(/[^A-Z0-9\s]/g,' ').trim().replace(/\s+/g,' ');
@@ -9,16 +10,42 @@ export function houseStreet(value: unknown) {
 }
 export function eventMillis(value: unknown): number {
   if (!value) return 0;
-  const v = value as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
-  const n = typeof v.toMillis === 'function' ? v.toMillis() : typeof v.seconds === 'number'
-    ? v.seconds * 1000 + (v.nanoseconds || 0) / 1e6 : new Date(value as string).getTime();
+  const v = value as { toMillis?: () => number; toDate?: () => Date; seconds?: number; nanoseconds?: number; _seconds?: number; _nanoseconds?: number };
+  const seconds = v.seconds ?? v._seconds;
+  const n = typeof v.toMillis === 'function' ? v.toMillis() : typeof v.toDate === 'function' ? v.toDate().getTime() : typeof seconds === 'number'
+    ? seconds * 1000 + (v.nanoseconds ?? v._nanoseconds ?? 0) / 1e6 : new Date(value as string).getTime();
   return Number.isFinite(n) ? n : 0;
 }
-const unworked = new Set(['','assigned','unassigned','unclaimed','claimed','new','not-knocked','available']);
+const unworked = new Set(['','assigned','unassigned','unclaimed','claimed','new','not-knocked','available','my-targets']);
+const dispositionKey = (value: unknown) => String(value || '').trim().toLowerCase().replace(/\s+/g,'-');
 export function latestVisit(lead: Lead) {
-  let at = unworked.has(String(lead.status || '').toLowerCase()) ? 0 : eventMillis(lead.dispositionedAt);
-  for (const h of lead.dispositionHistory || []) if (!unworked.has(String(h.disposition).toLowerCase().replace(/\s+/g,'-'))) at = Math.max(at,eventMillis(h.timestamp));
+  let at = unworked.has(dispositionKey(lead.status)) ? 0 : eventMillis(lead.dispositionedAt);
+  for (const h of lead.dispositionHistory || []) if (!unworked.has(dispositionKey(h.disposition))) at = Math.max(at,eventMillis(h.timestamp));
   return at;
+}
+/** Display projection only: never persist or use this object as a write patch.
+ * Canonical status wins a timestamp tie; an explicitly newer history event wins
+ * over a stale status. Resolve existing configured IDs, never invent new ones. */
+export function latestKnockDisplay(lead: Lead, dispositions: Disposition[] = DEFAULT_DISPOSITIONS): Lead {
+  const history = (lead.dispositionHistory || []).filter(h => !unworked.has(dispositionKey(h.disposition)));
+  const last = history.reduce<LeadDispositionHistoryEntry | undefined>((best,h) => !best || eventMillis(h.timestamp) > eventMillis(best.timestamp) ? h : best, undefined);
+  if (!last || !eventMillis(last.timestamp)) return lead;
+  if (!unworked.has(dispositionKey(lead.status)) && eventMillis(last.timestamp) <= eventMillis(lead.dispositionedAt)) return lead;
+  const match = [...dispositions, ...DEFAULT_DISPOSITIONS].find(d => dispositionKey(d.id) === dispositionKey(last.disposition) || dispositionKey(d.name) === dispositionKey(last.disposition));
+  if (!match) return lead;
+  return {...lead, status:match.id, disposition:match.name, dispositionedAt:new Date(eventMillis(last.timestamp))};
+}
+/** Reconcile the same document from personal, viewport and saved-knock caches.
+ * Arrival order is not event order. Equal versions prefer a full document. */
+export function mergeLeadSnapshots(...sources: ReadonlyArray<ReadonlyArray<Lead>>): Lead[] {
+  const records = new Map<string, Lead>();
+  for (const source of sources) for (const lead of source) {
+    const previous = records.get(lead.id);
+    const delta = previous ? latestVisit(lead) - latestVisit(previous) : 1;
+    const summary = (l:Lead) => !!(l as Lead & {mobileSummary?:boolean}).mobileSummary;
+    if (!previous || delta > 0 || (delta === 0 && !(summary(lead) && !summary(previous)))) records.set(lead.id, lead);
+  }
+  return [...records.values()];
 }
 export const compareHouseVisits = (a: Lead, b: Lead) => latestVisit(b) - latestVisit(a) || Number(!!a.historicalTerritoryPin) - Number(!!b.historicalTerritoryPin) || a.id.localeCompare(b.id);
 export function metersBetween(a: {lat?:number;lng?:number}, b: {lat?:number;lng?:number}) {
@@ -37,15 +64,24 @@ export function sameHouse(a: Lead, b: Lead) {
   return townA && townA === townB ? metersBetween(a,b) < 2000 || ![a.lat,a.lng,b.lat,b.lng].every(Number.isFinite) : metersBetween(a,b) < 75;
 }
 export function groupHouseLeads(leads: Lead[]) {
-  const buckets = new Map<string, Lead[][]>(), homes = new Map<string, Lead[]>(), groups: Lead[][] = [];
-  for (const lead of leads) {
+  const rows = mergeLeadSnapshots(leads);
+  const parents = rows.map((_,i) => i), buckets = new Map<string,number[]>(), homes = new Map<string,number>();
+  const root = (i:number):number => parents[i] === i ? i : (parents[i] = root(parents[i]));
+  const join = (a:number,b:number) => { parents[root(a)] = root(b); };
+  for (const [i,lead] of rows.entries()) {
     const street = houseStreet(lead.address), candidates = buckets.get(street) || [];
-    let group = lead.homeowner?.id ? homes.get(lead.homeowner.id) : undefined;
-    group ||= street ? candidates.find(g => sameHouse(g[0],lead)) : undefined;
-    if (!group) { group=[]; groups.push(group); candidates.push(group); buckets.set(street,candidates); }
-    group.push(lead);
-    if (lead.homeowner?.id) homes.set(lead.homeowner.id,group);
+    // Check every matching member, not just the first record returned by a page.
+    if (street) for (const other of candidates) if (sameHouse(rows[other],lead)) join(i,other);
+    if (lead.homeowner?.id) {
+      const other = homes.get(lead.homeowner.id);
+      if (other !== undefined) join(i,other);
+      homes.set(lead.homeowner.id,i);
+    }
+    candidates.push(i); buckets.set(street,candidates);
   }
+  const connected = new Map<number,Lead[]>();
+  for (const [i,lead] of rows.entries()) { const key=root(i), group=connected.get(key)||[]; group.push(lead); connected.set(key,group); }
+  const groups = [...connected.values()];
   const byLead = new Map<string, Lead[]>();
   for (const group of groups) { group.sort(compareHouseVisits); for (const l of group) byLead.set(l.id,group); }
   return { groups, byLead, pins: groups.map(g => g[0]) };

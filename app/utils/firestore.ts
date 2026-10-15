@@ -18,6 +18,7 @@ import {
 import { db } from './firebase';
 import { Lead, User } from '@/app/types';
 import { mapUserDoc, mapUserDocs } from './mapUserDoc';
+import { eventMillis } from '@/app/homeowners/houseIdentity';
 
 // Collections
 const LEADS_COLLECTION = 'leads';
@@ -34,7 +35,7 @@ export function mapLeadDoc(docSnap: any): Lead {
     id: docSnap.id,
     createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
     claimedAt: data.claimedAt?.toDate ? data.claimedAt.toDate() : (data.claimedAt ? new Date(data.claimedAt) : undefined),
-    dispositionedAt: data.dispositionedAt?.toDate ? data.dispositionedAt.toDate() : (data.dispositionedAt ? new Date(data.dispositionedAt) : undefined),
+    dispositionedAt: eventMillis(data.dispositionedAt) ? new Date(eventMillis(data.dispositionedAt)) : undefined,
     assignedAt: data.assignedAt?.toDate ? data.assignedAt.toDate() : (data.assignedAt ? new Date(data.assignedAt) : undefined),
     solarTestedAt: data.solarTestedAt?.toDate ? data.solarTestedAt.toDate() : (data.solarTestedAt ? new Date(data.solarTestedAt) : undefined),
     objectionRecordedAt: data.objectionRecordedAt?.toDate
@@ -48,7 +49,7 @@ export function mapLeadDoc(docSnap: any): Lead {
     dispositionHistory:
       data.dispositionHistory?.map((entry: any) => ({
         ...entry,
-        timestamp: entry.timestamp?.toDate ? entry.timestamp.toDate() : (entry.timestamp ? new Date(entry.timestamp) : new Date()),
+        timestamp: new Date(eventMillis(entry.timestamp)),
       })) || undefined,
   } as Lead;
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { createHomeownerVisit, homeownerVisitDraft, type HomeownerVisit } from '@/app/homeowners/visit';
+import { groupHouseLeads, latestKnockDisplay, mergeLeadSnapshots } from '@/app/homeowners/houseIdentity';
 import { auth, db } from '@/app/utils/firebase';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
@@ -63,9 +64,7 @@ export default function KnockingPage() {
   const [savedHomeVisits, setSavedHomeVisits] = useState<Lead[]>([]);
   const leads = useMemo(() => {
     if (!savedHomeVisits.length) return liveLeads;
-    const ids = new Set(liveLeads.map(l => l.id));
-    const extra = savedHomeVisits.filter(l => !ids.has(l.id));
-    return extra.length ? [...liveLeads, ...extra] : liveLeads;
+    return mergeLeadSnapshots(savedHomeVisits, liveLeads);
   }, [liveLeads, savedHomeVisits]);
   const [selectedHomeowner, setSelectedHomeowner] = useState<Homeowner | undefined>();
   const [homePreference, setHomePreference] = useDeviceValue(`raydar-homeowners:${currentUser?.id || ""}`, "localStorage");
@@ -125,9 +124,7 @@ export default function KnockingPage() {
   const pinPolygons = useMemo(() => currentUser && ['admin','manager'].includes(currentUser.role) ? undefined : overlayTerritories.filter(t => t.userId === currentUser?.id).map(t => t.polygon), [currentUser?.id, currentUser?.role, overlayTerritories]);
   const viewportPins = useViewportLeads(currentUser, viewport, pinPolygons, areasReady);
   const mapSource = useMemo(() => {
-    const records = new Map(viewportPins.leads.map(l => [l.id,l]));
-    for (const l of leads) if (l.lat != null && l.lng != null && inPinScope(l.lat,l.lng,pinPolygons)) records.set(l.id,l);
-    return [...records.values()];
+    return mergeLeadSnapshots(viewportPins.leads, leads).filter(l => inPinScope(l.lat,l.lng,pinPolygons));
   }, [viewportPins.leads,leads,pinPolygons]);
   const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
   const teamAreaTerritories = useMemo(
@@ -326,7 +323,9 @@ export default function KnockingPage() {
   // Estimate driving time (average 25 mph in city = 0.42 miles per minute)
   const drivingTimeMinutes = Math.round(routeDistance / 0.42);
 
-  const roleFilteredLeads = useMemo(() => mapSource.filter(l => inPinScope(l.lat,l.lng,pinPolygons)), [mapSource,pinPolygons]);
+  // Resolve the last visit before filters, so an older matching disposition
+  // cannot resurrect a second pin or hide a newer result at the same house.
+  const roleFilteredLeads = useMemo(() => groupHouseLeads(mapSource).pins.map(l => latestKnockDisplay(l,dispositions)), [mapSource,dispositions]);
 
   // Generate route when button is clicked
   const handleGenerateRoute = useCallback(() => {
@@ -875,7 +874,7 @@ export default function KnockingPage() {
           {currentUser && !isRefreshing && !dataUnavailable && !showLeadDetail && <ReturnVisitReminder key={`reminder:${currentUser.id}`} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
           {viewportPins.loading && <div className="rm-map-loading" role="status">Loading nearby pins…</div>}
           {viewportPins.error && <div className="rm-map-loading" role="status">{viewportPins.error} <button onClick={viewportPins.retry}>Retry pins</button></div>}
-          {viewportPins.partial && !viewportPins.loading && <div className="rm-map-loading" role="status">Zoom closer to see every pin in this busy area.</div>}
+          {viewportPins.partial && !viewportPins.loading && !viewportPins.error && <div className="rm-map-loading" role="status">More knock records are available here. <button onClick={viewportPins.loadMore}>Load more pins</button> or zoom closer.</div>}
           <button type="button" className={`rm-map-locate${gpsError ? ' is-warning' : ''}`} aria-label="Center map on my location"
             title={gpsError ? 'Location unavailable — enable location access' : 'Center map on my location'}
             aria-busy={gpsLoading} onClick={() => {

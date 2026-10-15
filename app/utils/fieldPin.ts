@@ -54,8 +54,7 @@ export function fieldPinStyle(lead: Lead, disposition?: Disposition) {
     kind = "appointment";
     color = "#5362d2";
   } else if (
-    ["sale", "sold", "customer"].includes(status) ||
-    ["sale", "customer"].includes(lead.leadType || "")
+    ["sale", "sold", "customer"].includes(status)
   ) {
     kind = "sale";
     color = "#15805b";

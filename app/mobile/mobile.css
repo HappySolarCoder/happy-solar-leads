@@ -1426,6 +1426,12 @@
   font-size: 12px;
   pointer-events: none;
 }
+.rm-map-loading button {
+  pointer-events: auto;
+  min-height: 44px;
+  text-decoration: underline;
+  font-weight: 600;
+}
 
 .rm-door-actions {
   position: absolute;

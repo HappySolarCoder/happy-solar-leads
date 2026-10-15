@@ -1,0 +1,176 @@
+{
+  "version": "14.11",
+  "build": 151,
+  "browser": "Chromium 153, fictional Firebase/API fixtures, external traffic blocked",
+  "screens": [
+    {
+      "name": "iOS-sized",
+      "width": 393,
+      "height": 852
+    },
+    {
+      "name": "Android-sized",
+      "width": 360,
+      "height": 640
+    }
+  ],
+  "keyboardSimulation": {
+    "visualViewportHeights": [
+      320,
+      260
+    ],
+    "offsetTop": [
+      0,
+      35
+    ],
+    "physicalKeyboardTested": false
+  },
+  "manualAndHistory": {
+    "results": [
+      {
+        "device": "ios",
+        "onePinFourRecords": true,
+        "latestOutcome": true,
+        "allEightHistoryEntries": true,
+        "homeownerInfo": true,
+        "homeownersOffDedup": true,
+        "workedSize": 14,
+        "holdJitter": true,
+        "panPinchCancel": true,
+        "businessCard": true,
+        "manualCreateTimestampGps": true,
+        "keyboardFooterReachable": true,
+        "lastFieldScrollable": true,
+        "productionWrites": 0
+      },
+      {
+        "device": "android",
+        "onePinFourRecords": true,
+        "latestOutcome": true,
+        "allEightHistoryEntries": true,
+        "homeownerInfo": true,
+        "homeownersOffDedup": true,
+        "workedSize": 14,
+        "holdJitter": true,
+        "panPinchCancel": true,
+        "businessCard": true,
+        "manualCreateTimestampGps": true,
+        "keyboardFooterReachable": true,
+        "lastFieldScrollable": true,
+        "productionWrites": 0
+      }
+    ],
+    "errors": []
+  },
+  "viewport": {
+    "stalePersonalCannotWin": true,
+    "latestHistoryDisplayed": true,
+    "emptyPageRetainsPins": true,
+    "replacementReusesMarker": true,
+    "cursorContinuation": true,
+    "failedRefreshRetainsPins": true,
+    "noPinGaps": true,
+    "productionTraffic": false,
+    "calls": [
+      {
+        "phase": "initial",
+        "after": null,
+        "south": "43.14445075545117"
+      },
+      {
+        "phase": "held",
+        "after": null,
+        "south": "43.14445075545117"
+      },
+      {
+        "phase": "held",
+        "after": "page-one",
+        "south": "43.14445075545117"
+      },
+      {
+        "phase": "more",
+        "after": "page-two",
+        "south": "43.14445075545117"
+      },
+      {
+        "phase": "fail",
+        "after": null,
+        "south": "43.14445075545117"
+      }
+    ],
+    "errors": []
+  },
+  "nativeCompilation": false,
+  "physicalDeviceTested": false,
+  "productionDataWrites": false,
+  "limitations": [
+    "Latest displayed result is chosen from loaded records; dense views may need Load more pins.",
+    "Native compilation, signing, and physical-device testing require platform tooling."
+  ],
+  "mobileTests": {
+    "passed": 146,
+    "failed": 0,
+    "concurrency": 1,
+    "spatialMatchingMs": 486.885417
+  },
+  "productionExport": true,
+  "capacitorSync": [
+    "ios",
+    "android"
+  ],
+  "bundleVerification": [
+    "out",
+    "ios/App/App/public",
+    "android/app/src/main/assets/public"
+  ],
+  "lintComparison": [
+    {
+      "file": "app/components/AddLeadModal.tsx",
+      "baselineErrors": 0,
+      "currentErrors": 0,
+      "newMessages": []
+    },
+    {
+      "file": "app/components/LeadMap.tsx",
+      "baselineErrors": 16,
+      "currentErrors": 16,
+      "newMessages": []
+    },
+    {
+      "file": "app/homeowners/houseIdentity.ts",
+      "baselineErrors": 0,
+      "currentErrors": 0,
+      "newMessages": []
+    },
+    {
+      "file": "app/homeowners/model.ts",
+      "baselineErrors": 0,
+      "currentErrors": 0,
+      "newMessages": []
+    },
+    {
+      "file": "app/hooks/useLiveLeads.ts",
+      "baselineErrors": 0,
+      "currentErrors": 0,
+      "newMessages": []
+    },
+    {
+      "file": "app/hooks/useViewportLeads.ts",
+      "baselineErrors": 1,
+      "currentErrors": 0,
+      "newMessages": []
+    },
+    {
+      "file": "app/mobile/knocking/page.tsx",
+      "baselineErrors": 11,
+      "currentErrors": 11,
+      "newMessages": []
+    },
+    {
+      "file": "app/utils/fieldPin.ts",
+      "baselineErrors": 0,
+      "currentErrors": 0,
+      "newMessages": []
+    }
+  ]
+}

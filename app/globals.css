@@ -1,5 +1,32 @@
 @import "tailwindcss";
 
+/* Manual pins: the dialog lives above the map and fits the visible keyboard
+   viewport. Only the fields scroll; Save and Cancel cannot fall below it. */
+.raydar-add-lead-dialog {
+  position: fixed;
+  inset: auto;
+  top: calc(var(--lead-viewport-top, 0px) + 12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  width: min(32rem, calc(100% - 24px));
+  max-width: calc(100% - 24px);
+  max-height: calc(var(--lead-viewport-height, 100dvh) - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  background: white;
+  color: #2D3748;
+  overflow: hidden;
+  box-shadow: 0 20px 60px #0004;
+}
+.raydar-add-lead-dialog[open] { display: flex; flex-direction: column; }
+.raydar-add-lead-dialog::backdrop { background: #0006; }
+.raydar-add-lead-header, .raydar-add-lead-footer { flex: none; }
+.raydar-add-lead-fields { min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scroll-padding: 16px; }
+.raydar-add-lead-dialog input, .raydar-add-lead-dialog select { font-size: 16px; min-width: 0; }
+.raydar-add-lead-dialog button { min-height: 44px; }
+
 :root {
   /* Raydar Official Brand Colors */
   --raydar-red: #FF5F5A;

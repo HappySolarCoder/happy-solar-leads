@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, MapPin, Loader, Home, Phone, Mail, DollarSign } from 'lucide-react';
 import { Lead } from '@/app/types';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
@@ -42,6 +43,25 @@ export default function AddLeadModal({
   const [isSaving, setIsSaving] = useState(false);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [selectedDisposition, setSelectedDisposition] = useState('');
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const headingId = useId();
+  useEffect(() => {
+    if (!isOpen) return;
+    const dialog = dialogRef.current;
+    const previous = document.activeElement as HTMLElement | null;
+    const viewport = window.visualViewport;
+    const resize = () => {
+      dialog?.style.setProperty('--lead-viewport-height', `${viewport?.height ?? window.innerHeight}px`);
+      dialog?.style.setProperty('--lead-viewport-top', `${viewport?.offsetTop ?? 0}px`);
+    };
+    resize(); dialog?.showModal();
+    viewport?.addEventListener('resize',resize); viewport?.addEventListener('scroll',resize);
+    window.addEventListener('resize',resize);
+    return () => {
+      viewport?.removeEventListener('resize',resize); viewport?.removeEventListener('scroll',resize);
+      window.removeEventListener('resize',resize); dialog?.close(); previous?.focus({preventScroll:true});
+    };
+  },[isOpen]);
 
   // Reverse geocoding can finish after the form opens. Never overwrite typing.
   useEffect(() => { if(initialAddress)setAddress(value=>value || initialAddress); },[initialAddress]);
@@ -64,7 +84,7 @@ export default function AddLeadModal({
       .catch(() => setDispositions([]));
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === 'undefined') return null;
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -116,32 +136,22 @@ export default function AddLeadModal({
     }
   };
 
-  return (
-    <>
-      {/* Backdrop */}
-      <div 
-        className="fixed inset-0 bg-black/40 z-50"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-        <div 
-          className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl pointer-events-auto"
-          onClick={(e) => e.stopPropagation()}
+  return createPortal(
+        <dialog ref={dialogRef} className="raydar-add-lead-dialog" aria-labelledby={headingId}
+          onCancel={event => {event.preventDefault(); if(!isSaving)onClose();}}
         >
           {/* Header */}
-          <div className="sticky top-0 bg-white border-b border-[#E2E8F0] px-6 py-4 flex items-center justify-between">
+          <div className="raydar-add-lead-header bg-white border-b border-[#E2E8F0] px-5 py-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-[#FF5F5A]/10 rounded-lg">
                 <MapPin className="w-5 h-5 text-[#FF5F5A]" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-[#2D3748]">Add New Lead</h2>
+                <h2 id={headingId} className="text-xl font-bold text-[#2D3748]">Add New Lead</h2>
                 <p className="text-xs text-[#718096]">Dropped pin location</p>
               </div>
             </div>
-            <button aria-label="Close"
+            <button aria-label="Close" disabled={isSaving}
               onClick={onClose}
               className="p-2 hover:bg-[#F7FAFC] rounded-lg transition-colors"
             >
@@ -150,7 +160,7 @@ export default function AddLeadModal({
           </div>
 
           {/* Content */}
-          <div className="p-6 space-y-4">
+          <div className="raydar-add-lead-fields p-5 space-y-4">
             {/* GPS Coordinates */}
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
               <div className="flex items-center gap-2 text-blue-800">
@@ -308,7 +318,7 @@ export default function AddLeadModal({
           </div>
 
           {/* Footer */}
-          <div className="sticky bottom-0 bg-white border-t border-[#E2E8F0] px-6 py-4 flex items-center gap-3">
+          <div className="raydar-add-lead-footer bg-white border-t border-[#E2E8F0] px-5 py-3 flex items-center gap-3">
             <button
               onClick={onClose}
               disabled={isSaving}
@@ -331,8 +341,6 @@ export default function AddLeadModal({
               )}
             </button>
           </div>
-        </div>
-      </div>
-    </>
+        </dialog>, document.body
   );
 }

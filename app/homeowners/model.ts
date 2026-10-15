@@ -1,4 +1,4 @@
-import { groupHouseLeads, houseStreet, compareHouseVisits, metersBetween } from "./houseIdentity";
+import { groupHouseLeads, houseStreet, compareHouseVisits, metersBetween, mergeLeadSnapshots } from "./houseIdentity";
 import { scopedViews, inPinScope, type PinScope } from "@/app/mobile/_lib/pinScope";
 import type { Lead } from "@/app/types";
 import { distanceBetween, geohashQueryBounds } from "geofire-common";
@@ -300,6 +300,7 @@ export type HouseIndex = {
 const cell = (lat: number, lng: number) =>
   `${Math.floor(lat / 0.0005)}:${Math.floor(lng / 0.0005)}`;
 export function buildHouseIndex(leads: Lead[]): HouseIndex {
+  leads = mergeLeadSnapshots(leads);
   const addresses = new Map<string, Lead[]>(), streets = new Map<string, Lead[]>(), cells = new Map<string, Lead[]>();
   for (const l of leads) {
     const street = houseStreet(l.address), key = addressKey(l.address,(l as Lead & {town?:string}).town || l.city);
@@ -317,12 +318,17 @@ export function buildHouseIndex(leads: Lead[]): HouseIndex {
 }
 export function mergeHomeowners(homes: Homeowner[], index: HouseIndex) {
   const gray: Homeowner[] = [], byLead = new Map<string, Homeowner>(), hiddenLeadIds = new Set<string>();
+  const groupedByLead = new Map(index.grouped.byLead);
   // Deduplication is independent of whether homeowner pins are enabled or loaded.
   for (const group of index.grouped.groups) for (const l of group.slice(1)) hiddenLeadIds.add(l.id);
-  for (const h of homes) {
+  // Duplicate parcel imports must not paint two homeowner dots on one house.
+  const homeById = new Map(homes.map(h=>[h.id,h]));
+  const homeGroups = groupHouseLeads(homes.map(h=>({id:h.id,address:h.addressNorm||h.address,city:h.municipality,state:h.state,lat:h.lat,lng:h.lng,status:'unclaimed'} as Lead)));
+  for (const house of homeGroups.groups) {
+    const h=homeById.get(house[0].id)!;
     const street=houseStreet(h.addressNorm || h.address);
     const sameState=(l:Lead) => !l.state || !h.state || normalized(l.state)===normalized(h.state);
-    let matches=(index.addresses.get(addressKey(street,h.municipality)) || []).filter(sameState);
+    let matches=(index.addresses.get(addressKey(street,h.municipality)) || []).filter(l=>sameState(l) && (metersBetween(h,l)<2000 || ![l.lat,l.lng].every(Number.isFinite)));
     if (!matches.length) matches=(index.streets.get(street) || []).filter(l=>sameState(l) && metersBetween(h,l)<75).sort(compareHouseVisits);
     // Only address-less legacy pins may use a tight, unambiguous proximity match.
     if (!matches.length) {
@@ -333,11 +339,14 @@ export function mergeHomeowners(homes: Homeowner[], index: HouseIndex) {
     }
     const match=matches[0];
     if (!match) { gray.push(h); continue; }
-    const group=index.grouped.byLead.get(match.id) || [match];
+    const group=mergeLeadSnapshots(...matches.map(l=>groupedByLead.get(l.id)||[l])).sort(compareHouseVisits);
+    hiddenLeadIds.delete(group[0].id);
+    for(const l of group.slice(1))hiddenLeadIds.add(l.id);
     for(const l of group) {
+      groupedByLead.set(l.id,group);
       const previous=byLead.get(l.id);
       if(!previous || metersBetween(h,l)<metersBetween(previous,l)) byLead.set(l.id,h);
     }
   }
-  return {gray,byLead,hiddenLeadIds};
+  return {gray,byLead,hiddenLeadIds,groupedByLead};
 }
