@@ -123,6 +123,22 @@ service cloud.firestore {
         && request.resource.data.setterId == uid();
     }
 
+    // App Review territory id is TEST-appreview-territory. That id prefix is
+    // what marks a territory TEST. Owner is userId, the same field
+    // leadInMyTerritory() reads. source stays manually-added so this create
+    // is still inside the deployed rules.
+    function testAccountTestLeadCreate() {
+      return request.resource.data.testData == true
+        && request.resource.data.claimedBy == uid()
+        && request.resource.data.setterId == uid()
+        && request.resource.data.source == "manually-added"
+        && request.resource.data.territoryId is string
+        && request.resource.data.territoryId.matches('^TEST-.*')
+        && approvedActive()
+        && isTest()
+        && get(/databases/$(database)/documents/territories/$(request.resource.data.territoryId)).data.userId == uid();
+    }
+
     // Web knocks on pins inside the rep's territory polygon are not always
     // assigned to that rep. territoryId must be set on those leads.
     function leadInMyTerritory() {
@@ -300,7 +316,11 @@ service cloud.firestore {
         );
 
       // CREATE: Admins = anything; real reps = only manual leads they set themselves.
-      allow create: if isAdmin() || (approvedActive() && !isTest() && requestIsManualByMe());
+      // TEST accounts get a separate branch for a test-only lead in their own
+      // TEST territory, and nothing else.
+      allow create: if isAdmin();
+      allow create: if approvedActive() && !isTest() && requestIsManualByMe();
+      allow create: if testAccountTestLeadCreate();
 
       // UPDATE: split so each branch stays under the rules expression budget.
       //   Admins = anything

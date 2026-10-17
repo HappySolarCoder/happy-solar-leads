@@ -98,6 +98,7 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
 
     await db.collection('territories').doc('TEST-appreview-territory').set({ userId: 'demo' });
     await db.collection('territories').doc('realTerritory').set({ userId: 'realSetter' });
+    await db.collection('territories').doc('demo-real-territory').set({ userId: 'demo' });
 
     for (let n = 1; n <= 8; n += 1) {
       await db.collection('leads').doc(`TEST-appreview-lead-${n}`).set({
@@ -165,6 +166,26 @@ function cases(): RuleCase[] {
     { id: 'demo knock own lead', uid: 'demo', run: (db) => lead('TEST-appreview-lead-2')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'allow' },
     { id: 'demo knock real lead', uid: 'demo', run: (db) => lead('realLead')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'deny' },
     { id: 'demo manual create', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo').set({ source: 'manually-added', setterId: 'demo', status: 'new' }), expectTight: 'deny' },
+    { id: 'demo create test lead in own TEST territory', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-test').set({
+      source: 'manually-added', testData: true, claimedBy: 'demo', setterId: 'demo', territoryId: 'TEST-appreview-territory', status: 'new',
+    }), expectTight: 'allow' },
+    { id: 'demo create lead missing testData', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-notest').set({
+      source: 'manually-added', claimedBy: 'demo', setterId: 'demo', territoryId: 'TEST-appreview-territory', status: 'new',
+    }), expectTight: 'deny' },
+    { id: 'demo create test lead in real territory', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-real-territory').set({
+      source: 'manually-added', testData: true, claimedBy: 'demo', setterId: 'demo', territoryId: 'demo-real-territory', status: 'new',
+    }), expectTight: 'deny' },
+    { id: 'demo create test lead claimed by other', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-other-claim').set({
+      source: 'manually-added', testData: true, claimedBy: 'realSetter', setterId: 'demo', territoryId: 'TEST-appreview-territory', status: 'new',
+    }), expectTight: 'deny' },
+    { id: 'demo create test lead setter other', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-other-setter').set({
+      source: 'manually-added', testData: true, claimedBy: 'demo', setterId: 'realSetter', territoryId: 'TEST-appreview-territory', status: 'new',
+    }), expectTight: 'deny' },
+    { id: 'demo cannot change role', uid: 'demo', run: (db) => db.collection('users').doc('demo').update({ role: 'admin' }), expectTight: 'deny' },
+    { id: 'demo cannot change status', uid: 'demo', run: (db) => db.collection('users').doc('demo').update({ status: 'pending' }), expectTight: 'deny' },
+    { id: 'demo cannot change approved', uid: 'demo', run: (db) => db.collection('users').doc('demo').update({ approved: false }), expectTight: 'deny' },
+    { id: 'demo cannot change isActive', uid: 'demo', run: (db) => db.collection('users').doc('demo').update({ isActive: false }), expectTight: 'deny' },
+    { id: 'demo cannot write real territory', uid: 'demo', run: (db) => db.collection('territories').doc('realTerritory').update({ userId: 'demo' }), expectTight: 'deny' },
 
     { id: 'setter own user', uid: 'realSetter', run: (db) => db.collection('users').doc('realSetter').get(), expectTight: 'allow' },
     { id: 'setter other user', uid: 'realSetter', run: (db) => db.collection('users').doc('closer').get(), expectTight: 'allow' },
@@ -181,6 +202,12 @@ function cases(): RuleCase[] {
     { id: 'setter knock in territory', uid: 'realSetter', run: (db) => lead('unassignedInRealTerritory')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'allow' },
     { id: 'setter knock outside territory', uid: 'realSetter', run: (db) => lead('claimedByOther')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'deny' },
     { id: 'setter manual create', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter').set({ source: 'manually-added', setterId: 'realSetter', status: 'new' }), expectTight: 'allow' },
+    { id: 'setter manual create with testData', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter-testdata').set({
+      source: 'manually-added', testData: true, claimedBy: 'realSetter', setterId: 'realSetter', territoryId: 'TEST-appreview-territory', status: 'new',
+    }), expectTight: 'allow' },
+    { id: 'setter nonmanual create with testData', uid: 'realSetter', run: (db) => db.collection('leads').doc('setter-testdata-only').set({
+      testData: true, claimedBy: 'realSetter', setterId: 'realSetter', territoryId: 'TEST-appreview-territory', status: 'new',
+    }), expectTight: 'deny' },
     { id: 'setter history create', uid: 'realSetter', run: (db) => db.collection('disposition_history').doc('hist-setter').set({ userId: 'realSetter' }), expectTight: 'allow' },
     { id: 'setter adminSettings', uid: 'realSetter', run: (db) => db.collection('adminSettings').doc('global').get(), expectTight: 'allow' },
     { id: 'setter dispositions', uid: 'realSetter', run: (db) => db.collection('dispositions').get(), expectTight: 'allow' },
