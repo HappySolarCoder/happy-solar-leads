@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "preparedAtUtc": "2026-10-17T05:59:50.294148+00:00",
+  "product": "Happy Solar Raydar",
+  "version": "14.11",
+  "nativeBuild": 151,
+  "handoffChanges": "Documentation only; no application runtime changes",
+  "repository": {
+    "name": "HappySolarCoder/happy-solar-leads",
+    "url": "https://github.com/HappySolarCoder/happy-solar-leads",
+    "releaseBranch": "codex/raydar-mobile-v14-11-pin-stability",
+    "releaseCommit": "337461c2a4fd2a66d4c624be1da5c4959fa242a5",
+    "handoffBranch": "codex/raydar-grok-handoff-v14-11",
+    "archiveSourceCommit": "04720636f9f37f73f98cacddd3b1b9974cc5388c",
+    "identicalReleaseTree": "e2080c9d3dd9c64932b8e3611c199b9f5d1adf8a"
+  },
+  "native": {
+    "displayName": "Raydar Next",
+    "applicationId": "com.happyslr.raydar.next",
+    "androidNamespace": "com.happyslr.raydar",
+    "webDir": "out",
+    "bundleBuiltAtUtc": "2026-10-15T17:57:43.544Z"
+  },
+  "environment": {
+    "apiOrigin": "https://happy-solar-leads.vercel.app",
+    "firebaseProject": "gen-lang-client-0395385938",
+    "firestoreDatabase": "(default)",
+    "firebaseAuthDomain": "gen-lang-client-0395385938.firebaseapp.com",
+    "expectedStorageBucket": "gen-lang-client-0395385938.firebasestorage.app",
+    "publicVariables": [
+      "NEXT_PUBLIC_API_BASE_URL",
+      "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+      "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
+      "NEXT_PUBLIC_FIREBASE_API_KEY",
+      "NEXT_PUBLIC_FIREBASE_APP_ID",
+      "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
+      "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+      "NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID"
+    ],
+    "serverOnlyVariables": [
+      "FIREBASE_SERVICE_ACCOUNT",
+      "FIREBASE_STORAGE_BUCKET",
+      "FIREBASE_SERVICE_ACCOUNT_JSON",
+      "GCP_PROJECT_ID",
+      "FIRESTORE_DATABASE_ID",
+      "GHL_APPOINTMENT_EVENTS_COLLECTION",
+      "TERRITORY_TASK_QUEUE",
+      "TERRITORY_TASK_SECRET"
+    ],
+    "privateCredentialsIncluded": false
+  },
+  "originalReleasePackages": [
+    {
+      "path": "releases/raydar-v14.11-ios.zip",
+      "platform": "ios",
+      "bytes": 16677523,
+      "sha256": "837413a3ca5f778f10d690df5656160e0fe7de8d5edff330b30103c8cab2c91b",
+      "kind": "source_project_with_prebuilt_web_assets",
+      "signed_binary": false
+    },
+    {
+      "path": "releases/raydar-v14.11-android.zip",
+      "platform": "android",
+      "bytes": 16713120,
+      "sha256": "5396c2d95cba7f5813b9ab9377f74319f20a797a9833c83ccf943e6c612ee03c",
+      "kind": "source_project_with_prebuilt_web_assets",
+      "signed_binary": false
+    }
+  ],
+  "backendProbe": {
+    "observedAtUtc": "2026-10-17T05:49:27.390969+00:00",
+    "command": "npm run mobile:check-backend",
+    "authenticated": false,
+    "productionWrites": 0,
+    "results": [
+      {
+        "path": "/api/mobile-leads",
+        "status": 401
+      },
+      {
+        "path": "/api/mobile-feedback",
+        "status": 401
+      },
+      {
+        "path": "/api/territory-management",
+        "status": 401
+      },
+      {
+        "path": "/api/mobile-user-management",
+        "status": 404
+      },
+      {
+        "path": "/api/field-config",
+        "status": 404
+      },
+      {
+        "path": "/api/field-work",
+        "status": 404
+      }
+    ],
+    "interpretation": "Route/auth boundary presence only; not authenticated correctness or capability proof"
+  },
+  "historicalVerification": {
+    "dateUtc": "2026-10-15",
+    "mobileTestsPassed": 146,
+    "testConcurrency": 1,
+    "browser": "Chromium 153 with fictional adapters and blocked external traffic",
+    "screenSizes": [
+      [
+        393,
+        852
+      ],
+      [
+        360,
+        640
+      ]
+    ],
+    "visualViewportHeights": [
+      320,
+      260
+    ],
+    "visualViewportOffsetTop": [
+      0,
+      35
+    ],
+    "configuredProductionExport": true,
+    "capacitorSync": true,
+    "nativeBundleChecks": true,
+    "evidence": [
+      "docs/mobile-next/VERIFY-V14.11.md",
+      "docs/mobile-next/VERIFY-V14.11.json"
+    ]
+  },
+  "limitations": [
+    "Physical iOS and Android acceptance not verified",
+    "Native compilation/signing and store uploads not performed",
+    "Authenticated production data and live scheduling/GHL/feedback not verified",
+    "Background territory queue infrastructure and app-closed processing not verified",
+    "Existing lint debt; parallel spatial timing assertion sensitive to contention",
+    "Pin grouping reflects newest loaded records, not an unbounded complete history scan",
+    "Separate Bloom application source is not included"
+  ],
+  "futureScopeNotImplemented": [
+    "Walking-camera follow",
+    "Two-finger map rotation / roof inspection",
+    "Business-card sending with attributed link-open alerts"
+  ],
+  "distribution": {
+    "githubContains": "Full rebuildable source, PDF, manual, bot instructions, acceptance checklist, manifest and PDF generator",
+    "completeTransferZipAlsoContains": "Original iOS and Android packages, full tracked source ZIP and bundle checksums",
+    "secretsAndBuildCachesExcluded": true
+  }
+}
