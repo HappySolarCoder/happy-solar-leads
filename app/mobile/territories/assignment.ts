@@ -34,8 +34,12 @@ export async function reviewAllPins(request: Request, body: Record<string, unkno
 export async function continueAssignment(request: Request, initial: AssignmentResult, onProgress: (result: AssignmentResult) => void) {
     let result = initial;
     while (!result.done) {
+        const scanned = result.scanned;
         onProgress(result);
         result = await request<AssignmentResult>({ action: 'continue-assignment', id: result.id, operationId: result.operationId });
+        // A page that does not advance would repeat the same bounded read forever.
+        if (!result.done && result.scanned === scanned)
+            throw Error('The territory assignment stopped advancing. Please retry.');
     }
     onProgress(result);
     return result;

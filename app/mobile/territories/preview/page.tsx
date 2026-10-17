@@ -74,6 +74,7 @@ const areas: ManagedTerritory[] = [
   },
 ];
 const initialData: TerritoryData = {
+  capabilities: { pagedAssignments: true, backgroundAssignments: true },
   actor: members[0],
   members,
   territories: areas,
@@ -85,6 +86,48 @@ export default function TerritoryPreview() {
     body?: Record<string, unknown>
   ): Promise<T> => {
     if (!body) return structuredClone(data.current) as T;
+    if (body.action === "save-background-assignment" || body.action === "begin-assignment") {
+      const background = body.action === "save-background-assignment";
+      const user = members.find((m) => m.id === body.userId);
+      if (!user) throw Object.assign(new Error("Choose an active, approved rep on your team."), { status: 403 });
+      if (body.kind === "create") {
+        const id = String(body.requestId);
+        let area = data.current.territories.find((t) => t.id === id);
+        if (!area) {
+          area = {
+            id,
+            name: String(body.name),
+            userId: user.id,
+            userName: user.name,
+            userColor: user.color,
+            polygon: body.polygon as TerritoryPoint[],
+            leadIds: [],
+            leadCount: 0,
+            version: "demo-saved",
+            assignment: { id, done: false, changed: 0, scanned: 0, targetId: user.id },
+          };
+          data.current.territories.push(area);
+        }
+        return { id, operationId: id, changed: 0, skipped: 0, scanned: 0, done: false, background, queued: background, queueError: "" } as T;
+      }
+      const area = data.current.territories.find((t) => t.id === body.id);
+      if (!area || !Array.isArray(area.polygon)) throw Object.assign(new Error("This territory is no longer in your list."), { status: 404 });
+      area.assignment = { id: String(body.requestId), done: false, changed: area.leadIds.length, scanned: 0, targetId: user.id };
+      area.version = "demo-transfer";
+      return { id: area.id, operationId: String(body.requestId), changed: area.leadIds.length, skipped: 0, scanned: 0, done: false, background, queued: background, queueError: "" } as T;
+    }
+    if (body.action === "continue-assignment" || body.action === "retry-background-assignment") {
+      const area = data.current.territories.find((t) => t.id === body.id);
+      if (!area?.assignment) throw Object.assign(new Error("Assignment not found."), { status: 404 });
+      const user = members.find((m) => m.id === area.assignment?.targetId) || members.find((m) => m.id === area.userId);
+      if (user) {
+        area.userId = user.id;
+        area.userName = user.name;
+        area.userColor = user.color;
+      }
+      area.assignment = { ...area.assignment, done: true };
+      return { id: area.id, operationId: area.assignment.id, changed: area.assignment.changed, skipped: 0, scanned: area.assignment.scanned, done: true, background: body.action === "retry-background-assignment", queued: true, queueError: "" } as T;
+    }
     if (body.action === "preview") {
       const polygon = body.polygon as TerritoryPoint[];
       const lat = polygon.reduce((s, p) => s + p.lat, 0) / polygon.length,
