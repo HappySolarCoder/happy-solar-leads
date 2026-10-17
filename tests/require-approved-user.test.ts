@@ -37,6 +37,7 @@ describe('isDeniedAccount', () => {
     assert.equal(isDeniedAccount(true, { isActive: false }), true);
     assert.equal(isDeniedAccount(true, { approved: false }), true);
     assert.equal(isDeniedAccount(true, { approvalStatus: 'pending' }), true);
+    assert.equal(isDeniedAccount(true, { status: 'deletion-requested', isActive: true, approved: true, approvalStatus: 'approved' }), true);
   });
 });
 
@@ -80,6 +81,18 @@ describe('requireApprovedUser', () => {
       { exists: true, data: { isActive: false, role: 'manager' } },
       { exists: true, data: { approved: false, role: 'manager' } },
       { exists: true, data: { approvalStatus: 'pending', role: 'admin', approved: true, isActive: true } },
+      {
+        exists: true,
+        data: {
+          status: 'deletion-requested',
+          role: 'setter',
+          isActive: true,
+          approved: true,
+          approvalStatus: 'approved',
+          deleted: false,
+          deletionPending: false,
+        },
+      },
     ];
 
     for (const user of cases) {

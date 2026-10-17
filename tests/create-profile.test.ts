@@ -81,6 +81,39 @@ describe('create-profile', () => {
     assert.equal(test.created.length, 0);
   });
 
+  it('returns 409 for an existing deletion-requested profile and does not rewrite it', async () => {
+    const existing = {
+      status: 'deletion-requested',
+      isActive: false,
+      deletionRequestedAt: 'original-timestamp',
+      email: 'rep@example.com',
+      role: 'setter',
+    };
+    const before = { ...existing };
+    let createCalls = 0;
+    const result = await handleCreateProfile({
+      authorization: 'Bearer token',
+      body: { name: 'New Rep', email: 'body-must-not-win@evil.test', requestedRole: 'admin' },
+      signupEnabled: true,
+      deps: {
+        verifyIdToken: async (_token, checkRevoked) => {
+          assert.equal(checkRevoked, true);
+          return { uid: 'uid-deleted', email: 'real.rep@example.com' };
+        },
+        createUserDoc: async () => {
+          createCalls += 1;
+          throw new ProfileExistsError();
+        },
+        now: () => NOW,
+        color: () => '#112233',
+      },
+    });
+    assert.equal(result.status, 409);
+    assert.deepEqual(result.body, { error: 'Account already exists' });
+    assert.equal(createCalls, 1);
+    assert.deepEqual(existing, before);
+  });
+
   it('returns 403 when self sign-up is disabled', async () => {
     const test = harness({ signupEnabled: false, authorization: null });
     const result = await test.run();

@@ -17,6 +17,7 @@ import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { getTeams, addTeam, updateTeam, deleteTeam, Team } from '@/app/utils/teams';
 import { getTerritoriesAsync, deleteTerritoryAsync } from '@/app/utils/territories';
 import { isProximityEnforcementEnabled } from '@/app/utils/proximityEnforcement';
+import { adminDeletionRequestedLabel } from '@/app/utils/accountDeletion';
 
 export default function UsersManagementPage() {
   const router = useRouter();
@@ -608,15 +609,22 @@ export default function UsersManagementPage() {
                           </select>
                         </td>
                         <td className="px-6 py-4">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={editForm.isActive ?? user.isActive}
-                              onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
-                              className="w-4 h-4 text-[#FF5F5A] border-[#E2E8F0] rounded focus:ring-[#FF5F5A]"
-                            />
-                            <span className="text-sm text-[#2D3748]">Active</span>
-                          </label>
+                          <div className="flex flex-col items-start gap-2">
+                            {adminDeletionRequestedLabel(user.status) && (
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                {adminDeletionRequestedLabel(user.status)}
+                              </span>
+                            )}
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editForm.isActive ?? user.isActive}
+                                onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
+                                className="w-4 h-4 text-[#FF5F5A] border-[#E2E8F0] rounded focus:ring-[#FF5F5A]"
+                              />
+                              <span className="text-sm text-[#2D3748]">Active</span>
+                            </label>
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           <label className="flex items-center gap-2 cursor-pointer">
@@ -698,16 +706,28 @@ export default function UsersManagementPage() {
                           )}
                         </td>
                         <td className="px-6 py-4">
-                          <button
-                            onClick={() => handleToggleActive(user.id)}
-                            className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                              user.isActive
-                                ? 'bg-green-100 text-green-800 hover:bg-green-200'
-                                : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
-                            }`}
-                          >
-                            {user.isActive ? 'Active' : 'Inactive'}
-                          </button>
+                          <div className="flex flex-col items-start gap-2">
+                            {adminDeletionRequestedLabel(user.status) && (
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                {adminDeletionRequestedLabel(user.status)}
+                              </span>
+                            )}
+                            <button
+                              onClick={() => handleToggleActive(user.id)}
+                              title={
+                                adminDeletionRequestedLabel(user.status)
+                                  ? 'Re-enable is a manual admin action'
+                                  : undefined
+                              }
+                              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                                user.isActive
+                                  ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                                  : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                              }`}
+                            >
+                              {user.isActive ? 'Active' : 'Inactive'}
+                            </button>
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           <button

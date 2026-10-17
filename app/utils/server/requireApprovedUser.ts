@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { isDeletionRequestedStatus } from '../accountDeletion';
 import { adminAuth, adminDb } from '../firebase-admin';
 
 export class HttpError extends Error {
@@ -41,8 +42,8 @@ export function isAuthError(error: unknown): boolean {
 }
 
 /**
- * Same deny-list as mobile lead reads. Missing flags are allowed so legacy
- * user docs that predate approval fields keep working.
+ * Same deny-list as mobile lead reads, plus status `deletion-requested`.
+ * Missing flags are allowed so legacy user docs that predate approval fields keep working.
  */
 export function isDeniedAccount(exists: boolean, user: UserProfile | undefined): boolean {
   if (!exists || !user) return true;
@@ -51,7 +52,8 @@ export function isDeniedAccount(exists: boolean, user: UserProfile | undefined):
       user.deletionPending ||
       user.isActive === false ||
       user.approved === false ||
-      user.approvalStatus === 'pending',
+      user.approvalStatus === 'pending' ||
+      isDeletionRequestedStatus(user.status),
   );
 }
 
