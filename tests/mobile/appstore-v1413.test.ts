@@ -4,8 +4,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ACCOUNT_DELETED_NOTICE,
   ACCOUNT_DELETION_MAILBOX,
-  ACCOUNT_DELETION_OUTCOME,
   PRIVACY_POLICY_URL,
   deletionBlockedReason,
   deletionMailto,
@@ -80,8 +80,8 @@ test("account deletion requests by email and refuses to continue while outbox wo
   assert.match(params.get("body") || "", /rep&name@happyslr.com/);
   assert.match(params.get("body") || "", /uid\/1/);
   assert.match(params.get("body") || "", /does not delete or change knock, visit, or lead history/);
-  assert.match(ACCOUNT_DELETION_OUTCOME, /visit history|Knocks, visits, and leads/);
-  assert.match(ACCOUNT_DELETION_OUTCOME, /signed out/i);
+  assert.match(ACCOUNT_DELETED_NOTICE, /company's lead records/);
+  assert.match(ACCOUNT_DELETED_NOTICE, /signed out/i);
   assert.equal(deletionBlockedReason({ drafts: 0, recordings: 0 }), null);
   assert.match(deletionBlockedReason({ drafts: 1, recordings: 0 }) || "", /1 unsynced visit/);
   assert.match(deletionBlockedReason({ drafts: 2, recordings: 1 }) || "", /2 unsynced visits and 1 unsent recording/);
