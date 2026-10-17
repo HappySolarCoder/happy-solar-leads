@@ -31,11 +31,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
 }
-
-export async function GET() {
-  // Return recent logs
-  return NextResponse.json({
-    logs: debugLogs.slice(-20), // Last 20 logs
-    total: debugLogs.length,
-  });
-}

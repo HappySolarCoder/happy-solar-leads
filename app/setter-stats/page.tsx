@@ -43,7 +43,7 @@ type SortBy = 'knocks' | 'conversations' | 'appointments' | 'goBacks';
 
 export default function DataDashboard() {
   const router = useRouter();
-  const [leads, setLeads] = useState<Lead[]>(() => getLeads());
+  const [leads, setLeads] = useState<Lead[]>([]);
   const [users, setUsers] = useState<User[]>(() => getUsers());
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
@@ -52,10 +52,7 @@ export default function DataDashboard() {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [sortBy, setSortBy] = useState<SortBy>('knocks');
 
-  const canSeeAllLeads = (role?: string) => {
-    // Team Stats page is intended to match admin totals for all roles.
-    return role === 'admin' || role === 'manager' || role === 'setter' || role === 'closer';
-  };
+  const canSeeAllLeads = (role?: string) => role === 'manager' || role === 'admin';
 
   useEffect(() => {
     async function loadData() {
@@ -80,7 +77,10 @@ export default function DataDashboard() {
           }
 
           if (token) {
-            const res = await fetch('/api/stats/all-leads', {
+            const statsPath = user.role === 'admin'
+              ? '/api/stats/all-leads?since=all'
+              : '/api/stats/all-leads';
+            const res = await fetch(statsPath, {
               headers: { Authorization: `Bearer ${token}` },
             });
             if (res.ok) {
@@ -143,9 +143,12 @@ export default function DataDashboard() {
       case 'thismonth':
         cutoffDate = startOfMonth(new Date());
         break;
-      case 'lastmonth':
-        cutoffDate = new Date(startOfMonth(new Date()).getTime() - 30 * 86400000);
+      case 'lastmonth': {
+        const thisMonth = startOfMonth(new Date());
+        cutoffDate = startOfMonth(new Date(thisMonth.getFullYear(), thisMonth.getMonth() - 1, 1));
+        endDate = thisMonth;
         break;
+      }
       default:
         cutoffDate = new Date(0); // All time
         endDate = undefined;
@@ -239,7 +242,9 @@ export default function DataDashboard() {
     return metricsArray;
   };
 
-  const setterMetrics = calculateSetterMetrics();
+  const setterMetrics = calculateSetterMetrics().filter((metric) =>
+    canSeeAllLeads(currentUser?.role) || metric.userId === currentUser?.id
+  );
 
   // Calculate team totals
   const teamTotals = setterMetrics.reduce(

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
+import { adminDb } from '@/app/utils/firebase-admin';
+import { requireApprovedRequestUser } from '@/app/utils/server/requireApprovedUser';
 import type { Lead } from '@/app/types';
 import type { Territory, TerritoryPoint } from '@/app/types/territory';
 import {
@@ -107,27 +108,9 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
-async function requireRaydarUid(request: NextRequest): Promise<string> {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    throw Object.assign(new Error('Missing credentials'), { status: 401 });
-  }
-  const idToken = authHeader.slice('Bearer '.length).trim();
-  if (!idToken) {
-    throw Object.assign(new Error('Missing credentials'), { status: 401 });
-  }
-
-  const decoded = await adminAuth().verifyIdToken(idToken);
-  const userDoc = await adminDb().collection('users').doc(decoded.uid).get();
-  if (!userDoc.exists) {
-    throw Object.assign(new Error('User not found'), { status: 403 });
-  }
-  return decoded.uid;
-}
-
 export async function GET(request: NextRequest) {
   try {
-    const uid = await requireRaydarUid(request);
+    const { uid } = await requireApprovedRequestUser(request);
     const db = adminDb();
 
     const territorySnap = await db.collection('territories').where('userId', '==', uid).get();

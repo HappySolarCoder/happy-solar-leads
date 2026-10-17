@@ -1,43 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
-
-function serializeValue(value: any): any {
-  if (value == null) return value;
-
-  // Firestore Timestamp (admin SDK)
-  if (typeof value?.toDate === 'function') {
-    return value.toDate().toISOString();
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(serializeValue);
-  }
-
-  if (typeof value === 'object') {
-    const out: Record<string, any> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = serializeValue(v);
-    return out;
-  }
-
-  return value;
-}
+import { buildStatsLeadQuery, handleAllLeadsStats } from '@/app/utils/server/allLeadsStats';
 
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Missing credentials' }, { status: 401 });
-    }
+    const result = await handleAllLeadsStats({
+      authorization: request.headers.get('authorization'),
+      sinceParam: request.nextUrl.searchParams.get('since'),
+      deps: {
+        verifyIdToken: (token, checkRevoked) => adminAuth().verifyIdToken(token, checkRevoked),
+        getUser: async (uid) => {
+          const doc = await adminDb().collection('users').doc(uid).get();
+          return { exists: doc.exists, data: doc.data() };
+        },
+        loadLeads: async (bound) => {
+          const snap = await buildStatsLeadQuery(adminDb().collection('leads'), bound).get();
+          return snap.docs.map((doc: { id: string; data: () => Record<string, unknown> }) => ({
+            id: doc.id,
+            data: doc.data(),
+          }));
+        },
+      },
+    });
 
-    const idToken = authHeader.split(' ')[1];
-    await adminAuth().verifyIdToken(idToken);
-
-    const snap = await adminDb().collection('leads').get();
-    const leads = snap.docs.map((d) => serializeValue({ id: d.id, ...(d.data() as any) }));
-
-    return NextResponse.json({ leads });
-  } catch (error: any) {
+    return NextResponse.json(result.body, { status: result.status });
+  } catch (error) {
     console.error('[stats/all-leads] error:', error);
-    return NextResponse.json({ error: error?.message || 'Internal error' }, { status: 500 });
+    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }

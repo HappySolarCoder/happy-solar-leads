@@ -42,19 +42,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-export async function GET() {
-  try {
-    const logPath = getLogPath();
-    if (fs.existsSync(logPath)) {
-      const content = fs.readFileSync(logPath, 'utf-8');
-      return NextResponse.json({ logs: content });
-    }
-    return NextResponse.json({ logs: '' });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
-    );
-  }
-}
