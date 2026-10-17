@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
-import { buildStatsLeadQuery, handleAllLeadsStats } from '@/app/utils/server/allLeadsStats';
+import { buildStatsLeadQuery, handleAllLeadsStats, isExcludedTestLead } from '@/app/utils/server/allLeadsStats';
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,10 +15,12 @@ export async function GET(request: NextRequest) {
         },
         loadLeads: async (bound) => {
           const snap = await buildStatsLeadQuery(adminDb().collection('leads'), bound).get();
-          return snap.docs.map((doc: { id: string; data: () => Record<string, unknown> }) => ({
-            id: doc.id,
-            data: doc.data(),
-          }));
+          return snap.docs
+            .map((doc: { id: string; data: () => Record<string, unknown> }) => ({
+              id: doc.id,
+              data: doc.data(),
+            }))
+            .filter((doc: { id: string; data: Record<string, unknown> }) => !isExcludedTestLead(doc.id, doc.data));
         },
       },
     });
