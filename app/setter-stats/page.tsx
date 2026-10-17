@@ -1,15 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { TrendingUp, Target, DollarSign, Award, ArrowLeft, Users, Calendar, Trophy, BarChart3 } from 'lucide-react';
+import { TrendingUp, Target, Award, ArrowLeft, Users, Calendar, Trophy, BarChart3 } from 'lucide-react';
 import { getLeads, getLeadsAsync, getUsers, getUsersAsync } from '@/app/utils/storage';
-import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User } from '@/app/types';
-import { Disposition } from '@/app/types/disposition';
-import { startOfToday, startOfWeek, startOfMonth, isAfter, format } from 'date-fns';
+import { startOfToday, startOfWeek, startOfMonth, isAfter } from 'date-fns';
 import { auth } from '@/app/utils/firebase';
+import type { TeamStatsSetter } from '@/app/utils/teamStats/aggregate';
 
 interface SetterMetrics {
   userId: string;
@@ -41,77 +40,147 @@ interface SetterMetrics {
 
 type SortBy = 'knocks' | 'conversations' | 'appointments' | 'goBacks';
 
+type StatsSource = 'pending' | 'aggregate' | 'legacy';
+
+function canSeeAllLeads(role?: string) {
+  return role === 'manager' || role === 'admin';
+}
+
+const RANGE_MEMO_MS = 60_000;
+
+async function authToken(): Promise<string | null> {
+  let token = await auth?.currentUser?.getIdToken();
+  if (!token) {
+    await new Promise((r) => setTimeout(r, 250));
+    token = await auth?.currentUser?.getIdToken();
+  }
+  return token ?? null;
+}
+
+/** One-release fallback when the aggregated endpoint is down. Remove after the next release. */
+async function loadLegacyAllLeads(role: string): Promise<Lead[]> {
+  try {
+    const token = await authToken();
+    if (token) {
+      const statsPath = role === 'admin' ? '/api/stats/all-leads?since=all' : '/api/stats/all-leads';
+      const res = await fetch(statsPath, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json?.leads) && json.leads.length) return json.leads;
+      }
+    }
+  } catch (e) {
+    console.error('All-leads stats fetch failed:', e);
+  }
+  return getLeads();
+}
+
 export default function DataDashboard() {
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [users, setUsers] = useState<User[]>(() => getUsers());
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [sortBy, setSortBy] = useState<SortBy>('knocks');
-
-  const canSeeAllLeads = (role?: string) => role === 'manager' || role === 'admin';
+  const [aggregateSetters, setAggregateSetters] = useState<TeamStatsSetter[] | null>(null);
+  const [statsSource, setStatsSource] = useState<StatsSource>('pending');
+  const rangeMemo = useRef(new Map<string, { at: number; setters: TeamStatsSetter[] }>());
+  const legacyLeadsRef = useRef<Lead[] | null>(null);
+  const legacyLatchedRef = useRef(false);
 
   useEffect(() => {
-    async function loadData() {
+    let cancelled = false;
+    async function loadIdentity() {
       const user = await getCurrentAuthUser();
       if (!user) {
         router.push('/login');
         return;
       }
+      if (cancelled) return;
       setCurrentUser(user);
-
       setIsLoading(false);
       setIsRefreshing(true);
 
-      let loadedLeads: Lead[] = [];
-
-      try {
-        if (canSeeAllLeads(user.role)) {
-          let token = await auth?.currentUser?.getIdToken();
-          if (!token) {
-            await new Promise((r) => setTimeout(r, 250));
-            token = await auth?.currentUser?.getIdToken();
-          }
-
-          if (token) {
-            const statsPath = user.role === 'admin'
-              ? '/api/stats/all-leads?since=all'
-              : '/api/stats/all-leads';
-            const res = await fetch(statsPath, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (res.ok) {
-              const json = await res.json();
-              if (Array.isArray(json?.leads)) loadedLeads = json.leads;
-            }
-          }
-        }
-      } catch (e) {
-        console.error('All-leads stats fetch failed:', e);
-      }
-
-      if (!loadedLeads.length) {
-        if (canSeeAllLeads(user.role)) {
-          // Do NOT overwrite with scoped subset; keep cached/all-user data.
-          loadedLeads = getLeads();
-        } else {
-          loadedLeads = await getLeadsAsync();
-        }
-      }
-
       const loadedUsers = await getUsersAsync();
-      const loadedDispositions = await getDispositionsAsync();
-      setLeads(loadedLeads);
+      if (cancelled) return;
       setUsers(loadedUsers);
-      setDispositions(loadedDispositions);
-      setIsRefreshing(false);
+
+      if (!canSeeAllLeads(user.role)) {
+        const loadedLeads = await getLeadsAsync();
+        if (cancelled) return;
+        setLeads(loadedLeads);
+        setStatsSource('legacy');
+        setIsRefreshing(false);
+      }
     }
 
-    loadData();
+    loadIdentity();
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
+
+  // Managers and admins load only the selected range. Other ranges are not prefetched.
+  useEffect(() => {
+    if (!currentUser || !canSeeAllLeads(currentUser.role)) return;
+    if (legacyLatchedRef.current) return;
+
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+    const memoKey = `${timeFilter}|${tz}`;
+    const memo = rangeMemo.current.get(memoKey);
+    if (memo && Date.now() - memo.at < RANGE_MEMO_MS) {
+      setAggregateSetters(memo.setters);
+      setStatsSource('aggregate');
+      setIsRefreshing(false);
+      return;
+    }
+
+    let cancelled = false;
+    setStatsSource('pending');
+    setAggregateSetters(null);
+    setIsRefreshing(true);
+
+    async function loadRange() {
+      try {
+        const token = await authToken();
+        if (!token) throw new Error('missing token');
+        const params = new URLSearchParams({ range: timeFilter, tz });
+        const res = await fetch(`/api/stats/team-performance?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const json = await res.json();
+        if (!Array.isArray(json?.setters)) throw new Error('missing setters');
+        if (cancelled) return;
+        const setters = json.setters as TeamStatsSetter[];
+        rangeMemo.current.set(memoKey, { at: Date.now(), setters });
+        setAggregateSetters(setters);
+        setStatsSource('aggregate');
+      } catch (error) {
+        console.error('Team performance stats fetch failed:', error);
+        if (cancelled) return;
+        legacyLatchedRef.current = true;
+        if (!legacyLeadsRef.current) {
+          legacyLeadsRef.current = await loadLegacyAllLeads(currentUser?.role || 'manager');
+        }
+        if (cancelled) return;
+        setLeads(legacyLeadsRef.current);
+        setAggregateSetters(null);
+        setStatsSource('legacy');
+      } finally {
+        if (!cancelled) setIsRefreshing(false);
+      }
+    }
+
+    loadRange();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, timeFilter]);
 
   // Calculate metrics for each setter
   const calculateSetterMetrics = (): SetterMetrics[] => {
@@ -191,7 +260,6 @@ export default function DataDashboard() {
       }
 
       const metrics = setterMap.get(userId)!;
-      const leadStatus = lead.status?.toLowerCase() || '';
 
       // Count knocks (all dispositioned leads in selected range)
       metrics.knocks++;
@@ -229,21 +297,41 @@ export default function DataDashboard() {
       }
     });
 
-    // Convert to array and sort
-    const metricsArray = Array.from(setterMap.values());
-    
-    // Sort by selected metric
+    return Array.from(setterMap.values());
+  };
+
+  const sortSetterMetrics = (metrics: SetterMetrics[]): SetterMetrics[] => {
+    const metricsArray = [...metrics];
     if (sortBy === 'goBacks') {
       metricsArray.sort((a, b) => b.goBacksScheduled - a.goBacksScheduled);
     } else {
       metricsArray.sort((a, b) => b[sortBy] - a[sortBy]);
     }
-
     return metricsArray;
   };
 
-  const setterMetrics = calculateSetterMetrics().filter((metric) =>
-    canSeeAllLeads(currentUser?.role) || metric.userId === currentUser?.id
+  const namedAggregate = (aggregateSetters ?? []).map((row) => {
+    const user = users.find((u) => u.id === row.userId);
+    return {
+      userId: row.userId,
+      userName: user?.name || 'Unknown',
+      knocks: row.knocks,
+      conversations: row.conversations,
+      appointments: row.appointments,
+      sales: row.sales,
+      notHome: row.notHome,
+      notInterested: row.notInterested,
+      goBacksScheduled: row.goBacksScheduled,
+      goBacksConverted: row.goBacksConverted,
+    };
+  });
+
+  const setterMetrics = sortSetterMetrics(
+    statsSource === 'aggregate' && aggregateSetters
+      ? namedAggregate
+      : calculateSetterMetrics().filter((metric) =>
+          canSeeAllLeads(currentUser?.role) || metric.userId === currentUser?.id
+        ),
   );
 
   // Calculate team totals
