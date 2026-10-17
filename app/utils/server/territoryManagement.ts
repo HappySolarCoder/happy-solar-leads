@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { enqueueTerritoryAssignment, territoryQueueReady } from "./territoryQueue";
 import { territoryV2, validTerritoryId } from "./territoryManagementV2";
 import { createHash } from "node:crypto";
 import { type DocumentSnapshot } from "firebase-admin/firestore";
@@ -20,8 +21,10 @@ import {
 export function createTerritoryHandlers(dependencies: {
   adminAuth: typeof adminAuth;
   adminDb: typeof adminDb;
+  queue?: { ready: typeof territoryQueueReady; enqueue: typeof enqueueTerritoryAssignment };
 }) {
   const { adminAuth, adminDb } = dependencies;
+  const queue=dependencies.queue || {ready:territoryQueueReady,enqueue:enqueueTerritoryAssignment};
   const fail = (message: string, status = 400): never => {
     throw Object.assign(new Error(message), { status });
   };
@@ -100,7 +103,7 @@ export function createTerritoryHandlers(dependencies: {
       return NextResponse.json(
         {
           actor,
-          capabilities: {pagedAssignments: true},
+          capabilities: {pagedAssignments: true, backgroundAssignments: queue.ready()},
           members: allMembers.filter((m) => scope.has(m.id)),
           territories: areas.docs
             .filter((d) => !d.data().archived && scope.has(d.data().userId))
@@ -125,6 +128,28 @@ export function createTerritoryHandlers(dependencies: {
         return fail("Invalid request.");
       }
       const action = body?.action;
+      if (action === 'save-background-assignment' || action === 'retry-background-assignment') {
+        if (!queue.ready()) fail('Background assignment needs the v14.9 backend configuration. Your drawing is unchanged.', 503);
+        let result: {id:string;operationId:string;changed:number;done:boolean};
+        if (action === 'save-background-assignment') result = await territoryV2(db, actor, {...body,action:'begin-assignment'}) as typeof result;
+        else {
+          if (!validTerritoryId(body.id)) fail('Choose a territory.');
+          const data = (await db.collection('territories').doc(body.id).get()).data();
+          if (!data || data.archived || !data.assignment) return fail('Assignment not found.',404);
+          const target=member(await db.collection('users').doc(data.assignment.targetId).get());
+          const owner=member(await db.collection('users').doc(data.userId).get());
+          if (!inManagerTeam(actor,target) || !inManagerTeam(actor,owner)) fail('This territory belongs to another team.',403);
+          result={id:body.id,operationId:data.assignment.id,changed:data.assignment.changed,done:data.assignment.done};
+        }
+        let queueError='';
+        if (!result.done) {
+          try {
+            const saved=(await db.collection('territories').doc(result.id).get()).data();
+            await queue.enqueue(result.id,result.operationId,saved?.assignment?.cursor,action==='retry-background-assignment');
+          } catch { queueError='Territory saved, but background processing could not start. Select it and tap Retry background assignment.'; }
+        }
+        return NextResponse.json({...result,background:true,queued:!queueError,queueError},{headers:{'Cache-Control':'no-store'}});
+      }
       if (["preview-v2", "begin-assignment", "continue-assignment"].includes(action)) {
         return NextResponse.json(await territoryV2(db, actor, body), {headers:{"Cache-Control":"no-store"}});
       }
