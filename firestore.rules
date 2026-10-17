@@ -20,6 +20,14 @@ service cloud.firestore {
       return signedIn() && myUser().role == "admin";
     }
 
+    function isManager() {
+      return signedIn() && myUser().role == "manager";
+    }
+
+    function canManageEasterEggs() {
+      return isAdmin() || isManager();
+    }
+
     // Helper: allows a field to be either unchanged OR completely omitted in the update
     function unchangedOrMissing(field) {
       return !(field in request.resource.data) ||
@@ -81,6 +89,43 @@ service cloud.firestore {
         ]);
     }
 
+    function easterEggLeadPlacementUpdate() {
+      return canManageEasterEggs()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "hasEasterEgg",
+          "easterEggId"
+        ])
+        && request.resource.data.hasEasterEgg == true
+        && ("easterEggId" in request.resource.data)
+        && request.resource.data.easterEggId != null;
+    }
+
+    function easterEggLeadClearUpdate() {
+      return signedIn()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "hasEasterEgg",
+          "easterEggId"
+        ])
+        && resource.data.hasEasterEgg == true
+        && (
+          !("hasEasterEgg" in request.resource.data)
+          || request.resource.data.hasEasterEgg == false
+        )
+        && (
+          !("easterEggId" in request.resource.data)
+          || request.resource.data.easterEggId == null
+        );
+    }
+
+    function easterEggWinUpdateOnly() {
+      return signedIn()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "wonBy",
+          "currentWinners",
+          "active"
+        ]);
+    }
+
     // ====================== USERS ======================
     // Any signed-in user can read (supports UI: names, colors, dropdowns, etc.)
     // Only admins can create/update/delete users
@@ -128,11 +173,22 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // ====================== EASTER EGGS ======================
+    // Signed-in users can read active egg state and record wins.
+    // Admins/managers can fully manage eggs from the admin page.
+    match /easterEggs/{eggId} {
+      allow read: if signedIn();
+      allow create, delete: if canManageEasterEggs();
+      allow update: if canManageEasterEggs() || easterEggWinUpdateOnly();
+    }
+
     // ====================== LEADS ======================
     match /leads/{leadId} {
 
-      // READ: Admins = all; reps = only their claimed / assigned / manually-created leads
+      // READ: Admins/managers = all; reps = only their claimed / assigned / manually-created leads
+      // This must stay aligned with canSeeAllLeads() in app/types/index.ts.
       allow read: if isAdmin()
+        || isManager()
         || leadIsClaimedByMe()
         || leadIsAssignedToMe()
         || leadIsManualByMe();
@@ -144,7 +200,7 @@ service cloud.firestore {
       //   Admins = anything
       //   Reps on owned leads = normal updates (no ownership/assignment mutations)
       //   Any signed-in user = disposition/door-knock-only updates (no ownership/assignment mutations)
-      allow update: if isAdmin() || (
+      allow update: if isAdmin() || easterEggLeadPlacementUpdate() || easterEggLeadClearUpdate() || (
         (leadIsClaimedByMe() || leadIsAssignedToMe() || leadIsManualByMe())
         && unchangedOrMissing("claimedBy")
         && unchangedOrMissing("assignedTo")
@@ -166,6 +222,30 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if signedIn() && request.resource.data.userId == uid();
       allow update, delete: if isAdmin();
+    }
+
+    // ====================== HOMEOWNERS (Raydar mobile v12.2) ======================
+    // Read-only public-record homeowner data for map pins. Any signed-in, active,
+    // approved admin/manager/setter/closer may run bounded list queries (limit <= 500).
+    // No territory or per-user flag. No client get/create/update/delete (Admin SDK only).
+    match /homeowners/{homeownerId} {
+      function activeHomeownerReader() {
+        let user = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+        return user.role in ['admin', 'manager', 'setter', 'closer']
+          && user.get('isActive', true) != false
+          && user.get('approved', true) != false
+          && user.get('approvalStatus', 'approved') == 'approved'
+          && user.get('status', 'active') == 'active'
+          && user.get('deleted', false) != true
+          && user.get('deletedAt', null) == null
+          && user.get('deletionPending', false) != true;
+      }
+      allow list: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.query.limit != null
+        && request.query.limit <= 500
+        && activeHomeownerReader();
+      allow get, create, update, delete: if false;
     }
 
     // ====================== DEFAULT DENY (critical security rule) ======================
