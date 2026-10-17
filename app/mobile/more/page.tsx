@@ -27,7 +27,7 @@ import {
 } from "../_components/MobileShell";
 import { useMobileData } from "../_components/useMobileData";
 import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
-import { PRIVACY_POLICY_URL } from '../_lib/accountPolicy';
+import { PRIVACY_POLICY_URL, clearUnknownDeletionAttempt } from '../_lib/accountPolicy';
 import AccountDeletion from '../_components/AccountDeletion';
 
 export default function MorePage() {
@@ -83,6 +83,7 @@ export default function MorePage() {
       : []),
   ];
   async function logout() {
+    clearUnknownDeletionAttempt(window.sessionStorage);
     setSigningOut(true);
     try {
       await signOut();

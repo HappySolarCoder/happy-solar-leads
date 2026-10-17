@@ -12,6 +12,7 @@ import {
   ACCOUNT_DELETION_EMAIL_QUESTION,
   ACCOUNT_DELETION_EMAIL_SIGNOUT_FAILED,
   ACCOUNT_DELETION_LIKELY_DELETED,
+  ACCOUNT_DELETION_LIKELY_SIGNOUT_FAILED,
   ACCOUNT_DELETION_MAILBOX,
   ACCOUNT_DELETION_OFFLINE,
   ACCOUNT_DELETION_PATH,
@@ -21,6 +22,11 @@ import {
   ACCOUNT_DELETION_UNKNOWN_KEY,
   ACCOUNT_DELETION_UNKNOWN_OUTCOME,
   ACCOUNT_DELETION_UNCONFIRMED,
+  ACCOUNT_TOKEN_DISABLED_CODE,
+  ACCOUNT_TOKEN_EXPIRED_CODE,
+  ACCOUNT_TOKEN_NETWORK_CODE,
+  afterLikelyDeletedSignOut,
+  classifyAccountToken,
   clearUnknownDeletionAttempt,
   emailHandoffChoice,
   interpretAccountDeletionResponse,
@@ -100,18 +106,23 @@ test("401 with no earlier unknown attempt asks for a fresh sign-in", () => {
   }
 });
 
-test("401 after an unknown attempt says the account was most likely deleted", () => {
+test("a plain 401 stays sign-in-again even after a 5xx", () => {
+  const server = interpretAccountDeletionResponse(500, { ok: false, error: "Internal error" });
+  assert.equal(server.action, "stay");
+  if (server.action === "stay") {
+    assert.equal(server.unknown, true);
+    assert.equal(server.retry, true);
+    assert.match(server.message, /could not confirm whether the deletion went through/);
+  }
   for (const error of ["Missing credentials", "Sign in again."]) {
-    const decision = interpretAccountDeletionResponse(401, { ok: false, error }, false, true);
-    assert.equal(decision.action, "likely-deleted");
-    if (decision.action !== "likely-deleted") return;
-    assert.equal(decision.notice, ACCOUNT_DELETION_LIKELY_DELETED);
-    assert.match(decision.notice, /most likely already deleted/);
-    assert.match(decision.notice, /Sign-in is disabled/);
-    assert.doesNotMatch(decision.notice, /Sign in again and retry/);
-    assert.doesNotMatch(decision.notice, /still signed in/i);
-    assert.doesNotMatch(decision.notice, /nothing was deleted/i);
-    assert.doesNotMatch(decision.notice, /was confirmed/);
+    const decision = interpretAccountDeletionResponse(401, { ok: false, error });
+    assert.deepEqual(decision, {
+      action: "stay",
+      message: ACCOUNT_DELETION_SIGN_IN_AGAIN,
+      retry: true,
+    });
+    stays(decision);
+    assert.notEqual(decision.action, "likely-deleted");
   }
 });
 
@@ -133,7 +144,7 @@ test("network errors and server failures are an unknown outcome and can be retri
   const server = interpretAccountDeletionResponse(500, { ok: false, error: "Internal error" });
   const unavailable = interpretAccountDeletionResponse(503, null);
   const offline = interpretAccountDeletionResponse(0, null, true);
-  const again = interpretAccountDeletionResponse(0, null, true, true);
+  const again = interpretAccountDeletionResponse(0, null, true);
   for (const decision of [server, unavailable, offline, again]) {
     assert.deepEqual(decision, {
       action: "stay",
@@ -195,7 +206,42 @@ test("a thrown request and a 404 with an unreadable body stay unambiguous", asyn
   stays(unread);
 });
 
-test("a lost request is remembered, and a later 401 or missing token is not a fresh sign-in", async () => {
+test("an offline token refresh stays signed in, and a disabled user does not", () => {
+  const offline = classifyAccountToken({
+    currentUserUid: "uid-a",
+    expectedUid: "uid-a",
+    errorCode: ACCOUNT_TOKEN_NETWORK_CODE,
+  });
+  assert.equal(offline.kind, "unknown");
+  const otherFailure = classifyAccountToken({
+    currentUserUid: "uid-a",
+    expectedUid: "uid-a",
+    errorCode: "auth/internal-error",
+  });
+  assert.equal(otherFailure.kind, "unknown");
+  const disabled = classifyAccountToken({
+    currentUserUid: "uid-a",
+    expectedUid: "uid-a",
+    errorCode: ACCOUNT_TOKEN_DISABLED_CODE,
+  });
+  assert.equal(disabled.kind, "likely-deleted");
+  const expired = classifyAccountToken({
+    currentUserUid: "uid-a",
+    expectedUid: "uid-a",
+    errorCode: ACCOUNT_TOKEN_EXPIRED_CODE,
+  });
+  assert.equal(expired.kind, "likely-deleted");
+  const cleared = classifyAccountToken({ currentUserUid: null, expectedUid: "uid-a" });
+  assert.equal(cleared.kind, "likely-deleted");
+  const ready = classifyAccountToken({
+    currentUserUid: "uid-a",
+    expectedUid: "uid-a",
+    token: "token-1",
+  });
+  assert.deepEqual(ready, { kind: "token", token: "token-1" });
+});
+
+test("the unknown-outcome flag belongs to one uid and a failed sign-out stays here", () => {
   const memory = new Map<string, string>();
   const storage = {
     getItem: (key: string) => memory.get(key) ?? null,
@@ -206,37 +252,28 @@ test("a lost request is remembered, and a later 401 or missing token is not a fr
       memory.delete(key);
     },
   };
-  assert.equal(unknownDeletionAttempt(storage), false);
-  rememberUnknownDeletionAttempt(storage);
-  assert.equal(memory.get(ACCOUNT_DELETION_UNKNOWN_KEY), "1");
-  assert.equal(unknownDeletionAttempt(storage), true);
+  assert.equal(unknownDeletionAttempt(storage, "uid-a"), false);
+  rememberUnknownDeletionAttempt(storage, "uid-a");
+  assert.equal(memory.get(ACCOUNT_DELETION_UNKNOWN_KEY), "uid-a");
+  assert.equal(unknownDeletionAttempt(storage, "uid-a"), true);
+  assert.equal(unknownDeletionAttempt(storage, "uid-b"), false);
+  assert.equal(memory.has(ACCOUNT_DELETION_UNKNOWN_KEY), false);
 
-  let calls = 0;
-  const refreshed = await requestAccountDeletion("token-1", async () => {
-    calls += 1;
-    return { status: 401, json: async () => ({ ok: false, error: "Sign in again." }) };
-  }, unknownDeletionAttempt(storage));
-  assert.equal(calls, 1);
-  assert.equal(refreshed.action, "likely-deleted");
-
-  const noToken = await requestAccountDeletion(null, async () => {
-    calls += 1;
-    return { status: 200, json: async () => ({ ok: true, disabled: true }) };
-  }, true);
-  assert.equal(calls, 1);
-  assert.equal(noToken.action, "likely-deleted");
-  if (noToken.action === "likely-deleted") assert.equal(noToken.notice, ACCOUNT_DELETION_LIKELY_DELETED);
-
-  const firstTime = await requestAccountDeletion(null, async () => {
-    calls += 1;
-    return { status: 200, json: async () => ({ ok: true, disabled: true }) };
-  }, false);
-  assert.equal(calls, 1);
-  assert.deepEqual(firstTime, { action: "stay", message: ACCOUNT_DELETION_SIGN_IN_AGAIN, retry: true });
-  stays(firstTime);
-
+  rememberUnknownDeletionAttempt(storage, "uid-a");
   clearUnknownDeletionAttempt(storage);
-  assert.equal(unknownDeletionAttempt(storage), false);
+  assert.equal(unknownDeletionAttempt(storage, "uid-a"), false);
+
+  const stayed = afterLikelyDeletedSignOut(false);
+  assert.equal(stayed.action, "stay");
+  if (stayed.action !== "stay") return;
+  assert.equal(stayed.retry, false);
+  assert.equal(stayed.message, ACCOUNT_DELETION_LIKELY_SIGNOUT_FAILED);
+  assert.match(stayed.message, /most likely already deleted/);
+  assert.match(stayed.message, /Sign-in is disabled/);
+  assert.match(stayed.message, /Sign out from More/);
+  assert.doesNotMatch(stayed.message, /was confirmed/);
+  const left = afterLikelyDeletedSignOut(true);
+  assert.deepEqual(left, { action: "leave", notice: ACCOUNT_DELETION_LIKELY_DELETED });
 });
 
 test("the email path signs out only after the person confirms they sent it", async () => {
@@ -304,7 +341,22 @@ test("the screen confirms the outcome before deleting and signs out only from a 
   assert.match(ACCOUNT_DELETION_EMAIL_QUESTION, new RegExp(ACCOUNT_DELETION_MAILBOX.replace(".", "\\.")));
   assert.match(source, /rememberUnknownDeletionAttempt/);
   assert.match(source, /unknownOutcome/);
+  assert.match(source, /classifyAccountToken/);
+  assert.match(source, /session\.kind === "likely-deleted"/);
+  assert.match(source, /session\.kind === "unknown"/);
+  assert.match(source, /if \(decision\.unknown\) rememberUnknown\(\);\s*else clearUnknown\(\);/);
+  assert.match(source, /afterLikelyDeletedSignOut\(signedOut\)/);
+  assert.match(source, /outcome\.action === "stay"/);
+  const leaveAt = source.indexOf("async function leaveLikelyDeleted");
+  const showStayAt = source.indexOf("function showStay", leaveAt);
+  const leave = source.slice(leaveAt, showStayAt);
+  assert.ok(leave.indexOf('outcome.action === "stay"') < leave.indexOf("onSignedOut()"));
   assert.match(source, /ACCOUNT_DELETION_LIKELY_DELETED/);
+  const more = readFileSync(path.join(root, "app/mobile/more/page.tsx"), "utf8");
+  const logoutAt = more.indexOf("async function logout");
+  const clearAt = more.indexOf("clearUnknownDeletionAttempt(window.sessionStorage)", logoutAt);
+  const signOutAt = more.indexOf("await signOut()", logoutAt);
+  assert.ok(logoutAt > 0 && clearAt > logoutAt && clearAt < signOutAt);
   assert.match(source, /visibilityState === "hidden"/);
   assert.doesNotMatch(source, /appStateChange|hasFocus\(|resolveMailtoHandoff|afterMailtoHandoff/);
   assert.doesNotMatch(source, /Your account deletion was confirmed/);

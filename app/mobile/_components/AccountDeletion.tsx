@@ -16,6 +16,8 @@ import {
   ACCOUNT_DELETION_SERVER_SIGNOUT_FAILED,
   ACCOUNT_DELETION_STORAGE_KEY,
   ACCOUNT_DELETION_UNKNOWN_OUTCOME,
+  afterLikelyDeletedSignOut,
+  classifyAccountToken,
   clearUnknownDeletionAttempt,
   deletionBlockedReason,
   deletionMailto,
@@ -54,15 +56,15 @@ export default function AccountDeletion({
   const mailto = deletionMailto({ email: user.email || "", uid: user.id });
 
   useEffect(() => {
-    const stored = unknownDeletionAttempt(window.sessionStorage);
+    const stored = unknownDeletionAttempt(window.sessionStorage, user.id);
     unknownRef.current = stored;
     setUnknownOutcome(stored);
-  }, []);
+  }, [user.id]);
 
   function rememberUnknown() {
     unknownRef.current = true;
     setUnknownOutcome(true);
-    rememberUnknownDeletionAttempt(window.sessionStorage);
+    rememberUnknownDeletionAttempt(window.sessionStorage, user.id);
   }
 
   function clearUnknown() {
@@ -72,11 +74,10 @@ export default function AccountDeletion({
   }
 
   function readUnknown(): boolean {
-    if (unknownOutcome || unknownRef.current) return true;
-    const stored = unknownDeletionAttempt(window.sessionStorage);
-    if (!stored) return false;
+    const stored = unknownDeletionAttempt(window.sessionStorage, user.id);
+    if (!stored && !unknownRef.current && !unknownOutcome) return false;
     unknownRef.current = true;
-    setUnknownOutcome(true);
+    if (!unknownOutcome) setUnknownOutcome(true);
     return true;
   }
 
@@ -103,13 +104,27 @@ export default function AccountDeletion({
     }
   }
 
-  async function idToken(): Promise<string | null> {
+  async function readAccountToken() {
     const current = auth?.currentUser;
-    if (!current || current.uid !== user.id) return null;
+    if (!current) {
+      return classifyAccountToken({ currentUserUid: null, expectedUid: user.id });
+    }
     try {
-      return await current.getIdToken();
-    } catch {
-      return null;
+      const token = await current.getIdToken();
+      return classifyAccountToken({
+        currentUserUid: current.uid,
+        expectedUid: user.id,
+        token,
+      });
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code || "")
+        : "";
+      return classifyAccountToken({
+        currentUserUid: current.uid,
+        expectedUid: user.id,
+        errorCode: code,
+      });
     }
   }
 
@@ -140,17 +155,30 @@ export default function AccountDeletion({
   async function leaveLikelyDeleted() {
     setMessage(ACCOUNT_DELETION_LIKELY_DELETED);
     setWorkingCopy(ACCOUNT_DELETION_LIKELY_DELETED);
+    let signedOut = false;
     try {
       sessionStorage.setItem(ACCOUNT_DELETION_STORAGE_KEY, ACCOUNT_DELETION_LIKELY_DELETED);
     } catch {
       /* Login still opens if the notice cannot be stored. */
     }
-    clearUnknown();
     try {
       await signOut();
+      signedOut = true;
     } catch {
-      /* Firebase may already have signed this phone out. */
+      try {
+        sessionStorage.removeItem(ACCOUNT_DELETION_STORAGE_KEY);
+      } catch {
+        /* The on-screen warning is the result that matters. */
+      }
     }
+    const outcome = afterLikelyDeletedSignOut(signedOut);
+    if (outcome.action === "stay") {
+      setRetry(outcome.retry);
+      setMessage(outcome.message);
+      setPhase("result");
+      return;
+    }
+    clearUnknown();
     onSignedOut();
   }
 
@@ -205,13 +233,17 @@ export default function AccountDeletion({
     setRetry(false);
     try {
       if (await blocked("You are still signed in.")) return;
-      const earlierUnknown = readUnknown();
-      const token = await idToken();
-      if (earlierUnknown && !token) {
+      readUnknown();
+      const session = await readAccountToken();
+      if (session.kind === "likely-deleted") {
         await leaveLikelyDeleted();
         return;
       }
-      await apply(await requestAccountDeletion(token, (path, init) => apiFetch(path, init), earlierUnknown));
+      if (session.kind === "unknown") {
+        showStay({ action: "stay", message: ACCOUNT_DELETION_UNKNOWN_OUTCOME, retry: true, unknown: true });
+        return;
+      }
+      await apply(await requestAccountDeletion(session.token, (path, init) => apiFetch(path, init)));
     } catch {
       rememberUnknown();
       showStay({ action: "stay", message: ACCOUNT_DELETION_UNKNOWN_OUTCOME, retry: true, unknown: true });

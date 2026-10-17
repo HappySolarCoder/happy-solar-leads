@@ -56,6 +56,15 @@ export const ACCOUNT_DELETION_OFFLINE = ACCOUNT_DELETION_UNKNOWN_OUTCOME;
 export const ACCOUNT_DELETION_LIKELY_DELETED =
   "Your account was most likely already deleted. Sign-in is disabled.";
 
+export const ACCOUNT_DELETION_LIKELY_SIGNOUT_FAILED =
+  "Your account was most likely already deleted. Sign-in is disabled. Sign out from More.";
+
+export const ACCOUNT_TOKEN_DISABLED_CODE = "auth/user-disabled";
+
+export const ACCOUNT_TOKEN_EXPIRED_CODE = "auth/user-token-expired";
+
+export const ACCOUNT_TOKEN_NETWORK_CODE = "auth/network-request-failed";
+
 export const ACCOUNT_DELETION_UNCONFIRMED =
   "Raydar could not confirm that the account was deleted. You are still signed in and nothing was deleted.";
 
@@ -150,20 +159,27 @@ type DeletionMemory = {
   removeItem?: (key: string) => void;
 };
 
-export function rememberUnknownDeletionAttempt(storage: DeletionMemory | null): void {
+/** The stored value is the uid the unknown attempt belonged to. */
+export function rememberUnknownDeletionAttempt(storage: DeletionMemory | null, uid: string): void {
+  if (!uid) return;
   try {
-    storage?.setItem?.(ACCOUNT_DELETION_UNKNOWN_KEY, "1");
+    storage?.setItem?.(ACCOUNT_DELETION_UNKNOWN_KEY, uid);
   } catch {
     /* The component state still remembers this attempt. */
   }
 }
 
-export function unknownDeletionAttempt(storage: DeletionMemory | null): boolean {
+export function unknownDeletionAttempt(storage: DeletionMemory | null, uid: string): boolean {
+  let stored: string | null = null;
   try {
-    return storage?.getItem(ACCOUNT_DELETION_UNKNOWN_KEY) === "1";
+    stored = storage?.getItem(ACCOUNT_DELETION_UNKNOWN_KEY) ?? null;
   } catch {
     return false;
   }
+  if (!stored || !uid) return false;
+  if (stored === uid) return true;
+  clearUnknownDeletionAttempt(storage);
+  return false;
 }
 
 export function clearUnknownDeletionAttempt(storage: DeletionMemory | null): void {
@@ -178,12 +194,18 @@ function isRecord(body: unknown): body is Record<string, unknown> {
   return !!body && typeof body === "object";
 }
 
-/** Sign out only for a confirmed disable. A lost response does not claim nothing changed. */
+/**
+ * Sign out only for a confirmed disable.
+ * A 500 `{ok:false, error:'Internal error'}` is both the profile-write failure
+ * (Auth still enabled) and the route's generic catch, so the body does not
+ * prove the account was left enabled. The wording stays unconfirmed. A later
+ * HTTP 401 is still "sign in again"; only a Firebase disabled or expired
+ * token, or a cleared currentUser, leaves as likely deleted.
+ */
 export function interpretAccountDeletionResponse(
   status: number,
   body: unknown,
   networkError = false,
-  earlierUnknown = false,
 ): AccountDeletionDecision {
   if (networkError) {
     return { action: "stay", message: ACCOUNT_DELETION_UNKNOWN_OUTCOME, retry: true, unknown: true };
@@ -193,7 +215,6 @@ export function interpretAccountDeletionResponse(
   }
   if (status === 404) return { action: "email-fallback" };
   if (status === 401) {
-    if (earlierUnknown) return { action: "likely-deleted", notice: ACCOUNT_DELETION_LIKELY_DELETED };
     return { action: "stay", message: ACCOUNT_DELETION_SIGN_IN_AGAIN, retry: true };
   }
   if (status === 403 && isRecord(body) && body.error === ADMIN_SELF_DELETE_ERROR) {
@@ -203,6 +224,35 @@ export function interpretAccountDeletionResponse(
     return { action: "stay", message: ACCOUNT_DELETION_UNKNOWN_OUTCOME, retry: true, unknown: true };
   }
   return { action: "stay", message: ACCOUNT_DELETION_UNCONFIRMED, retry: false };
+}
+
+export type AccountTokenRead =
+  | { kind: "token"; token: string }
+  | { kind: "likely-deleted" }
+  | { kind: "unknown" };
+
+/** A missing token is not a deleted account unless Firebase says the user is gone. */
+export function classifyAccountToken(input: {
+  currentUserUid: string | null | undefined;
+  expectedUid: string;
+  token?: string | null;
+  errorCode?: string | null;
+}): AccountTokenRead {
+  if (!input.currentUserUid) return { kind: "likely-deleted" };
+  if (input.currentUserUid !== input.expectedUid) return { kind: "unknown" };
+  if (input.token) return { kind: "token", token: input.token };
+  if (input.errorCode === ACCOUNT_TOKEN_DISABLED_CODE || input.errorCode === ACCOUNT_TOKEN_EXPIRED_CODE) {
+    return { kind: "likely-deleted" };
+  }
+  return { kind: "unknown" };
+}
+
+/** Stay on this screen when local sign-out fails. Do not open login. */
+export function afterLikelyDeletedSignOut(signedOut: boolean):
+  | { action: "leave"; notice: string }
+  | { action: "stay"; message: string; retry: false } {
+  if (signedOut) return { action: "leave", notice: ACCOUNT_DELETION_LIKELY_DELETED };
+  return { action: "stay", message: ACCOUNT_DELETION_LIKELY_SIGNOUT_FAILED, retry: false };
 }
 
 /** The person decides whether the email was sent. Hiding the app is not a yes. */
@@ -229,9 +279,8 @@ type DeletionResponse = { status: number; json: () => Promise<unknown> };
 export async function requestAccountDeletion(
   token: string | null | undefined,
   fetchImpl: (path: string, init: { method: string; headers: { Authorization: string } }) => Promise<DeletionResponse>,
-  earlierUnknown = false,
 ): Promise<AccountDeletionDecision> {
-  if (!token) return interpretAccountDeletionResponse(401, { error: "Missing credentials" }, false, earlierUnknown);
+  if (!token) return interpretAccountDeletionResponse(401, { error: "Missing credentials" });
   let response: DeletionResponse;
   try {
     response = await fetchImpl(ACCOUNT_DELETION_PATH, {
@@ -239,7 +288,7 @@ export async function requestAccountDeletion(
       headers: { Authorization: `Bearer ${token}` },
     });
   } catch {
-    return interpretAccountDeletionResponse(0, null, true, earlierUnknown);
+    return interpretAccountDeletionResponse(0, null, true);
   }
   let body: unknown = null;
   try {
@@ -247,5 +296,5 @@ export async function requestAccountDeletion(
   } catch {
     body = null;
   }
-  return interpretAccountDeletionResponse(response.status, body, false, earlierUnknown);
+  return interpretAccountDeletionResponse(response.status, body);
 }
