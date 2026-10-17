@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
-import { Lead, User } from '@/app/types';
-import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
+import { Lead } from '@/app/types';
+import { saveLeadAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
+import { postDiscordNotification, readNotificationError } from '@/app/utils/notificationsClient';
 import {
   FALLBACK_SCHEDULING_MANAGER_PHONE,
   schedulingManagerTelDigits,
@@ -31,18 +32,12 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
   const [isSaving, setIsSaving] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [infoSent, setInfoSent] = useState(false);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
   // Cached before the call tap. Reading this during the click must not await.
   const [schedulingManagerPhone, setSchedulingManagerPhone] = useState(FALLBACK_SCHEDULING_MANAGER_PHONE);
 
-  // Load current user and scheduling-manager phone when the modal mounts.
+  // Load the scheduling-manager phone when the modal mounts.
   useEffect(() => {
     let cancelled = false;
-
-    async function loadUser() {
-      const user = await getCurrentUserAsync();
-      if (!cancelled) setCurrentUser(user);
-    }
 
     async function loadSchedulingManagerPhone() {
       const settings = await getAdminSettingsAsync();
@@ -50,7 +45,6 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       if (!cancelled && phone) setSchedulingManagerPhone(phone);
     }
 
-    loadUser();
     loadSchedulingManagerPhone();
 
     return () => {
@@ -89,7 +83,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     try {
       // 0. Validate required fields before doing anything
       const missing: string[] = [];
-      const isBlank = (v: any) => !String(v ?? '').trim();
+      const isBlank = (v: unknown) => !String(v ?? '').trim();
 
       if (isBlank(formData.name)) missing.push('Name');
       if (isBlank(formData.address)) missing.push('Street Address');
@@ -111,84 +105,36 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
         return;
       }
 
-      // 1. Get current user (fallback if state not loaded yet)
-      const user = currentUser || await getCurrentUserAsync();
-      
-      console.log('=== USER DEBUG ===');
-      console.log('Current user from state:', currentUser);
-      console.log('User for message:', user);
-      console.log('User name:', user?.name);
+      const payload: Record<string, unknown> = {
+        kind: 'scheduling',
+        name: formData.name,
+        address: formData.address,
+        city: formData.city,
+        state: formData.state,
+        zip: formData.zip,
+        phone: formData.phone,
+      };
+      const email = formData.email.trim();
+      const bill = String(formData.estimatedBill ?? '').trim();
+      const notes = formData.notes.trim();
+      if (email) payload.email = email;
+      if (bill) payload.estimatedBill = bill;
+      if (notes) payload.notes = notes;
+      if (typeof lead.solarScore === 'number') payload.solarScore = lead.solarScore;
+      if (typeof lead.solarSunshineHours === 'number') payload.solarSunshineHours = lead.solarSunshineHours;
+      if (typeof lead.solarMaxPanels === 'number') payload.solarMaxPanels = lead.solarMaxPanels;
+      if (typeof lead.hasSouthFacingRoof === 'boolean') payload.hasSouthFacingRoof = lead.hasSouthFacingRoof;
 
-      // 2. Get admin settings from Firestore (synced across devices)
-      const settings = await getAdminSettingsAsync();
-
-      console.log('=== SETTINGS DEBUG ===');
-      console.log('Settings loaded from Firestore:', settings);
-      console.log('Webhook URL:', settings?.notificationWebhook);
-
-      if (!settings?.notificationWebhook) {
-        console.error('Settings check failed:', { settings });
-        alert(`Webhook not configured!\n\nGo to Admin → Settings and configure Discord webhook.\n\n(Settings are now synced via Firestore - works on all devices!)`);
-        return;
-      }
-
-      // 3. Build and send webhook notification
-      let solarSection = '';
-      if (lead.solarScore) {
-        solarSection = `\n**☀️ Solar Data:**
-- Solar Score: ${lead.solarScore}/100
-- Sun Hours/Year: ${lead.solarSunshineHours ? Math.round(lead.solarSunshineHours).toLocaleString() : 'N/A'}
-- Max Panels: ${lead.solarMaxPanels || 'N/A'}
-- South-Facing Roof: ${lead.hasSouthFacingRoof !== undefined ? (lead.hasSouthFacingRoof ? 'Yes ✅' : 'No ❌') : 'N/A'}`;
-      }
-
-      console.log('=== FORM DATA DEBUG ===');
-      console.log('Form data:', formData);
-      console.log('Lead name:', formData.name);
-
-      const leadInfo = `
-📞 **Scheduling Manager Request**
-👤 **Sent by:** ${user?.name || 'Unknown Setter'}
-
-**Lead Details:**
-👤 Name: ${formData.name}
-📍 Address: ${formData.address}, ${formData.city}, ${formData.state} ${formData.zip}
-📞 Phone: ${formData.phone || 'N/A'}
-📧 Email: ${formData.email || 'N/A'}
-💰 Est. Bill: ${formData.estimatedBill ? `$${formData.estimatedBill}/mo` : 'N/A'}${solarSection}
-
-📝 Notes: ${formData.notes || 'None'}
-
-🎯 **Action Required:** Call customer to schedule appointment
-      `.trim();
-
-      const payload = settings.notificationType === 'discord'
-        ? { content: leadInfo }
-        : settings.notificationType === 'googlechat'
-        ? { text: leadInfo }
-        : settings.notificationType === 'slack'
-        ? { text: leadInfo }
-        : { message: leadInfo };
-
-      console.log('Sending webhook to:', settings.notificationWebhook);
-
-      // Send webhook
-      const response = await fetch(settings.notificationWebhook, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const response = await postDiscordNotification(payload);
 
       if (response.ok) {
-        console.log('✅ Webhook sent successfully');
         setInfoSent(true);
       } else {
-        console.error('❌ Webhook failed:', response.status, response.statusText);
-        alert(`Failed to send notification: ${response.status} ${response.statusText}`);
+        alert(await readNotificationError(response));
       }
-    } catch (err: any) {
-      console.error('❌ Webhook error:', err);
-      alert(`Error sending notification: ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      alert(`Error sending notification: ${message}`);
     } finally {
       setIsSending(false);
     }

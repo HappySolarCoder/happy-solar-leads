@@ -6,12 +6,12 @@ import { ArrowLeft, Save, Bell, MessageSquare, Send } from 'lucide-react';
 import { canManageUsers } from '@/app/types';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getAdminSettingsAsync, saveAdminSettingsAsync, AdminSettings } from '@/app/utils/adminSettings';
+import { postDiscordNotification, readNotificationError } from '@/app/utils/notificationsClient';
 
 export default function AdminSettingsPage() {
   const router = useRouter();
   const [settings, setSettings] = useState<AdminSettings>({
     schedulingManagerPhone: '(716) 272-9889',
-    notificationWebhook: '',
     notificationType: 'discord',
   });
   const [isSaving, setIsSaving] = useState(false);
@@ -56,43 +56,27 @@ export default function AdminSettingsPage() {
     try {
       await saveAdminSettingsAsync(settings);
       alert('Settings saved successfully! ✅\n\nNow synced across all devices.');
-    } catch (error: any) {
-      alert(`Error saving settings: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Error saving settings: ${message}`);
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleTest = async () => {
-    if (!settings.notificationWebhook) {
-      alert('Please enter a webhook URL first');
-      return;
-    }
-
     setTestResult('Sending...');
 
     try {
-      const payload = settings.notificationType === 'discord'
-        ? { content: '🧪 Test notification from Raydar - Scheduling Manager integration working!' }
-        : settings.notificationType === 'googlechat'
-        ? { text: '🧪 Test notification from Raydar - Scheduling Manager integration working!' }
-        : settings.notificationType === 'slack'
-        ? { text: '🧪 Test notification from Raydar - Scheduling Manager integration working!' }
-        : { message: '🧪 Test notification from Raydar - Scheduling Manager integration working!' };
-
-      const response = await fetch(settings.notificationWebhook, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
+      const response = await postDiscordNotification({ kind: 'test' });
       if (response.ok) {
         setTestResult('✅ Success! Check your messaging app.');
       } else {
-        setTestResult(`❌ Failed: ${response.status} ${response.statusText}`);
+        setTestResult(`❌ ${await readNotificationError(response)}`);
       }
-    } catch (err: any) {
-      setTestResult(`❌ Error: ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      setTestResult(`❌ Error: ${message}`);
     }
   };
 
@@ -148,7 +132,7 @@ export default function AdminSettingsPage() {
                 placeholder="(716) 272-9889"
               />
               <p className="text-xs text-[#718096] mt-1">
-                This number will be dialed when setters click "Call Scheduling Manager"
+                This number will be dialed when setters click Call Scheduling Manager
               </p>
             </div>
           </div>
@@ -173,7 +157,12 @@ export default function AdminSettingsPage() {
               </label>
               <select
                 value={settings.notificationType}
-                onChange={(e) => setSettings({ ...settings, notificationType: e.target.value as any })}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === 'discord' || value === 'googlechat' || value === 'slack' || value === 'webhook') {
+                    setSettings({ ...settings, notificationType: value });
+                  }
+                }}
                 className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A] text-[#2D3748]"
               >
                 <option value="discord">Discord</option>
@@ -183,19 +172,12 @@ export default function AdminSettingsPage() {
               </select>
             </div>
 
-            <div>
-              <label className="block text-sm font-semibold text-[#2D3748] mb-2">
-                Webhook URL
-              </label>
-              <input
-                type="url"
-                value={settings.notificationWebhook}
-                onChange={(e) => setSettings({ ...settings, notificationWebhook: e.target.value })}
-                className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A] text-[#2D3748] font-mono text-sm"
-                placeholder="https://discord.com/api/webhooks/..."
-              />
+            <div className="p-4 bg-[#F7FAFC] rounded-lg border border-[#E2E8F0]">
+              <p className="text-sm text-[#2D3748]">
+                Discord notifications are sent by the server. The webhook URL is not loaded in the browser.
+              </p>
               <p className="text-xs text-[#718096] mt-1">
-                Get this from your messaging app's webhook settings
+                An admin sets DISCORD_NOTIFICATION_WEBHOOK_URL on the server. Until that is set, the server reads the existing saved webhook itself.
               </p>
             </div>
 
@@ -224,9 +206,9 @@ export default function AdminSettingsPage() {
                   <ol className="list-decimal list-inside space-y-1 ml-2">
                     <li>Go to your Discord server settings</li>
                     <li>Navigate to Integrations → Webhooks</li>
-                    <li>Click "New Webhook"</li>
-                    <li>Name it "Raydar Scheduling Manager"</li>
-                    <li>Copy the webhook URL and paste it above</li>
+                    <li>Click New Webhook</li>
+                    <li>Name it Raydar Scheduling Manager</li>
+                    <li>Give the webhook URL to an admin to store on the server. Do not paste it into Raydar.</li>
                   </ol>
                 </>
               )}
@@ -236,9 +218,9 @@ export default function AdminSettingsPage() {
                   <ol className="list-decimal list-inside space-y-1 ml-2">
                     <li>Open Google Chat and go to the desired space</li>
                     <li>Click space name → Manage webhooks</li>
-                    <li>Click "Add webhook"</li>
-                    <li>Name it "Raydar Scheduling Manager"</li>
-                    <li>Copy the webhook URL and paste it above</li>
+                    <li>Click Add webhook</li>
+                    <li>Name it Raydar Scheduling Manager</li>
+                    <li>Give the webhook URL to an admin to store on the server. Do not paste it into Raydar.</li>
                   </ol>
                 </>
               )}
@@ -248,9 +230,9 @@ export default function AdminSettingsPage() {
                   <ol className="list-decimal list-inside space-y-1 ml-2">
                     <li>Go to api.slack.com/apps</li>
                     <li>Create new app → From scratch</li>
-                    <li>Enable "Incoming Webhooks"</li>
+                    <li>Enable Incoming Webhooks</li>
                     <li>Add New Webhook to Workspace</li>
-                    <li>Copy the webhook URL and paste it above</li>
+                    <li>Give the webhook URL to an admin to store on the server. Do not paste it into Raydar.</li>
                   </ol>
                 </>
               )}
