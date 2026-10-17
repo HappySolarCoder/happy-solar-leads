@@ -6,18 +6,18 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-test("iOS and Android stay on release 14.14 build 154 together", () => {
+test("iOS and Android stay on release 14.15 build 155 together", () => {
   const release = JSON.parse(readFileSync(path.join(root, "app/mobile/_lib/release.json"), "utf8"));
-  assert.equal(release.version, "14.14");
-  assert.equal(release.build, 154);
+  assert.equal(release.version, "14.15");
+  assert.equal(release.build, 155);
   const project = readFileSync(path.join(root, "ios/App/App.xcodeproj/project.pbxproj"), "utf8");
   const versions = [...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]);
   const builds = [...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]);
-  assert.deepEqual(versions, ["14.14", "14.14"]);
-  assert.deepEqual(builds, ["154", "154"]);
+  assert.deepEqual(versions, ["14.15", "14.15"]);
+  assert.deepEqual(builds, ["155", "155"]);
   const gradle = readFileSync(path.join(root, "android/app/build.gradle"), "utf8");
-  assert.match(gradle, /versionName "14\.14"/);
-  assert.match(gradle, /versionCode 154\b/);
+  assert.match(gradle, /versionName "14\.15"/);
+  assert.match(gradle, /versionCode 155\b/);
 });
 
 test("iOS declares that the app does not use non-exempt encryption", () => {
@@ -58,9 +58,9 @@ test("iPhone-only submission drops the untested iPad target and the leftover arm
   assert.doesNotMatch(plist, /UIRequiredDeviceCapabilities/);
 });
 
-test("installers look for the 14.14 configuration before older folders", () => {
+test("installers look for the 14.15 configuration before older folders", () => {
   for (const script of ["scripts/mobile/install-ios.sh", "scripts/mobile/install-android.sh"]) {
     const source = readFileSync(path.join(root, script), "utf8");
-    assert.match(source, /14\.14-ios 14\.14-android 14\.13-ios/);
+    assert.match(source, /14\.15-ios 14\.15-android 14\.14-ios/);
   }
 });

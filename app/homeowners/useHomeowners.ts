@@ -29,6 +29,7 @@ export function useHomeowners(
     let loader = loaders.get(scope);
     if (!loader) {
       loader = new HomeownerLoader({
+        accountId: uid,
         read: (tile) => readTile(scope, tile),
         save: (tile) => saveTile(scope, tile),
         fetch: (range, zoom) => readHomeownerRange(range, zoom, uid),

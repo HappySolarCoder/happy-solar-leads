@@ -1,6 +1,9 @@
 import { apiFetch } from '@/app/utils/apiFetch';
 import { auth, db } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { resolveSchedulingRead, SchedulingAccessError } from './schedulingAccess';
+
+export { SchedulingAccessError };
 
 export interface AdminSettings {
   schedulingManagerPhone: string;
@@ -11,35 +14,34 @@ export interface AdminSettings {
 const SETTINGS_DOC_ID = 'global';
 
 export async function getAdminSettingsAsync(): Promise<AdminSettings | null> {
-  try {
+  const uid = auth?.currentUser?.uid || '';
+  const result = await resolveSchedulingRead(uid, async () => {
     if (!db) {
       console.error('Firestore not initialized');
-      // Fallback to localStorage
-      const localStr = localStorage.getItem('raydar_admin_settings');
-      return localStr ? JSON.parse(localStr) : null;
+      const localStr = typeof localStorage !== 'undefined' ? localStorage.getItem('raydar_admin_settings') : null;
+      return localStr ? JSON.parse(localStr) as AdminSettings : null;
     }
 
     const docRef = doc(db, 'adminSettings', SETTINGS_DOC_ID);
     const docSnap = await getDoc(docRef);
-    
+
     if (docSnap.exists()) {
       return docSnap.data() as AdminSettings;
     }
-    
-    // Fallback to localStorage for backwards compatibility
-    const localStr = localStorage.getItem('raydar_admin_settings');
+
+    // Fallback to localStorage for backwards compatibility. Never reached after a denial.
+    const localStr = typeof localStorage !== 'undefined' ? localStorage.getItem('raydar_admin_settings') : null;
     if (localStr) {
-      const local = JSON.parse(localStr);
-      // Migrate to Firestore
+      const local = JSON.parse(localStr) as AdminSettings;
       await saveAdminSettingsAsync(local);
       return local;
     }
-    
+
     return null;
-  } catch (error) {
-    console.error('Error getting admin settings:', error);
-    return null;
-  }
+  });
+  if (result.status === 'denied') throw new SchedulingAccessError();
+  if (result.status === 'missing') return null;
+  return result.settings;
 }
 
 export async function saveAdminSettingsAsync(settings: AdminSettings): Promise<void> {

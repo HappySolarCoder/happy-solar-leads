@@ -18,6 +18,7 @@ import { getLeadsAsync, getUsersAsync } from "@/app/utils/storage";
 import { getDispositionsAsync } from "@/app/utils/dispositions";
 import { getCurrentAuthUser } from "@/app/utils/auth";
 import { Lead, User, canSeeAllLeads } from "@/app/types";
+import { leadActorIds, scopeTeamTotals } from "@/app/utils/testAccount";
 import { Disposition, isKnockStatus } from "@/app/types/disposition";
 import ActivityStream from "@/app/components/ActivityStream";
 
@@ -85,8 +86,8 @@ export default function DashboardPage() {
 
   if (!currentUser) return null;
 
-  // Filter leads based on user role
-  const visibleLeads = canSeeAllLeads(currentUser.role)
+  // Filter leads based on user role, then drop synthetic accounts from real totals.
+  const roleLeads = canSeeAllLeads(currentUser.role)
     ? leads
     : leads.filter(
         (l) =>
@@ -94,6 +95,14 @@ export default function DashboardPage() {
           l.claimedBy === currentUser.id ||
           l.assignedTo === currentUser.id,
       );
+  const scoped = scopeTeamTotals({
+    viewer: currentUser,
+    users,
+    records: roleLeads,
+    actorIds: leadActorIds,
+  });
+  const visibleLeads = scoped.records;
+  const roster = scoped.users;
 
   // Get today's date (start of day)
   const today = new Date();
@@ -183,7 +192,7 @@ export default function DashboardPage() {
   const activeSetterIds = new Set(
     todayLeads.map((l) => l.claimedBy).filter(Boolean),
   );
-  const activeSetters = users.filter((u) => activeSetterIds.has(u.id));
+  const activeSetters = roster.filter((u) => activeSetterIds.has(u.id));
 
   return (
     <div className="min-h-screen bg-white">

@@ -6,6 +6,7 @@ import { Brain, TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Clock, Tar
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { User, Lead } from '@/app/types';
+import { leadActorIds, scopeTeamTotals } from '@/app/utils/testAccount';
 import { canSeeAllLeads } from '@/app/types';
 import {
   calculateDailyMetrics,
@@ -51,8 +52,14 @@ export default function AIManagerPage() {
         getLeadsAsync(),
       ]);
 
-      setUsers(loadedUsers.filter(u => u.role === 'setter' || u.role === 'closer'));
-      setLeads(loadedLeads);
+      const scoped = scopeTeamTotals({
+        viewer: user,
+        users: loadedUsers,
+        records: loadedLeads,
+        actorIds: leadActorIds,
+      });
+      setUsers(scoped.users.filter(u => u.role === 'setter' || u.role === 'closer'));
+      setLeads(scoped.records);
       setLoading(false);
     }
     loadData();

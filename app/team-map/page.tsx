@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { ArrowLeft, ChevronDown, ChevronUp, Users, X } from "lucide-react";
@@ -16,6 +16,13 @@ import { getCurrentAuthUser } from "@/app/utils/auth";
 import { getLeadsAsync } from "@/app/utils/storage";
 import { canSeeTeamData, type Lead, type User } from "@/app/types";
 import { isKnockStatus } from "@/app/types/disposition";
+import {
+  membersFromActiveUsers,
+  ownTeamMember,
+  subscribeActiveTeamLocations,
+  TEAM_VIEW_UNAVAILABLE,
+} from "@/app/utils/teamDirectory";
+import { countRecordForViewer } from "@/app/utils/testAccount";
 import { useOptionalMobileData } from "@/app/mobile/_components/MobileDataProvider";
 import { useDeviceNow } from "@/app/mobile/_components/useDeviceNow";
 import type { TeamMember } from "@/app/components/TeamMapView";
@@ -39,6 +46,7 @@ export default function TeamMapPage() {
   }>({ user: null, leads: [] });
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [teamNote, setTeamNote] = useState("");
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [capped, setCapped] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -48,6 +56,10 @@ export default function TeamMapPage() {
   const user = shared?.user || fallback.user;
   const leads = shared?.leads || fallback.leads;
   const allowed = !!user && canSeeTeamData(user.role);
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  });
 
   // The installed app reuses its existing lead subscription. Legacy web entry
   // retains its existing cache, without adding a second mobile collection read.
@@ -78,47 +90,42 @@ export default function TeamMapPage() {
   }, [hasShared]);
 
   useEffect(() => {
-    if (!allowed || !db) return;
-    // Only while this screen is open; retain the existing active-user listener,
-    // now bounded, and never load the homeowners collection here.
-    return onSnapshot(
-      query(collection(db, "users"), where("isActive", "==", true), limit(500)),
-      (snapshot) => {
+    const database = db;
+    if (!allowed || !database || !user?.id) return;
+    // Only while this screen is open. A permission-denied unsubscribes once and
+    // does not attach again for this account.
+    return subscribeActiveTeamLocations({
+      viewerId: user.id,
+      attach: (onNext, onError) =>
+        onSnapshot(
+          query(collection(database, "users"), where("isActive", "==", true), limit(500)),
+          (snapshot) => onNext({
+            size: snapshot.size,
+            docs: snapshot.docs.map((doc) => ({
+              id: doc.id,
+              data: () => doc.data() as Record<string, unknown>,
+            })),
+          }),
+          onError,
+        ),
+      onNext: (snapshot) => {
         setError("");
+        setTeamNote("");
         setCapped(snapshot.size === 500);
-        const next: TeamMember[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data(),
-            location = data.currentLocation;
-          const timestamp =
-            location?.timestamp?.toDate?.() ||
-            (location?.timestamp ? new Date(location.timestamp) : null);
-          if (
-            !Number.isFinite(location?.lat) ||
-            !Number.isFinite(location?.lng) ||
-            Math.abs(location.lat) > 90 ||
-            Math.abs(location.lng) > 180 ||
-            !timestamp ||
-            !Number.isFinite(timestamp.getTime())
-          )
-            return;
-          next.push({
-            id: doc.id,
-            name: data.name || "Team member",
-            color: /^#[\da-f]{6}$/i.test(data.color) ? data.color : "#52738e",
-            lat: location.lat,
-            lng: location.lng,
-            lastUpdate: timestamp,
-            status: data.status || "In field",
-          });
-        });
-        setMembers(next);
+        setMembers(membersFromActiveUsers(snapshot.docs, userRef.current));
       },
-      () =>
+      onDenied: () => {
+        setError("");
+        setTeamNote(TEAM_VIEW_UNAVAILABLE);
+        setCapped(false);
+        const self = ownTeamMember(userRef.current);
+        setMembers(self ? [self] : []);
+      },
+      onUnavailable: () =>
         setError(
           "Recent team locations are unavailable. Check your connection or account access.",
         ),
-    );
+    });
   }, [allowed, user?.id]);
 
   const active = useMemo(
@@ -150,6 +157,7 @@ export default function TeamMapPage() {
     if (filter === "all") start = 0;
     const result = new Map<string, { doors: number; appointments: number }>();
     for (const lead of leads) {
+      if (!countRecordForViewer(user, lead)) continue;
       if (!lead.claimedBy || !lead.dispositionedAt) continue;
       const at = new Date(lead.dispositionedAt).getTime();
       if (!Number.isFinite(at) || at < start || at >= end) continue;
@@ -160,7 +168,7 @@ export default function TeamMapPage() {
       result.set(lead.claimedBy, count);
     }
     return result;
-  }, [leads, filter, now]);
+  }, [leads, filter, now, user]);
 
   if (!hasShared && !ready)
     return (
@@ -211,6 +219,9 @@ export default function TeamMapPage() {
             <Users size={21} />
           </button>
         </div>
+        {teamNote && (
+          <p className="mt-2 text-xs text-[#65778a]">{teamNote}</p>
+        )}
         {error && (
           <p role="alert" className="mt-2 text-xs text-amber-800">
             {error}

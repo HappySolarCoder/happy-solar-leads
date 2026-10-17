@@ -8,6 +8,12 @@ import {
   getDocsFromServer,
 } from "firebase/firestore";
 import { auth, db } from "@/app/utils/firebase";
+import { isPermissionDenied } from "@/app/utils/permissionDenied";
+import {
+  HOMEOWNER_LIMITED_NOTE,
+  homeownersAccessDenied,
+  markHomeownersAccessDenied,
+} from "./access";
 import {
   hashNumber,
   numberHash,
@@ -23,6 +29,9 @@ export async function readHomeownerRange(
   zoom: number,
   uid: string,
 ) {
+  if (homeownersAccessDenied(uid)) {
+    throw Object.assign(new Error(HOMEOWNER_LIMITED_NOTE), { code: "permission-denied" });
+  }
   if (!db || auth?.currentUser?.uid !== uid)
     throw Error("Sign in to view homeowner records.");
   if (
@@ -44,7 +53,10 @@ export async function readHomeownerRange(
       endAt(last),
       limit(QUERY_LIMIT),
     ),
-  );
+  ).catch((error: unknown) => {
+    if (isPermissionDenied(error)) markHomeownersAccessDenied(uid);
+    throw error;
+  });
   if (auth?.currentUser?.uid !== uid) throw Error("Account changed.");
   const docs = snapshot.docs
     .map((d) => parseHomeowner(d.id, d.data()))
