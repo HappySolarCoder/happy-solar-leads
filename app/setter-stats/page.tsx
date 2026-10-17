@@ -102,7 +102,14 @@ export default function DataDashboard() {
         }
       }
 
-      const loadedUsers = await getUsersAsync();
+      let loadedUsers: User[] = [];
+      try {
+        loadedUsers = await getUsersAsync();
+      } catch (error) {
+        console.error('Team performance roster failed:', error);
+        loadedUsers = [];
+      }
+      if (loadedUsers.length === 0) loadedUsers = [user];
       const loadedDispositions = await getDispositionsAsync();
       setLeads(loadedLeads);
       setUsers(loadedUsers);
@@ -242,9 +249,31 @@ export default function DataDashboard() {
     return metricsArray;
   };
 
-  const setterMetrics = calculateSetterMetrics().filter((metric) =>
+  const activityMetrics = calculateSetterMetrics().filter((metric) =>
     canSeeAllLeads(currentUser?.role) || metric.userId === currentUser?.id
   );
+
+  // A denied directory (demo) or an empty roster must still show this user.
+  const rosterIsSelfOnly = users.length <= 1;
+  const setterMetrics = (() => {
+    if (!currentUser || !rosterIsSelfOnly) return activityMetrics;
+    if (activityMetrics.some((metric) => metric.userId === currentUser.id)) return activityMetrics;
+    return [
+      ...activityMetrics,
+      {
+        userId: currentUser.id,
+        userName: currentUser.name || 'You',
+        knocks: 0,
+        conversations: 0,
+        appointments: 0,
+        sales: 0,
+        notHome: 0,
+        notInterested: 0,
+        goBacksScheduled: 0,
+        goBacksConverted: 0,
+      },
+    ];
+  })();
 
   // Calculate team totals
   const teamTotals = setterMetrics.reduce(
