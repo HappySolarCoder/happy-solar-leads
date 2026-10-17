@@ -4,8 +4,13 @@ import { useState, useEffect } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
-import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
+import { getAdminSettingsAsync, SchedulingAccessError } from '@/app/utils/adminSettings';
 import { sendSchedulingWebhook } from '@/app/utils/schedulingWebhook';
+import {
+  beginSchedulingSend,
+  SCHEDULING_UNAVAILABLE_MESSAGE,
+  schedulingAction,
+} from '@/app/utils/schedulingAccess';
 import { auth } from '@/app/utils/firebase';
 import {
   FALLBACK_SCHEDULING_MANAGER_PHONE,
@@ -41,6 +46,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
   const [isSending, setIsSending] = useState(false);
   const [infoSent, setInfoSent] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [schedulingUnavailable, setSchedulingUnavailable] = useState(false);
   // Cached before the call tap. Reading this during the click must not await.
   const [schedulingManagerPhone, setSchedulingManagerPhone] = useState(FALLBACK_SCHEDULING_MANAGER_PHONE);
 
@@ -54,9 +60,13 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
     }
 
     async function loadSchedulingManagerPhone() {
-      const settings = await getAdminSettingsAsync();
-      const phone = settings?.schedulingManagerPhone?.trim();
-      if (!cancelled && phone) setSchedulingManagerPhone(phone);
+      try {
+        const settings = await getAdminSettingsAsync();
+        const action = schedulingAction(settings ? { status: 'ready', settings } : { status: 'missing' });
+        if (!cancelled && action.phone) setSchedulingManagerPhone(action.phone);
+      } catch (error) {
+        if (!cancelled && error instanceof SchedulingAccessError) setSchedulingUnavailable(true);
+      }
     }
 
     loadUser();
@@ -101,6 +111,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
   };
 
   const handleSendInfo = async () => {
+    if (schedulingUnavailable) return;
     setIsSending(true);
 
     try {
@@ -133,11 +144,16 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
       if (mobileMode && (!user || auth?.currentUser?.uid !== user.id)) throw Error('Sign in again before sending this request.');
       
 
-      // 2. Get admin settings from Firestore (synced across devices)
+      // 2. Get admin settings from Firestore (synced across devices).
+      // A denied read disables scheduling. It must not use a stored or hardcoded webhook.
       const settings = await getAdminSettingsAsync();
-
-
-      if (!settings?.notificationWebhook) {
+      const action = schedulingAction(settings ? { status: 'ready', settings } : { status: 'missing' });
+      const decision = beginSchedulingSend(schedulingUnavailable, action);
+      if (decision === 'disabled') {
+        setSchedulingUnavailable(true);
+        return;
+      }
+      if (decision === 'unconfigured') {
         alert(`Webhook not configured!\n\nGo to Admin → Settings and configure Discord webhook.\n\n(Settings are now synced via Firestore - works on all devices!)`);
         return;
       }
@@ -174,17 +190,17 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
 🎯 **Action Required:** Call customer to schedule appointment
       `.trim();
 
-      const payload: Record<string, string> = settings.notificationType === 'discord'
+      const payload: Record<string, string> = settings?.notificationType === 'discord'
         ? { content: leadInfo }
-        : settings.notificationType === 'googlechat'
+        : settings?.notificationType === 'googlechat'
         ? { text: leadInfo }
-        : settings.notificationType === 'slack'
+        : settings?.notificationType === 'slack'
         ? { text: leadInfo }
         : { message: leadInfo };
 
 
-      // Send webhook
-      const response = await sendSchedulingWebhook(settings.notificationWebhook, payload);
+      // Send webhook. beginSchedulingSend already refused a missing or denied URL.
+      const response = await sendSchedulingWebhook(action.webhook as string, payload);
 
       if (response.ok) {
         setInfoSent(true);
@@ -194,6 +210,10 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
         alert(`Failed to send notification: ${response.status} ${response.statusText}`);
       }
     } catch (err) {
+      if (err instanceof SchedulingAccessError) {
+        setSchedulingUnavailable(true);
+        return;
+      }
       console.error('❌ Webhook error:', err);
       alert(`Error sending notification: ${(err as Error).message}`);
     } finally {
@@ -385,10 +405,13 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
             </button>
 
             {/* Step 1: Send Info */}
+            {schedulingUnavailable && (
+              <p role="status" className="text-sm text-center text-[#4A5568]">{SCHEDULING_UNAVAILABLE_MESSAGE}</p>
+            )}
             {!infoSent ? (
               <button
                 onClick={handleSendInfo}
-                disabled={isSending}
+                disabled={isSending || schedulingUnavailable}
                 className="w-full px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <Send className="w-5 h-5" />

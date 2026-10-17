@@ -1,5 +1,12 @@
 import { inPinScope } from "@/app/mobile/_lib/pinScope";
 import { distanceBetween } from "geofire-common";
+import { isPermissionDenied } from "@/app/utils/permissionDenied";
+import {
+  HOMEOWNER_LIMITED_NOTE,
+  homeownersAccessDenied,
+  homeownerFailureMessage,
+  markHomeownersAccessDenied,
+} from "./access";
 import {
   applyRead,
   inView,
@@ -35,6 +42,7 @@ export const EMPTY_HOMES: HomeownerState = {
   queries: 0,
 };
 type Dependencies = {
+  accountId?: string | null;
   read: (tile: string) => Promise<HomeTile>;
   save: (tile: HomeTile) => Promise<void>;
   fetch: (
@@ -228,6 +236,11 @@ export class HomeownerLoader {
       for (let index = 0; index < work.length; index++) {
         const { tile, r } = work[index];
         if (!active() || !this.deps.online()) break;
+        if (homeownersAccessDenied(this.deps.accountId)) {
+          error = HOMEOWNER_LIMITED_NOTE;
+          partial = false;
+          break;
+        }
         if (
           queries >= MAX_VIEW_QUERIES ||
           reads + QUERY_LIMIT > MAX_VIEW_READS
@@ -261,12 +274,13 @@ export class HomeownerLoader {
         await this.deps.save(updated);
       }
     } catch (e) {
-      const x = e as { code?: string; message?: string };
-      if (this.deps.online())
-        error =
-          x.code === "permission-denied"
-            ? "Homeowner access is not enabled for this account."
-            : x.message || "Homeowner records are temporarily unavailable.";
+      if (this.deps.online()) {
+        if (isPermissionDenied(e)) {
+          markHomeownersAccessDenied(this.deps.accountId);
+          partial = false;
+        }
+        error = homeownerFailureMessage(e);
+      }
     }
     if (!error) partial = [...plan].some(([key,ranges]) => {
       const tile=tiles.get(key);if(!tile)return true;

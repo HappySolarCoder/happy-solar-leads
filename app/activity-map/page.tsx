@@ -8,6 +8,7 @@ import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User } from '@/app/types';
 import { ensureUserColors } from '@/app/utils/userColors';
+import { leadActorIds, scopeTeamTotals } from '@/app/utils/testAccount';
 import { formatTimeEST, formatDateEST } from '@/app/utils/timezone';
 
 // Dynamic import for map (client-side only)
@@ -75,8 +76,14 @@ export default function ActivityMapPage() {
         const loadedLeads = await getLeadsAsync();
         const loadedUsers = await getUsersAsync();
 
-        setAllLeads(loadedLeads);
-        setUsers(ensureUserColors(loadedUsers));
+        const scoped = scopeTeamTotals({
+          viewer: user,
+          users: loadedUsers,
+          records: loadedLeads,
+          actorIds: leadActorIds,
+        });
+        setAllLeads(scoped.records);
+        setUsers(ensureUserColors(scoped.users));
         setIsLoading(false);
       } catch (error) {
         console.error('Error loading activity data:', error);
@@ -92,14 +99,20 @@ export default function ActivityMapPage() {
     const refreshInterval = setInterval(async () => {
       try {
         const loadedLeads = await getLeadsAsync();
-        setAllLeads(loadedLeads);
+        const scoped = scopeTeamTotals({
+          viewer: currentUser,
+          users,
+          records: loadedLeads,
+          actorIds: leadActorIds,
+        });
+        setAllLeads(scoped.records);
       } catch (error) {
         console.error('Error refreshing activity data:', error);
       }
     }, 30000); // 30 seconds
 
     return () => clearInterval(refreshInterval);
-  }, []);
+  }, [currentUser, users]);
 
   // Process activity data when date or user filter changes
   useEffect(() => {
@@ -110,8 +123,14 @@ export default function ActivityMapPage() {
     const dateStart = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
     const dateEnd = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
 
+    const scoped = scopeTeamTotals({
+      viewer: currentUser,
+      users,
+      records: allLeads,
+      actorIds: leadActorIds,
+    });
     // Filter leads knocked on selected date
-    const knockedLeads = allLeads.filter(lead => {
+    const knockedLeads = scoped.records.filter(lead => {
       if (!lead.dispositionedAt) return false;
       
       const knockDate = new Date(lead.dispositionedAt);
@@ -146,7 +165,7 @@ export default function ActivityMapPage() {
     const activities: UserActivity[] = [];
     
     activitiesByUser.forEach((knocks, userId) => {
-      const user = users.find(u => u.id === userId);
+      const user = scoped.users.find(u => u.id === userId);
       if (!user) return;
 
       // Sort knocks by time
@@ -216,7 +235,7 @@ export default function ActivityMapPage() {
     activities.sort((a, b) => b.totalKnocks - a.totalKnocks);
 
     setUserActivities(activities);
-  }, [selectedDate, allLeads, users]);
+  }, [selectedDate, allLeads, users, currentUser]);
 
   // Get filtered activities based on selected user
   const filteredActivities = selectedUserId === 'all' 

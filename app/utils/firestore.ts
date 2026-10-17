@@ -15,9 +15,10 @@ import {
   limit,
   writeBatch
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import { Lead, User } from '@/app/types';
 import { mapUserDoc, mapUserDocs } from './mapUserDoc';
+import { readUserDirectory } from './directoryUsers';
 import { eventMillis } from '@/app/homeowners/houseIdentity';
 
 // Collections
@@ -508,12 +509,19 @@ export async function getAllUsers(): Promise<User[]> {
     console.error('[getAllUsers] Failed to load users collection:', error);
     throw error;
   }
+  const uid = auth?.currentUser?.uid || '';
   try {
-    const usersRef = collection(db, USERS_COLLECTION);
-    const snapshot = await getDocs(usersRef);
-    // PR 125 parse: mixed Timestamp / Date / string createdAt must not throw.
-    // Per-doc wrap is in mapUserDocs — one bad field skips that field, not the roster.
-    return mapUserDocs(snapshot.docs);
+    return await readUserDirectory(uid, {
+      listUsers: async () => {
+        const usersRef = collection(db!, USERS_COLLECTION);
+        const snapshot = await getDocs(usersRef);
+        // PR 125 parse: mixed Timestamp / Date / string createdAt must not throw.
+        // Per-doc wrap is in mapUserDocs — one bad field skips that field, not the roster.
+        return mapUserDocs(snapshot.docs);
+      },
+      // Own-doc get stays allowed when the collection list is denied.
+      ownUser: async () => (uid ? getUser(uid) : null),
+    });
   } catch (error) {
     console.error('[getAllUsers] Failed to load users collection:', error);
     throw error;

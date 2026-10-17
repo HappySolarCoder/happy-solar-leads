@@ -1,5 +1,6 @@
 // Virtual Manager AI - Performance Analysis & Coaching
 import { Lead, User } from '@/app/types';
+import { isTestDataRecord } from '@/app/utils/testAccount';
 
 export interface DailyMetrics {
   date: string;
@@ -55,8 +56,9 @@ export function calculateDailyMetrics(
 ): DailyMetrics {
   const dateStr = date.toISOString().split('T')[0];
   
+  const countableLeads = leads.filter(lead => !isTestDataRecord(lead));
   // Debug: Check how many leads belong to this setter
-  const setterLeads = leads.filter(l => l.claimedBy === setterId);
+  const setterLeads = countableLeads.filter(l => l.claimedBy === setterId);
   const leadsWithGPS = setterLeads.filter(l => l.knockGpsTimestamp);
   
   // Show sample GPS dates
@@ -89,7 +91,7 @@ export function calculateDailyMetrics(
   console.log(`[calculateDailyMetrics] ${setterName}: ${setterLeads.length} claimed leads, ${leadsWithGPS.length} with GPS timestamp`);
   
   // Filter leads for this setter and this date
-  const todayLeads = leads.filter(lead => {
+  const todayLeads = countableLeads.filter(lead => {
     if (lead.claimedBy !== setterId) return false;
     if (!lead.knockGpsTimestamp) return false;
     
