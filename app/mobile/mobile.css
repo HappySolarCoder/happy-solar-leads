@@ -862,6 +862,49 @@
   color: #617382;
   margin-top: 10px;
 }
+.rm-privacy {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rm-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.rm-delete-account {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 12px 8px;
+  background: transparent;
+  border: 0;
+  color: #8b3a3a;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+.rm-dialog .rm-copy {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--rm-ink);
+}
+.rm-dialog .rm-quiet {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-top: 8px;
+  padding: 8px 0;
+  background: transparent;
+  border: 0;
+  color: var(--rm-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+.rm-dialog a.rm-primary {
+  text-decoration: none;
+}
 .rm-field-shell {
   height: var(--app-height, 100dvh);
   display: flex;

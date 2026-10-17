@@ -27,6 +27,8 @@ import {
 } from "../_components/MobileShell";
 import { useMobileData } from "../_components/useMobileData";
 import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
+import { PRIVACY_POLICY_URL } from '../_lib/accountPolicy';
+import AccountDeletion from '../_components/AccountDeletion';
 
 export default function MorePage() {
   const { user, loading } = useMobileData();
@@ -123,6 +125,10 @@ export default function MorePage() {
           <AppointmentSyncPanel />
         )}
         {error && <MobileNotice>{error}</MobileNotice>}
+        <a className="rm-privacy" href={PRIVACY_POLICY_URL} target="_blank" rel="noopener noreferrer">
+          Privacy policy
+        </a>
+        {user && <AccountDeletion user={user} onSignedOut={() => router.replace("/login")} />}
         <button className="rm-signout" onClick={logout} disabled={signingOut}>
           <LogOut size={18} />
           {signingOut ? "Signing out…" : "Sign out"}
