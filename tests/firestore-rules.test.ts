@@ -117,7 +117,22 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
       status: 'new',
       territoryId: 'realTerritory',
     });
+    await db.collection('leads').doc('territoryAddClaimed').set({
+      status: 'new',
+      territoryId: 'realTerritory',
+    });
+    await db.collection('leads').doc('territoryAddAssigned').set({
+      status: 'new',
+      territoryId: 'realTerritory',
+    });
     await db.collection('leads').doc('unclaimedLead').set({ status: 'new' });
+    await db.collection('leads').doc('claimAddAssigned').set({ status: 'new' });
+    await db.collection('leads').doc('claimAddTerritory').set({ status: 'new' });
+    await db.collection('leads').doc('managerAddClaimed').set({ status: 'new' });
+    await db.collection('leads').doc('managerAddAssigned').set({ status: 'new' });
+    await db.collection('leads').doc('adminAddClaimed').set({ status: 'new' });
+    await db.collection('leads').doc('adminAddAssigned').set({ status: 'new' });
+    await db.collection('leads').doc('adminKnockLead').set({ status: 'new' });
     await db.collection('leads').doc('placementLead').set({ status: 'new' });
     await db.collection('leads').doc('clearLead').set({
       status: 'new',
@@ -164,11 +179,21 @@ function cases(): RuleCase[] {
     { id: 'demo dispositions', uid: 'demo', run: (db) => db.collection('dispositions').doc('not-home').get(), expectTight: 'allow' },
     { id: 'demo easter egg', uid: 'demo', run: (db) => db.collection('easterEggs').doc('egg-1').get(), expectTight: 'deny' },
     { id: 'demo knock own lead', uid: 'demo', run: (db) => lead('TEST-appreview-lead-2')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'allow' },
+    { id: 'demo knock sets claimedBy to real rep', uid: 'demo', run: (db) => lead('TEST-appreview-lead-3')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: 'realSetter' }), expectTight: 'deny' },
     { id: 'demo knock real lead', uid: 'demo', run: (db) => lead('realLead')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'deny' },
     { id: 'demo manual create', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo').set({ source: 'manually-added', setterId: 'demo', status: 'new' }), expectTight: 'deny' },
     { id: 'demo create test lead in own TEST territory', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-test').set({
       source: 'manually-added', testData: true, claimedBy: 'demo', setterId: 'demo', territoryId: 'TEST-appreview-territory', status: 'new',
     }), expectTight: 'allow' },
+    { id: 'demo create test lead assigned to self', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-test-assigned').set({
+      source: 'manually-added', testData: true, claimedBy: 'demo', setterId: 'demo', assignedTo: 'demo', territoryId: 'TEST-appreview-territory', status: 'new',
+    }), expectTight: 'allow' },
+    { id: 'demo create test lead assigned to other', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-test-assigned-other').set({
+      source: 'manually-added', testData: true, claimedBy: 'demo', setterId: 'demo', assignedTo: 'realSetter', territoryId: 'TEST-appreview-territory', status: 'new',
+    }), expectTight: 'deny' },
+    { id: 'demo create test lead with easter egg', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-test-egg').set({
+      source: 'manually-added', testData: true, claimedBy: 'demo', setterId: 'demo', territoryId: 'TEST-appreview-territory', hasEasterEgg: true, status: 'new',
+    }), expectTight: 'deny' },
     { id: 'demo create lead missing testData', uid: 'demo', run: (db) => db.collection('leads').doc('manual-demo-notest').set({
       source: 'manually-added', claimedBy: 'demo', setterId: 'demo', territoryId: 'TEST-appreview-territory', status: 'new',
     }), expectTight: 'deny' },
@@ -199,7 +224,11 @@ function cases(): RuleCase[] {
     { id: 'setter read own lead', uid: 'realSetter', run: (db) => lead('realLead')(db).get(), expectTight: 'allow' },
     { id: 'setter update own lead', uid: 'realSetter', run: (db) => lead('realLead')(db).update({ notes: 'follow up' }), expectTight: 'allow' },
     { id: 'setter claim unclaimed', uid: 'realSetter', run: (db) => lead('unclaimedLead')(db).update({ claimedBy: 'realSetter', claimedAt: new Date(), status: 'claimed' }), expectTight: 'allow' },
+    { id: 'setter claim adds assignedTo', uid: 'realSetter', run: (db) => lead('claimAddAssigned')(db).update({ claimedBy: 'realSetter', claimedAt: new Date(), status: 'claimed', assignedTo: 'realSetter' }), expectTight: 'deny' },
+    { id: 'setter claim adds territoryId', uid: 'realSetter', run: (db) => lead('claimAddTerritory')(db).update({ claimedBy: 'realSetter', claimedAt: new Date(), status: 'claimed', territoryId: 'realTerritory' }), expectTight: 'deny' },
     { id: 'setter knock in territory', uid: 'realSetter', run: (db) => lead('unassignedInRealTerritory')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'allow' },
+    { id: 'setter territory knock adds claimedBy', uid: 'realSetter', run: (db) => lead('territoryAddClaimed')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: 'manager' }), expectTight: 'deny' },
+    { id: 'setter territory knock adds assignedTo', uid: 'realSetter', run: (db) => lead('territoryAddAssigned')(db).update({ status: 'not-home', dispositionedAt: new Date(), assignedTo: 'realSetter' }), expectTight: 'deny' },
     { id: 'setter knock outside territory', uid: 'realSetter', run: (db) => lead('claimedByOther')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'deny' },
     { id: 'setter manual create', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter').set({ source: 'manually-added', setterId: 'realSetter', status: 'new' }), expectTight: 'allow' },
     { id: 'setter manual create with testData', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter-testdata').set({
@@ -234,12 +263,17 @@ function cases(): RuleCase[] {
     { id: 'manager place egg', uid: 'manager', run: (db) => lead('placementLead')(db).update({ hasEasterEgg: true, easterEggId: 'egg-1' }), expectTight: 'allow' },
     { id: 'manager knock other lead', uid: 'manager', run: (db) => lead('claimedByOther')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'allow' },
     { id: 'manager knock stranger', uid: 'manager', run: (db) => lead('strangerLead')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'allow' },
+    { id: 'manager knock adds claimedBy', uid: 'manager', run: (db) => lead('managerAddClaimed')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: 'realSetter' }), expectTight: 'deny' },
+    { id: 'manager knock adds assignedTo', uid: 'manager', run: (db) => lead('managerAddAssigned')(db).update({ status: 'not-home', dispositionedAt: new Date(), assignedTo: 'manager' }), expectTight: 'deny' },
     { id: 'manager lead delete', uid: 'manager', run: (db) => lead('adminDeleteLead')(db).delete(), expectTight: 'deny' },
     { id: 'manager other territory', uid: 'manager', run: (db) => db.collection('territories').doc('realTerritory').get(), expectTight: 'deny' },
     { id: 'manager user write', uid: 'manager', run: (db) => db.collection('users').doc('nope').set({ role: 'setter' }), expectTight: 'deny' },
 
     { id: 'admin user write', uid: 'admin', run: (db) => db.collection('users').doc('created-by-admin').set({ role: 'setter', name: 'Created', ...ACTIVE }), expectTight: 'allow' },
     { id: 'admin territory write', uid: 'admin', run: (db) => db.collection('territories').doc('admin-made').set({ userId: 'realSetter' }), expectTight: 'allow' },
+    { id: 'admin knock status only', uid: 'admin', run: (db) => lead('adminKnockLead')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'allow' },
+    { id: 'admin knock adds claimedBy', uid: 'admin', run: (db) => lead('adminAddClaimed')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: 'realSetter' }), expectTight: 'allow' },
+    { id: 'admin knock adds assignedTo', uid: 'admin', run: (db) => lead('adminAddAssigned')(db).update({ status: 'not-home', dispositionedAt: new Date(), assignedTo: 'realSetter' }), expectTight: 'allow' },
     { id: 'admin lead delete', uid: 'admin', run: (db) => lead('adminDeleteLead')(db).delete(), expectTight: 'allow' },
     { id: 'admin history read', uid: 'admin', run: (db) => db.collection('disposition_history').doc('hist-seed').get(), expectTight: 'allow' },
     { id: 'admin all leads', uid: 'admin', run: (db) => db.collection('leads').get(), expectTight: 'allow' },

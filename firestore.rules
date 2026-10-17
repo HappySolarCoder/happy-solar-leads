@@ -107,6 +107,12 @@ service cloud.firestore {
       ]);
     }
 
+    // changedKeys() ignores keys the write ADDS. Block adding ownership fields,
+    // matching the deployed unchangedOrMissing() guards on these branches.
+    function addsNoOwnership(fields) {
+      return !request.resource.data.diff(resource.data).addedKeys().hasAny(fields);
+    }
+
     function leadIsAssignedToMe() {
       return signedIn() && resource.data.assignedTo == uid();
     }
@@ -134,6 +140,11 @@ service cloud.firestore {
         && request.resource.data.source == "manually-added"
         && request.resource.data.territoryId is string
         && request.resource.data.territoryId.matches('^TEST-.*')
+        && (
+          !("assignedTo" in request.resource.data)
+          || request.resource.data.assignedTo == uid()
+        )
+        && request.resource.data.get('hasEasterEgg', false) != true
         && approvedActive()
         && isTest()
         && get(/databases/$(database)/documents/territories/$(request.resource.data.territoryId)).data.userId == uid();
@@ -162,6 +173,7 @@ service cloud.firestore {
           "claimedAt",
           "status"
         ])
+        && addsNoOwnership(['assignedTo', 'territoryId'])
         && approvedActive()
         && notTest();
     }
@@ -183,14 +195,16 @@ service cloud.firestore {
       return (user.role == 'admin' || user.role == 'manager')
         && notTest()
         && dispositionUpdateOnly()
+        && addsNoOwnership(['claimedBy', 'assignedTo', 'territoryId'])
         && approvedActive();
     }
 
     // Territory owners, including the demo, can knock pins in their territory.
-    // dispositionUpdateOnly already blocks ownership-field edits.
+    // addedKeys blocks ownership fields that changedKeys() does not see.
     function territoryDisposition() {
       return leadInMyTerritory()
         && dispositionUpdateOnly()
+        && addsNoOwnership(['claimedBy', 'assignedTo', 'territoryId'])
         && approvedActive();
     }
 
