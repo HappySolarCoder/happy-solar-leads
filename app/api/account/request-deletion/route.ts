@@ -22,7 +22,8 @@ export async function POST(request: NextRequest) {
     const result = await handleRequestAccountDeletion({
       authorization: request.headers.get('authorization'),
       deps: {
-        verifyIdToken: (token, checkRevoked) => adminAuth().verifyIdToken(token, checkRevoked),
+        verifyIdToken: (token, checkRevoked) =>
+          checkRevoked ? adminAuth().verifyIdToken(token, true) : adminAuth().verifyIdToken(token),
         auth: {
           updateUser: (uid, properties) => adminAuth().updateUser(uid, properties),
           revokeRefreshTokens: (uid) => adminAuth().revokeRefreshTokens(uid),

@@ -23,6 +23,9 @@ function harness(options: {
   authorization?: string | null;
   profile?: Stored | null;
   verifyError?: unknown;
+  /** Thrown only when verifyIdToken is called with checkRevoked. The unchecked call succeeds. */
+  revokedOnCheck?: 'auth/user-disabled' | 'auth/id-token-revoked';
+  setError?: unknown;
   uid?: string;
   email?: string;
 } = {}) {
@@ -31,7 +34,8 @@ function harness(options: {
   if (options.profile) users.set(uid, { ...options.profile });
 
   const calls = {
-    checkRevoked: [] as boolean[],
+    checkRevoked: [] as Array<boolean | undefined>,
+    order: [] as string[],
     updateUser: [] as Array<{ uid: string; properties: { disabled: true } }>,
     revoke: [] as string[],
     sets: [] as Array<{ collection: string; id: string; data: Stored; options: { merge?: boolean } }>,
@@ -55,7 +59,9 @@ function harness(options: {
               return { exists: Boolean(data), data: () => (data ? { ...data } : undefined) };
             },
             async set(data: Stored, setOptions: { merge?: boolean }) {
+              calls.order.push(`set:${name}`);
               calls.sets.push({ collection: name, id, data: { ...data }, options: setOptions });
+              if (options.setError) throw options.setError;
               if (name === 'users' && setOptions?.merge) {
                 users.set(id, { ...(users.get(id) || {}), ...data });
               }
@@ -82,14 +88,17 @@ function harness(options: {
   const deps: RequestAccountDeletionDeps = {
     verifyIdToken: async (_token, checkRevoked) => {
       calls.checkRevoked.push(checkRevoked);
+      if (options.revokedOnCheck && checkRevoked) throw { code: options.revokedOnCheck };
       if (options.verifyError) throw options.verifyError;
       return { uid, email: options.email ?? 'setter@example.com' };
     },
     auth: {
       updateUser: async (userId, properties) => {
+        calls.order.push('updateUser');
         calls.updateUser.push({ uid: userId, properties });
       },
       revokeRefreshTokens: async (userId) => {
+        calls.order.push('revokeRefreshTokens');
         calls.revoke.push(userId);
       },
     },
@@ -152,7 +161,7 @@ describe('POST /api/account/request-deletion', () => {
     assert.equal(wrongScheme.status, 401);
     assert.deepEqual(wrongScheme.body, { ok: false, error: 'Missing credentials' });
 
-    const rejected = harness({ profile: setterProfile, verifyError: { code: 'auth/id-token-revoked' } });
+    const rejected = harness({ profile: setterProfile, verifyError: { code: 'auth/id-token-expired' } });
     const invalid = await rejected.run('Bearer stale');
     assert.equal(invalid.status, 401);
     assert.deepEqual(invalid.body, { ok: false, error: 'Sign in again.' });
@@ -191,6 +200,7 @@ describe('POST /api/account/request-deletion', () => {
     assert.equal(result.status, 200);
     assert.deepEqual(result.body, { ok: true, disabled: true });
     assert.deepEqual(test.calls.checkRevoked, [true]);
+    assert.deepEqual(test.calls.order, ['set:users', 'updateUser', 'revokeRefreshTokens']);
     assert.deepEqual(test.calls.updateUser, [{ uid: 'uid-setter', properties: { disabled: true } }]);
     assert.deepEqual(test.calls.revoke, ['uid-setter']);
     assert.equal(test.calls.sets.length, 1);
@@ -252,6 +262,70 @@ describe('POST /api/account/request-deletion', () => {
     });
     assert.deepEqual(test.calls.logs, ['[account-deletion-requested] uid=uid-missing role=']);
     assertNoHistoryWrites(test.calls);
+  });
+
+  it('returns 5xx and leaves Auth enabled when the profile write fails', async () => {
+    const test = harness({ profile: setterProfile, setError: new Error('firestore unavailable') });
+    const result = await test.run();
+    assert.ok(result.status >= 500 && result.status < 600);
+    assert.deepEqual(result.body, { ok: false, error: 'Internal error' });
+    assert.equal(test.calls.updateUser.length, 0);
+    assert.equal(test.calls.revoke.length, 0);
+    assert.deepEqual(test.calls.order, ['set:users']);
+    assert.equal(test.users.get('uid-setter')?.status, 'active');
+    assert.equal(test.users.get('uid-setter')?.isActive, true);
+    assert.equal(test.calls.logs.length, 0);
+    assertNoHistoryWrites(test.calls);
+  });
+
+  it('accepts a disabled or revoked token when the profile is already deletion-requested', async () => {
+    for (const code of ['auth/user-disabled', 'auth/id-token-revoked'] as const) {
+      const test = harness({
+        revokedOnCheck: code,
+        email: 'setter@example.com',
+        profile: {
+          role: 'setter',
+          email: 'setter@example.com',
+          name: 'Set Ter',
+          isActive: false,
+          status: 'deletion-requested',
+          deletionRequestedAt: 'original-timestamp',
+        },
+      });
+      const result = await test.run('Bearer same-token');
+      assert.equal(result.status, 200, code);
+      assert.deepEqual(result.body, { ok: true, disabled: true });
+      assert.deepEqual(test.calls.checkRevoked, [true, undefined]);
+      assert.equal(test.calls.sets.length, 0);
+      assert.equal(test.calls.timestamps, 0);
+      assert.equal(test.calls.revoke.length, 0);
+      assert.deepEqual(test.calls.updateUser, [{ uid: 'uid-setter', properties: { disabled: true } }]);
+      assert.equal(test.users.get('uid-setter')?.deletionRequestedAt, 'original-timestamp');
+      assert.equal(test.users.get('uid-setter')?.email, 'setter@example.com');
+      assert.equal(test.calls.logs[0].includes('setter@example.com'), false);
+      assertNoHistoryWrites(test.calls);
+    }
+  });
+
+  it('returns 401 for a disabled or revoked token when the profile is not deletion-requested', async () => {
+    for (const code of ['auth/user-disabled', 'auth/id-token-revoked'] as const) {
+      const test = harness({
+        revokedOnCheck: code,
+        profile: setterProfile,
+      });
+      const result = await test.run('Bearer same-token');
+      assert.equal(result.status, 401, code);
+      assert.deepEqual(result.body, { ok: false, error: 'Sign in again.' });
+      assert.deepEqual(test.calls.checkRevoked, [true, undefined]);
+      assert.equal(test.calls.updateUser.length, 0);
+      assert.equal(test.calls.revoke.length, 0);
+      assert.equal(test.calls.sets.length, 0);
+      assert.equal(test.calls.timestamps, 0);
+      assert.equal(test.users.get('uid-setter')?.status, 'active');
+      assert.equal(test.users.get('uid-setter')?.isActive, true);
+      assert.deepEqual(test.calls.logs, []);
+      assertNoHistoryWrites(test.calls);
+    }
   });
 
   it('does not call lead or territory writers', async () => {
