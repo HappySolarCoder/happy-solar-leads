@@ -30,6 +30,12 @@ export default function SignupPage() {
         throw new Error('Firebase not initialized');
       }
 
+      if (process.env.NEXT_PUBLIC_NATIVE_BUILD === '1') {
+        setError('Accounts are created by your company. Contact your manager.');
+        setIsLoading(false);
+        return;
+      }
+
       if (password.length < 6) {
         setError('Password must be at least 6 characters');
         setIsLoading(false);
@@ -88,6 +94,26 @@ export default function SignupPage() {
     manager: 'Manage team and assign leads',
     admin: 'Full system access and configuration',
   };
+
+  if (process.env.NEXT_PUBLIC_NATIVE_BUILD === '1') {
+    return (
+      <div className="min-h-screen bg-[#F7FAFC] flex items-center justify-center px-4 py-12">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-8 text-center">
+          <h1 className="text-2xl font-bold text-[#2D3748]">Accounts are created for you</h1>
+          <p className="text-[#718096] mt-3">
+            Happy Solar administrators create Raydar accounts for staff. This app does not offer self-signup.
+          </p>
+          <button
+            type="button"
+            onClick={() => router.push('/login')}
+            className="w-full mt-6 border-2 border-[#E2E8F0] text-[#2D3748] font-semibold py-3 rounded-lg hover:bg-[#F7FAFC] transition-colors"
+          >
+            Back to sign in
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F7FAFC] flex items-center justify-center px-4 py-12">

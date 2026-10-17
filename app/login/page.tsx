@@ -9,6 +9,11 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { saveCurrentUser } from '@/app/utils/storage';
 import { ArrowRight, Mail, Lock, AlertCircle } from 'lucide-react';
 import { MOBILE_BUILD_LABEL, startupEvent } from '@/app/mobile/_lib/startupDiagnostics';
+import {
+  ACCOUNT_DELETION_STORAGE_KEY,
+  PRIVACY_POLICY_URL,
+  missingAccountMessage,
+} from '@/app/mobile/_lib/accountPolicy';
 import { withDeadline } from '@/app/utils/withDeadline';
 
 const nativeBuild = process.env.NEXT_PUBLIC_NATIVE_BUILD === '1';
@@ -18,10 +23,21 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const pendingLogin = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    try {
+      const message = sessionStorage.getItem(ACCOUNT_DELETION_STORAGE_KEY);
+      if (!message) return;
+      sessionStorage.removeItem(ACCOUNT_DELETION_STORAGE_KEY);
+      setNotice(message);
+    } catch {
+      /* Sign-in still works if session storage is unavailable. */
+    }
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,7 +90,7 @@ export default function LoginPage() {
       if (err.code === 'auth/user-disabled') {
         setError('This account is disabled. Contact an admin.');
       } else if (err.code === 'auth/user-not-found') {
-        setError('No account found with this email. Please create one.');
+        setError(missingAccountMessage());
       } else if (err.code === 'auth/wrong-password') {
         setError('Incorrect password.');
       } else if (err.code === 'auth/invalid-credential') {
@@ -87,7 +103,7 @@ export default function LoginPage() {
         try {
           const methods = auth ? await fetchSignInMethodsForEmail(auth, email) : [];
           if (!methods || methods.length === 0) {
-            setError('No account found with this email. Please create one.');
+            setError(missingAccountMessage());
           } else {
             setError('Incorrect password.');
           }
@@ -123,6 +139,12 @@ export default function LoginPage() {
           <p className="text-[#718096] mt-2">Sign in to your account</p>
           {nativeBuild && <p className="text-xs text-[#587E98] mt-3">{MOBILE_BUILD_LABEL}</p>}
         </div>
+
+        {notice && (
+          <div role="status" className="mb-6 p-4 bg-[#EBF4FA] border border-[#C5D8E6] rounded-lg">
+            <p className="text-sm text-[#2D3748]">{notice}</p>
+          </div>
+        )}
 
         {/* Login Form */}
         <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-8">
@@ -199,23 +221,39 @@ export default function LoginPage() {
           {nativeBuild && error && <button type="button" onClick={() => window.location.reload()}
             className="w-full mt-4 text-sm text-[#476E88] underline">Reload app</button>}
 
-          {/* Divider */}
-          <div className="relative my-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-[#E2E8F0]" />
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-4 bg-white text-[#718096]">New to Raydar?</span>
-            </div>
-          </div>
-
-          {/* Create Account Button */}
-          <button
-            onClick={() => router.push('/signup')}
-            className="w-full border-2 border-[#E2E8F0] text-[#2D3748] font-semibold py-3 rounded-lg hover:bg-[#F7FAFC] transition-colors"
-          >
-            Create Account
-          </button>
+          {process.env.NEXT_PUBLIC_NATIVE_BUILD !== '1' && (
+            <>
+              <div className="relative my-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-[#E2E8F0]" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-4 bg-white text-[#718096]">New to Raydar?</span>
+                </div>
+              </div>
+              <button
+                onClick={() => router.push('/signup')}
+                className="w-full border-2 border-[#E2E8F0] text-[#2D3748] font-semibold py-3 rounded-lg hover:bg-[#F7FAFC] transition-colors"
+              >
+                Create Account
+              </button>
+            </>
+          )}
+          {process.env.NEXT_PUBLIC_NATIVE_BUILD === '1' && (
+            <>
+              <p className="text-center text-sm text-[#718096] mt-6">
+                Accounts are created by your manager.
+              </p>
+              <a
+                href={PRIVACY_POLICY_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-center text-base font-semibold text-[#476E88] underline py-3 mt-2"
+              >
+                Privacy policy
+              </a>
+            </>
+          )}
         </div>
 
         {/* Footer */}

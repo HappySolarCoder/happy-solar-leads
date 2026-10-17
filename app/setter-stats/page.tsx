@@ -12,6 +12,7 @@ import { Lead, User } from '@/app/types';
 import { Disposition } from '@/app/types/disposition';
 import { startOfToday, startOfWeek, startOfMonth, isAfter, format } from 'date-fns';
 import { auth } from '@/app/utils/firebase';
+import { teamPerformanceMayRequestAllLeads } from '@/app/mobile/_lib/accountPolicy';
 
 interface SetterMetrics {
   userId: string;
@@ -55,10 +56,7 @@ export default function DataDashboard() {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [sortBy, setSortBy] = useState<SortBy>('knocks');
 
-  const canSeeAllLeads = (role?: string) => {
-    // Team Stats page is intended to match admin totals for all roles.
-    return role === 'admin' || role === 'manager' || role === 'setter' || role === 'closer';
-  };
+  const canSeeAllLeads = (role?: string) => teamPerformanceMayRequestAllLeads(role);
 
   useEffect(() => {
     async function loadData() {
