@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
+import { adminDb } from '@/app/utils/firebase-admin';
 import { membersFromTerritories } from '@/app/utils/teamAreas';
+import { requireApprovedRequestUser } from '@/app/utils/server/requireApprovedUser';
 import type { Territory } from '@/app/types/territory';
 
 function serializeTerritory(id: string, data: Record<string, unknown>): Territory {
@@ -26,31 +27,11 @@ function serializeTerritory(id: string, data: Record<string, unknown>): Territor
   };
 }
 
-async function requireRaydarUid(request: NextRequest): Promise<string> {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    throw Object.assign(new Error('Missing credentials'), { status: 401 });
-  }
-  const idToken = authHeader.slice('Bearer '.length).trim();
-  if (!idToken) {
-    throw Object.assign(new Error('Missing credentials'), { status: 401 });
-  }
-
-  const decoded = await adminAuth().verifyIdToken(idToken, true);
-  const userDoc = await adminDb().collection('users').doc(decoded.uid).get();
-  if (!userDoc.exists) {
-    throw Object.assign(new Error('User not found'), { status: 403 });
-  }
-  return decoded.uid;
-}
-
 export async function GET(request: NextRequest) {
   try {
-    const uid = await requireRaydarUid(request);
+    const { uid, role } = await requireApprovedRequestUser(request);
     const summary = request.nextUrl.searchParams.get('summary') === '1';
-    const caller = summary ? (await adminDb().collection('users').doc(uid).get()).data() : null;
-    if (summary && (!caller || caller.deleted || caller.deletionPending || caller.isActive === false || caller.approved === false || caller.approvalStatus === 'pending')) return NextResponse.json({error:'This account cannot load territories.'},{status:403});
-    const ownOnly = summary && !['admin','manager'].includes(caller?.role || '');
+    const ownOnly = summary && !['admin', 'manager'].includes(role);
 
     const [territorySnap, userSnap] = await Promise.all([
       (summary ? (ownOnly ? adminDb().collection('territories').where('userId','==',uid) : adminDb().collection('territories')).select('userId','userName','userColor','polygon','archived','createdAt','createdBy','leadCount') : adminDb().collection('territories')).get(),
