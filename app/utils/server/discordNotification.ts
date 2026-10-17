@@ -116,6 +116,19 @@ export async function resolveDiscordWebhookUrl(deps: {
   return selectWebhookUrl(undefined, await deps.readStoredWebhook());
 }
 
+const DISCORD_WEBHOOK_HOSTS = new Set([
+  'discord.com',
+  'canary.discord.com',
+  'ptb.discord.com',
+  'discordapp.com',
+  'canary.discordapp.com',
+  'ptb.discordapp.com',
+]);
+
+function isDiscordWebhookHost(hostname: string): boolean {
+  return DISCORD_WEBHOOK_HOSTS.has(hostname);
+}
+
 export function isDiscordWebhookUrl(value: string): boolean {
   let url: URL;
   try {
@@ -127,7 +140,7 @@ export function isDiscordWebhookUrl(value: string): boolean {
   if (url.username || url.password || url.port) return false;
   if (url.search || url.hash) return false;
   const host = url.hostname.toLowerCase();
-  if (host !== 'discord.com' && host !== 'discordapp.com') return false;
+  if (!isDiscordWebhookHost(host)) return false;
   const parts = url.pathname.split('/').filter(Boolean);
   if (parts.length !== 4) return false;
   if (parts[0] !== 'api' || parts[1] !== 'webhooks') return false;

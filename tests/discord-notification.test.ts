@@ -243,9 +243,29 @@ describe('discord notification webhook selection', () => {
   });
 
   it('accepts only https Discord webhook URLs', () => {
-    assert.equal(isDiscordWebhookUrl(FAKE_WEBHOOK), true);
-    assert.equal(isDiscordWebhookUrl('https://discordapp.com/api/webhooks/123456789012345678/fakeTokenForTests'), true);
+    const path = '/api/webhooks/123456789012345678/fakeTokenForTests';
+    for (const host of [
+      'discord.com',
+      'canary.discord.com',
+      'ptb.discord.com',
+      'discordapp.com',
+      'canary.discordapp.com',
+      'ptb.discordapp.com',
+    ]) {
+      assert.equal(isDiscordWebhookUrl(`https://${host}${path}`), true, host);
+    }
+    for (const host of [
+      'discord.com.evil.com',
+      'evilcanary.discord.com',
+      'canary.discord.com.evil.com',
+      'notdiscord.com',
+      'www.discord.com',
+      'evil.discord.com',
+    ]) {
+      assert.equal(isDiscordWebhookUrl(`https://${host}${path}`), false, host);
+    }
     assert.equal(isDiscordWebhookUrl('http://discord.com/api/webhooks/123456789012345678/fakeTokenForTests'), false);
+    assert.equal(isDiscordWebhookUrl('http://canary.discord.com/api/webhooks/123456789012345678/fakeTokenForTests'), false);
     assert.equal(isDiscordWebhookUrl(`${FAKE_WEBHOOK}/slack`), false);
     assert.equal(isDiscordWebhookUrl('https://hooks.slack.com/services/T00/B00/secret'), false);
     assert.equal(isDiscordWebhookUrl('https://user:pass@discord.com/api/webhooks/123456789012345678/fakeTokenForTests'), false);
