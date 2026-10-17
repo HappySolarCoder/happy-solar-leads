@@ -7,7 +7,12 @@ import type { PendingMutation } from '../../app/field/types';
 import { knockPatch } from '../../app/field/knockPatch';
 import { directPatch, reportingPatch, mergeReportingPatch, firestoreValue } from '../../app/field/directWrites';
 import { restFields } from '../../app/field/createLeadOnce';
-import { nativeSchedulingWebhook } from '../../app/utils/schedulingWebhook';
+import {
+  AMBIGUOUS_SEND_MESSAGE,
+  SCHEDULING_ROUTE_PATH,
+  sendSchedulingNotification,
+  type SchedulingPayload,
+} from '../../app/utils/schedulingNotification';
 import { assertProductionConfig } from '../../scripts/mobile/production-config.mjs';
 
 const user = { id: 'firebase-rep-uid', name: 'Test Rep' } as User;
@@ -89,19 +94,40 @@ test('production mobile config rejects a preview backend or another Firebase pro
   assert.throws(() => assertProductionConfig({ ...env, NEXT_PUBLIC_API_BASE_URL: 'https://preview.example.com' }));
   assert.throws(() => assertProductionConfig({ ...env, NEXT_PUBLIC_FIREBASE_PROJECT_ID: 'other-project' }));
 });
-test('native webhook uses the configured endpoint and exact provider payload, without redirects/retries', async () => {
-  for (const key of ['content', 'text', 'message']) {
-    const payload = { [key]: 'Example scheduling request' }; let calls = 0;
-    const response = await nativeSchedulingWebhook('https://scheduler.example.invalid/hook', payload, async options => {
-      calls++; assert.equal(options.url, 'https://scheduler.example.invalid/hook');
-      assert.deepEqual(options.data, payload); assert.equal(options.method, 'POST');
-      assert.equal(options.headers?.['Content-Type'], 'application/json');
-      assert.equal(options.disableRedirects, true);
-      return { data: '', status: 204, headers: {}, url: options.url };
-    });
-    assert.equal(calls, 1); assert.equal(response.ok, true);
-  }
-  const failed = await nativeSchedulingWebhook('https://scheduler.example.invalid/hook', {content:'Example'}, async options => ({data:'Denied',status:403,headers:{},url:options.url}));
-  assert.equal(failed.ok, false);
-  await assert.rejects(nativeSchedulingWebhook('http://insecure.example.invalid/', {}), /HTTPS/);
+test('scheduling route posts once and does not retry an ambiguous response', async () => {
+  const payload: SchedulingPayload = {
+    kind: 'scheduling', name: 'Ada', address: '1 Main', city: 'Rochester', state: 'NY', zip: '14601', phone: '555',
+  };
+  let calls = 0;
+  const sent = await sendSchedulingNotification(payload, {
+    getToken: async () => 'token',
+    post: async (path, init) => {
+      calls += 1;
+      assert.equal(path, SCHEDULING_ROUTE_PATH);
+      assert.equal(path.includes('http'), false);
+      assert.equal(init.method, 'POST');
+      const body = JSON.parse(String(init.body)) as SchedulingPayload;
+      assert.equal(body.kind, 'scheduling');
+      assert.equal('content' in body, false);
+      assert.equal('text' in body, false);
+      assert.equal('message' in body, false);
+      const headers = init.headers as Record<string, string>;
+      assert.equal(headers.Authorization, 'Bearer token');
+      assert.equal(headers['Content-Type'], 'application/json');
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(sent.status, 'sent');
+  calls = 0;
+  const ambiguous = await sendSchedulingNotification(payload, {
+    getToken: async () => 'token',
+    post: async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ error: 'Discord did not accept the notification.' }), { status: 502 });
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(ambiguous.status, 'ambiguous');
+  if (ambiguous.status === 'ambiguous') assert.equal(ambiguous.message, AMBIGUOUS_SEND_MESSAGE);
 });

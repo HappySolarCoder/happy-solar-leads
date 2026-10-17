@@ -1,19 +1,8 @@
 import { isPermissionDenied } from "./permissionDenied";
 
-export const SCHEDULING_UNAVAILABLE_MESSAGE = "Scheduling isn't available for this account.";
-
-export interface SchedulingSettingsShape {
+/** Phone number only. The notification URL stays on the server. */
+export interface SchedulingPhoneSettings {
   schedulingManagerPhone?: string;
-  notificationWebhook?: string;
-  notificationType?: string;
-}
-
-export class SchedulingAccessError extends Error {
-  readonly code = "permission-denied";
-  constructor() {
-    super(SCHEDULING_UNAVAILABLE_MESSAGE);
-    this.name = "SchedulingAccessError";
-  }
 }
 
 const deniedAccounts = new Set<string>();
@@ -33,10 +22,10 @@ export type SchedulingRead<T> =
   | { status: "denied" };
 
 /**
- * Read adminSettings once. A permission-denied is remembered for this account
- * and never falls through to a stored webhook or a hardcoded number.
+ * Read the scheduling phone once. A permission-denied is remembered for this
+ * account so the read is not retried. A denied read does not disable Send.
  */
-export async function resolveSchedulingRead<T extends SchedulingSettingsShape>(
+export async function resolveSchedulingRead<T extends SchedulingPhoneSettings>(
   uid: string,
   read: () => Promise<T | null>,
 ): Promise<SchedulingRead<T>> {
@@ -53,30 +42,10 @@ export async function resolveSchedulingRead<T extends SchedulingSettingsShape>(
   }
 }
 
-export function schedulingAction<T extends SchedulingSettingsShape>(read: SchedulingRead<T>): {
-  sendEnabled: boolean;
-  message: string;
-  phone: string | null;
-  webhook: string | null;
-} {
-  if (read.status === "denied") {
-    return { sendEnabled: false, message: SCHEDULING_UNAVAILABLE_MESSAGE, phone: null, webhook: null };
-  }
-  const settings = read.status === "ready" ? read.settings : null;
-  return {
-    sendEnabled: true,
-    message: "",
-    phone: settings?.schedulingManagerPhone?.trim() || null,
-    webhook: settings?.notificationWebhook?.trim() || null,
-  };
-}
-
-/** Disabled accounts never reach the webhook. Missing settings stay on the existing unconfigured path. */
-export function beginSchedulingSend(
-  unavailable: boolean,
-  action: { sendEnabled: boolean; webhook: string | null },
-): "disabled" | "unconfigured" | "send" {
-  if (unavailable || !action.sendEnabled) return "disabled";
-  if (!action.webhook) return "unconfigured";
-  return "send";
+/** Copy the phone string and nothing else from a settings document. */
+export function phoneOnly(value: unknown): SchedulingPhoneSettings | null {
+  if (!value || typeof value !== "object") return null;
+  const phone = (value as SchedulingPhoneSettings).schedulingManagerPhone;
+  if (typeof phone !== "string") return { schedulingManagerPhone: "" };
+  return { schedulingManagerPhone: phone };
 }

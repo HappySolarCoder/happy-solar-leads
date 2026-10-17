@@ -25,12 +25,14 @@ import {
 } from "../../app/utils/testAccount";
 import { calculateDailyMetrics } from "../../app/utils/aiManager";
 import {
-  beginSchedulingSend,
+  phoneOnly,
   resetSchedulingAccessForTests,
   resolveSchedulingRead,
-  schedulingAction,
-  SCHEDULING_UNAVAILABLE_MESSAGE,
 } from "../../app/utils/schedulingAccess";
+import {
+  resetSchedulingSendBlocksForTests,
+  schedulingBlockedFor,
+} from "../../app/utils/schedulingNotification";
 import { HomeownerLoader, type HomeownerState } from "../../app/homeowners/loader";
 import {
   HOMEOWNER_LIMITED_NOTE,
@@ -196,8 +198,9 @@ test("a homeowner denial is remembered for that account and the next pan does no
   }
 });
 
-test("an adminSettings denial disables scheduling and does not supply a webhook or phone", async () => {
+test("an adminSettings denial latches the phone read and does not disable scheduling send", async () => {
   resetSchedulingAccessForTests();
+  resetSchedulingSendBlocksForTests();
   try {
     let reads = 0;
     const read = async () => {
@@ -206,25 +209,22 @@ test("an adminSettings denial disables scheduling and does not supply a webhook 
     };
     const first = await resolveSchedulingRead("demo", read);
     const second = await resolveSchedulingRead("demo", read);
-    const action = schedulingAction(first);
     assert.equal(first.status, "denied");
     assert.equal(second.status, "denied");
     assert.equal(reads, 1);
-    assert.equal(action.sendEnabled, false);
-    assert.equal(action.phone, null);
-    assert.equal(action.webhook, null);
-    assert.equal(action.message, SCHEDULING_UNAVAILABLE_MESSAGE);
-    assert.equal(beginSchedulingSend(false, action), "disabled");
-    assert.equal(beginSchedulingSend(true, { sendEnabled: true, webhook: "https://example.test/hook" }), "disabled");
-    const ready = await resolveSchedulingRead("manager", async () => ({
-      notificationWebhook: "https://example.test/hook",
+    assert.equal(schedulingBlockedFor("demo"), false);
+    const ready = await resolveSchedulingRead("manager", async () => phoneOnly({
       schedulingManagerPhone: "5551234567",
+      notificationWebhook: "https://example.test/hook",
     }));
     assert.equal(ready.status, "ready");
-    assert.equal(beginSchedulingSend(false, schedulingAction(ready)), "send");
-    assert.equal(beginSchedulingSend(false, schedulingAction({ status: "missing" })), "unconfigured");
+    if (ready.status === "ready") {
+      assert.deepEqual(ready.settings, { schedulingManagerPhone: "5551234567" });
+      assert.equal(Object.hasOwn(ready.settings, "notificationWebhook"), false);
+    }
   } finally {
     resetSchedulingAccessForTests();
+    resetSchedulingSendBlocksForTests();
   }
 });
 
@@ -268,7 +268,7 @@ test("test accounts and their knocks stay out of a real user's totals", () => {
   assert.equal(metrics.doorsKnocked, 1);
 });
 
-test("rep screens share the directory fallback and scheduling stays disabled in the editor", () => {
+test("rep screens share the directory fallback and scheduling send ignores a denied phone read", () => {
   const firestore = readFileSync(path.join(root, "app/utils/firestore.ts"), "utf8");
   const storage = readFileSync(path.join(root, "app/utils/storage.ts"), "utf8");
   const teamMap = readFileSync(path.join(root, "app/team-map/page.tsx"), "utf8");
@@ -282,11 +282,17 @@ test("rep screens share the directory fallback and scheduling stays disabled in 
   assert.doesNotMatch(loader, /Homeowner access is not enabled/);
   assert.match(loader, /homeownersAccessDenied/);
   assert.match(goals, /countRecordForViewer/);
-  const guardAt = modal.indexOf("beginSchedulingSend(");
-  const sendAt = modal.indexOf("sendSchedulingWebhook(");
-  assert.ok(guardAt !== -1 && guardAt < sendAt);
-  assert.match(modal, /disabled=\{isSending \|\| schedulingUnavailable\}/);
-  assert.match(modal, /SCHEDULING_UNAVAILABLE_MESSAGE/);
+  assert.match(modal, /sendSchedulingNotification/);
+  assert.match(modal, /blockedForAccount/);
+  assert.match(modal, /buildSchedulingPayload/);
+  assert.doesNotMatch(modal, /beginSchedulingSend\(/);
+  assert.doesNotMatch(modal, /sendSchedulingWebhook\(/);
+  assert.doesNotMatch(modal, /notificationWebhook/);
+  assert.doesNotMatch(modal, /schedulingUnavailable/);
+  assert.match(modal, /disabled=\{isSending \|\| blockedForAccount \|\| cooldownUntil > now\}/);
+  const phoneLoad = modal.slice(modal.indexOf("loadSchedulingManagerPhone"), modal.indexOf("loadUser();"));
+  assert.match(phoneLoad, /getAdminSettingsAsync/);
+  assert.doesNotMatch(phoneLoad, /blockedForAccount/);
   for (const file of [
     "app/setter-stats/page.tsx",
     "app/components/LeadDetail.tsx",
