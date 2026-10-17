@@ -37,8 +37,9 @@ export function resolveStatsSince(
   role: string,
   now: Date,
 ): { ok: true; bound: Date | null } | { ok: false; status: number; error: string } {
+  const floor = defaultStatsSince(now);
   if (sinceParam == null || sinceParam.trim() === '') {
-    return { ok: true, bound: defaultStatsSince(now) };
+    return { ok: true, bound: floor };
   }
 
   const since = sinceParam.trim();
@@ -50,6 +51,15 @@ export function resolveStatsSince(
   }
 
   const parsed = new Date(since);
+  // Non-admins cannot widen the window. An earlier date is raised to the
+  // 62-day floor, and a date that does not parse uses that same floor.
+  if (role !== 'admin') {
+    if (Number.isNaN(parsed.getTime()) || parsed.getTime() < floor.getTime()) {
+      return { ok: true, bound: floor };
+    }
+    return { ok: true, bound: parsed };
+  }
+
   if (Number.isNaN(parsed.getTime())) {
     return { ok: false, status: 400, error: 'Invalid since date.' };
   }

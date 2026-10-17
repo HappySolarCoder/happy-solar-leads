@@ -125,6 +125,36 @@ describe('all-leads stats access', () => {
     assert.equal(adminResult.status, 200);
     assert.deepEqual(admin.bounds, [null]);
   });
+
+  it('clamps a manager since date older than 62 days', async () => {
+    const test = statsHarness('manager', '1970-01-01');
+    const result = await test.run();
+    assert.equal(result.status, 200);
+    assert.equal(test.bounds.length, 1);
+    assert.equal(test.bounds[0]!.getTime(), NOW.getTime() - STATS_WINDOW_MS);
+  });
+
+  it('keeps a manager since date inside the 62-day window', async () => {
+    const recent = '2026-10-01T00:00:00.000Z';
+    const test = statsHarness('manager', recent);
+    const result = await test.run();
+    assert.equal(result.status, 200);
+    assert.equal(test.bounds[0]!.toISOString(), recent);
+  });
+
+  it('falls back to 62 days when a manager since date is invalid', async () => {
+    const test = statsHarness('manager', 'not-a-date');
+    const result = await test.run();
+    assert.equal(result.status, 200);
+    assert.equal(test.bounds[0]!.getTime(), NOW.getTime() - STATS_WINDOW_MS);
+  });
+
+  it('leaves an admin since date outside the window unchanged', async () => {
+    const test = statsHarness('admin', '1970-01-01');
+    const result = await test.run();
+    assert.equal(result.status, 200);
+    assert.equal(test.bounds[0]!.toISOString(), new Date('1970-01-01').toISOString());
+  });
 });
 
 describe('buildStatsLeadQuery', () => {
