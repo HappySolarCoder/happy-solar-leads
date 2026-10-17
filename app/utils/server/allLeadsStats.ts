@@ -1,8 +1,11 @@
+import { isExcludedTestLead } from '../teamStats/aggregate';
 import {
   HttpError,
   requireApprovedUser,
   type RequireApprovedUserDeps,
 } from './requireApprovedUser';
+
+export { isExcludedTestLead };
 
 /**
  * Fields read from Firestore. id is the document id, not a stored field.
@@ -70,46 +73,6 @@ export function resolveStatsSince(
     return { ok: false, status: 400, error: 'Invalid since date.' };
   }
   return { ok: true, bound: parsed };
-}
-
-const TEST_FLAG_STRINGS = new Set(['true', '1', 'yes']);
-
-/** true, "true", 1, "1", and "yes" (any case). false, 0, and null are not flags. */
-function isTruthyTestFlag(value: unknown): boolean {
-  if (value === true || value === 1) return true;
-  if (typeof value !== 'string') return false;
-  return TEST_FLAG_STRINGS.has(value.trim().toLowerCase());
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-}
-
-function recordHasTestFlag(value: unknown, seen: WeakSet<object>): boolean {
-  if (Array.isArray(value)) {
-    if (seen.has(value)) return false;
-    seen.add(value);
-    return value.some((item) => recordHasTestFlag(item, seen));
-  }
-  if (!isPlainRecord(value)) return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-  for (const [key, child] of Object.entries(value)) {
-    if ((key === 'testData' || key === 'isTestAccount') && isTruthyTestFlag(child)) return true;
-    if (recordHasTestFlag(child, seen)) return true;
-  }
-  return false;
-}
-
-/**
- * Test leads are dropped from stats. Matches a TEST- document id
- * (any case), a truthy testData flag at any depth, or a truthy isTestAccount.
- */
-export function isExcludedTestLead(id: string, data: unknown): boolean {
-  if (typeof id === 'string' && id.toLowerCase().startsWith('test-')) return true;
-  return recordHasTestFlag(data, new WeakSet());
 }
 
 function serializeStatsValue(value: unknown): unknown {
