@@ -178,6 +178,45 @@ service cloud.firestore {
         && notTest();
     }
 
+    // App Review claim/unclaim. Every condition is required together.
+    // Claim: claimedBy goes from absent/null/empty to uid().
+    // Unclaim: claimedBy goes from uid() to absent/null.
+    // Same changed fields as claimTransitionByMe. testData stays true.
+    function testAccountClaimOrUnclaim() {
+      let territoryId = resource.data.get('territoryId', '');
+      return resource.data.get('testData', false) == true
+        && resource.data.get('assignedTo', '') == uid()
+        && territoryId is string
+        && territoryId.matches('^TEST-.*')
+        && request.resource.data.get('testData', false) == true
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "claimedBy",
+          "claimedAt",
+          "status"
+        ])
+        && addsNoOwnership(['assignedTo', 'territoryId'])
+        && (
+          (
+            request.resource.data.get('claimedBy', '') == uid()
+            && (
+              !("claimedBy" in resource.data)
+              || resource.data.get('claimedBy', null) == null
+              || resource.data.get('claimedBy', '') == ''
+            )
+          )
+          || (
+            resource.data.get('claimedBy', '') == uid()
+            && (
+              !("claimedBy" in request.resource.data)
+              || request.resource.data.claimedBy == null
+            )
+          )
+        )
+        && isTest()
+        && approvedActive()
+        && get(/databases/$(database)/documents/territories/$(territoryId)).data.userId == uid();
+    }
+
     // Approved owners, including the demo, may edit a lead they already own
     // without changing claim, assignment, or territory.
     function ownerLeadUpdate() {
@@ -343,6 +382,8 @@ service cloud.firestore {
       //   Approved owners (including the demo) = normal updates without ownership edits
       //   Staff, owners, or the territory owner = disposition/door-knock only
       //   Real reps = first claim
+      //   TEST accounts = claim or unclaim only their assigned testData lead
+      //   in a TEST territory they own
       allow update: if isAdmin();
       allow update: if easterEggLeadPlacementUpdate();
       allow update: if easterEggLeadClearUpdate();
@@ -350,6 +391,7 @@ service cloud.firestore {
       allow update: if staffDisposition();
       allow update: if territoryDisposition();
       allow update: if claimTransitionByMe();
+      allow update: if testAccountClaimOrUnclaim();
 
       // DELETE: admin only
       allow delete: if isAdmin();

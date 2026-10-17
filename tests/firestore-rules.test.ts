@@ -126,6 +126,42 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
       territoryId: 'realTerritory',
     });
     await db.collection('leads').doc('unclaimedLead').set({ status: 'new' });
+    await db.collection('leads').doc('demoTestClaimLead').set({
+      status: 'new',
+      testData: true,
+      assignedTo: 'demo',
+      territoryId: 'TEST-appreview-territory',
+    });
+    await db.collection('leads').doc('demoClaimOtherUid').set({
+      status: 'new',
+      testData: true,
+      assignedTo: 'demo',
+      territoryId: 'TEST-appreview-territory',
+    });
+    await db.collection('leads').doc('demoUnclaimOther').set({
+      status: 'claimed',
+      testData: true,
+      assignedTo: 'demo',
+      claimedBy: 'realSetter',
+      territoryId: 'TEST-appreview-territory',
+    });
+    await db.collection('leads').doc('demoFlipTestData').set({
+      status: 'new',
+      testData: true,
+      assignedTo: 'demo',
+      territoryId: 'TEST-appreview-territory',
+    });
+    await db.collection('leads').doc('demoClaimRealTerritory').set({
+      status: 'new',
+      testData: true,
+      assignedTo: 'demo',
+      territoryId: 'demo-real-territory',
+    });
+    await db.collection('leads').doc('demoClaimUnassigned').set({
+      status: 'new',
+      testData: true,
+      territoryId: 'TEST-appreview-territory',
+    });
     await db.collection('leads').doc('claimAddAssigned').set({ status: 'new' });
     await db.collection('leads').doc('claimAddTerritory').set({ status: 'new' });
     await db.collection('leads').doc('managerAddClaimed').set({ status: 'new' });
@@ -178,6 +214,16 @@ function cases(): RuleCase[] {
     { id: 'demo adminSettings', uid: 'demo', run: (db) => db.collection('adminSettings').doc('global').get(), expectTight: 'deny' },
     { id: 'demo dispositions', uid: 'demo', run: (db) => db.collection('dispositions').doc('not-home').get(), expectTight: 'allow' },
     { id: 'demo easter egg', uid: 'demo', run: (db) => db.collection('easterEggs').doc('egg-1').get(), expectTight: 'deny' },
+    { id: 'demo claims and unclaims own TEST lead', uid: 'demo', run: async (db) => {
+      await lead('demoTestClaimLead')(db).update({ status: 'claimed', claimedBy: 'demo', claimedAt: new Date() });
+      await lead('demoTestClaimLead')(db).update({ status: 'unclaimed', claimedBy: null, claimedAt: null });
+    }, expectTight: 'allow' },
+    { id: 'demo claims real lead', uid: 'demo', run: (db) => lead('realLead')(db).update({ status: 'claimed', claimedBy: 'demo', claimedAt: new Date() }), expectTight: 'deny' },
+    { id: 'demo claims TEST lead for another uid', uid: 'demo', run: (db) => lead('demoClaimOtherUid')(db).update({ status: 'claimed', claimedBy: 'realSetter', claimedAt: new Date() }), expectTight: 'deny' },
+    { id: 'demo unclaims lead claimed by someone else', uid: 'demo', run: (db) => lead('demoUnclaimOther')(db).update({ status: 'unclaimed', claimedBy: null, claimedAt: null }), expectTight: 'deny' },
+    { id: 'demo claim flips testData', uid: 'demo', run: (db) => lead('demoFlipTestData')(db).update({ status: 'claimed', claimedBy: 'demo', claimedAt: new Date(), testData: false }), expectTight: 'deny' },
+    { id: 'demo claims lead in real territory', uid: 'demo', run: (db) => lead('demoClaimRealTerritory')(db).update({ status: 'claimed', claimedBy: 'demo', claimedAt: new Date() }), expectTight: 'deny' },
+    { id: 'demo claims unassigned TEST lead', uid: 'demo', run: (db) => lead('demoClaimUnassigned')(db).update({ status: 'claimed', claimedBy: 'demo', claimedAt: new Date() }), expectTight: 'deny' },
     { id: 'demo knock own lead', uid: 'demo', run: (db) => lead('TEST-appreview-lead-2')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'allow' },
     { id: 'demo knock sets claimedBy to real rep', uid: 'demo', run: (db) => lead('TEST-appreview-lead-3')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: 'realSetter' }), expectTight: 'deny' },
     { id: 'demo knock real lead', uid: 'demo', run: (db) => lead('realLead')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'deny' },
@@ -353,6 +399,9 @@ describe('firestore rules', { concurrency: 1 }, () => {
 
       const mismatches: string[] = [];
       const loosened: string[] = [];
+      const allowedExceptions: string[] = [];
+      // Deployed rules have no TEST claim/unclaim. This is the only intended loosening.
+      const intendedException = 'demo claims and unclaims own TEST lead';
       for (const ruleCase of cases()) {
         const provider = ruleCase.provider ?? 'password';
         const deployedResult = client(deployed, ruleCase.uid, provider, deployedClients);
@@ -375,7 +424,12 @@ describe('firestore rules', { concurrency: 1 }, () => {
           mismatches.push(`${ruleCase.id}: expected ${ruleCase.expectTight}, got ${after} (deployed ${before})`);
         }
         if (before === 'deny' && after === 'allow') {
-          loosened.push(`${ruleCase.id}: deployed denied, tightened allowed`);
+          const line = `${ruleCase.id}: deployed denied, tightened allowed`;
+          if (ruleCase.id === intendedException && ruleCase.uid === 'demo') {
+            allowedExceptions.push(line);
+          } else {
+            loosened.push(line);
+          }
         }
         if (after === 'allow' && ruleCase.exists != null) {
           const snap = value as { exists?: boolean };
@@ -386,8 +440,15 @@ describe('firestore rules', { concurrency: 1 }, () => {
       console.log(`rules cases: ${cases().length}`);
       console.log(`tight mismatches: ${mismatches.length}`);
       console.log(`tighten-only violations: ${loosened.length}`);
+      console.log(`allowed exceptions: ${allowedExceptions.length}`);
+      for (const line of allowedExceptions) {
+        console.log(`allowed exception: ${line} (TEST account claim/unclaim of an assigned testData lead in the caller's TEST territory)`);
+      }
       assert.deepEqual(mismatches, []);
       assert.deepEqual(loosened, []);
+      assert.deepEqual(allowedExceptions, [
+        `${intendedException}: deployed denied, tightened allowed`,
+      ]);
     } finally {
       await deployed.cleanup();
       await tight.cleanup();
