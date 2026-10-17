@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
+import { toPublicAdminSettings } from '@/app/utils/publicAdminSettings';
 
 const SETTINGS_DOC_ID = 'global';
 
@@ -20,10 +21,12 @@ export async function GET(request: NextRequest) {
     }
 
     const docSnap = await adminDb().collection('adminSettings').doc(SETTINGS_DOC_ID).get();
-    return NextResponse.json({ settings: docSnap.exists ? docSnap.data() : null });
-  } catch (error: any) {
-    console.error('[Admin Settings] GET error:', error);
-    return NextResponse.json({ error: error?.message || 'Internal error' }, { status: 500 });
+    const settings = docSnap.exists ? toPublicAdminSettings(docSnap.data()) : null;
+    return NextResponse.json({ settings });
+  } catch (error: unknown) {
+    console.error('[Admin Settings] GET error');
+    const message = error instanceof Error ? error.message : 'Internal error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -44,21 +47,19 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { schedulingManagerPhone, notificationWebhook, notificationType } = body || {};
+    const { schedulingManagerPhone, notificationType } = body || {};
 
     if (!schedulingManagerPhone || typeof schedulingManagerPhone !== 'string') {
       return NextResponse.json({ error: 'Invalid schedulingManagerPhone' }, { status: 400 });
-    }
-    if (typeof notificationWebhook !== 'string') {
-      return NextResponse.json({ error: 'Invalid notificationWebhook' }, { status: 400 });
     }
     if (!['discord', 'googlechat', 'slack', 'webhook'].includes(notificationType)) {
       return NextResponse.json({ error: 'Invalid notificationType' }, { status: 400 });
     }
 
+    // Phone and platform only. The webhook stays in Firestore until the server
+    // env var replaces it, and this response never echoes it.
     const settings = {
       schedulingManagerPhone,
-      notificationWebhook,
       notificationType,
       updatedAt: new Date(),
       updatedBy: decoded.uid,
@@ -66,9 +67,10 @@ export async function POST(request: NextRequest) {
 
     await adminDb().collection('adminSettings').doc(SETTINGS_DOC_ID).set(settings, { merge: true });
 
-    return NextResponse.json({ success: true, settings });
-  } catch (error: any) {
-    console.error('[Admin Settings] POST error:', error);
-    return NextResponse.json({ error: error?.message || 'Internal error' }, { status: 500 });
+    return NextResponse.json({ success: true });
+  } catch (error: unknown) {
+    console.error('[Admin Settings] POST error');
+    const message = error instanceof Error ? error.message : 'Internal error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

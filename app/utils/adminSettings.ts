@@ -1,39 +1,60 @@
 import { auth, db } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { toPublicAdminSettings, type AdminSettings } from './publicAdminSettings';
 
-export interface AdminSettings {
-  schedulingManagerPhone: string;
-  notificationWebhook: string;
-  notificationType: 'discord' | 'googlechat' | 'slack' | 'webhook';
-}
+export type { AdminSettings } from './publicAdminSettings';
 
 const SETTINGS_DOC_ID = 'global';
+const LOCAL_SETTINGS_KEY = 'raydar_admin_settings';
+
+function readLocalSettings(): AdminSettings | null {
+  try {
+    const localStr = localStorage.getItem(LOCAL_SETTINGS_KEY);
+    if (!localStr) return null;
+    const parsed = toPublicAdminSettings(JSON.parse(localStr));
+    if (!parsed) return null;
+    // Older builds stored the webhook in the browser. Replace that copy.
+    localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(parsed));
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalSettings(settings: AdminSettings): void {
+  try {
+    localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(toPublicAdminSettings(settings)));
+  } catch (error) {
+    console.warn('Could not backup admin settings to localStorage (ignored):', error);
+  }
+}
 
 export async function getAdminSettingsAsync(): Promise<AdminSettings | null> {
   try {
     if (!db) {
       console.error('Firestore not initialized');
-      // Fallback to localStorage
-      const localStr = localStorage.getItem('raydar_admin_settings');
-      return localStr ? JSON.parse(localStr) : null;
+      return readLocalSettings();
     }
 
     const docRef = doc(db, 'adminSettings', SETTINGS_DOC_ID);
     const docSnap = await getDoc(docRef);
-    
+
     if (docSnap.exists()) {
-      return docSnap.data() as AdminSettings;
+      const settings = toPublicAdminSettings(docSnap.data());
+      if (settings) writeLocalSettings(settings);
+      return settings;
     }
-    
-    // Fallback to localStorage for backwards compatibility
-    const localStr = localStorage.getItem('raydar_admin_settings');
-    if (localStr) {
-      const local = JSON.parse(localStr);
-      // Migrate to Firestore
-      await saveAdminSettingsAsync(local);
+
+    const local = readLocalSettings();
+    if (local) {
+      try {
+        await saveAdminSettingsAsync(local);
+      } catch (error) {
+        console.error('Error migrating admin settings:', error);
+      }
       return local;
     }
-    
+
     return null;
   } catch (error) {
     console.error('Error getting admin settings:', error);
@@ -42,8 +63,10 @@ export async function getAdminSettingsAsync(): Promise<AdminSettings | null> {
 }
 
 export async function saveAdminSettingsAsync(settings: AdminSettings): Promise<void> {
+  const payload = toPublicAdminSettings(settings);
+  if (!payload) throw new Error('Invalid settings');
+
   try {
-    // Preferred: save via server API (Admin SDK) to avoid Firestore client rules issues
     if (auth?.currentUser) {
       const idToken = await auth.currentUser.getIdToken();
       const res = await fetch('/api/admin/settings', {
@@ -52,7 +75,7 @@ export async function saveAdminSettingsAsync(settings: AdminSettings): Promise<v
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify(settings),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -60,35 +83,19 @@ export async function saveAdminSettingsAsync(settings: AdminSettings): Promise<v
         throw new Error(data?.error || `Failed to save settings (${res.status})`);
       }
 
-      // Backup (best-effort only; never fail save due to localStorage quota)
-      try {
-        localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
-      } catch (e) {
-        console.warn('Could not backup admin settings to localStorage (ignored):', e);
-      }
+      writeLocalSettings(payload);
       return;
     }
 
-    // Fallback: if not authenticated yet, attempt Firestore direct write
     if (!db) {
       console.error('Firestore not initialized - saving to localStorage only');
-      try {
-        localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
-      } catch (e) {
-        console.warn('Could not save admin settings to localStorage (quota?)', e);
-      }
+      writeLocalSettings(payload);
       return;
     }
 
     const docRef = doc(db, 'adminSettings', SETTINGS_DOC_ID);
-    await setDoc(docRef, settings);
-
-    // Also save to localStorage as backup (best-effort)
-    try {
-      localStorage.setItem('raydar_admin_settings', JSON.stringify(settings));
-    } catch (e) {
-      console.warn('Could not backup admin settings to localStorage (quota?)', e);
-    }
+    await setDoc(docRef, payload, { merge: true });
+    writeLocalSettings(payload);
   } catch (error) {
     console.error('Error saving admin settings:', error);
     throw error;
