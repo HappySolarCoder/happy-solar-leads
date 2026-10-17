@@ -39,7 +39,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result.body, {
       status: result.status,
-      headers: { 'Cache-Control': 'private, no-store' },
+      headers: {
+        'Cache-Control': 'private, no-store',
+        ...result.headers,
+      },
     });
   } catch {
     console.error('[notifications/discord] failed');

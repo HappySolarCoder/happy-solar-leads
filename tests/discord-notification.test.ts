@@ -150,8 +150,40 @@ describe('discord notification auth', () => {
       uid: 'uid-flagged',
       user: { role: 'setter', name: 'Flagged', email: 'flag@company.com', isTest: true, approved: true, isActive: true },
     });
-    assert.equal((await byFlag.run({ kind: 'test' })).status, 403);
+    assert.equal((await byFlag.run(scheduling)).status, 403);
     assert.equal(byFlag.posts.length, 0);
+
+    const byIsTestAccount = harness({
+      uid: 'uid-is-test-account',
+      user: {
+        role: 'admin',
+        name: 'Demo',
+        email: 'demo@company.com',
+        isTestAccount: true,
+        approved: true,
+        isActive: true,
+      },
+    });
+    const isTestAccountResult = await byIsTestAccount.run(scheduling);
+    assert.equal(isTestAccountResult.status, 403);
+    assert.equal(isTestAccountResult.body.error, 'Test accounts cannot send notifications.');
+    assert.equal(byIsTestAccount.posts.length, 0);
+
+    const byTestData = harness({
+      uid: 'uid-test-data',
+      user: {
+        role: 'setter',
+        name: 'Probe',
+        email: 'probe@company.com',
+        testData: true,
+        approved: true,
+        isActive: true,
+      },
+    });
+    const testDataResult = await byTestData.run(scheduling);
+    assert.equal(testDataResult.status, 403);
+    assert.equal(testDataResult.body.error, 'Test accounts cannot send notifications.');
+    assert.equal(byTestData.posts.length, 0);
   });
 
   it('still sends when the lead email is a test domain and the rep is real', async () => {
@@ -164,15 +196,46 @@ describe('discord notification auth', () => {
 
 describe('discord notification payload', () => {
   it('accepts the admin test payload and nothing else on that kind', async () => {
-    const test = harness({ uid: 'uid-test-kind' });
+    const test = harness({
+      uid: 'uid-test-kind',
+      user: { role: 'admin', name: 'Ada Admin', email: 'ada@company.com', approved: true, isActive: true },
+    });
     const result = await test.run({ kind: 'test' });
     assert.equal(result.status, 200);
     assert.equal(test.posts[0].body.content, DISCORD_TEST_CONTENT);
 
-    const extra = harness({ uid: 'uid-test-extra' });
+    const extra = harness({
+      uid: 'uid-test-extra',
+      user: { role: 'admin', name: 'Ada Admin', email: 'ada@company.com', approved: true, isActive: true },
+    });
     const rejected = await extra.run({ kind: 'test', content: 'custom' });
     assert.equal(rejected.status, 400);
     assert.equal(extra.posts.length, 0);
+  });
+
+  it('lets only an admin send a test notification', async () => {
+    const setter = harness({ uid: 'uid-setter-test' });
+    const setterResult = await setter.run({ kind: 'test' });
+    assert.equal(setterResult.status, 403);
+    assert.equal(setterResult.body.error, 'Only an admin can send a test notification.');
+    assert.equal(setter.posts.length, 0);
+
+    const manager = harness({
+      uid: 'uid-manager-test',
+      user: { role: 'manager', name: 'Morgan Manager', email: 'morgan@company.com', approved: true, isActive: true },
+    });
+    const managerResult = await manager.run({ kind: 'test' });
+    assert.equal(managerResult.status, 403);
+    assert.equal(managerResult.body.error, 'Only an admin can send a test notification.');
+    assert.equal(manager.posts.length, 0);
+
+    const admin = harness({
+      uid: 'uid-admin-test',
+      user: { role: 'admin', name: 'Ada Admin', email: 'ada@company.com', approved: true, isActive: true },
+    });
+    const adminResult = await admin.run({ kind: 'test' });
+    assert.equal(adminResult.status, 200);
+    assert.equal(admin.posts.length, 1);
   });
 
   it('rejects unknown fields, missing fields, and non-objects', async () => {
@@ -278,7 +341,7 @@ describe('discord notification webhook selection', () => {
     assert.equal(missing.posts.length, 0);
 
     const slack = harness({ uid: 'uid-slack-hook', webhook: 'https://hooks.slack.com/services/T00/B00/secret' });
-    const result = await slack.run({ kind: 'test' });
+    const result = await slack.run(scheduling);
     assert.equal(result.status, 503);
     assert.equal(result.body.error, 'Discord notifications are not configured.');
     assert.equal(slack.posts.length, 0);
@@ -289,20 +352,22 @@ describe('discord notification webhook selection', () => {
     let now = 5_000;
     const test = harness({ uid: 'uid-rate', now: () => now });
     for (let i = 0; i < DISCORD_NOTIFICATION_LIMIT; i += 1) {
-      assert.equal((await test.run({ kind: 'test' })).status, 200);
+      assert.equal((await test.run(scheduling)).status, 200);
     }
-    const blocked = await test.run({ kind: 'test' });
+    const blocked = await test.run(scheduling);
     assert.equal(blocked.status, 429);
+    assert.equal(blocked.body.error, 'Too many notifications. Try again in a minute.');
+    assert.equal(blocked.headers?.['Retry-After'], '60');
     assert.equal(test.posts.length, DISCORD_NOTIFICATION_LIMIT);
 
     now += DISCORD_NOTIFICATION_WINDOW_MS;
-    assert.equal((await test.run({ kind: 'test' })).status, 200);
+    assert.equal((await test.run(scheduling)).status, 200);
     assert.equal(test.posts.length, DISCORD_NOTIFICATION_LIMIT + 1);
   });
 
   it('returns 502 without echoing the webhook when Discord rejects the post', async () => {
     const test = harness({ uid: 'uid-upstream', postOk: false });
-    const result = await test.run({ kind: 'test' });
+    const result = await test.run(scheduling);
     assert.equal(result.status, 502);
     assert.equal(JSON.stringify(result).includes('fakeToken'), false);
   });
@@ -333,5 +398,8 @@ describe('isTestAccount', () => {
     assert.equal(isTestAccount('uid-1', { accountType: 'Test' }), true);
     assert.equal(isTestAccount('uid-1', { testAccount: true, email: 'rep@company.com' }), true);
     assert.equal(isTestAccount('user-test-4', { email: 'rep@company.com' }), true);
+    assert.equal(isTestAccount('uid-1', { email: 'rep@company.com', isTestAccount: true }), true);
+    assert.equal(isTestAccount('uid-1', { email: 'rep@company.com', testData: true }), true);
+    assert.equal(isTestAccount('uid-1', { email: 'rep@company.com', isTestAccount: false, testData: false }), false);
   });
 });

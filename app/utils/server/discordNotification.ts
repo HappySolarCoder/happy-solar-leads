@@ -1,3 +1,4 @@
+import { isExcludedTestLead } from './allLeadsStats';
 import {
   HttpError,
   requireApprovedUser,
@@ -86,11 +87,26 @@ export function allowDiscordNotification(
   return true;
 }
 
+/** Seconds until the oldest hit in the current window expires. At least 1. */
+export function discordRetryAfterSeconds(
+  uid: string,
+  now: number,
+  store: RateLimitStore = HITS,
+  windowMs = DISCORD_NOTIFICATION_WINDOW_MS,
+): number {
+  const recent = (store.get(uid) ?? []).filter((at) => now - at < windowMs);
+  if (recent.length === 0) return Math.ceil(windowMs / 1000);
+  const oldest = Math.min(...recent);
+  return Math.max(1, Math.ceil((windowMs - (now - oldest)) / 1000));
+}
+
 /**
  * Seeded local users use @test.com and user-test-* ids. A profile can also
  * be marked with isTest, testAccount, or accountType "test".
+ * isTestAccount and testData use the same helper as the stats test-lead filter.
  */
 export function isTestAccount(uid: string, user: UserProfile): boolean {
+  if (isExcludedTestLead(uid, user)) return true;
   if (user.isTest === true || user.testAccount === true) return true;
   if (typeof user.accountType === 'string' && user.accountType.trim().toLowerCase() === 'test') return true;
   if (uid.startsWith('user-test-')) return true;
@@ -321,7 +337,7 @@ export async function handleDiscordNotification(input: {
   authorization: string | null;
   body: unknown;
   deps: DiscordNotificationDeps;
-}): Promise<{ status: number; body: { error?: string; success?: boolean } }> {
+}): Promise<{ status: number; body: { error?: string; success?: boolean }; headers?: Record<string, string> }> {
   let approved;
   try {
     approved = await requireApprovedUser(input.authorization, input.deps);
@@ -339,9 +355,18 @@ export async function handleDiscordNotification(input: {
   const parsed = parseNotificationPayload(input.body);
   if (!parsed.ok) return { status: 400, body: { error: parsed.error } };
 
+  if (parsed.kind === 'test' && approved.role !== 'admin') {
+    return { status: 403, body: { error: 'Only an admin can send a test notification.' } };
+  }
+
   const now = input.deps.now?.() ?? Date.now();
-  if (!allowDiscordNotification(approved.uid, now, input.deps.rateLimitStore ?? HITS)) {
-    return { status: 429, body: { error: 'Too many notifications. Try again in a minute.' } };
+  const store = input.deps.rateLimitStore ?? HITS;
+  if (!allowDiscordNotification(approved.uid, now, store)) {
+    return {
+      status: 429,
+      body: { error: 'Too many notifications. Try again in a minute.' },
+      headers: { 'Retry-After': String(discordRetryAfterSeconds(approved.uid, now, store)) },
+    };
   }
 
   const webhookUrl = await input.deps.resolveWebhookUrl();
