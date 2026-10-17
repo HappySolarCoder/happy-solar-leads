@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildStatsLeadQuery,
   handleAllLeadsStats,
+  isExcludedTestLead,
   STATS_SELECT_FIELDS,
   STATS_WINDOW_MS,
 } from '../app/utils/server/allLeadsStats.ts';
@@ -181,5 +182,90 @@ describe('buildStatsLeadQuery', () => {
     calls.length = 0;
     buildStatsLeadQuery(query, null);
     assert.deepEqual(calls, [['select', ...STATS_SELECT_FIELDS]]);
+    assert.equal(STATS_SELECT_FIELDS.includes('testData'), true);
+    assert.equal(STATS_SELECT_FIELDS.includes('isTestAccount'), true);
+  });
+});
+
+describe('test lead exclusion', () => {
+  const excluded: Array<{ id: string; data: Record<string, unknown> }> = [
+    { id: 'testData-true', data: { status: 'appointment', testData: true } },
+    { id: 'testData-true-string', data: { status: 'appointment', testData: 'true' } },
+    { id: 'testData-1', data: { status: 'appointment', testData: 1 } },
+    { id: 'testData-1-string', data: { status: 'appointment', testData: '1' } },
+    { id: 'testData-yes', data: { status: 'appointment', testData: 'yes' } },
+    { id: 'testData-nested-true', data: { status: 'appointment', meta: { testData: true } } },
+    { id: 'testData-nested-true-string', data: { account: { profile: { testData: 'true' } } } },
+    { id: 'testData-nested-1', data: { visits: [{ testData: 1 }] } },
+    { id: 'testData-nested-1-string', data: { wrap: { testData: '1' } } },
+    { id: 'testData-nested-yes', data: { wrap: { inner: { testData: 'yes' } } } },
+    { id: 'isTestAccount-true', data: { isTestAccount: true } },
+    { id: 'isTestAccount-true-string', data: { isTestAccount: 'true' } },
+    { id: 'isTestAccount-1', data: { isTestAccount: 1 } },
+    { id: 'isTestAccount-1-string', data: { isTestAccount: '1' } },
+    { id: 'isTestAccount-yes', data: { isTestAccount: 'yes' } },
+    { id: 'isTestAccount-nested', data: { owner: { isTestAccount: true } } },
+    { id: 'TEST-upper', data: { status: 'sale', testData: false } },
+    { id: 'test-lower', data: { status: 'sale' } },
+    { id: 'Test-mixed', data: { status: 'sale' } },
+  ];
+
+  const kept: Array<{ id: string; data: Record<string, unknown> }> = [
+    { id: 'lead-real', data: { status: 'appointment', claimedBy: 'rep-1' } },
+    { id: 'testData-false', data: { status: 'knock', testData: false } },
+    { id: 'testData-zero', data: { status: 'knock', testData: 0 } },
+    { id: 'testData-null', data: { status: 'knock', testData: null } },
+    { id: 'testData-nested-false', data: { meta: { testData: false } } },
+    { id: 'isTestAccount-false', data: { isTestAccount: false } },
+    { id: 'isTestAccount-zero', data: { isTestAccount: 0 } },
+    { id: 'isTestAccount-null', data: { isTestAccount: null } },
+    { id: 'TESTIMONIAL', data: { status: 'appointment', testData: null } },
+  ];
+
+  it('classifies every test variant as excluded and every control as kept', () => {
+    for (const doc of excluded) {
+      assert.equal(isExcludedTestLead(doc.id, doc.data), true, doc.id);
+    }
+    for (const doc of kept) {
+      assert.equal(isExcludedTestLead(doc.id, doc.data), false, doc.id);
+    }
+  });
+
+  it('drops test leads from the stats response and keeps real leads unchanged', async () => {
+    const result = await handleAllLeadsStats({
+      authorization: 'Bearer token',
+      sinceParam: null,
+      deps: {
+        ...authDeps('manager'),
+        now: () => NOW,
+        loadLeads: async () => [richLead, ...kept, ...excluded],
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.ok('leads' in result.body);
+    assert.deepEqual(
+      result.body.leads.map((lead) => lead.id),
+      [richLead.id, ...kept.map((doc) => doc.id)],
+    );
+
+    const real = result.body.leads[0];
+    assert.equal(real.status, 'appointment');
+    assert.equal(Object.hasOwn(real, 'testData'), false);
+    assert.equal(Object.hasOwn(real, 'isTestAccount'), false);
+    assert.equal(Object.hasOwn(real, 'name'), false);
+
+    const falseFlag = result.body.leads.find((lead) => lead.id === 'testData-false');
+    assert.ok(falseFlag);
+    assert.equal(falseFlag.status, 'knock');
+    assert.deepEqual(Object.keys(falseFlag).sort(), [
+      'assignedTo',
+      'claimedBy',
+      'dispositionHistory',
+      'dispositionedAt',
+      'goBackScheduledBy',
+      'id',
+      'status',
+    ]);
   });
 });
