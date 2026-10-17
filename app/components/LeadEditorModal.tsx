@@ -1,16 +1,22 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
-import { sendSchedulingWebhook } from '@/app/utils/schedulingWebhook';
 import { auth } from '@/app/utils/firebase';
 import {
   FALLBACK_SCHEDULING_MANAGER_PHONE,
   schedulingManagerTelDigits,
 } from '@/app/utils/schedulingManagerTel';
+import {
+  AMBIGUOUS_SEND_MESSAGE,
+  SIGN_IN_AGAIN_MESSAGE,
+  buildSchedulingPayload,
+  schedulingBlockedFor,
+  sendSchedulingNotification,
+} from '@/app/utils/schedulingNotification';
 
 interface LeadEditorModalProps {
   signedInRep?: User | null;
@@ -41,8 +47,15 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
   const [isSending, setIsSending] = useState(false);
   const [infoSent, setInfoSent] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [sendNotice, setSendNotice] = useState<string | null>(null);
+  const [accountBlocked, setAccountBlocked] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [now, setNow] = useState(0);
+  const sendingRef = useRef(false);
   // Cached before the call tap. Reading this during the click must not await.
   const [schedulingManagerPhone, setSchedulingManagerPhone] = useState(FALLBACK_SCHEDULING_MANAGER_PHONE);
+  const accountId = signedInRep?.id || auth?.currentUser?.uid || '';
+  const blockedForAccount = accountBlocked || schedulingBlockedFor(accountId);
 
   // Load current user and scheduling-manager phone when the modal mounts.
   useEffect(() => {
@@ -54,9 +67,13 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
     }
 
     async function loadSchedulingManagerPhone() {
-      const settings = await getAdminSettingsAsync();
-      const phone = settings?.schedulingManagerPhone?.trim();
-      if (!cancelled && phone) setSchedulingManagerPhone(phone);
+      try {
+        const settings = await getAdminSettingsAsync();
+        const phone = settings?.schedulingManagerPhone?.trim();
+        if (!cancelled && phone) setSchedulingManagerPhone(phone);
+      } catch {
+        // Denied or offline: keep FALLBACK_SCHEDULING_MANAGER_PHONE. Do not disable Send.
+      }
     }
 
     loadUser();
@@ -66,6 +83,16 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
       cancelled = true;
     };
   }, [signedInRep]);
+
+  useEffect(() => {
+    if (cooldownUntil <= 0) return;
+    const id = window.setInterval(() => {
+      const next = Date.now();
+      setNow(next);
+      if (next >= cooldownUntil) window.clearInterval(id);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [cooldownUntil]);
 
   const handleSave = async () => {
     if (mobileMode && pendingFieldWork) { alert('Sync or review this pin’s pending changes in Field tools before editing contact details. You can still send the scheduling information.'); return; }
@@ -101,102 +128,74 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
   };
 
   const handleSendInfo = async () => {
+    if (sendingRef.current || isSending) return;
+    const uid = signedInRep?.id || auth?.currentUser?.uid || '';
+    if (blockedForAccount || schedulingBlockedFor(uid)) return;
+    if (cooldownUntil > Date.now()) return;
+    sendingRef.current = true;
     setIsSending(true);
+    setSendNotice(null);
 
     try {
-      // 0. Validate required fields before doing anything
-      const missing: string[] = [];
-      const isBlank = (v: unknown) => !String(v ?? '').trim();
-
-      if (isBlank(formData.name)) missing.push('Name');
-      if (isBlank(formData.address)) missing.push('Street Address');
-      if (isBlank(formData.city)) missing.push('City');
-      if (isBlank(formData.state)) missing.push('State');
-      if (isBlank(formData.zip)) missing.push('Zip');
-      // Strongly recommended: phone is required for scheduling manager to call
-      if (isBlank(formData.phone)) missing.push('Phone');
-
-      if (missing.length > 0) {
-        alert(`Missing required fields:\n\n- ${missing.join('\n- ')}\n\nPlease fill these out before sending to the Scheduling Manager.`);
+      const built = buildSchedulingPayload(formData, lead, fieldContext);
+      if (!built.ok) {
+        alert(built.message);
         return;
       }
 
-      // Basic format sanity checks (non-blocking beyond alerts)
-      const zipClean = String(formData.zip).trim();
-      if (!/^\d{5}(-\d{4})?$/.test(zipClean)) {
-        alert('Zip code looks invalid. Please enter a 5-digit ZIP (or ZIP+4) before sending.');
+      let user = signedInRep || currentUser;
+      if (!user) {
+        try {
+          user = await getCurrentUserAsync();
+        } catch {
+          setSendNotice(SIGN_IN_AGAIN_MESSAGE);
+          return;
+        }
+      }
+      if (mobileMode && (!user || auth?.currentUser?.uid !== user.id)) {
+        setSendNotice(SIGN_IN_AGAIN_MESSAGE);
         return;
       }
 
-      // 1. Get current user (fallback if state not loaded yet)
-      const user = signedInRep || currentUser || await getCurrentUserAsync();
-      if (mobileMode && (!user || auth?.currentUser?.uid !== user.id)) throw Error('Sign in again before sending this request.');
-      
-
-      // 2. Get admin settings from Firestore (synced across devices)
-      const settings = await getAdminSettingsAsync();
-
-
-      if (!settings?.notificationWebhook) {
-        alert(`Webhook not configured!\n\nGo to Admin → Settings and configure Discord webhook.\n\n(Settings are now synced via Firestore - works on all devices!)`);
+      // Persist the lead before the notification so the request has a real visit.
+      try {
+        if (saveLeadPatch) await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+        await beforeSend?.();
+      } catch (error) {
+        alert(`Changes could not be saved. ${(error as Error).message}`);
         return;
       }
 
-      // A new imported home becomes a visit only on an explicit Save/Send action.
-      // Persist before the webhook so the scheduling request has a real lead.
-      if (saveLeadPatch) await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
-      await beforeSend?.();
+      const outcome = await sendSchedulingNotification(built.payload, {
+        accountId: uid,
+        getToken: async (forceRefresh) => {
+          const current = auth?.currentUser;
+          if (!current) throw new Error('signed-out');
+          return current.getIdToken(forceRefresh);
+        },
+      });
 
-      // 3. Build and send webhook notification
-      let solarSection = '';
-      if (lead.solarScore) {
-        solarSection = `\n**☀️ Solar Data:**
-- Solar Score: ${lead.solarScore}/100
-- Sun Hours/Year: ${lead.solarSunshineHours ? Math.round(lead.solarSunshineHours).toLocaleString() : 'N/A'}
-- Max Panels: ${lead.solarMaxPanels || 'N/A'}
-- South-Facing Roof: ${lead.hasSouthFacingRoof !== undefined ? (lead.hasSouthFacingRoof ? 'Yes ✅' : 'No ❌') : 'N/A'}`;
-      }
-
-
-      const leadInfo = `
-📞 **Scheduling Manager Request**
-👤 **Sent by:** ${user?.name || 'Unknown Setter'}
-
-**Lead Details:**
-👤 Name: ${formData.name}
-📍 Address: ${formData.address}, ${formData.city}, ${formData.state} ${formData.zip}
-📞 Phone: ${formData.phone || 'N/A'}
-📧 Email: ${formData.email || 'N/A'}
-💰 Est. Bill: ${formData.estimatedBill ? `$${formData.estimatedBill}/mo` : 'N/A'}${solarSection}
-
-📝 Notes: ${formData.notes || 'None'}${fieldContext ? `\nField context: ${fieldContext}` : ''}
-
-🎯 **Action Required:** Call customer to schedule appointment
-      `.trim();
-
-      const payload: Record<string, string> = settings.notificationType === 'discord'
-        ? { content: leadInfo }
-        : settings.notificationType === 'googlechat'
-        ? { text: leadInfo }
-        : settings.notificationType === 'slack'
-        ? { text: leadInfo }
-        : { message: leadInfo };
-
-
-      // Send webhook
-      const response = await sendSchedulingWebhook(settings.notificationWebhook, payload);
-
-      if (response.ok) {
+      if (outcome.status === 'sent') {
         setInfoSent(true);
         void onInfoSent?.().catch(() => {});
-      } else {
-        console.error('❌ Webhook failed:', response.status, response.statusText);
-        alert(`Failed to send notification: ${response.status} ${response.statusText}`);
+        return;
       }
-    } catch (err) {
-      console.error('❌ Webhook error:', err);
-      alert(`Error sending notification: ${(err as Error).message}`);
+      if (outcome.status === 'blocked') {
+        setAccountBlocked(true);
+        setSendNotice(outcome.message);
+        return;
+      }
+      if (outcome.status === 'rateLimited') {
+        const until = Date.now() + outcome.retryAfterSec * 1000;
+        setCooldownUntil(until);
+        setNow(Date.now());
+        return;
+      }
+      setSendNotice(outcome.message);
+    } catch {
+      setSendNotice(AMBIGUOUS_SEND_MESSAGE);
     } finally {
+      sendingRef.current = false;
       setIsSending(false);
     }
   };
@@ -385,10 +384,17 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
             </button>
 
             {/* Step 1: Send Info */}
+            {!infoSent && (cooldownUntil > now || sendNotice) && (
+              <p role="status" className="text-sm text-center text-[#4A5568]">
+                {cooldownUntil > now
+                  ? `Too many requests. You can send again in ${Math.max(1, Math.ceil((cooldownUntil - now) / 1000))} seconds.`
+                  : sendNotice}
+              </p>
+            )}
             {!infoSent ? (
               <button
                 onClick={handleSendInfo}
-                disabled={isSending}
+                disabled={isSending || blockedForAccount || cooldownUntil > now}
                 className="w-full px-4 py-3 bg-[#FF5F5A] hover:bg-[#E54E49] text-white rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <Send className="w-5 h-5" />

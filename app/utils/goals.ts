@@ -5,6 +5,7 @@ import { startOfMonth, endOfMonth, format, isAfter, isBefore } from 'date-fns';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { Lead, User } from '@/app/types';
+import { countRecordForViewer } from '@/app/utils/testAccount';
 
 export type MonthId = `${number}-${string}`; // e.g. 2026-03
 
@@ -75,6 +76,7 @@ export async function getMyMonthlyKnocksAsync(monthDate: Date, currentUser: User
     .map(d => d.id.toLowerCase());
 
   const knocks = leads.filter((lead: Lead) => {
+    if (!countRecordForViewer(currentUser, lead)) return false;
     if (!lead.dispositionedAt) return false;
 
     // Count by actor (who dispositioned), fallback to claimedBy for legacy rows.

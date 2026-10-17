@@ -47,6 +47,9 @@ export interface User {
   mustChangePassword?: boolean;
   // Team (for user organization - e.g., Rochester, Buffalo)
   team?: string;
+  /** App Review and other synthetic accounts. Omitted from real team totals. */
+  isTestAccount?: boolean;
+  testData?: boolean;
   // Last published field GPS (users.currentLocation) — used by team map / area overlay
   currentLocation?: {
     lat: number;
@@ -85,6 +88,8 @@ export interface Lead {
   dispositionedAt?: Date;
   notes?: string;
   source?: string;
+  /** Synthetic lead or knock. Omitted from real team totals. */
+  testData?: boolean;
   createdAt: Date;
   // Tags (admin only)
   tags?: LeadTag[];

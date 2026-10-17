@@ -13,6 +13,9 @@ import { Disposition } from '@/app/types/disposition';
 import { startOfToday, startOfWeek, startOfMonth, isAfter, format } from 'date-fns';
 import { auth } from '@/app/utils/firebase';
 import { teamPerformanceMayRequestAllLeads } from '@/app/mobile/_lib/accountPolicy';
+import { directoryAccessLimited } from '@/app/utils/directoryUsers';
+import { TEAM_VIEW_UNAVAILABLE } from '@/app/utils/teamDirectory';
+import { ensureViewerPerformanceRow, leadActorIds, scopeTeamTotals } from '@/app/utils/testAccount';
 
 interface SetterMetrics {
   userId: string;
@@ -154,8 +157,15 @@ export default function DataDashboard() {
 
     // For this dashboard, "knocks" means all dispositioned leads in range.
 
+    const scoped = scopeTeamTotals({
+      viewer: currentUser,
+      users,
+      records: leads,
+      actorIds: leadActorIds,
+    });
+
     // Filter leads by time
-    const filteredLeads = leads.filter(lead => {
+    const filteredLeads = scoped.records.filter(lead => {
       if (!lead.dispositionedAt) return false;
       const leadDate = new Date(lead.dispositionedAt);
       // Must be after cutoff date
@@ -173,7 +183,7 @@ export default function DataDashboard() {
       if (!userId) return;
 
       if (!setterMap.has(userId)) {
-        const user = users.find(u => u.id === userId);
+        const user = scoped.users.find(u => u.id === userId);
         setterMap.set(userId, {
           userId,
           userName: user?.name || 'Unknown',
@@ -240,7 +250,24 @@ export default function DataDashboard() {
     return metricsArray;
   };
 
-  const setterMetrics = calculateSetterMetrics();
+  const teamLimited = directoryAccessLimited(currentUser?.id);
+  const setterMetrics = ensureViewerPerformanceRow(
+    calculateSetterMetrics(),
+    currentUser,
+    teamLimited,
+    (viewer) => ({
+      userId: viewer.id,
+      userName: viewer.name,
+      knocks: 0,
+      conversations: 0,
+      appointments: 0,
+      sales: 0,
+      notHome: 0,
+      notInterested: 0,
+      goBacksScheduled: 0,
+      goBacksConverted: 0,
+    }),
+  );
 
   // Calculate team totals
   const teamTotals = setterMetrics.reduce(
@@ -312,6 +339,9 @@ export default function DataDashboard() {
           <div className="text-center">
             <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-[#2D3748] mb-1 sm:mb-2">Team Performance</h1>
             <p className="text-xs sm:text-sm text-[#718096] mb-3 sm:mb-4">Real-time setter metrics {isRefreshing ? '• Refreshing…' : ''}</p>
+            {teamLimited && (
+              <p className="text-xs text-[#718096] mb-3">{TEAM_VIEW_UNAVAILABLE}</p>
+            )}
 
             {/* Time Filter */}
             <div className="flex flex-wrap justify-center gap-1 sm:gap-2 bg-white p-2 rounded-lg shadow-sm">

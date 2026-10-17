@@ -2,6 +2,7 @@
 import { Lead, User, LeadStatus } from '@/app/types';
 import { isKnockStatus } from '@/app/types/disposition';
 import { auth } from './firebase';
+import { isPermissionDenied } from './permissionDenied';
 import { startupEvent } from '@/app/mobile/_lib/startupDiagnostics';
 import { 
   getAllLeads as firestoreGetAllLeads,
@@ -260,7 +261,20 @@ export async function getUsersAsync(): Promise<User[]> {
       usersCacheTimestamp = Date.now();
       startupEvent('directory-ready', startedAt);
       return users;
-    }).catch(error => {
+    }).catch(async error => {
+      // getAllUsers already returns the signed-in profile on permission-denied.
+      // If a denial still surfaces, keep the screen on that one profile.
+      if (isPermissionDenied(error)) {
+        const own = await firestoreGetUser(account.uid).catch(() => null);
+        const users = own ? [own] : [];
+        if (auth?.currentUser === account) {
+          usersCache = users;
+          mobileUsersAccount = account;
+          usersCacheTimestamp = Date.now();
+        }
+        startupEvent('directory-ready', startedAt);
+        return users;
+      }
       startupEvent('directory-error', startedAt, error);
       throw error;
     }).finally(() => {
@@ -273,11 +287,12 @@ export async function getUsersAsync(): Promise<User[]> {
     return usersCache;
   }
 
+  let me: User | null = null;
   try {
     // Wait for auth. getAllUsers() now throws on failure (no silent []).
     // A pre-auth [] must not be cached for 90s (empties Assign To / Filter).
     const { getCurrentAuthUser } = await import('./auth');
-    const me = await getCurrentAuthUser();
+    me = await getCurrentAuthUser();
     if (!me) return usersCache || [];
 
     const users = await firestoreGetAllUsers();
@@ -287,6 +302,10 @@ export async function getUsersAsync(): Promise<User[]> {
     }
     return users;
   } catch (error) {
+    if (isPermissionDenied(error)) {
+      const own = me?.id ? await firestoreGetUser(me.id).catch(() => null) : null;
+      return own ? [own] : [];
+    }
     console.error('Firestore getUsers failed:', error);
     return usersCache || [];
   }

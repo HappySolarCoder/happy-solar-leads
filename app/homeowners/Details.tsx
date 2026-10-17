@@ -5,6 +5,7 @@ import MobileDialog from "@/app/mobile/_components/MobileDialog";
 import { occupancyLabel, suspectedRenter, type Homeowner } from "./model";
 import type { HomeownerState } from "./loader";
 import { homeownerPinArtwork } from "./artwork";
+import { HOMEOWNER_LIMITED_NOTE } from "./access";
 export function HomeownerSection({ homeowner: h, compact = false }: { homeowner?: Homeowner; compact?: boolean }) {
   if (!h) return null;
   return (
@@ -129,11 +130,14 @@ export function HomeownerStatus({
           .includes(search.toLowerCase()),
       )
     : [];
+  const limited = state.error === HOMEOWNER_LIMITED_NOTE;
   const title = state.zoomIn
     ? "Zoom in for homes"
-    : state.error
-      ? "Homes unavailable"
-      : state.offline
+    : limited
+      ? "Homes"
+      : state.error
+        ? "Homes unavailable"
+        : state.offline
         ? "Saved homes"
         : state.partial
           ? "Homes · zoom for more"
