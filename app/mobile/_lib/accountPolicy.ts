@@ -2,7 +2,7 @@
  * Native App Store account rules for 14.14.
  * The website build leaves self-signup and team-stat totals unchanged.
  * Account deletion calls POST /api/account/request-deletion. Until that route
- * is deployed, a 404 falls back to the confirmed email handoff.
+ * is deployed, a 404 opens an email and asks whether it was sent.
  * Knock, visit, and lead records are never deleted or rewritten here.
  */
 
@@ -13,20 +13,32 @@ export const ACCOUNT_DELETION_MAILBOX = "evan@happyslr.com";
 
 export const ACCOUNT_DELETION_STORAGE_KEY = "raydar-account-deletion-notice";
 
+/** Set when a deletion request ended without a definite yes or no. */
+export const ACCOUNT_DELETION_UNKNOWN_KEY = "raydar-account-deletion-unknown";
+
 export const ACCOUNT_DELETION_PATH = "/api/account/request-deletion";
 
 /** Shown before the person confirms, so the outcome is stated first. */
 export const ACCOUNT_DELETION_CONFIRMATION =
-  "Deleting your account disables sign-in right away. Happy Solar removes remaining profile details within 30 days. Knock and visit records the company needs stay with the company's lead records. Nothing on this phone is erased. If account deletion is not available yet, Raydar opens an email to evan@happyslr.com. You are signed out only after that email opens. If it cannot open, you stay signed in and Raydar shows the address to contact.";
+  "Deleting your account disables sign-in right away. Happy Solar removes remaining profile details within 30 days. Knock and visit records the company needs stay with the company's lead records. Nothing on this phone is erased. If account deletion is not available yet, Raydar opens an email to evan@happyslr.com. You are signed out only after you confirm that you sent that email. The address stays on screen so you can send it yourself.";
 
 export const ACCOUNT_DELETED_NOTICE =
   "Your account is deleted and sign-in is disabled. Happy Solar removes remaining profile details within 30 days. Knock and visit records the company needs stay with the company's lead records. You are signed out of this phone. Nothing on this phone was erased.";
 
 export const ACCOUNT_DELETION_EMAIL_NOTICE =
-  "Account deletion is not available in the app yet, so an email to evan@happyslr.com was opened with your account email and id. Happy Solar will disable your sign-in. Knock and visit records the company needs stay with the company's lead records. You are signed out of this phone. Nothing on this phone was erased.";
+  "You sent the deletion email to evan@happyslr.com with your account email and id. Happy Solar will disable your sign-in. Knock and visit records the company needs stay with the company's lead records. You are signed out of this phone. Nothing on this phone was erased.";
 
-export const ACCOUNT_DELETION_MAIL_UNOPENED =
-  "Raydar could not open an email. You are still signed in and nothing was deleted. Contact evan@happyslr.com with your account email and id.";
+export const ACCOUNT_DELETION_EMAIL_QUESTION =
+  `Did you send the deletion email to ${ACCOUNT_DELETION_MAILBOX}?`;
+
+export const ACCOUNT_DELETION_EMAIL_NOT_SENT =
+  `You are still signed in and nothing was deleted. Email ${ACCOUNT_DELETION_MAILBOX} with your account email and id when you are ready.`;
+
+export const ACCOUNT_DELETION_SERVER_SIGNOUT_FAILED =
+  "Your account deletion was confirmed, but this phone could not finish signing out. Close Raydar and open it again. You are still signed in on this phone. Nothing on this phone was erased.";
+
+export const ACCOUNT_DELETION_EMAIL_SIGNOUT_FAILED =
+  "The request email was sent, but sign-out failed. Sign out from More.";
 
 export const ACCOUNT_DELETION_SIGN_IN_AGAIN =
   "Sign in again and retry. You are still signed in and nothing was deleted.";
@@ -34,11 +46,15 @@ export const ACCOUNT_DELETION_SIGN_IN_AGAIN =
 export const ACCOUNT_DELETION_ADMIN_BLOCKED =
   "Admin accounts can't be deleted in the app. You are still signed in and nothing was deleted.";
 
-export const ACCOUNT_DELETION_SERVER_ERROR =
-  "Happy Solar could not delete the account. You are still signed in and nothing was deleted. Try again.";
+export const ACCOUNT_DELETION_UNKNOWN_OUTCOME =
+  "Raydar could not confirm whether the deletion went through. If sign-in later reports the account is disabled, the deletion succeeded.";
 
-export const ACCOUNT_DELETION_OFFLINE =
-  "Raydar could not reach Happy Solar. You are still signed in and nothing was deleted. Try again when you have a connection.";
+export const ACCOUNT_DELETION_SERVER_ERROR = ACCOUNT_DELETION_UNKNOWN_OUTCOME;
+
+export const ACCOUNT_DELETION_OFFLINE = ACCOUNT_DELETION_UNKNOWN_OUTCOME;
+
+export const ACCOUNT_DELETION_LIKELY_DELETED =
+  "Your account was most likely already deleted. Sign-in is disabled.";
 
 export const ACCOUNT_DELETION_UNCONFIRMED =
   "Raydar could not confirm that the account was deleted. You are still signed in and nothing was deleted.";
@@ -124,64 +140,87 @@ export function deletionMailto(account: { email: string; uid: string }): string 
 
 export type AccountDeletionDecision =
   | { action: "sign-out"; notice: string }
+  | { action: "likely-deleted"; notice: string }
   | { action: "email-fallback" }
-  | { action: "stay"; message: string; retry: boolean };
+  | { action: "stay"; message: string; retry: boolean; unknown?: boolean };
+
+type DeletionMemory = {
+  getItem: (key: string) => string | null;
+  setItem?: (key: string, value: string) => void;
+  removeItem?: (key: string) => void;
+};
+
+export function rememberUnknownDeletionAttempt(storage: DeletionMemory | null): void {
+  try {
+    storage?.setItem?.(ACCOUNT_DELETION_UNKNOWN_KEY, "1");
+  } catch {
+    /* The component state still remembers this attempt. */
+  }
+}
+
+export function unknownDeletionAttempt(storage: DeletionMemory | null): boolean {
+  try {
+    return storage?.getItem(ACCOUNT_DELETION_UNKNOWN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function clearUnknownDeletionAttempt(storage: DeletionMemory | null): void {
+  try {
+    storage?.removeItem?.(ACCOUNT_DELETION_UNKNOWN_KEY);
+  } catch {
+    /* A failed clear must not sign the user out. */
+  }
+}
 
 function isRecord(body: unknown): body is Record<string, unknown> {
   return !!body && typeof body === "object";
 }
 
-/** Sign out only for a confirmed disable. Every other result stays signed in. */
+/** Sign out only for a confirmed disable. A lost response does not claim nothing changed. */
 export function interpretAccountDeletionResponse(
   status: number,
   body: unknown,
   networkError = false,
+  earlierUnknown = false,
 ): AccountDeletionDecision {
   if (networkError) {
-    return { action: "stay", message: ACCOUNT_DELETION_OFFLINE, retry: true };
+    return { action: "stay", message: ACCOUNT_DELETION_UNKNOWN_OUTCOME, retry: true, unknown: true };
   }
   if (status === 200 && isRecord(body) && body.ok === true && body.disabled === true) {
     return { action: "sign-out", notice: ACCOUNT_DELETED_NOTICE };
   }
   if (status === 404) return { action: "email-fallback" };
   if (status === 401) {
+    if (earlierUnknown) return { action: "likely-deleted", notice: ACCOUNT_DELETION_LIKELY_DELETED };
     return { action: "stay", message: ACCOUNT_DELETION_SIGN_IN_AGAIN, retry: true };
   }
   if (status === 403 && isRecord(body) && body.error === ADMIN_SELF_DELETE_ERROR) {
     return { action: "stay", message: ACCOUNT_DELETION_ADMIN_BLOCKED, retry: false };
   }
   if (status >= 500 && status <= 599) {
-    return { action: "stay", message: ACCOUNT_DELETION_SERVER_ERROR, retry: true };
+    return { action: "stay", message: ACCOUNT_DELETION_UNKNOWN_OUTCOME, retry: true, unknown: true };
   }
   return { action: "stay", message: ACCOUNT_DELETION_UNCONFIRMED, retry: false };
 }
 
-/** The email fallback signs out only after the mail app actually takes over. */
-export function afterMailtoHandoff(opened: boolean): AccountDeletionDecision {
-  if (opened) return { action: "sign-out", notice: ACCOUNT_DELETION_EMAIL_NOTICE };
-  return { action: "stay", message: ACCOUNT_DELETION_MAIL_UNOPENED, retry: false };
+/** The person decides whether the email was sent. Hiding the app is not a yes. */
+export function emailHandoffChoice(sent: boolean): AccountDeletionDecision {
+  if (sent) return { action: "sign-out", notice: ACCOUNT_DELETION_EMAIL_NOTICE };
+  return { action: "stay", message: ACCOUNT_DELETION_EMAIL_NOT_SENT, retry: false };
 }
 
-/**
- * True only when the page is hidden or the app is inactive after the mailto.
- * A focus loss from the "no mail account" alert is not a successful handoff.
- */
-export async function resolveMailtoHandoff(options: {
-  open: () => void;
+/** Wait until the screen is visible. This does not decide that an email was sent. */
+export async function waitUntilAppIsVisible(options: {
   hidden: () => boolean;
   wait: (ms: number) => Promise<void>;
-  timeoutMs?: number;
+  settleMs?: number;
   pollMs?: number;
-}): Promise<boolean> {
-  options.open();
-  const timeoutMs = options.timeoutMs ?? 4000;
-  const pollMs = options.pollMs ?? 50;
-  const started = Date.now();
-  for (;;) {
-    if (options.hidden()) return true;
-    if (Date.now() - started >= timeoutMs) return false;
-    await options.wait(Math.min(pollMs, timeoutMs - (Date.now() - started)));
-  }
+}): Promise<void> {
+  await options.wait(options.settleMs ?? 350);
+  const pollMs = options.pollMs ?? 100;
+  while (options.hidden()) await options.wait(pollMs);
 }
 
 type DeletionResponse = { status: number; json: () => Promise<unknown> };
@@ -190,8 +229,9 @@ type DeletionResponse = { status: number; json: () => Promise<unknown> };
 export async function requestAccountDeletion(
   token: string | null | undefined,
   fetchImpl: (path: string, init: { method: string; headers: { Authorization: string } }) => Promise<DeletionResponse>,
+  earlierUnknown = false,
 ): Promise<AccountDeletionDecision> {
-  if (!token) return interpretAccountDeletionResponse(401, { error: "Missing credentials" });
+  if (!token) return interpretAccountDeletionResponse(401, { error: "Missing credentials" }, false, earlierUnknown);
   let response: DeletionResponse;
   try {
     response = await fetchImpl(ACCOUNT_DELETION_PATH, {
@@ -199,7 +239,7 @@ export async function requestAccountDeletion(
       headers: { Authorization: `Bearer ${token}` },
     });
   } catch {
-    return interpretAccountDeletionResponse(0, null, true);
+    return interpretAccountDeletionResponse(0, null, true, earlierUnknown);
   }
   let body: unknown = null;
   try {
@@ -207,5 +247,5 @@ export async function requestAccountDeletion(
   } catch {
     body = null;
   }
-  return interpretAccountDeletionResponse(response.status, body);
+  return interpretAccountDeletionResponse(response.status, body, false, earlierUnknown);
 }
