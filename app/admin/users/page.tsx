@@ -12,8 +12,7 @@ import {
   getUsersAsync, saveUserAsync 
 } from '@/app/utils/storage';
 import { getCurrentAuthUser } from '@/app/utils/auth';
-import { auth, createSecondaryAuth } from '@/app/utils/firebase';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '@/app/utils/firebase';
 import { getTeams, addTeam, updateTeam, deleteTeam, Team } from '@/app/utils/teams';
 import { getTerritoriesAsync, deleteTerritoryAsync } from '@/app/utils/territories';
 import { isProximityEnforcementEnabled } from '@/app/utils/proximityEnforcement';
@@ -356,8 +355,6 @@ export default function UsersManagementPage() {
     setUsers(allUsers);
   };
 
-  const randomColor = () => `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')}`;
-
   const handleCreateUser = async () => {
     setCreateError('');
     setIsCreating(true);
@@ -368,36 +365,36 @@ export default function UsersManagementPage() {
         return;
       }
 
-      const secondary = await createSecondaryAuth();
-      if (!secondary) {
-        throw new Error('Firebase not initialized');
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) {
+        throw new Error('Sign in again.');
       }
 
-      const cred = await createUserWithEmailAndPassword(secondary.auth, createForm.email, createForm.password);
-      await secondary.dispose?.();
+      const response = await fetch('/api/admin/create-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: createForm.name,
+          email: createForm.email,
+          password: createForm.password,
+          role: createForm.role,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = typeof payload?.error === 'string' ? payload.error : 'Failed to create user';
+        throw new Error(message);
+      }
 
-      const now = new Date();
-      const newUser: User = {
-        id: cred.user.uid,
-        name: createForm.name,
-        email: createForm.email,
-        role: createForm.role,
-        requestedRole: createForm.role,
-        approved: true,
-        approvalStatus: 'approved',
-        createdAt: now,
-        status: 'active',
-        isActive: true,
-        color: randomColor(),
-      };
-
-      await saveUserAsync(newUser);
       const allUsers = await getUsersAsync();
       setUsers(allUsers);
       setShowCreateModal(false);
       setCreateForm({ name: '', email: '', password: '', role: 'setter' });
     } catch (error: any) {
-      console.error('Create user failed:', error);
+      console.error('Create user failed');
       setCreateError(error?.message || 'Failed to create user');
     } finally {
       setIsCreating(false);
