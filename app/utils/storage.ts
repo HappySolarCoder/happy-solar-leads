@@ -1,6 +1,7 @@
 // Firestore-backed storage (replacing localStorage)
 import { Lead, User, LeadStatus } from '@/app/types';
 import { isKnockStatus } from '@/app/types/disposition';
+import { isPermissionDenied, rosterOnDirectoryError } from './usersDirectory';
 import { 
   getAllLeads as firestoreGetAllLeads,
   getLeadsForUser as firestoreGetLeadsForUser,
@@ -241,12 +242,13 @@ export async function getUsersAsync(): Promise<User[]> {
     return usersCache;
   }
 
+  let sessionUser: User | null = null;
   try {
     // Wait for auth. getAllUsers() now throws on failure (no silent []).
     // A pre-auth [] must not be cached for 90s (empties Assign To / Filter).
     const { getCurrentAuthUser } = await import('./auth');
-    const me = await getCurrentAuthUser();
-    if (!me) return usersCache || [];
+    sessionUser = await getCurrentAuthUser();
+    if (!sessionUser) return usersCache || [];
 
     const users = await firestoreGetAllUsers();
     if (users.length > 0) {
@@ -255,8 +257,11 @@ export async function getUsersAsync(): Promise<User[]> {
     }
     return users;
   } catch (error) {
-    console.error('Firestore getUsers failed:', error);
-    return usersCache || [];
+    const fallback = rosterOnDirectoryError(error, sessionUser, usersCache);
+    if (!(isPermissionDenied(error) && sessionUser)) {
+      console.error('Firestore getUsers failed:', error);
+    }
+    return fallback;
   }
 }
 
