@@ -3,11 +3,18 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { auth } from "@/app/utils/firebase";
-import { getCurrentAuthUser } from "@/app/utils/auth";
 import { apiFetch } from "@/app/utils/apiFetch";
-import { mayManageTerritories } from "@/app/utils/territoryManager";
+import { MOBILE_BUILD_LABEL } from "../_lib/startupDiagnostics";
 import TerritoryWorkspace, { type TerritoryData } from "./TerritoryWorkspace";
 import { MobileLoading } from "../_components/MobileShell";
+import {
+  loadTerritories,
+  territoryHttpResult,
+  TERRITORY_SUMMARY_PATH,
+  type TerritoryHttpResult,
+  type TerritoryLoadResult,
+} from "./loadTerritories";
+
 async function request<T = TerritoryData>(
   body?: Record<string, unknown>
 ): Promise<T> {
@@ -34,28 +41,39 @@ async function request<T = TerritoryData>(
     throw Object.assign(new Error(result.error || `Territories could not be loaded (HTTP ${response.status}).`), {status:response.status});
   return result;
 }
+
+async function summaryResponse(): Promise<TerritoryHttpResult> {
+  const token = await auth?.currentUser?.getIdToken();
+  if (!token) return { status: 401, contentType: "application/json", body: null };
+  const response = await apiFetch(TERRITORY_SUMMARY_PATH, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return territoryHttpResult(response);
+}
+
 export default function TerritoriesPage() {
   const router = useRouter(),
     [data, setData] = useState<TerritoryData | null>(null),
-    [error, setError] = useState(""),
+    [error, setError] = useState<Extract<TerritoryLoadResult, { type: "error" }> | null>(null),
     [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
-    void (async () => {
-      const user = await getCurrentAuthUser();
+    void loadTerritories({
+      authReady: () => (auth ? auth.authStateReady() : Promise.resolve()),
+      currentUser: () => auth?.currentUser ?? null,
+      request: summaryResponse,
+    }).then((outcome) => {
       if (!active) return;
-      if (!user) {
-        router.replace("/login");
+      if (outcome.type === "redirect") {
+        router.replace(outcome.href);
         return;
       }
-      if (!mayManageTerritories(user))
-        throw new Error(
-          "Territory management is available to approved managers and admins."
-        );
-      const result = await request();
-      if (active) setData(result);
-    })().catch((e) => {
-      if (active) setError(e.message);
+      if (outcome.type === "error") {
+        setError(outcome);
+        return;
+      }
+      if (outcome.type === "ready") setData(outcome.data);
     });
     return () => {
       active = false;
@@ -65,16 +83,23 @@ export default function TerritoriesPage() {
     return (
       <div className="rt-unavailable">
         <h1>Territories</h1>
-        <p role="alert">{error}</p>
+        <p role="alert">{error.message}</p>
+        {error.signIn ? (
+          <button type="button" className="rt-primary" onClick={() => router.push("/login")}>
+            Sign in
+          </button>
+        ) : null}
         <button
-          className="rt-primary"
+          type="button"
+          className={error.signIn ? undefined : "rt-primary"}
           onClick={() => {
-            setError("");
+            setError(null);
             setAttempt((a) => a + 1);
           }}
         >
           Try again
         </button>
+        <small className="rt-help">{MOBILE_BUILD_LABEL}</small>
         <Link href="/mobile/more">Back to workspace</Link>
       </div>
     );
