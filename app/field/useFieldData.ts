@@ -17,8 +17,9 @@ import { DIRECT_MOBILE_WRITES, directPatch, rejectCombinedKnockAndNotes } from '
 import { acceptDisposition } from './draftQueue';
 import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
-import { deliverFieldDispo, leadOwnedBy, notesDraftUsesRoute, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
-import { NOTES_TOO_LONG_MESSAGE, notesEditTooLong, notesQueuedBody } from './notesLimits';
+import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
+import { enqueueDirectSave } from './enqueueDirectSave';
+import { CONTACT_NOT_SENT_MESSAGE, parkContactDeniedDrafts, repMayWriteContactFields } from './sendInfoGate';
 import { readSyncLog, recordSyncEvent, reportParked, type SyncEvent } from './syncDiagnostics';
 import { displayedKnockPoint, type KnockPoint } from './knockPoint';
 import { GPS_WINDOW_AFTER_MS } from './gpsPolicy';
@@ -340,37 +341,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     const recordedAt = new Date();
     rejectCombinedKnockAndNotes(patch);
     const clean = directPatch(patch), entry = clean.dispositionHistory?.[0];
-    let noteText = "";
-    let baseNotes = lead.notes || "";
-    const draftId = crypto.randomUUID();
     const tappedAt = entry?.timestamp ? new Date(entry.timestamp) : recordedAt;
-    if (!entry && typeof clean.notes === "string" && clean.notes === (lead.notes || "")) delete clean.notes;
-    const editingNotes = !entry && typeof clean.notes === "string";
-    if (editingNotes) {
-      const priors = (await readDrafts(uid)).filter((row) =>
-        row.leadId === lead.id && row.kind === "notes" && row.parkedReason === SYNC_REASON.notesTooLong);
-      if (notesEditTooLong({
-        currentNotes: lead.notes || "",
-        notes: clean.notes as string,
-        leadId: lead.id,
-        baseNotes,
-        draftId,
-        actionAt: tappedAt.toISOString(),
-        parkedNotes: priors,
-      })) throw Error(NOTES_TOO_LONG_MESSAGE);
-      const queued = notesQueuedBody({
-        leadId: lead.id,
-        notes: clean.notes as string,
-        baseNotes,
-        draftId,
-        actionAt: tappedAt.toISOString(),
-        parkedNotes: priors,
-      });
-      noteText = queued.notes;
-      baseNotes = queued.baseNotes;
-      clean.notes = noteText;
-    }
-    if (!entry && !Object.keys(clean).length) return;
     if (entry) clean.dispositionHistory = [entry];
     if (entry && (entry.userId !== uid || entry.userName !== actor.name))
       throw Error('The knock identity does not match the signed-in rep.');
@@ -379,20 +350,35 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         leads: [lead, ...(current.area?.leads || latest.current.liveLeads).filter(l => l.id !== lead.id).slice(0, 24)] };
       await putArea(area); update({ area });
     }
+    if (!entry) {
+      const priors = (await readDrafts(uid)).filter((row) =>
+        row.leadId === lead.id && row.kind === "notes" && row.parkedReason === SYNC_REASON.notesTooLong);
+      await enqueueDirectSave({
+        lead,
+        patch: clean,
+        actor,
+        create,
+        createdAt: tappedAt.toISOString(),
+        parkedNotes: priors,
+        enqueue,
+      });
+      return;
+    }
     // History timestamp is the tap, captured before any GPS await. Save time is not the window.
     const shown = point === undefined ? displayedKnockPoint(lead, lead.homeowner) : point;
+    const draftId = crypto.randomUUID();
     let staged: import('./types').PendingMutation = {
       id: draftId, userId: uid, userName: actor.name,
       leadId: lead.id, createdAt: tappedAt.toISOString(),
-      kind: entry ? 'knock' : 'notes', baseStatus: lead.status, baseNotes,
-      ...(entry ? { status: clean.status, disposition: entry.disposition } : editingNotes ? { notes: noteText } : {}),
+      kind: 'knock', baseStatus: lead.status, baseNotes: lead.notes || '',
+      status: clean.status, disposition: entry.disposition,
       direct: {
         patch: clean,
         ...(create ? { create } : {}),
-        ...((entry ? prefersServerDispo(lead, uid, actor.role) : editingNotes && notesDraftUsesRoute(lead, uid, actor.role, noteText)) ? { serverDispo: true } : {}),
+        ...(prefersServerDispo(lead, uid, actor.role) ? { serverDispo: true } : {}),
         ...(shown?.source === 'homeowner_corrected' && shown.homeownerId ? { homeownerId: shown.homeownerId } : {}),
         ...(shown ? { gpsPointSource: shown.source } : {}),
-        ...(deferGps && entry ? { gps: {
+        ...(deferGps ? { gps: {
           ...(shown ? { lat: shown.lat, lng: shown.lng, source: shown.source } : {}),
           ...(shown?.homeownerId ? { homeownerId: shown.homeownerId } : {}),
           tappedAt: tappedAt.getTime(),
@@ -402,9 +388,54 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         } } : {}),
       },
     };
-    if (deferGps && entry) staged = stageKnockGps(staged, Date.now());
+    if (deferGps) staged = stageKnockGps(staged, Date.now());
     await enqueue(staged);
   }, [uid, enqueue, current.area, update]);
+  const parkDeniedContact = useCallback(async (leadId: string) => {
+    const drafts = await readDrafts(uid);
+    for (const row of parkContactDeniedDrafts(drafts, leadId)) {
+      await putDraft(row);
+      await recordSyncEvent({
+        id: crypto.randomUUID(),
+        userId: uid,
+        at: Date.now(),
+        draftId: row.id,
+        leadId: row.leadId,
+        createdAt: row.createdAt,
+        state: "parked",
+        parkedReason: row.parkedReason,
+        lastError: row.lastError,
+        attempts: row.attempts ?? 0,
+      });
+    }
+    await reloadDrafts();
+  }, [uid, reloadDrafts]);
+  const prepareSendInfo = useCallback(async (leadId: string) => {
+    const actor = latest.current.user;
+    const known = latest.current.liveLeads.find((row) => row.id === leadId)
+      || current.area?.leads.find((row) => row.id === leadId);
+    const canWrite = !known || !actor || repMayWriteContactFields(known, uid, actor.role);
+    const refused = () => Object.assign(Error(CONTACT_NOT_SENT_MESSAGE), { code: "contact_denied" });
+    if (!canWrite && !isDeviceOnline()) {
+      await parkDeniedContact(leadId);
+      throw refused();
+    }
+    // Offline, and this role may write contact fields: the draft stays durably
+    // queued. Send Info does not post. That is unchanged. An ambiguous
+    // notification response is never retried.
+    if (!isDeviceOnline()) throw Error('Connect before sending the scheduling request.');
+    await sync();
+    const drafts = await readDrafts(uid);
+    if (!canWrite) {
+      if (drafts.some((row) => row.leadId === leadId && row.kind === "contact" && row.syncState !== "parked"))
+        await parkDeniedContact(leadId);
+      throw refused();
+    }
+    if (drafts.some((row) => row.leadId === leadId && row.parkedReason === SYNC_REASON.contactDenied))
+      throw refused();
+    const hold = schedulingHold(drafts, leadId);
+    if (hold) throw Error(hold);
+  }, [uid, sync, current.area, parkDeniedContact]);
   const ensureLeadSynced = useCallback(async (leadId: string) => {
     if (!isDeviceOnline()) throw Error('Connect before sending the scheduling request.');
     await sync();
@@ -455,6 +486,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     enqueue,
     enqueueDirect,
     ensureLeadSynced,
+    prepareSendInfo,
     retrySync,
     sync,
     discard,

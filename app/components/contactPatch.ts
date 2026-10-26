@@ -1,6 +1,6 @@
 import type { Lead } from "@/app/types";
 
-/** The contact editor's fields. Notes ride along with the contact save. */
+/** The contact editor's fields. Notes are included only when the rep changed them. */
 export type ContactForm = {
   name: string;
   address: string;
@@ -55,4 +55,30 @@ export function changedContactPatch(lead: Lead, form: ContactForm): Partial<Lead
     if (nextBill != null) patch.estimatedBill = nextBill;
   }
   return Object.keys(patch).length ? patch : null;
+}
+
+/** Direct editor save. When notes are over the limit, contact fields still save and notes do not. */
+export function editorSavePatch(lead: Lead, form: ContactForm, notesBlocked = false): Partial<Lead> | null {
+  const source = notesBlocked ? { ...form, notes: lead.notes || "" } : form;
+  return changedContactPatch(lead, source);
+}
+
+/**
+ * Office full-document save. The form's notes are not copied onto the lead
+ * unless the rep changed them, so an unchanged note is not blanked.
+ */
+export function officeLeadSave(lead: Lead, form: ContactForm): Lead {
+  const fields = contactSaveFields(lead, form);
+  return {
+    ...lead,
+    name: form.name,
+    address: form.address,
+    city: form.city,
+    state: form.state,
+    zip: form.zip,
+    phone: form.phone || undefined,
+    email: form.email || undefined,
+    estimatedBill: form.estimatedBill === "" || form.estimatedBill == null ? undefined : Number(form.estimatedBill),
+    ...fields,
+  };
 }

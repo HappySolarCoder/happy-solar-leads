@@ -66,7 +66,12 @@ export function directPatch(patch: Partial<Lead>): Partial<Lead> {
 export function reportingPatch(m: PendingMutation, user: User): Partial<Lead> {
   if (m.userId !== user.id) throw Error('This saved action belongs to a different account.');
   const at = dateValue(m.createdAt);
-  let patch = m.direct ? directPatch(m.direct.patch) : m.kind === 'notes' ? { notes: m.notes || '' } : {};
+  let patch = m.direct ? directPatch(m.direct.patch) : m.kind === 'notes' && typeof m.notes === 'string' ? { notes: m.notes } : {};
+  if (m.kind === 'contact') {
+    const contact = { ...patch };
+    delete contact.notes;
+    patch = contact;
+  }
   if (m.kind === 'handoff') throw Object.assign(Error('Legacy handoff needs review; it was not sent.'), { status: 409 });
   if (m.kind === 'knock') {
     if (!m.status || ['claimed', 'unclaimed'].includes(m.status)) throw Error('Use the claim/unclaim action for ownership changes.');
@@ -151,17 +156,22 @@ export async function commitDirectMutation(m: PendingMutation, user: User, io?: 
       if (m.direct?.legacy && patch.knockGpsLat != null && patch.knockGpsLng != null && current.lat != null && current.lng != null)
         patch.knockDistanceFromAddress = distanceBetween([patch.knockGpsLat, patch.knockGpsLng], [current.lat, current.lng]) * 1000;
       if (current.historicalTerritoryPin) throw Object.assign(Error('Historical pins cannot be dispositioned.'), { status: 403 });
-      if (m.kind === 'notes' && typeof patch.notes !== 'string') {
-        const merged = mergeReportingPatch(current, patch);
+      if (m.kind === 'contact' || (m.kind === 'notes' && typeof patch.notes !== 'string' && typeof m.notes !== 'string')) {
+        const contact = { ...patch };
+        delete contact.notes;
+        const merged = mergeReportingPatch(current, contact);
         if (!merged.replayed) tx.update(ref, firestoreValue(merged.patch) as Record<string, unknown>);
         return { replayed: merged.replayed, lead: mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...merged.patch }) }) };
       }
       if (m.kind === 'notes') {
-        const edited = typeof patch.notes === 'string' ? patch.notes : (m.notes || '');
+        const edited = typeof patch.notes === 'string' ? patch.notes : (m.notes as string);
         const applied = notesTransactionPatch(current.notes, m.baseNotes, edited);
-        const lead = mapLeadDoc({ id: m.leadId, data: () => ({ ...current, notes: applied.notes }) });
-        if (applied.replayed) return { replayed: true, lead };
-        tx.update(ref, firestoreValue({ notes: applied.notes }) as Record<string, unknown>);
+        const rest = { ...patch };
+        delete rest.notes;
+        const lead = mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...rest, notes: applied.notes }) });
+        if (applied.replayed && !Object.keys(rest).length) return { replayed: true, lead };
+        const write = { ...rest, ...(applied.replayed ? {} : { notes: applied.notes }) };
+        tx.update(ref, firestoreValue(write) as Record<string, unknown>);
         return { replayed: false, lead };
       }
       const merged = mergeReportingPatch(current, patch);

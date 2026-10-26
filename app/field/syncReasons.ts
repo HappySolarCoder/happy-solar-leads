@@ -16,6 +16,12 @@ export const SYNC_REASON = {
   notesTooLong: "notes_too_long",
   /** Parked. An old draft carried both a knock and a note, and it could not be split. */
   combinedDraft: "combined_draft",
+  /**
+   * Parked. A direct contact or photo write was permission-denied.
+   * It is not retried as a notes body. Diagnostics shows this code.
+   * The sync-report wire maps it to permission_denied, which the live route accepts.
+   */
+  contactDenied: "contact_denied",
   invalidPayload: "invalid_payload",
   other: "other",
 } as const;

@@ -1,3 +1,4 @@
+import { coerceLegacyContactDraft, hasContactFields, notesWereEdited, splitNotesAndContact } from "./contactSave";
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
 import { absorbNotesText } from "./notesLimits";
 import { SERVER_DISPO_SLOW_RETRY_MS, splitCombinedDraft } from "./serverDispo";
@@ -121,29 +122,44 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       }
       if (deferred.has(m.leadId)) continue;
       progressed = true;
-      let current = m;
-      let absorbedPriors: PendingMutation[] = [];
-      if (m.kind === "notes") {
-        const priors = all.filter((row) =>
-          notesTooLongRow(row)
-          && row.leadId === m.leadId
-          && row.id !== m.id
-          && (row.createdAt < m.createdAt || (row.createdAt === m.createdAt && row.id < m.id))
-        );
-        if (priors.length) {
-          current = absorbNotesTooLong(m, priors);
-          if (write) await write(current);
-          // The parked row stays until this replacement is saved.
-          absorbedPriors = priors;
-        }
+      let current = coerceLegacyContactDraft(m);
+      if (current !== m && write) await write(current);
+      const ids = new Set(all.map((row) => row.id));
+      const contactSplit = splitNotesAndContact(current, ids);
+      if (contactSplit && contactSplit !== "unsafe" && deps.insert) {
+        await deps.insert(contactSplit.contact);
+        await deps.insert(contactSplit.notes);
+        await deps.remove(current.id);
+        continue;
       }
-      const split = splitCombinedDraft(m, new Set(all.map((row) => row.id)));
+      let absorbedPriors: PendingMutation[] = [];
+      const priors = all.filter((row) =>
+        notesTooLongRow(row)
+        && row.leadId === current.leadId
+        && row.id !== current.id
+        && (row.createdAt < current.createdAt || (row.createdAt === current.createdAt && row.id < current.id))
+      );
+      const blank = typeof current.notes === "string" && !current.notes.trim();
+      const descendedClear = blank && priors.some((row) => (row.notes || "") !== "" && current.baseNotes === row.notes);
+      const absorb = current.kind === "notes"
+        && !hasContactFields(current)
+        && notesWereEdited(current)
+        && typeof current.notes === "string"
+        && (!blank || descendedClear)
+        && priors.length > 0;
+      if (absorb) {
+        current = absorbNotesTooLong(current, priors);
+        if (write) await write(current);
+        // The parked row stays until this replacement is saved.
+        absorbedPriors = priors;
+      }
+      const split = splitCombinedDraft(current, ids);
       if (split) {
         if (split === "unsafe" || !deps.insert) {
           const parkedDraft: PendingMutation = {
-            ...m,
+            ...current,
             syncState: "parked",
-            attempts: (m.attempts ?? 0) + 1,
+            attempts: (current.attempts ?? 0) + 1,
             parkedReason: SYNC_REASON.combinedDraft,
             lastError: "Save the knock and the note as separate actions.",
           };
@@ -153,12 +169,12 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           if (write) await write(parkedDraft);
           parked += 1;
           await recordSyncEvent(eventFor(parkedDraft, "parked"));
-          try { await (deps.report ?? reportParked)(m.userId); } catch { /* sync-report never stops a dispo */ }
+          try { await (deps.report ?? reportParked)(current.userId); } catch { /* sync-report never stops a dispo */ }
           continue;
         }
         await deps.insert(split.knock);
         await deps.insert(split.notes);
-        await deps.remove(m.id);
+        await deps.remove(current.id);
         continue;
       }
       const fail = async (

@@ -1069,7 +1069,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
         <LeadEditorModal
           signedInRep={currentUser}
           saveLeadPatch={DIRECT_MOBILE_WRITES ? saveReportingPatch : saveLeadPatch}
-          beforeSend={DIRECT_MOBILE_WRITES && field ? () => field.ensureLeadSynced(lead.id) : undefined}
+          beforeSend={DIRECT_MOBILE_WRITES && field ? () => field.prepareSendInfo(lead.id) : undefined}
           mobileMode={fieldMemory}
           pendingFieldWork={!DIRECT_MOBILE_WRITES && hasPendingFieldWork}
           fieldContext={capture ? [visit.openerId ? `Opener: ${field.config.openers.find(o => o.id === visit.openerId)?.label || visit.openerId}` : "", visit.previewShown ? "Company-approved savings illustration shown; not a quote." : "", visit.proofShown ? "Approved local proof shown." : ""].filter(Boolean).join("\n") : undefined}

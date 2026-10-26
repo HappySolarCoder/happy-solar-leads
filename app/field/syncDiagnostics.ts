@@ -166,7 +166,13 @@ export function syncReportItem(event: SyncEvent, includeExtended = !stripExtende
     leadId: event.leadId,
     intendedStatus: (event.status || event.disposition || "unknown").slice(0, 64),
     actionAt: event.createdAt,
-    reasonCode: areaRefusal ? "out_of_area" : flagged ? SYNC_REASON.gpsUnverifiedFlagged : (event.parkedReason || SYNC_REASON.other),
+    reasonCode: areaRefusal
+      ? "out_of_area"
+      : flagged
+        ? SYNC_REASON.gpsUnverifiedFlagged
+        : event.parkedReason === SYNC_REASON.contactDenied
+          ? SYNC_REASON.permissionDenied
+          : (event.parkedReason || SYNC_REASON.other),
     outcome: areaRefusal ? "refused" : flagged ? "flagged_accepted" : "refused",
     appBuild: (event.appBuild || appBuildLabel()).slice(0, 32),
   };

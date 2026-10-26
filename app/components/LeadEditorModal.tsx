@@ -5,7 +5,14 @@ import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
 import { NOTES_TOO_LONG_MESSAGE, notesEditTooLong, type NotesLengthDraft } from '@/app/field/notesLimits';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
-import { changedContactPatch, contactSaveFields } from './contactPatch';
+import { contactSaveFields, editorSavePatch, officeLeadSave } from './contactPatch';
+import { isDeviceOnline } from '@/app/utils/connectivity';
+import {
+  CONTACT_NOT_SENT_MESSAGE,
+  contactSaveDeniedError,
+  finishSendInfo,
+  repMayWriteContactFields,
+} from '@/app/field/sendInfoGate';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 import { auth } from '@/app/utils/firebase';
@@ -106,38 +113,31 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
     parkedNotes: pendingDrafts,
   });
 
+  const persistEditor = async (notesBlocked: boolean) => {
+    const form = notesBlocked ? { ...formData, notes: lead.notes || '' } : formData;
+    if (saveLeadPatch) {
+      if (DIRECT_MOBILE_WRITES) {
+        const patch = editorSavePatch(lead, form, false);
+        if (patch) await saveLeadPatch(patch);
+      } else await saveLeadPatch(contactSaveFields(lead, form));
+      return;
+    }
+    if (mobileMode) {
+      const { updateLeadAsync } = await import('@/app/utils/storage');
+      await updateLeadAsync(lead.id, contactSaveFields(lead, form));
+      return;
+    }
+    await saveLeadAsync(officeLeadSave(lead, form));
+  };
+
   const handleSave = async () => {
-    if (notesTooLong) return;
     if (mobileMode && pendingFieldWork) { alert('Sync or review this pin’s pending changes in Field tools before editing contact details. You can still send the scheduling information.'); return; }
     setIsSaving(true);
 
     try {
-      const updatedLead: Lead = {
-        ...lead,
-        name: formData.name,
-        address: formData.address,
-        city: formData.city,
-        state: formData.state,
-        zip: formData.zip,
-        phone: formData.phone || undefined,
-        email: formData.email || undefined,
-        estimatedBill: formData.estimatedBill ? Number(formData.estimatedBill) : undefined,
-        notes: formData.notes || undefined,
-      };
-
-      if (saveLeadPatch) {
-        if (DIRECT_MOBILE_WRITES) {
-          const patch = changedContactPatch(lead, formData);
-          if (patch) await saveLeadPatch(patch);
-        } else {
-          await saveLeadPatch(contactSaveFields(lead, formData));
-        }
-      } else if (mobileMode) {
-        const { updateLeadAsync } = await import('@/app/utils/storage');
-        await updateLeadAsync(lead.id, contactSaveFields(lead, formData));
-      } else await saveLeadAsync({ ...updatedLead, ...contactSaveFields(lead, formData) });
-      invalidateLeadsCache(); // Ensure fresh data after update
-      onSave();
+      await persistEditor(notesTooLong);
+      invalidateLeadsCache();
+      if (!notesTooLong) onSave();
     } catch (error) {
       if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) return;
       alert(`Changes could not be saved. ${(error as Error).message}`);
@@ -171,55 +171,80 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
           return;
         }
       }
-      if (mobileMode && (!user || auth?.currentUser?.uid !== user.id)) {
+      if (!user || (mobileMode && auth?.currentUser?.uid !== user.id)) {
         setSendNotice(SIGN_IN_AGAIN_MESSAGE);
         return;
       }
 
-      if (notesTooLong) {
+      // Persist contact fields before the notification. Over-long notes are not part of that write.
+      let notesBlocked = false;
+      try {
+        await persistEditor(notesTooLong);
+      } catch (error) {
+        if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) notesBlocked = true;
+        else if (contactSaveDeniedError(error)) {
+          setSendNotice(CONTACT_NOT_SENT_MESSAGE);
+          return;
+        } else {
+          alert(`Changes could not be saved. ${(error as Error).message}`);
+          return;
+        }
+      }
+      const canWrite = repMayWriteContactFields(lead, user.id, user.role);
+      if (notesTooLong && canWrite) {
+        setSendNotice(NOTES_TOO_LONG_MESSAGE);
+        if (notesTooLong) return;
+      }
+      if (notesBlocked && canWrite) {
         setSendNotice(NOTES_TOO_LONG_MESSAGE);
         return;
       }
-      // Persist the lead before the notification so the request has a real visit.
+
+      let result: { posted: number; notice: string | null };
       try {
-        if (saveLeadPatch) {
-          const patch = DIRECT_MOBILE_WRITES ? changedContactPatch(lead, formData) : contactSaveFields(lead, formData);
-          if (patch) await saveLeadPatch(patch);
-        }
-        await beforeSend?.();
+        result = await finishSendInfo({
+          online: isDeviceOnline(),
+          canWriteContact: canWrite,
+          confirm: async () => { await beforeSend?.(); },
+          post: async () => {
+            // One attempt. An ambiguous response is never retried.
+            const outcome = await sendSchedulingNotification(built.payload, {
+              accountId: uid,
+              getToken: async (forceRefresh) => {
+                const current = auth?.currentUser;
+                if (!current) throw new Error('signed-out');
+                return current.getIdToken(forceRefresh);
+              },
+            });
+            if (outcome.status === 'sent') {
+              setInfoSent(true);
+              void onInfoSent?.().catch(() => {});
+              return;
+            }
+            if (outcome.status === 'blocked') {
+              setAccountBlocked(true);
+              setSendNotice(outcome.message);
+              return;
+            }
+            if (outcome.status === 'rateLimited') {
+              const until = Date.now() + outcome.retryAfterSec * 1000;
+              setCooldownUntil(until);
+              setNow(Date.now());
+              return;
+            }
+            setSendNotice(outcome.message);
+          },
+        });
       } catch (error) {
-        if ((error as Error).message !== NOTES_TOO_LONG_MESSAGE)
+        if ((error as { sendInfoSave?: boolean }).sendInfoSave) {
           alert(`Changes could not be saved. ${(error as Error).message}`);
-        return;
+          return;
+        }
+        throw error;
       }
-
-      const outcome = await sendSchedulingNotification(built.payload, {
-        accountId: uid,
-        getToken: async (forceRefresh) => {
-          const current = auth?.currentUser;
-          if (!current) throw new Error('signed-out');
-          return current.getIdToken(forceRefresh);
-        },
-      });
-
-      if (outcome.status === 'sent') {
-        setInfoSent(true);
-        void onInfoSent?.().catch(() => {});
-        return;
-      }
-      if (outcome.status === 'blocked') {
-        setAccountBlocked(true);
-        setSendNotice(outcome.message);
-        return;
-      }
-      if (outcome.status === 'rateLimited') {
-        const until = Date.now() + outcome.retryAfterSec * 1000;
-        setCooldownUntil(until);
-        setNow(Date.now());
-        return;
-      }
-      setSendNotice(outcome.message);
+      if (result.notice) setSendNotice(result.notice);
     } catch {
+      // An ambiguous response is never retried.
       setSendNotice(AMBIGUOUS_SEND_MESSAGE);
     } finally {
       sendingRef.current = false;

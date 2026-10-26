@@ -164,7 +164,7 @@ export type FieldMutation = {
   userId: string;
   leadId: string;
   createdAt: string;
-  kind: "knock" | "notes" | "handoff";
+  kind: "knock" | "notes" | "handoff" | "contact";
   baseStatus: string;
   baseNotes?: string;
   status?: string;

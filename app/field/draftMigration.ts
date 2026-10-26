@@ -1,4 +1,5 @@
 import type { User } from "@/app/types";
+import { coerceLegacyContactDraft } from "./contactSave";
 import { reportingPatch } from "./directWrites";
 import { SYNC_REASON } from "./syncReasons";
 import type { ParkedReason, PendingMutation } from "./types";
@@ -24,8 +25,8 @@ const reopenedSessions = new Set<string>();
 
 /**
  * One pass per cold start. Parked denials are tried again.
- * notes_too_long and combined_draft are included. They reopen at most once
- * per app start. That is bounded, and fine.
+ * notes_too_long, combined_draft, and contact_denied are included. They reopen
+ * at most once per app start. That is bounded, and fine.
  */
 export function reopenDeniedParked(
   drafts: PendingMutation[],
@@ -101,28 +102,29 @@ export function migrateDraft(
   m: PendingMutation,
   actor?: { id: string; name: string },
 ): PendingMutation {
-  if (heldForGps(m)) {
-    const flagged = flagHeldGps(m);
-    return flagged === m ? m : flagged;
+  const current = coerceLegacyContactDraft(m);
+  if (heldForGps(current)) {
+    const flagged = flagHeldGps(current);
+    return flagged === current ? current : flagged;
   }
-  if (m.syncState) return withCurrentReason(m);
-  if (m.blocked && !m.direct?.gps) {
+  if (current.syncState) return withCurrentReason(current);
+  if (current.blocked && !current.direct?.gps) {
     const next: PendingMutation = {
-      ...m,
+      ...current,
       syncState: "queued",
       attempts: 0,
-      lastError: m.error,
+      lastError: current.error,
     };
     delete next.blocked;
     return next;
   }
-  if (!m.direct && m.kind !== "handoff") {
-    if (!actor || actor.id !== m.userId) return m;
+  if (!current.direct && current.kind !== "handoff") {
+    if (!actor || actor.id !== current.userId) return current;
     try {
       const next: PendingMutation = {
-        ...m,
-        userName: m.userName || actor.name,
-        direct: { patch: reportingPatch(m, { id: actor.id, name: actor.name } as User), legacy: true },
+        ...current,
+        userName: current.userName || actor.name,
+        direct: { patch: reportingPatch(current, { id: actor.id, name: actor.name } as User), legacy: true },
         syncState: "queued",
         attempts: 0,
       };
@@ -131,7 +133,7 @@ export function migrateDraft(
       return next;
     } catch (e) {
       const next: PendingMutation = {
-        ...m,
+        ...current,
         syncState: "parked",
         parkedReason: SYNC_REASON.invalidPayload,
         lastError: (e as Error).message,
@@ -141,8 +143,8 @@ export function migrateDraft(
       return next;
     }
   }
-  if (m.direct?.gps) return { ...m, syncState: "gps", attempts: m.attempts ?? 0 };
-  if (m.direct || m.kind === "handoff")
-    return { ...m, syncState: m.kind === "handoff" ? "parked" : "queued", parkedReason: m.kind === "handoff" ? SYNC_REASON.invalidPayload : undefined, attempts: m.attempts ?? 0 };
-  return m;
+  if (current.direct?.gps) return { ...current, syncState: "gps", attempts: current.attempts ?? 0 };
+  if (current.direct || current.kind === "handoff")
+    return { ...current, syncState: current.kind === "handoff" ? "parked" : "queued", parkedReason: current.kind === "handoff" ? SYNC_REASON.invalidPayload : undefined, attempts: current.attempts ?? 0 };
+  return current;
 }

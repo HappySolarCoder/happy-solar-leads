@@ -2,6 +2,7 @@ import type { Lead, User } from "@/app/types";
 import { apiFetch } from "@/app/utils/apiFetch";
 import { auth } from "@/app/utils/firebase";
 import { isScheduledGoBackStatus } from "@/app/types/disposition";
+import { coerceLegacyContactDraft, hasContactFields, notesWereEdited } from "./contactSave";
 import { commitDirectMutation, historyGpsFlag, reportingPatch } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
 import { rebaseNotes } from "./notesRebase";
@@ -215,7 +216,10 @@ export function fieldDispoBody(
   const leadId = m.leadId;
   if (!leadId || leadId.includes("/") || leadId.length > 1500) throw invalid("Lead id is not valid for the disposition route.");
   if (m.kind === "notes") {
-    const notes = m.notes ?? (typeof sourcePatch.notes === "string" ? sourcePatch.notes : "");
+    const notes = typeof m.notes === "string"
+      ? m.notes
+      : typeof sourcePatch.notes === "string" ? sourcePatch.notes : undefined;
+    if (typeof notes !== "string") throw invalid("This save does not include a note.");
     return notesRouteBody({
       leadId,
       draftId: m.id,
@@ -224,6 +228,7 @@ export function fieldDispoBody(
       baseNotes: typeof m.baseNotes === "string" ? m.baseNotes : null,
     });
   }
+  if (m.kind !== "knock") throw invalid("Contact edits are not sent to the disposition route.");
   const source = sourcePatch as Record<string, unknown>;
   const status = (typeof source.status === "string" && source.status) || m.status || "";
   if (!status || status === "claimed" || status === "unclaimed")
@@ -604,6 +609,35 @@ async function plainPatchAfterRoute(
   }
 }
 
+function detachServerDispo(m: PendingMutation): PendingMutation {
+  if (!m.direct?.serverDispo) return m;
+  const direct = { ...m.direct };
+  delete direct.serverDispo;
+  return { ...m, direct };
+}
+
+/** Contact and photo writes stay on Firestore. A denial is never turned into a notes body. */
+async function commitContactWrite(
+  m: PendingMutation,
+  user: User,
+  commit: NonNullable<FieldDispoDeps["commit"]>,
+): Promise<{ replayed: boolean; lead?: Lead }> {
+  try {
+    return await commit(detachServerDispo(m), user);
+  } catch (error) {
+    const failure = error as Error & { status?: number; code?: string };
+    if (!permissionDenied(failure)) throw failure;
+    throw Object.assign(failure, { status: 403, code: "permission-denied", reasonCode: SYNC_REASON.contactDenied });
+  }
+}
+
+function writesContactDirect(m: PendingMutation): boolean {
+  if (m.kind === "contact") return true;
+  if (m.kind !== "notes") return false;
+  if (!notesWereEdited(m)) return hasContactFields(m) || typeof m.notes !== "string";
+  return hasContactFields(m);
+}
+
 /** Firestore first for pins the client can write. Notes keep the baseNotes check there. Handoffs never use this route. */
 export async function deliverFieldDispo(
   m: PendingMutation,
@@ -611,24 +645,26 @@ export async function deliverFieldDispo(
   deps: FieldDispoDeps = {},
 ): Promise<{ replayed: boolean; lead?: Lead }> {
   const commit = deps.commit ?? commitDirectMutation;
-  if (m.kind === "handoff") return commit(m, user);
-  if (m.direct?.serverDispo) {
+  const prepared = coerceLegacyContactDraft(m);
+  if (prepared.kind === "handoff") return commit(prepared, user);
+  if (writesContactDirect(prepared)) return commitContactWrite(prepared, user, commit);
+  if (prepared.direct?.serverDispo) {
     try {
-      return await postFieldDispo(m, user, deps);
+      return await postFieldDispo(prepared, user, deps);
     } catch (routeFailure) {
       if (notesTooLongFailure(routeFailure)) throw routeFailure;
-      return plainPatchAfterRoute(m, user, routeFailure, commit);
+      return plainPatchAfterRoute(prepared, user, routeFailure, commit);
     }
   }
   try {
-    return await commit(m, user);
+    return await commit(prepared, user);
   } catch (error) {
     if (!permissionDenied(error as Error & { code?: string })) throw error;
     try {
-      return await postFieldDispo(m, user, deps);
+      return await postFieldDispo(prepared, user, deps);
     } catch (routeFailure) {
       if (notesTooLongFailure(routeFailure)) throw routeFailure;
-      return plainPatchAfterRoute(m, user, routeFailure, commit);
+      return plainPatchAfterRoute(prepared, user, routeFailure, commit);
     }
   }
 }

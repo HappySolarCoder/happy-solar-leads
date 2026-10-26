@@ -61,18 +61,21 @@ export type NotesDraftText = { notes: string; baseNotes: string };
 
 /**
  * A later notes edit absorbs one parked or waiting notes_too_long draft.
- * The new edit replaces it when it already contains the parked text, when it
- * is a shorter copy of that text, or when next.baseNotes is the parked text
- * itself (the rep edited that note). The result is the edit plus the parked
- * draft's server baseNotes, not parked + "\n" + edit. Anything else rebases
+ * The edit replaces the parked text only when next.baseNotes is that parked
+ * text, which means the rep opened it and changed or cleared it. An empty or
+ * whitespace edit does not replace it otherwise. A short note that merely
+ * happens to be a substring does not replace it either. Anything else rebases
  * onto the parked text so that text is kept.
  */
 export function absorbNotesText(parked: NotesDraftText, next: NotesDraftText): NotesDraftText {
   const parkedText = parked.notes || "";
   const nextText = next.notes || "";
-  if (parkedText && (next.baseNotes === parkedText || nextText.includes(parkedText) || parkedText.includes(nextText))) {
-    return { notes: nextText, baseNotes: parked.baseNotes || "" };
+  const descended = parkedText !== "" && next.baseNotes === parked.notes;
+  if (!nextText.trim()) {
+    if (descended) return { notes: nextText, baseNotes: parked.baseNotes || "" };
+    return { notes: parkedText, baseNotes: parked.baseNotes || "" };
   }
+  if (descended) return { notes: nextText, baseNotes: parked.baseNotes || "" };
   return rebaseNotes(parked.baseNotes || "", nextText, parkedText);
 }
 
