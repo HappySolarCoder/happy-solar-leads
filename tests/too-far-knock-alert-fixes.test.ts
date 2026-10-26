@@ -291,13 +291,13 @@ describe('#173 dry-run perRep', () => {
       data: {
         dispositionHistory: [
           entry(s, 'over', { ...flag('too_far'), userName: 'History Over' }),
-          entry(s + 1, 'over', flag('too_far')),
-          entry(s + 2, 'over'),
-          entry(s + 3, 'exact', flag('too_far')),
-          ...Array.from({ length: 19 }, (_, i) => entry(s + 10 + i, 'exact')),
-          entry(s + 40, 'quiet'),
-          entry(s + 50, 'user-test-qa', flag('too_far')),
-          entry(s + 51, 'user-test-qa', flag('too_far')),
+          entry(s + 31_000, 'over', flag('too_far')),
+          entry(s + 62_000, 'over'),
+          entry(s, 'exact', flag('too_far')),
+          ...Array.from({ length: 19 }, (_, i) => entry(s + (i + 1) * 31_000, 'exact')),
+          entry(s + 40_000, 'quiet'),
+          entry(s + 50_000, 'user-test-qa', flag('too_far')),
+          entry(s + 51_000, 'user-test-qa', flag('too_far')),
         ],
       },
     }];
@@ -356,6 +356,51 @@ describe('#173 dry-run perRep', () => {
     assert.equal(again.body.alreadySent, true);
     assert.equal(Object.hasOwn(again.body, 'perRep'), false);
     assert.equal(t.sent.length, 1);
+  });
+});
+
+describe('#173 double-tap collapse', () => {
+  const door = (history: Array<Record<string, unknown>>, id = 'door'): Lead => ({ id, data: { dispositionHistory: history } });
+
+  it('a duplicate within 30s counts once, including across leads and users separately', () => {
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 14_000, 'u'), entry(s + 30_000, 'u')])]), [0, 1]);
+    assert.deepEqual(counts([
+      door([entry(s, 'u')], 'a'),
+      door([entry(s + 2_000, 'u')], 'b'),
+    ]), [0, 2]);
+    const split = tally([door([entry(s, 'u'), entry(s + 2_000, 'v')])]);
+    assert.deepEqual([split.get('u')?.total, split.get('v')?.total], [1, 1]);
+  });
+
+  it('31s apart counts twice, measured from the kept entry', () => {
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 31_000, 'u')])]), [0, 2]);
+    assert.deepEqual(counts([door([entry(s + 20_000, 'u'), entry(s, 'u'), entry(s + 31_000, 'u')])]), [0, 2]);
+  });
+
+  it('a different disposition counts twice', () => {
+    const history = [entry(s, 'u'), { ...entry(s + 1_000, 'u'), disposition: 'Go Back' }];
+    assert.deepEqual(counts([door(history)]), [0, 2]);
+  });
+
+  it('a too_far in a collapsed pair still counts as too_far, including perRep', async () => {
+    assert.deepEqual(counts([door([entry(s + 14_000, 'u', flag('too_far')), entry(s, 'u')])]), [1, 1]);
+    const leads = [door([
+      entry(s, 'u'),
+      entry(s + 14_000, 'u', flag('too_far')),
+      entry(s + 31_000, 'u'),
+    ])];
+    const t = rig({ leads, users: { u: { name: 'Ada' } } });
+    const dry = await t.run({ dryRun: '1' });
+    const perRep = dry.body.perRep as Array<{ userId: string; name: string; tooFar: number; total: number; pct: string }>;
+    const rows = dry.body.rows as Array<{ tooFar: number; total: number; percent: string }>;
+    assert.deepEqual(perRep, [{ userId: 'u', name: 'Ada', tooFar: 1, total: 2, pct: percentLabel(1, 2) }]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].tooFar, 1);
+    assert.equal(rows[0].total, 2);
+    assert.equal(rows[0].percent, perRep[0].pct);
+    const computed = tally(leads).get('u');
+    assert.equal(perRep[0].tooFar, computed?.tooFar);
+    assert.equal(perRep[0].total, computed?.total);
   });
 });
 

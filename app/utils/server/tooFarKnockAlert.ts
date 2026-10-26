@@ -12,6 +12,8 @@ import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 export const TOO_FAR_ALERT_TO = 'evan@happyslr.com';
 export const LEAD_PAGE = 250;
 export const LEAD_PAGE_CAP = 40;
+/** Same user, lead, and disposition inside this gap is one knock. */
+const DUP_KNOCK_MS = 30_000;
 const NY = 'America/New_York';
 const ENV_KEYS = ['CRON_SECRET', 'RESEND_API_KEY', 'RESEND_FROM'] as const;
 const SEND_ENV_KEYS = ['RESEND_API_KEY', 'RESEND_FROM'] as const;
@@ -269,13 +271,47 @@ export function entryIsFar(entry: Record<string, unknown>): boolean {
   return distance - credit > RADIUS_M;
 }
 
+type KnockHit = { at: number; far: boolean };
+
+/**
+ * One counted knock per cluster. A later hit within 30s of the cluster's
+ * kept timestamp joins it. Any far hit makes the whole knock far.
+ */
+function collapseKnocks(hits: KnockHit[]): { total: number; tooFar: number } {
+  const ordered = [...hits].sort((a, b) => a.at - b.at);
+  let total = 0;
+  let tooFar = 0;
+  let keptAt = 0;
+  let clusterFar = false;
+  let open = false;
+  const close = () => {
+    if (!open) return;
+    total += 1;
+    if (clusterFar) tooFar += 1;
+    open = false;
+  };
+  for (const hit of ordered) {
+    if (!open || hit.at - keptAt > DUP_KNOCK_MS) {
+      close();
+      open = true;
+      keptAt = hit.at;
+      clusterFar = hit.far;
+    } else if (hit.far) {
+      clusterFar = true;
+    }
+  }
+  close();
+  return { total, tooFar };
+}
+
 export function tallyKnocks(
   leads: Array<{ id: string; data: Record<string, unknown> }>,
   startMs: number,
   endMs: number,
   knockKeys: Set<string> = doorKnockKeys([]),
 ): Map<string, Tally> {
-  const tallies = new Map<string, Tally>();
+  const groups = new Map<string, KnockHit[]>();
+  const names = new Map<string, string>();
   for (const lead of leads) {
     if (isExcludedTestLead(lead.id, lead.data)) continue;
     for (const entry of historyEntries(lead.data.dispositionHistory)) {
@@ -285,12 +321,24 @@ export function tallyKnocks(
       if (typeof userId !== 'string' || !userId) continue;
       const disposition = typeof entry.disposition === 'string' ? entry.disposition.trim().toLowerCase() : '';
       if (!disposition || !knockKeys.has(disposition)) continue;
-      const current = tallies.get(userId) ?? { tooFar: 0, total: 0, rep: userId };
-      current.total += 1;
-      if (entryIsFar(entry)) current.tooFar += 1;
-      if (typeof entry.userName === 'string' && entry.userName.trim()) current.rep = entry.userName.trim();
-      tallies.set(userId, current);
+      const key = `${userId}\u0000${lead.id}\u0000${disposition}`;
+      const hits = groups.get(key);
+      const hit = { at, far: entryIsFar(entry) };
+      if (hits) hits.push(hit);
+      else groups.set(key, [hit]);
+      if (typeof entry.userName === 'string' && entry.userName.trim()) names.set(userId, entry.userName.trim());
     }
+  }
+  const tallies = new Map<string, Tally>();
+  for (const [key, hits] of groups) {
+    const userId = key.slice(0, key.indexOf('\u0000'));
+    const collapsed = collapseKnocks(hits);
+    const named = names.get(userId);
+    const current = tallies.get(userId) ?? { tooFar: 0, total: 0, rep: named ?? userId };
+    current.total += collapsed.total;
+    current.tooFar += collapsed.tooFar;
+    if (named) current.rep = named;
+    tallies.set(userId, current);
   }
   return tallies;
 }
