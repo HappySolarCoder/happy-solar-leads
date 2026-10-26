@@ -1,12 +1,32 @@
 import { timingSafeEqual } from 'crypto';
 import { isTestAccount } from './discordNotification';
 import type { UserProfile } from './requireApprovedUser';
+import { isExcludedTestLead } from './allLeadsStats';
+import {
+  GPS_ACCURACY_CREDIT_CAP_M,
+  GPS_MAX_VERIFIED_ACCURACY_M,
+  RADIUS_M,
+} from '@/app/utils/gpsRule';
+import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 
 export const TOO_FAR_ALERT_TO = 'evan@happyslr.com';
 export const LEAD_PAGE = 250;
 export const LEAD_PAGE_CAP = 40;
 const NY = 'America/New_York';
 const ENV_KEYS = ['CRON_SECRET', 'RESEND_API_KEY', 'RESEND_FROM'] as const;
+const SEND_ENV_KEYS = ['RESEND_API_KEY', 'RESEND_FROM'] as const;
+/** The cron fires at 03:30 and 04:30 UTC. Only the one landing in NY hour 23 runs. */
+export const RUN_NY_HOUR = 23;
+const DATE_PARAM = /^(\d{4})-(\d{2})-(\d{2})$/;
+const M_TO_FT = 3.28084;
+/**
+ * Projection for the leads query. dispositionedAt must stay: startAfter(doc)
+ * reads the orderBy field from the snapshot. Only entry.gpsFlag is used for
+ * counting; top-level GPS fields are never read.
+ */
+export const LEAD_SELECT_FIELDS = ['dispositionedAt', 'dispositionHistory', 'testData', 'isTestAccount'] as const;
+
+export type DispositionDef = { id?: unknown; name?: unknown; countsAsDoorKnock?: unknown };
 
 export type TooFarRow = {
   userId: string;
@@ -40,6 +60,8 @@ export type TooFarAlertDeps = {
   now: () => Date;
   fetchPage: (startMs: number, endMs: number, cursor: LeadPageDoc | null) => Promise<LeadPage>;
   getUsers: (uids: string[]) => Promise<Map<string, Record<string, unknown> | null>>;
+  /** Custom dispositions (one small collection read). Defaults fill the gaps. */
+  getDispositions: () => Promise<DispositionDef[]>;
   claimMarker: (day: string, data: Record<string, unknown>) => Promise<boolean>;
   releaseMarker: (day: string) => Promise<void>;
   sendEmail: (message: AlertEmail) => Promise<void>;
@@ -169,7 +191,10 @@ export function alertHtml(rows: TooFarRow[]): string {
   const body = rows.map((row) => (
     `<tr><td>${escapeHtml(row.rep)}</td><td>${row.tooFar}</td><td>${row.total}</td><td>${row.percent}</td></tr>`
   )).join('');
-  return '<table><thead><tr><th>rep</th><th>knocks over 115 ft</th><th>total knocks</th><th>%</th></tr></thead>'
+  const creditFt = Math.round(GPS_ACCURACY_CREDIT_CAP_M * M_TO_FT);
+  const radiusFt = Math.round(RADIUS_M * M_TO_FT);
+  return `<p>A knock counts as far when its distance from the house, minus up to ${GPS_ACCURACY_CREDIT_CAP_M} m (${creditFt} ft) of GPS accuracy credit, is over ${RADIUS_M} m (${radiusFt} ft).</p>`
+    + '<table><thead><tr><th>rep</th><th>knocks over 115 ft</th><th>total knocks</th><th>%</th></tr></thead>'
     + `<tbody>${body}</tbody></table>`;
 }
 
@@ -178,24 +203,82 @@ function historyEntries(value: unknown): Array<Record<string, unknown>> {
   return value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object');
 }
 
+function dispositionKeys(value: { id?: unknown; name?: unknown }): string[] {
+  const keys: string[] = [];
+  if (typeof value.id === 'string' && value.id.trim()) keys.push(value.id.trim().toLowerCase());
+  if (typeof value.name === 'string' && value.name.trim()) {
+    const name = value.name.trim().toLowerCase();
+    keys.push(name, name.replace(/\s+/g, '-'));
+  }
+  return keys;
+}
+
+/**
+ * Lower-cased ids and names (plus hyphenated names) of dispositions with
+ * countsAsDoorKnock === true. Same matching as the dashboard. A stored
+ * disposition overrides the default with the same id or name.
+ */
+export function doorKnockKeys(custom: DispositionDef[]): Set<string> {
+  const knock = new Set<string>();
+  const seen = new Set<string>();
+  for (const def of custom) {
+    const keys = dispositionKeys(def);
+    keys.forEach((key) => seen.add(key));
+    if (def.countsAsDoorKnock === true) keys.forEach((key) => knock.add(key));
+  }
+  for (const def of DEFAULT_DISPOSITIONS) {
+    const keys = dispositionKeys(def);
+    if (keys.some((key) => seen.has(key))) continue;
+    if (def.countsAsDoorKnock) keys.forEach((key) => knock.add(key));
+  }
+  return knock;
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Far = the entry's own gpsFlag says too_far, or out_of_area on a good fix
+ * that is also past the distance rule. out_of_area is only chosen after the
+ * no_fix/stale/low/reduced accuracy checks, so the reason itself means the
+ * fix was good. Entries do not store accuracy today; with no accuracy the
+ * full 15 m credit is assumed (conservative: fewer alerts). An accuracy
+ * over 65 m is not a good fix. The lead's top-level GPS fields are never read.
+ */
+export function entryIsFar(entry: Record<string, unknown>): boolean {
+  const flag = entry.gpsFlag;
+  if (!flag || typeof flag !== 'object') return false;
+  const { gpsUnverifiedReason: reason, gpsDistanceM, gpsAccuracyM } = flag as Record<string, unknown>;
+  if (reason === 'too_far') return true;
+  if (reason !== 'out_of_area') return false;
+  const distance = finiteNumber(gpsDistanceM);
+  if (distance == null || distance < 0) return false;
+  const accuracy = finiteNumber(gpsAccuracyM);
+  if (accuracy != null && (accuracy < 0 || accuracy > GPS_MAX_VERIFIED_ACCURACY_M)) return false;
+  const credit = accuracy == null ? GPS_ACCURACY_CREDIT_CAP_M : Math.min(accuracy, GPS_ACCURACY_CREDIT_CAP_M);
+  return distance - credit > RADIUS_M;
+}
+
 export function tallyKnocks(
   leads: Array<{ id: string; data: Record<string, unknown> }>,
   startMs: number,
   endMs: number,
+  knockKeys: Set<string> = doorKnockKeys([]),
 ): Map<string, Tally> {
   const tallies = new Map<string, Tally>();
   for (const lead of leads) {
+    if (isExcludedTestLead(lead.id, lead.data)) continue;
     for (const entry of historyEntries(lead.data.dispositionHistory)) {
       const at = millisOf(entry.timestamp);
       if (at == null || at < startMs || at >= endMs) continue;
       const userId = entry.userId;
       if (typeof userId !== 'string' || !userId) continue;
+      const disposition = typeof entry.disposition === 'string' ? entry.disposition.trim().toLowerCase() : '';
+      if (!disposition || !knockKeys.has(disposition)) continue;
       const current = tallies.get(userId) ?? { tooFar: 0, total: 0, rep: userId };
       current.total += 1;
-      const flag = entry.gpsFlag;
-      if (flag && typeof flag === 'object' && (flag as { gpsUnverifiedReason?: unknown }).gpsUnverifiedReason === 'too_far') {
-        current.tooFar += 1;
-      }
+      if (entryIsFar(entry)) current.tooFar += 1;
       if (typeof entry.userName === 'string' && entry.userName.trim()) current.rep = entry.userName.trim();
       tallies.set(userId, current);
     }
@@ -251,26 +334,62 @@ export async function loadDispositionedLeads(
   return { leads, truncated: true };
 }
 
+export function nyHour(now: Date): number {
+  return zonedParts(now, NY).hour;
+}
+
+/** Strict YYYY-MM-DD, a real calendar day, not after today in NY. */
+export function parseDateParam(value: string, now: Date): ReturnType<typeof nyDayWindow> | null {
+  const match = DATE_PARAM.exec(value);
+  if (!match) return null;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return null;
+  if (year < 2020) return null;
+  const window = nyDayWindow(new Date(zonedStartUtc(year, month, day, NY) + 12 * 60 * 60 * 1000));
+  if (window.key !== value || window.key > nyDayWindow(now).key) return null;
+  return window;
+}
+
 export async function handleTooFarKnockAlert(
   request: { headers: { get(name: string): string | null }; nextUrl: { searchParams: { get(name: string): string | null } } },
   deps: TooFarAlertDeps,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const missing = missingAlertEnv(deps.env);
   const secret = deps.env.CRON_SECRET?.trim();
-  if (secret && !bearerMatches(request.headers.get('authorization'), secret)) {
+  if (!secret) return { status: 503, body: { missing: missingAlertEnv(deps.env) } };
+  if (!bearerMatches(request.headers.get('authorization'), secret)) {
     return { status: 401, body: { error: 'unauthorized' } };
   }
-  if (missing.length) return { status: 503, body: { missing } };
 
-  const dryRun = request.nextUrl.searchParams.get('dryRun') === '1';
-  const day = nyDayWindow(deps.now());
+  const params = request.nextUrl.searchParams;
+  const dryRun = params.get('dryRun') === '1';
+  const now = deps.now();
+  const dateParam = params.get('date');
+  let day = nyDayWindow(now);
+  if (dateParam != null) {
+    const parsed = parseDateParam(dateParam, now);
+    if (!parsed) return { status: 400, body: { error: 'invalid_date', expected: 'YYYY-MM-DD, not after today (America/New_York)' } };
+    day = parsed;
+  }
+  const missingSend = SEND_ENV_KEYS.filter((key) => !deps.env[key]?.trim());
+  if (!dryRun && missingSend.length) return { status: 503, body: { missing: missingSend } };
+  // Scheduled runs (no date, not a dry run) fire at 03:30 and 04:30 UTC; only NY hour 23 proceeds.
+  if (!dryRun && dateParam == null && nyHour(now) !== RUN_NY_HOUR) {
+    return { status: 200, body: { ok: true, skipped: true, reason: 'not_ny_hour_23', nyHour: nyHour(now) } };
+  }
+
   const loaded = await loadDispositionedLeads(deps.fetchPage, day.startMs, day.endMs);
-  const tallies = tallyKnocks(loaded.leads, day.startMs, day.endMs);
+  if (loaded.truncated && !dryRun) {
+    console.error(`[too-far-alert] truncated ${day.key}; not sending a partial email`);
+    return { status: 503, body: { ok: false, sent: false, truncated: true, date: day.key } };
+  }
+  const knockKeys = loaded.leads.length ? doorKnockKeys(await deps.getDispositions()) : new Set<string>();
+  const tallies = tallyKnocks(loaded.leads, day.startMs, day.endMs, knockKeys);
   const users = tallies.size ? await deps.getUsers([...tallies.keys()]) : new Map<string, Record<string, unknown> | null>();
   const rows = rowsFromTallies(tallies, users);
   const email = rows.length
     ? {
-      from: deps.env.RESEND_FROM!.trim(),
+      from: deps.env.RESEND_FROM?.trim() || '(RESEND_FROM unset)',
       to: TOO_FAR_ALERT_TO,
       subject: alertSubject(day.label),
       html: alertHtml(rows),
@@ -284,14 +403,14 @@ export async function handleTooFarKnockAlert(
     };
   }
   if (!email) {
-    return { status: 200, body: { ok: true, sent: false, date: day.key, rows, truncated: loaded.truncated } };
+    return { status: 200, body: { ok: true, sent: false, date: day.key, rows, truncated: false } };
   }
 
   const claimed = await deps.claimMarker(day.key, {
     date: day.key,
     to: TOO_FAR_ALERT_TO,
     rowCount: rows.length,
-    sentAt: deps.now().toISOString(),
+    sentAt: now.toISOString(),
   });
   if (!claimed) {
     return { status: 200, body: { ok: true, sent: false, alreadySent: true, date: day.key, rows } };
@@ -304,5 +423,5 @@ export async function handleTooFarKnockAlert(
     return { status: 502, body: { ok: false, error: 'send_failed' } };
   }
   console.log(`[too-far-alert] sent ${day.key} ${rows.length}`);
-  return { status: 200, body: { ok: true, sent: true, date: day.key, rows, truncated: loaded.truncated } };
+  return { status: 200, body: { ok: true, sent: true, date: day.key, rows, truncated: false } };
 }

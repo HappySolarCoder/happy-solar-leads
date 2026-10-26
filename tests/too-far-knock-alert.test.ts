@@ -78,6 +78,7 @@ function harness(options: {
       for (const uid of uids) users.set(uid, options.users?.[uid] ?? { name: uid });
       return users;
     },
+    getDispositions: async () => [],
     claimMarker: async (day) => {
       if (markers.has(day)) return false;
       markers.add(day);

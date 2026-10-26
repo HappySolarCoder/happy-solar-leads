@@ -3,6 +3,7 @@ import { Timestamp, type QueryDocumentSnapshot } from 'firebase-admin/firestore'
 import { adminDb } from '@/app/utils/firebase-admin';
 import {
   LEAD_PAGE,
+  LEAD_SELECT_FIELDS,
   handleTooFarKnockAlert,
   type AlertEmail,
 } from '@/app/utils/server/tooFarKnockAlert';
@@ -39,6 +40,7 @@ async function run(request: NextRequest) {
         .where('dispositionedAt', '>=', Timestamp.fromMillis(startMs))
         .where('dispositionedAt', '<', Timestamp.fromMillis(endMs))
         .orderBy('dispositionedAt')
+        .select(...LEAD_SELECT_FIELDS)
         .limit(LEAD_PAGE);
       if (cursor?.cursor) query = query.startAfter(cursor.cursor as QueryDocumentSnapshot);
       const snap = await query.get();
@@ -59,6 +61,13 @@ async function run(request: NextRequest) {
         users.set(uids[index] || snap.id, snap.exists ? (snap.data() as Record<string, unknown>) : null);
       });
       return users;
+    },
+    getDispositions: async () => {
+      const snap = await db.collection('dispositions').get();
+      return snap.docs.map((doc) => {
+        const data = doc.data() as Record<string, unknown>;
+        return { id: doc.id, name: data.name, countsAsDoorKnock: data.countsAsDoorKnock };
+      });
     },
     claimMarker: async (day, data) => {
       const ref = db.collection(MARKER_COLLECTION).doc(day);

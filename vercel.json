@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/too-far-knocks",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/too-far-knocks",
+      "schedule": "30 4 * * *"
     }
   ]
 }
