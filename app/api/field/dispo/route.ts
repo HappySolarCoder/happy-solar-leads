@@ -10,7 +10,7 @@ import {
 } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
 import {
-  FIELD_DISPO_MAX_BYTES,
+  FIELD_DISPO_NOTES_BODY_MAX,
   handleFieldDispo,
   type DispoCollection,
   type DispoDb,
@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
   try {
     const authorization = request.headers.get('authorization');
     const declared = Number(request.headers.get('content-length'));
-    if (Number.isFinite(declared) && declared > FIELD_DISPO_MAX_BYTES) {
+    if (Number.isFinite(declared) && declared > FIELD_DISPO_NOTES_BODY_MAX) {
       return json(await handleFieldDispo({ authorization, bodyBytes: declared, deps: deps() }));
     }
     const rawBody = await request.text();

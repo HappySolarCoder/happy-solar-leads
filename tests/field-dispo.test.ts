@@ -422,7 +422,7 @@ describe('field dispo', { concurrency: 1 }, () => {
         goBack: { scheduledDate: '2026-10-28T00:00:00.000Z' },
         objection: { type: 'other' },
       }), field: 'goBack' },
-      { name: 'notes length', body: { draftId: 'draft-1', leadId: 'lead-1', kind: 'notes', actionAt: ACTION, notes: 'n'.repeat(10001), baseNotes: '' }, field: 'notes' },
+      { name: 'notes type', body: { draftId: 'draft-1', leadId: 'lead-1', kind: 'notes', actionAt: ACTION, notes: 12, baseNotes: '' }, field: 'notes' },
       { name: 'goBack notes', body: knockBody({ goBack: { scheduledDate: '2026-10-28T00:00:00.000Z', notes: 'n'.repeat(2001) } }), field: 'goBack.notes' },
       { name: 'goBack time', body: knockBody({ goBack: { scheduledDate: '2026-10-28T00:00:00.000Z', scheduledTime: '1'.repeat(17) } }), field: 'goBack.scheduledTime' },
       { name: 'objection type', body: knockBody({ objection: { type: 'nope' } }), field: 'objection.type' },
@@ -897,6 +897,109 @@ describe('field dispo', { concurrency: 1 }, () => {
     assert.equal(retry.body.duplicate, false);
     assert.equal(conflict.db.docs.get('leads/lead-1')?.notes, 'mine');
     assert.equal(creates(conflict.db).length, 1);
+  });
+
+  it('saves a 20k-char note on a non-owned lead and a note whose body is over 32 KB', async () => {
+    const territory = { id: 'terr-mine', data: { userId: 'uid-setter' } };
+    const lead = { claimedBy: 'other-rep', assignedTo: 'other-rep', territoryId: 'terr-mine', notes: '' };
+    const save = async (notes: string) => {
+      const test = harness({ lead: { ...lead }, territories: [territory] });
+      const rawBody = JSON.stringify({
+        draftId: 'notes-long',
+        leadId: 'lead-1',
+        kind: 'notes',
+        actionAt: ACTION,
+        notes,
+        baseNotes: '',
+      });
+      const result = await test.run(undefined, undefined, { rawBody });
+      return { test, result, rawBody };
+    };
+
+    const twenty = await save('n'.repeat(20_000));
+    assert.equal(twenty.result.status, 200, JSON.stringify(twenty.result.body));
+    assert.equal(twenty.result.body.result, 'applied');
+    assert.equal(twenty.test.db.docs.get('leads/lead-1')?.notes, 'n'.repeat(20_000));
+    assert.equal(twenty.test.db.docs.get('leads/lead-1')?.claimedBy, 'other-rep');
+
+    const wide = 'n'.repeat(40_000);
+    const over = await save(wide);
+    assert.ok(Buffer.byteLength(over.rawBody, 'utf8') > FIELD_DISPO_MAX_BYTES);
+    assert.equal(over.result.status, 200, JSON.stringify(over.result.body));
+    assert.equal(over.test.db.docs.get('leads/lead-1')?.notes, wide);
+    assert.equal(over.test.db.docs.get('leads/lead-1')?.claimedBy, 'other-rep');
+  });
+
+  it('returns 413 payload_too_large when notes or baseNotes exceed 100000 characters', async () => {
+    const lead = { claimedBy: 'uid-setter', notes: 'keep' };
+    const post = (notes: string, baseNotes = '') => {
+      const test = harness({ lead: { ...lead } });
+      const rawBody = JSON.stringify({
+        draftId: 'notes-cap',
+        leadId: 'lead-1',
+        kind: 'notes',
+        actionAt: ACTION,
+        notes,
+        baseNotes,
+      });
+      return test.run(undefined, undefined, { rawBody }).then((result) => ({ test, result }));
+    };
+
+    const notes = await post('n'.repeat(100_001));
+    assert.equal(notes.result.status, 413, JSON.stringify(notes.result.body));
+    assert.deepEqual(notes.result.body, { ok: false, error: 'payload_too_large' });
+    assert.equal(notes.test.db.txCount, 0);
+    assert.equal(notes.test.db.docs.get('leads/lead-1')?.notes, 'keep');
+
+    const base = await post('ok', 'b'.repeat(100_001));
+    assert.equal(base.result.status, 413, JSON.stringify(base.result.body));
+    assert.deepEqual(base.result.body, { ok: false, error: 'payload_too_large' });
+    assert.equal(base.test.db.docs.get('leads/lead-1')?.notes, 'keep');
+  });
+
+  it('still rejects a knock body over 32 KB', async () => {
+    const test = harness({ lead: { claimedBy: 'uid-setter', status: 'old' } });
+    const rawBody = JSON.stringify({ ...knockBody(), pad: 'x'.repeat(40 * 1024) });
+    assert.ok(Buffer.byteLength(rawBody, 'utf8') > FIELD_DISPO_MAX_BYTES);
+    const result = await test.run(undefined, undefined, { rawBody });
+    assert.equal(result.status, 413, JSON.stringify(result.body));
+    assert.deepEqual(result.body, { ok: false, error: 'too_large' });
+    assert.equal(test.db.txCount, 0);
+    assert.equal(test.db.docs.get('leads/lead-1')?.status, 'old');
+  });
+
+  it('keeps both note versions when the client resubmits after a conflict', async () => {
+    const serverNotes = 'S'.repeat(20_000);
+    const localNotes = 'L'.repeat(20_000);
+    const kept = `${serverNotes}\n${localNotes}`;
+    const test = harness({
+      lead: { claimedBy: 'other-rep', territoryId: 'terr-mine', notes: serverNotes },
+      territories: [{ id: 'terr-mine', data: { userId: 'uid-setter' } }],
+    });
+    const send = (draftId: string, notes: string, baseNotes: string) => test.run(undefined, undefined, {
+      rawBody: JSON.stringify({
+        draftId,
+        leadId: 'lead-1',
+        kind: 'notes',
+        actionAt: ACTION,
+        notes,
+        baseNotes,
+      }),
+    });
+
+    const conflict = await send('notes-both', localNotes, 'stale');
+    assert.equal(conflict.status, 409, JSON.stringify(conflict.body));
+    assert.equal(conflict.body.reasonCode, 'notes_conflict');
+    assert.equal(conflict.body.currentNotes, serverNotes);
+    assert.equal(test.db.docs.get('leads/lead-1')?.notes, serverNotes);
+    assert.equal(creates(test.db).length, 0);
+
+    const merged = await send('notes-both', kept, serverNotes);
+    assert.ok(Buffer.byteLength(JSON.stringify({ notes: kept }), 'utf8') > FIELD_DISPO_MAX_BYTES);
+    assert.equal(merged.status, 200, JSON.stringify(merged.body));
+    assert.equal(merged.body.result, 'applied');
+    assert.equal(test.db.docs.get('leads/lead-1')?.notes, kept);
+    assert.equal(test.db.docs.get('leads/lead-1')?.claimedBy, 'other-rep');
   });
 
   it('replays a stored receipt without writing again', async () => {

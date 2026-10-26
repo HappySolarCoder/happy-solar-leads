@@ -28,6 +28,9 @@ import {
 export const FIELD_DISPO_LIMIT = 60;
 export const FIELD_DISPO_WINDOW_MS = 60_000;
 export const FIELD_DISPO_MAX_BYTES = 32 * 1024;
+/** kind:notes may be larger. Knock and other dispos stay at FIELD_DISPO_MAX_BYTES. */
+export const FIELD_DISPO_NOTES_BODY_MAX = 256 * 1024;
+const NOTES_TEXT_MAX = 100_000;
 export const TERRITORY_QUERY_LIMIT = 200;
 export const HISTORY_CAP = 500;
 const RECEIPT_RESPONSE_MAX_BYTES = 2048;
@@ -335,6 +338,26 @@ function invalid(field: string): FieldDispoResult {
   return finish(400, { ok: false, error: 'invalid_payload', reasonCode: 'invalid_payload', field });
 }
 
+function tooLarge(): FieldDispoResult {
+  return finish(413, { ok: false, error: 'too_large' });
+}
+
+function payloadTooLarge(): FieldDispoResult {
+  return finish(413, { ok: false, error: 'payload_too_large' });
+}
+
+/** True when the unread or oversized body is a notes draft. */
+function notesPayload(rawBody: string | undefined, body: unknown): boolean {
+  if (isPlainObject(body) && body.kind === 'notes') return true;
+  return typeof rawBody === 'string' && /"kind"\s*:\s*"notes"/.test(rawBody);
+}
+
+function notesTextOverMax(payload: Record<string, unknown>): boolean {
+  const { notes, baseNotes } = payload;
+  return (typeof notes === 'string' && notes.length > NOTES_TEXT_MAX)
+    || (typeof baseNotes === 'string' && baseNotes.length > NOTES_TEXT_MAX);
+}
+
 function forbidden(reasonCode: FieldReasonCode): FieldDispoResult {
   if (!KNOWN_REASONS.has(reasonCode)) throw new Error('Unknown dispo reason');
   return finish(403, { ok: false, error: 'forbidden', reasonCode });
@@ -432,11 +455,11 @@ function parseDraft(body: unknown, now: number): { ok: true; draft: ParsedDraft 
   if (kindUnknown) return { ok: false, field: kindUnknown };
 
   if (body.kind === 'notes') {
-    const notes = boundedString(body.notes, 10000, true);
+    const notes = boundedString(body.notes, NOTES_TEXT_MAX, true);
     if (notes == null) return { ok: false, field: 'notes' };
     let baseNotes = '';
     if (Object.prototype.hasOwnProperty.call(body, 'baseNotes') && body.baseNotes != null) {
-      const parsedBase = boundedString(body.baseNotes, 10000, true);
+      const parsedBase = boundedString(body.baseNotes, NOTES_TEXT_MAX, true);
       if (parsedBase == null) return { ok: false, field: 'baseNotes' };
       baseNotes = parsedBase;
     }
@@ -742,15 +765,23 @@ export async function handleFieldDispo(input: {
     : typeof input.rawBody === 'string'
       ? Buffer.byteLength(input.rawBody, 'utf8')
       : 0;
-  if (bodyBytes > FIELD_DISPO_MAX_BYTES) return finish(413, { ok: false, error: 'too_large' });
+  if (bodyBytes > FIELD_DISPO_NOTES_BODY_MAX) {
+    return notesPayload(input.rawBody, input.body) ? payloadTooLarge() : tooLarge();
+  }
 
   let payload = input.body;
   if (typeof input.rawBody === 'string') {
     try {
       payload = JSON.parse(input.rawBody);
     } catch {
+      if (bodyBytes > FIELD_DISPO_MAX_BYTES) return tooLarge();
       return invalid('body');
     }
+  }
+  if (isPlainObject(payload) && payload.kind === 'notes') {
+    if (notesTextOverMax(payload)) return payloadTooLarge();
+  } else if (bodyBytes > FIELD_DISPO_MAX_BYTES) {
+    return tooLarge();
   }
   const parsed = parseDraft(payload, now);
   if (!parsed.ok) return invalid(parsed.field);
