@@ -73,6 +73,9 @@ async function commitNotes(actor: User, store: ReturnType<typeof fakeLeadTransac
 test("an uncontested notes edit is stored exactly and a replay writes nothing more", async () => {
   const cases = [
     { name: "delete", server: "Keep this\nDrop this", edit: "Keep this" },
+    { name: "delete leading", server: "Gate code 1234\nDog in yard", edit: "Dog in yard" },
+    { name: "delete middle", server: "Gate code 1234\nDog in yard\nCall after 5", edit: "Gate code 1234\nCall after 5" },
+    { name: "rewrite", server: "Gate code 1234\nDog in yard", edit: "Call after 5" },
     { name: "clear", server: "Call aftr 5", edit: "" },
     { name: "typo", server: "Call aftr 5", edit: "Call after 5" },
   ];
@@ -111,17 +114,69 @@ test("two phones keep both notes on an owned lead and an admin lead", async () =
   }
 });
 
-test("a contested edit that changes the end of a line is appended on a new line", async () => {
+test("a contested edit that extends the last line stays on that line", async () => {
   const store = fakeLeadTransaction("lead-1", "Call after 5\nDog in yard", { claimedBy: owner.id });
   const saved = await commitNotes(owner, store, "Call after 5 today", "Call after 5");
   assert.equal(saved.replayed, false);
-  assert.equal(store.notes(), "Call after 5\nDog in yard\n today");
-  assert.equal(String(store.notes()).endsWith("yard today"), false);
+  assert.equal(store.notes(), "Call after 5\nDog in yard today");
+  assert.equal(String(store.notes()).endsWith("yard today"), true);
   const replay = await commitNotes(owner, store, "Call after 5 today", "Call after 5");
   assert.equal(replay.replayed, true);
-  assert.equal(store.notes(), "Call after 5\nDog in yard\n today");
+  assert.equal(store.notes(), "Call after 5\nDog in yard today");
   assert.equal(store.updates.length, 1);
 });
+
+test("owned, manager, and territory paths apply a deletion when the server text is unchanged", async () => {
+  const original = "Gate code 1234\nDog in yard\nCall after 5";
+  const edits = [
+    { name: "leading", edit: "Dog in yard\nCall after 5" },
+    { name: "middle", edit: "Gate code 1234\nCall after 5" },
+    { name: "rewrite", edit: "Leave a card" },
+  ];
+  const manager = { id: "manager-rep", name: "Manager", role: "manager" } as User;
+  for (const item of edits) {
+    const owned = fakeLeadTransaction("lead-1", original, { claimedBy: owner.id });
+    const ownedSave = await commitNotes(owner, owned, item.edit, original);
+    assert.equal(ownedSave.replayed, false, `owned ${item.name}`);
+    assert.equal(owned.notes(), item.edit, `owned ${item.name}`);
+    assert.equal(owned.updates.length, 1, `owned ${item.name}`);
+    const ownedReplay = await commitNotes(owner, owned, item.edit, original);
+    assert.equal(ownedReplay.replayed, true, `owned ${item.name} replay`);
+    assert.equal(owned.updates.length, 1, `owned ${item.name} replay`);
+
+    const managed = fakeLeadTransaction("lead-1", original, { claimedBy: "someone-else" });
+    const managedSave = await commitNotes(manager, managed, item.edit, original);
+    assert.equal(managedSave.replayed, false, `manager ${item.name}`);
+    assert.equal(managed.notes(), item.edit, `manager ${item.name}`);
+    assert.equal(managed.updates.length, 1, `manager ${item.name}`);
+
+    const bodies: { notes?: string; baseNotes?: string | null }[] = [];
+    let server = original;
+    await deliverFieldDispo({
+      ...notesDraft(setterRoute(), "lead-1", item.edit, original),
+      direct: { patch: { notes: item.edit }, serverDispo: true },
+    }, setterRoute(), {
+      getToken: async () => "token",
+      post: async (_path, init) => {
+        const body = JSON.parse(String(init?.body)) as { notes?: string; baseNotes?: string | null };
+        bodies.push(body);
+        server = body.notes || "";
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    assert.equal(bodies.length, 1, `territory ${item.name}`);
+    assert.equal(bodies[0].notes, item.edit, `territory ${item.name}`);
+    assert.equal(bodies[0].baseNotes, original, `territory ${item.name}`);
+    assert.equal(server, item.edit, `territory ${item.name}`);
+  }
+});
+
+function setterRoute(): User {
+  return { id: "territory-rep", name: "Territory", role: "setter" } as User;
+}
 
 test("a route notes conflict retries the plain patch with the rebased text", async () => {
   let posts = 0;

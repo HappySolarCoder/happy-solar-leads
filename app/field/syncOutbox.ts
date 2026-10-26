@@ -1,3 +1,4 @@
+import { coalesceNotesDrafts } from "./notesCoalesce";
 import { coerceLegacyContactDraft, hasContactFields, notesWereEdited, splitNotesAndContact } from "./contactSave";
 import { compareQueuedDrafts } from "./draftQueue";
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
@@ -115,6 +116,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
     let progressed = false;
     for (const m of fresh) {
       if (!deps.active()) return { accepted, retried, parked };
+      if (seen.has(m.id)) continue;
       seen.add(m.id);
       const state = effectiveSyncState(m);
       if (m.direct?.gps || state === "gps" || state === "parked") continue;
@@ -136,6 +138,27 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
         continue;
       }
       let absorbedPriors: PendingMutation[] = [];
+      let supersededIds: string[] = [];
+      const stored = current;
+      if (current.kind === "notes" && !hasContactFields(current)) {
+        const group = all.filter((row) =>
+          row.kind === "notes"
+          && row.leadId === current.leadId
+          && row.userId === current.userId
+          && row.id !== undefined
+          && !row.direct?.gps
+          && !notesTooLongRow(row)
+          && effectiveSyncState(row) !== "parked"
+          && effectiveSyncState(row) !== "gps"
+          && (row.nextAttemptAt ?? 0) <= now()
+        );
+        if (group.length > 1 && group.some((row) => row.id === current.id)) {
+          const merged = coalesceNotesDrafts(group);
+          current = merged.draft;
+          supersededIds = merged.supersededIds;
+          for (const row of group) seen.add(row.id);
+        }
+      }
       const priors = all.filter((row) =>
         notesTooLongRow(row)
         && row.leadId === current.leadId
@@ -153,7 +176,8 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
         && priors.length > 0;
       if (absorb) {
         current = absorbNotesTooLong(current, priors);
-        if (write) await write(current);
+        // A coalesced draft is written only after the send is accepted.
+        if (write && supersededIds.length === 0) await write(current);
         // The parked row stays until this replacement is saved.
         absorbedPriors = priors;
       }
@@ -220,22 +244,31 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           await deps.remove(prior.id);
         }
       };
+      const dropSuperseded = async () => {
+        for (const id of supersededIds) {
+          seen.add(id);
+          await deps.remove(id);
+        }
+      };
+      // A failed coalesce leaves every original draft. The merged text is not stored.
+      const failureDraft = supersededIds.length > 0 ? stored : current;
       try {
         await deps.send(current);
         await deps.remove(current.id);
+        await dropSuperseded();
         await dropAbsorbed();
         accepted += 1;
         await recordSyncEvent(eventFor(current, "accepted"));
       } catch (caught) {
         const error = caught as Error & { status?: number; code?: string; rebasedDraft?: PendingMutation };
         const outcome = classifySyncFailure(error);
-        const kept = outcome.kind === "denial" ? withRebasedNotes(current, error.rebasedDraft) : current;
+        const kept = outcome.kind === "denial" ? withRebasedNotes(failureDraft, error.rebasedDraft) : failureDraft;
         if (outcome.kind === "gps-pending") continue;
         if (outcome.kind === "slow") {
           const next: PendingMutation = {
-            ...current,
+            ...failureDraft,
             syncState: "queued",
-            attempts: (current.attempts ?? 0) + 1,
+            attempts: (failureDraft.attempts ?? 0) + 1,
             nextAttemptAt: now() + SERVER_DISPO_SLOW_RETRY_MS,
             routeHold: "field-dispo",
             lastError: error.message,
@@ -246,7 +279,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           else delete next.parkedReason;
           if (write) await write(next);
           retried += 1;
-          deferred.add(current.leadId);
+          deferred.add(failureDraft.leadId);
           await recordSyncEvent(eventFor(next, "queued"));
           continue;
         }
@@ -254,11 +287,12 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           try {
             await deps.send(current);
             await deps.remove(current.id);
+            await dropSuperseded();
             await dropAbsorbed();
             accepted += 1;
             await recordSyncEvent(eventFor(current, "accepted"));
           } catch (again) {
-            await fail(current, again as Error, "retry");
+            await fail(failureDraft, again as Error, "retry");
           }
           continue;
         }
@@ -270,7 +304,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           );
           continue;
         }
-        await fail(current, error, "retry");
+        await fail(failureDraft, error, "retry");
       }
     }
     if (!progressed) break;

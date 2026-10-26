@@ -300,7 +300,7 @@ function rows(): MatrixRow[] {
     { case: "Send Info notes too long", patch: { phone: "556", notes: "中".repeat(90_000) }, notesTooLong: true, expectUpdate: [{ phone: "556" }], expectRemaining: "empty" },
     { case: "parked + empty edit", leadNotes: kept, parkedText: "PARKED TEXT", expectNotes: kept, expectRemaining: "parked-note" },
     { case: "parked + deliberate clear", leadNotes: "PARKED TEXT", parkedText: "PARKED TEXT", expectNotes: "", expectRemaining: "empty" },
-    { case: "parked + substring note", leadNotes: "prefix UNIQUE suffix", parkedText: "prefix UNIQUE suffix", expectNotes: "prefix UNIQUE suffix", expectRemaining: "empty" },
+    { case: "parked + substring note", leadNotes: "prefix UNIQUE suffix", parkedText: "prefix UNIQUE suffix", expectNotes: "prefix UNIQUE suffix\nUNIQUE", expectRemaining: "empty" },
   ];
   const out: MatrixRow[] = [];
   for (const item of cases) {
@@ -488,7 +488,7 @@ test("contact and photo saves keep their fields and never blank notes", async ()
     }
     if (row.case === "parked + substring note") {
       const sent = observed.payloads.map((item) => item.notes).find((notes) => typeof notes === "string");
-      assert.equal(sent, "prefix UNIQUE suffix");
+      assert.equal(sent, "prefix UNIQUE suffix\nUNIQUE");
       assert.notEqual(sent, "UNIQUE");
     }
     if (row.case === "parked + deliberate clear") {
@@ -559,7 +559,7 @@ test("absorb keeps parked text unless the edit descends from it", () => {
   assert.equal(absorbNotesText(parked, { notes: "", baseNotes: "" }).notes, parked.notes);
   assert.equal(absorbNotesText(parked, { notes: "   ", baseNotes: "other" }).notes, parked.notes);
   assert.deepEqual(absorbNotesText(parked, { notes: "", baseNotes: parked.notes }), { notes: "", baseNotes: "" });
-  assert.equal(absorbNotesText(parked, { notes: "UNIQUE", baseNotes: "" }).notes, parked.notes);
+  assert.equal(absorbNotesText(parked, { notes: "UNIQUE", baseNotes: "" }).notes, "prefix UNIQUE suffix\nUNIQUE");
 });
 
 test("a legacy notes carrier replays as the contact patch", () => {

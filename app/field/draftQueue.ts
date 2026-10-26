@@ -18,13 +18,26 @@ export function compareQueuedDrafts(
   return (a.id || "").localeCompare(b.id || "");
 }
 
-/** Next device sequence for this account. Pass only that account's drafts. */
-export function nextQueueSeq(existing: readonly { queueSeq?: number }[]): number {
+const queueSeqFloor = new Map<string, number>();
+
+/** Tests that assert the first sequence start from an empty counter. */
+export function resetQueueSeqForTests(): void {
+  queueSeqFloor.clear();
+}
+
+/**
+ * Next device sequence for this account. Pass only that account's drafts.
+ * The counter increments synchronously, so two saves in one turn that both
+ * see the same snapshot still get distinct sequences.
+ */
+export function nextQueueSeq(existing: readonly { queueSeq?: number }[], userId = ""): number {
   let max = 0;
   for (const row of existing) {
     if (typeof row.queueSeq === "number" && Number.isFinite(row.queueSeq) && row.queueSeq > max) max = row.queueSeq;
   }
-  return max + 1;
+  const seq = Math.max(max, queueSeqFloor.get(userId) ?? 0) + 1;
+  queueSeqFloor.set(userId, seq);
+  return seq;
 }
 
 /** A new dispo always joins the queue. Older drafts for the same lead stay. */
@@ -43,7 +56,7 @@ export function acceptDisposition(
   const pending = next as PendingMutation;
   return {
     ...pending,
-    queueSeq: typeof pending.queueSeq === "number" ? pending.queueSeq : nextQueueSeq(existing),
+    queueSeq: typeof pending.queueSeq === "number" ? pending.queueSeq : nextQueueSeq(existing, pending.userId),
     syncState: pending.syncState ?? (pending.direct?.gps ? "gps" : "queued"),
     attempts: pending.attempts ?? 0,
   };

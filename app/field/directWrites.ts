@@ -180,7 +180,7 @@ export async function commitDirectMutation(m: PendingMutation, user: User, io?: 
           const rest = { ...patch };
           delete rest.notes;
           if (currentNotes !== base && currentNotes !== '') {
-            throw Object.assign(Error('Notes changed on another device. Review this draft.'), { status: 409, reasonCode: SYNC_REASON.notesConflict });
+            throw Object.assign(Error('Notes were rejected.'), { status: 409, reasonCode: SYNC_REASON.notesRejected });
           }
           const lead = mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...rest, notes: '' }) });
           if (currentNotes === '' && !Object.keys(rest).length) return { replayed: true, lead };

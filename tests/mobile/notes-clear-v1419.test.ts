@@ -4,11 +4,12 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLeadSaveDrafts, coerceLegacyContactDraft } from "../../app/field/contactSave";
-import { acceptDisposition, compareQueuedDrafts } from "../../app/field/draftQueue";
+import { acceptDisposition, compareQueuedDrafts, resetQueueSeqForTests } from "../../app/field/draftQueue";
 import { commitDirectMutation, type DirectCommitIo } from "../../app/field/directWrites";
 import { migrateDraft, resetParkedReopenForTests, reopenDeniedParked } from "../../app/field/draftMigration";
 import { classifySyncFailure } from "../../app/field/draftState";
-import { NOTES_BLANK_MESSAGE, NOTES_UNSAVED_MESSAGE, parkedNotesBanner, parkedNotesNotice, whitespaceNotesChange } from "../../app/field/notesLimits";
+import { NOTES_BLANK_MESSAGE, NOTES_UNSAVED_MESSAGE, absorbNotesText, parkedNotesBanner, parkedNotesNotice, whitespaceNotesChange } from "../../app/field/notesLimits";
+import { coalesceNotesDrafts, orderQueuedNotes } from "../../app/field/notesCoalesce";
 import { rebaseNotes } from "../../app/field/notesRebase";
 import { deliverFieldDispo, fieldDispoBody, postFieldDispo } from "../../app/field/serverDispo";
 import { syncReportItem } from "../../app/field/syncDiagnostics";
@@ -273,13 +274,14 @@ test("notes_empty, notes_clear_mismatch, and a clearNotes 400 park as notes_reje
   assert.equal(reported.reasonCode, SYNC_REASON.invalidPayload);
 });
 
-test("a 409 on a clear stays a conflict and keeps clearNotes", async () => {
+test("a 409 on a manager clear parks as notes_rejected and keeps clearNotes", async () => {
+  const manager = { id: "rep-manager", name: "Manager", role: "manager" } as User;
   let posts = 0;
   const bodies: { notes?: string; clearNotes?: boolean; baseNotes?: string }[] = [];
-  let rows = [clearDraft(true)];
-  await syncOutbox({
+  let rows: PendingMutation[] = [{ ...clearDraft(true), userId: manager.id, userName: manager.name }];
+  const run = () => syncOutbox({
     read: async () => rows,
-    send: async (row) => postFieldDispo(row, setter, {
+    send: async (row) => postFieldDispo(row, manager, {
       getToken: async () => "token",
       post: async (_path, init) => {
         posts += 1;
@@ -298,16 +300,20 @@ test("a 409 on a clear stays a conflict and keeps clearNotes", async () => {
     now: () => Date.parse(at),
     random: () => 0,
   });
+  await run();
   assert.equal(posts, 1);
   assert.equal(bodies.length, 1);
   assert.equal(bodies[0].notes, "");
   assert.equal(bodies[0].baseNotes, seen);
   assert.equal(bodies[0].clearNotes, true);
-  assert.equal(rows[0].syncState, "retry");
+  assert.equal(rows[0].syncState, "parked");
+  assert.equal(rows[0].parkedReason, SYNC_REASON.notesRejected);
   assert.equal(rows[0].notes, "");
   assert.equal(rows[0].clearNotes, true);
   assert.equal(rows[0].baseNotes, seen);
-  assert.match(rows[0].lastError || "", /Notes changed on another device/);
+  assert.equal(parkedNotesNotice(rows, "lead-1"), "These notes weren't saved. The server rejected this clear.");
+  await run();
+  assert.equal(posts, 1);
   assert.equal(classifySyncFailure(Object.assign(Error("Notes changed on another device. Review this draft."), {
     status: 409,
     reasonCode: SYNC_REASON.notesConflict,
@@ -475,8 +481,8 @@ test("rebaseNotes keeps typed text and does not duplicate a clear-then-type", ()
   const base = `${line}\nCall after 5`;
   const once = rebaseNotes(base, "Call after 5", line);
   assert.equal(once.notes, `${line}\nCall after 5`);
-  const twice = rebaseNotes(base, "Call after 5", once.notes);
-  assert.equal(twice.notes, once.notes);
+  const deleted = rebaseNotes(base, "Call after 5", once.notes);
+  assert.equal(deleted.notes, "Call after 5");
   assert.equal(rebaseNotes(once.baseNotes, once.notes, once.notes).notes, once.notes);
   assert.equal(once.notes.includes(line), true);
   assert.equal(once.notes.includes("Call after 5"), true);
@@ -509,6 +515,13 @@ test("parked note reasons are visible and a whitespace save is not treated as sa
     syncState: "parked",
     parkedReason: SYNC_REASON.notesRejected,
   }], "lead-1"), "These notes weren't saved. The server rejected this clear.");
+  assert.equal(parkedNotesNotice([{
+    leadId: "lead-1",
+    kind: "notes",
+    notes: "Dog in yard",
+    syncState: "parked",
+    parkedReason: SYNC_REASON.notesRejected,
+  }], "lead-1"), "These notes weren't saved. The server rejected these notes.");
   assert.equal(parkedNotesNotice([{
     leadId: "lead-1",
     kind: "notes",
@@ -605,6 +618,7 @@ test("same-millisecond clear and type leave the queue in the order the rep acted
       ...(part.clearNotes ? { clearNotes: true } : {}),
       direct: { patch: { notes: part.notes } },
     });
+    resetQueueSeqForTests();
     const first = acceptDisposition([], draft(item.first));
     const second = acceptDisposition([first], draft(item.second));
     assert.equal(first.queueSeq, 1, item.name);
@@ -654,4 +668,210 @@ test("same-millisecond clear and type leave the queue in the order the rep acted
   const hook = readFileSync(path.join(root, "app/field/useFieldData.ts"), "utf8");
   assert.match(hook, /readDrafts\(uid\)/);
   assert.match(hook, /acceptDisposition\(drafts, m\)/);
+});
+
+test("two saves in the same tick get distinct queue sequences", () => {
+  resetQueueSeqForTests();
+  const draft = (id: string): PendingMutation => ({
+    id,
+    userId: owner.id,
+    userName: owner.name,
+    leadId: "lead-1",
+    createdAt: at,
+    kind: "notes",
+    baseStatus: "claimed",
+    baseNotes: "S",
+    notes: id,
+    direct: { patch: { notes: id } },
+  });
+  const existing: PendingMutation[] = [];
+  const first = acceptDisposition(existing, draft("a-save"));
+  const second = acceptDisposition(existing, draft("b-save"));
+  assert.equal(first.queueSeq, 1);
+  assert.equal(second.queueSeq, 2);
+  assert.equal(acceptDisposition([first], first).queueSeq, 1);
+});
+
+test("absorbNotesText keeps a short addition that sits inside a longer parked line", () => {
+  const parked = { notes: "Older text\nDog in yard\n…", baseNotes: "seed" };
+  const merged = absorbNotesText(parked, { baseNotes: "Older text", notes: "Older text\nDog" });
+  assert.equal(merged.notes, "Older text\nDog in yard\n…\nDog");
+  assert.equal(merged.notes.includes("Dog in yard"), true);
+  assert.equal(absorbNotesText(parked, { baseNotes: merged.notes, notes: merged.notes }).notes, merged.notes);
+});
+
+test("rebaseNotes and absorbNotesText keep every line except a deliberate delete", () => {
+  const texts = ["", "A", "B", "A\nB", "B\nA", "A\nB\nC", "A\nC", "C"];
+  const lines = (text: string) => text.split("\n").filter((line) => line.length > 0);
+  const present = (result: string, line: string) => result.split("\n").includes(line);
+  const assertKept = (base: string, edit: string, server: string, result: string, label: string) => {
+    if (server === base) {
+      assert.equal(result, edit, label);
+      return;
+    }
+    for (const line of lines(server)) {
+      assert.equal(present(result, line), true, `server ${line} missing from ${JSON.stringify(result)} ${label}`);
+    }
+    // A pure append types only the lines after base. A rewrite types every line.
+    const typed = edit.startsWith(base) ? edit.slice(base.length) : edit;
+    for (const line of lines(typed)) {
+      assert.equal(present(result, line), true, `typed ${line} missing from ${JSON.stringify(result)} ${label}`);
+    }
+  };
+  for (const base of texts) {
+    for (const edit of texts) {
+      for (const current of texts) {
+        const applied = rebaseNotes(base, edit, current);
+        const label = JSON.stringify({ base, edit, current });
+        assertKept(base, edit, current, applied.notes, label);
+        if (current !== base && applied.notes !== base) {
+          assert.equal(rebaseNotes(base, edit, applied.notes).notes, applied.notes, `replay ${label}`);
+        }
+        assert.equal(rebaseNotes(applied.baseNotes, applied.notes, applied.notes).notes, applied.notes, `stored replay ${label}`);
+      }
+    }
+  }
+  for (const parked of texts) {
+    for (const next of texts) {
+      for (const base of texts) {
+        const merged = absorbNotesText({ notes: parked, baseNotes: "seed" }, { notes: next, baseNotes: base });
+        const label = JSON.stringify({ parked, next, base });
+        if (!next.trim()) {
+          if (parked !== "" && base === parked) assert.equal(merged.notes, next, label);
+          else assert.equal(merged.notes, parked, label);
+          continue;
+        }
+        if (parked !== "" && base === parked) {
+          assert.equal(merged.notes, next, label);
+          continue;
+        }
+        assertKept(base, next, parked, merged.notes, label);
+      }
+    }
+  }
+});
+
+test("queued notes drafts coalesce once and a knock stays a knock", async () => {
+  const stamp = "2026-10-26T13:00:00.000Z";
+  const note = (
+    id: string,
+    notes: string,
+    baseNotes: string,
+    extra: Partial<PendingMutation> = {},
+  ): PendingMutation => ({
+    id,
+    userId: owner.id,
+    userName: owner.name,
+    leadId: "lead-1",
+    createdAt: stamp,
+    kind: "notes",
+    baseStatus: "claimed",
+    notes,
+    baseNotes,
+    syncState: "queued",
+    attempts: 0,
+    direct: { patch: { notes } },
+    ...extra,
+  });
+  const legacyReverse = [
+    note("a-l2", "S\nL1\nL2", "S\nL1"),
+    note("z-l1", "S\nL1", "S"),
+  ];
+  assert.deepEqual(orderQueuedNotes(legacyReverse).map((row) => row.id), ["z-l1", "a-l2"]);
+  const chain = [
+    ...legacyReverse,
+    note("n1", "S\nL1\nL2\nN1", "S\nL1\nL2", { queueSeq: 1 }),
+    note("n2", "S\nL1\nL2\nN1\nN2", "S\nL1\nL2\nN1", { queueSeq: 2 }),
+  ];
+  assert.equal(coalesceNotesDrafts(chain).draft.notes, "S\nL1\nL2\nN1\nN2");
+  assert.equal(coalesceNotesDrafts(chain).draft.baseNotes, "S");
+  const garbage = [
+    note("a-wide", "S\nL1\nL2", ""),
+    note("m-mid", "L1\nL2\nN1", ""),
+    note("n-s", "S", "", { queueSeq: 1 }),
+    note("n-d", "S\nL1\nL2\nN2", "S", { queueSeq: 2 }),
+  ];
+  const merged = coalesceNotesDrafts(garbage).draft;
+  assert.equal(merged.notes, "S\nL1\nL2\nN1\nN2");
+  assert.notEqual(merged.notes, "S\nL1\nL2\nL1\nL2\nN1\nS\nL1\nL2\nN2");
+  const history = [{ disposition: "Not Home", timestamp: new Date(stamp), userId: owner.id, userName: owner.name }];
+  const knock: PendingMutation = {
+    id: "k-knock",
+    userId: owner.id,
+    userName: owner.name,
+    leadId: "lead-1",
+    createdAt: stamp,
+    kind: "knock",
+    baseStatus: "claimed",
+    status: "not-home",
+    disposition: "Not Home",
+    syncState: "queued",
+    attempts: 0,
+    direct: { patch: { status: "not-home", dispositionHistory: history } },
+  };
+  let rows = [...garbage, knock];
+  let record: Record<string, unknown> = { notes: "S" };
+  const sent: PendingMutation[] = [];
+  let failSend = true;
+  const io = {
+    db: {},
+    auth: { currentUser: { uid: owner.id } },
+    doc: () => ({ path: "leads/lead-1" }),
+    runTransaction: async (_database: unknown, fn: (tx: {
+      get: () => Promise<{ exists: () => boolean; data: () => Record<string, unknown> }>;
+      update: (_ref: unknown, data: Record<string, unknown>) => void;
+    }) => Promise<unknown>) => fn({
+      get: async () => ({ exists: () => true, data: () => ({ ...record }) }),
+      update: (_ref, data) => {
+        record = { ...record, ...data };
+      },
+    }),
+  } as unknown as DirectCommitIo;
+  let clock = Date.parse(stamp);
+  const run = () => syncOutbox({
+    read: async () => rows,
+    send: async (row) => {
+      if (failSend && row.kind === "notes") throw Error("offline");
+      sent.push(row);
+      return deliverFieldDispo(row, owner, {
+        getToken: async () => "token",
+        commit: async (mutation, user) => commitDirectMutation(mutation, user, io),
+        post: async () => {
+          throw Error("coalesced notes must not use the route");
+        },
+      });
+    },
+    remove: async (id) => {
+      rows = rows.filter((row) => row.id !== id);
+    },
+    update: async (row) => {
+      rows = rows.map((current) => (current.id === row.id ? row : current));
+    },
+    report: async () => {},
+    active: () => true,
+    now: () => clock,
+    random: () => 0,
+  });
+  await run();
+  assert.equal(record.notes, "S");
+  assert.equal(rows.filter((row) => row.kind === "notes").length, 4);
+  assert.equal(rows.some((row) => row.kind === "knock"), true);
+  assert.equal(rows.find((row) => row.kind === "knock")?.direct?.patch.dispositionHistory, history);
+  failSend = false;
+  clock += 20 * 60 * 1000;
+  sent.length = 0;
+  await run();
+  assert.equal(record.notes, "S\nL1\nL2\nN1\nN2");
+  for (const token of ["S", "L1", "L2", "N1", "N2"]) {
+    assert.equal(String(record.notes).split("\n").filter((line) => line === token).length, 1, token);
+  }
+  assert.equal(rows.length, 0);
+  const notesSent = sent.filter((row) => row.kind === "notes");
+  const knocksSent = sent.filter((row) => row.kind === "knock");
+  assert.equal(notesSent.length, 1);
+  assert.equal(notesSent[0].notes, "S\nL1\nL2\nN1\nN2");
+  assert.equal(knocksSent.length, 1);
+  assert.equal(knocksSent[0].id, "k-knock");
+  assert.deepEqual(knocksSent[0].direct?.patch.dispositionHistory, history);
+  assert.equal(Object.prototype.hasOwnProperty.call(knocksSent[0].direct?.patch || {}, "notes"), false);
 });

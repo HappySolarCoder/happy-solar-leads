@@ -574,8 +574,11 @@ export async function postFieldDispo(
       knownReason(data?.reasonCode) || SYNC_REASON.other,
     ));
   }
-  if (response.status === 409)
+  if (response.status === 409) {
+    if (deliberateNotesClear(draft))
+      fail(routeError("Notes were rejected.", 409, SYNC_REASON.notesRejected));
     fail(routeError("Notes changed on another device. Review this draft.", 409, SYNC_REASON.notesConflict));
+  }
   if (response.status === 429)
     fail(Object.assign(Error("Disposition route asked us to wait."), {
       status: 429,

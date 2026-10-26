@@ -108,8 +108,10 @@ export type NotesDraftText = { notes: string; baseNotes: string };
  * The edit replaces the parked text only when next.baseNotes is that parked
  * text, which means the rep opened it and changed or cleared it. An empty or
  * whitespace edit does not replace it otherwise. A short note that merely
- * happens to be a substring does not replace it either. Anything else rebases
- * onto the parked text so that text is kept.
+ * happens to be a substring does not replace it. Anything else uses the same
+ * three-way rule as rebaseNotes, with the parked text as the server text.
+ * The merge is skipped only when that text already ends with the exact
+ * addition on a line boundary.
  */
 export function absorbNotesText(parked: NotesDraftText, next: NotesDraftText): NotesDraftText {
   const parkedText = parked.notes || "";
@@ -120,9 +122,7 @@ export function absorbNotesText(parked: NotesDraftText, next: NotesDraftText): N
     return { notes: parkedText, baseNotes: parked.baseNotes || "" };
   }
   if (descended) return { notes: nextText, baseNotes: parked.baseNotes || "" };
-  // A short note that is already inside the parked text does not replace it and is not appended.
-  if (parkedText.includes(nextText)) return { notes: parkedText, baseNotes: parked.baseNotes || "" };
-  return rebaseNotes(parked.baseNotes || "", nextText, parkedText);
+  return rebaseNotes(next.baseNotes || "", nextText, parkedText);
 }
 
 export type NotesLengthDraft = {
@@ -152,7 +152,7 @@ function parkedNoteCopy(row: NotesLengthDraft): string {
     const notes = typeof row.notes === "string" ? row.notes : "";
     if (row.clearNotes === true) return "These notes weren't saved. The server rejected this clear.";
     if (!notes.trim()) return "These notes weren't saved. Blank notes aren't sent.";
-    return "These notes weren't saved. The server rejected this clear.";
+    return "These notes weren't saved. The server rejected these notes.";
   }
   return NOTES_UNSAVED_MESSAGE;
 }
