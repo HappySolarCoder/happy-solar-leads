@@ -4,11 +4,12 @@ import { acceptDisposition, collapseLegacyNotesQueue, collapseNotesGroup, resetQ
 import { splitNotesAndContact } from "../../app/field/contactSave";
 import { commitDirectMutation, reportingPatch, type DirectCommitIo } from "../../app/field/directWrites";
 import { compareNotesSend, orderQueuedNotes } from "../../app/field/notesCoalesce";
-import { notesAfterConflict, rebaseNotes } from "../../app/field/notesRebase";
-import { PHONE_CLOCK_NOTICE, SYNC_REASON } from "../../app/field/syncReasons";
+import { notesAfterConflict, rebaseNotes, trimEdgeBlankLines } from "../../app/field/notesRebase";
+import { NOTES_ACTION_AT_RETRY_MESSAGE, PHONE_CLOCK_NOTICE, SYNC_REASON } from "../../app/field/syncReasons";
+import { reopenDeniedParked, resetParkedReopenForTests } from "../../app/field/draftMigration";
 import { putDraft, readDrafts } from "../../app/field/deviceStore";
 import { NOTES_MAX_CHARS, NOTES_OTHER_REP_MESSAGE, NOTES_TOO_LONG_MESSAGE, parkedNotesNotice, phoneClockNotice } from "../../app/field/notesLimits";
-import { SERVER_DISPO_SLOW_RETRY_MS, deliverFieldDispo, postFieldDispo } from "../../app/field/serverDispo";
+import { SERVER_DISPO_SLOW_RETRY_MS, deliverFieldDispo, postFieldDispo, resetServerClockForTests } from "../../app/field/serverDispo";
 import { syncOutbox } from "../../app/field/syncOutbox";
 import type { PendingMutation } from "../../app/field/types";
 import type { User } from "../../app/types";
@@ -173,7 +174,7 @@ test("a lost reply after a committed 200 on the route does not rewrite notes", a
       const base = shape === "plain" ? "S" : "Gate code 1234\nDog in yard";
       const typed = shape === "plain" ? "S\nA1" : "Dog in yard";
       const start = shape === "plain" ? "S" : "Gate code 1234";
-      const expect = shape === "plain" ? "S\nA1" : "Gate code 1234\nDog in yard";
+      const expect = shape === "plain" ? "S\nA1" : "Gate code 1234";
       let record = start;
       const receipts = new Set<string>();
       let posts = 0;
@@ -216,24 +217,25 @@ test("a lost reply after a committed 200 on the route does not rewrite notes", a
       assert.equal(record, expect, `${label} replay`);
       assert.ok(posts > posted, `${label} replay posted the same draft`);
       assert.equal(rows.length, 0, label);
-      assertLinesOnce(record, shape === "plain" ? ["S", "A1"] : ["Gate code 1234", "Dog in yard"], label);
+      assertLinesOnce(record, shape === "plain" ? ["S", "A1"] : ["Gate code 1234"], label);
     }
   }
 });
 
 test("replaying an applied owned draft leaves the server notes unchanged", async () => {
   const cases = [
-    { base: "Gate code 1234\nDog in yard", edit: "Dog in yard", server: "Gate code 1234" },
-    { base: "S", edit: "S\nA1", server: "S" },
-    { base: "Call after 5", edit: "Call after 5 in yard", server: "Gate code 1234\nCall after 5" },
-    { base: "5", edit: "5 in yard", server: "Gate code 1234\nCall after" },
+    { base: "Gate code 1234\nDog in yard", edit: "Dog in yard", server: "Gate code 1234", firstReplayed: true },
+    { base: "S", edit: "S\nA1", server: "S", firstReplayed: false },
+    { base: "Call after 5", edit: "Call after 5 in yard", server: "Gate code 1234\nCall after 5", firstReplayed: false },
+    { base: "5", edit: "5 in yard", server: "Gate code 1234\nCall after", firstReplayed: false },
   ];
   for (const item of cases) {
     let record = item.server;
     let draft = note(`sweep-${item.edit.length}-${item.server.length}`, item.edit, item.base);
     const io = leadIo(() => record, (next) => { record = next; }, async (row) => { draft = row; });
     const first = await commitDirectMutation(draft, owner, io);
-    assert.equal(first.replayed, false, item.edit);
+    assert.equal(first.replayed, item.firstReplayed, item.edit);
+    if (item.firstReplayed) assert.equal(record, item.server, item.edit);
     const settled = record;
     for (let n = 0; n < 5; n += 1) {
       const again = await commitDirectMutation(draft, owner, io);
@@ -579,31 +581,49 @@ test("draft ids are unique at queue time and a split keeps the notes id", () => 
   }
 });
 
-test("an actionAt older than 30 days parks and is not resent with a new time", async () => {
-  const createdAt = new Date(Date.parse(at) - 40 * 24 * 60 * 60 * 1000).toISOString();
+test("an actionAt older than 25 days is re-stamped once and a second rejection stays parked", async () => {
+  resetServerClockForTests();
+  const now = Date.parse(at);
+  const createdAt = new Date(now - 40 * 24 * 60 * 60 * 1000).toISOString();
+  const restamped = new Date(now).toISOString();
+  const retried = new Date(now - 30_000).toISOString();
   let rows = [note("old-action", "S\nL1", "S", { createdAt, direct: { patch: { notes: "S\nL1" }, serverDispo: true } })];
   const seenAt: string[] = [];
+  const seenIds: string[] = [];
   let posts = 0;
-  const run = (now: number) => syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+  const run = (clock: number) => syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
     await postFieldDispo(row, owner, {
+      now: () => clock,
       getToken: async () => "token",
       post: async (_path, init) => {
         posts += 1;
-        const body = JSON.parse(String(init?.body)) as { actionAt?: string };
+        const body = JSON.parse(String(init?.body)) as { actionAt?: string; draftId?: string };
         seenAt.push(body.actionAt || "");
+        seenIds.push(body.draftId || "");
         return json(400, { ok: false, error: "invalid_payload", field: "actionAt" });
       },
     });
-  }, now));
-  await run(Date.parse(at));
-  assert.equal(posts, 1);
-  assert.equal(seenAt[0], createdAt);
+  }, clock));
+  await run(now);
+  assert.equal(posts, 2);
+  assert.deepEqual(seenAt, [restamped, retried]);
+  assert.equal(seenIds[0], "old-action-stale");
+  assert.equal(seenIds[1], "old-action-stale-clock");
   assert.equal(rows[0].syncState, "parked");
   assert.equal(rows[0].parkedReason, SYNC_REASON.notesRejected);
   assert.equal(rows[0].createdAt, createdAt);
+  assert.equal(rows[0].id, "old-action");
   assert.equal(rows[0].notes, "S\nL1");
-  await run(Date.parse(at) + 60 * 60 * 1000);
-  assert.equal(posts, 1);
+  assert.equal(rows[0].lastError, NOTES_ACTION_AT_RETRY_MESSAGE);
+  assert.equal(parkedNotesNotice(rows, "lead-1"), NOTES_ACTION_AT_RETRY_MESSAGE);
+  await run(now + 60 * 60 * 1000);
+  assert.equal(posts, 2);
+  resetParkedReopenForTests();
+  const reopened = reopenDeniedParked(rows, owner.id);
+  assert.equal(reopened[0].syncState, "parked");
+  assert.equal(reopened[0].lastError, NOTES_ACTION_AT_RETRY_MESSAGE);
+  resetParkedReopenForTests();
+  resetServerClockForTests();
 });
 
 test("a 429 with Retry-After waits and then sends in the same order", async () => {
@@ -831,32 +851,145 @@ test("a lost reply on the old draft id is covered by the replacement", async () 
   assert.equal(rows.length, 0);
 });
 
-test("a future actionAt stays retryable and does not change the timestamp", async () => {
+test("a future notes actionAt is resent once from server time and then parked", async () => {
+  resetServerClockForTests();
   const now = Date.parse(at);
   const createdAt = new Date(now + 11 * 60 * 1000).toISOString();
+  const retried = new Date(now - 30_000).toISOString();
   let rows = [note("future", "S\nL1", "S", { createdAt, direct: { patch: { notes: "S\nL1" }, serverDispo: true } })];
   const seenAt: string[] = [];
+  const seenIds: string[] = [];
   await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
     await postFieldDispo(row, owner, {
       now: () => now,
       getToken: async () => "token",
       post: async (_path, init) => {
-        const body = JSON.parse(String(init?.body)) as { actionAt?: string };
+        const body = JSON.parse(String(init?.body)) as { actionAt?: string; draftId?: string };
         seenAt.push(body.actionAt || "");
+        seenIds.push(body.draftId || "");
         return json(400, { ok: false, field: "actionAt" });
       },
     });
   }, now));
-  assert.deepEqual(seenAt, [createdAt]);
-  assert.equal(rows[0].syncState, "retry");
-  assert.equal(rows[0].parkedReason, undefined);
+  assert.deepEqual(seenAt, [createdAt, retried]);
+  assert.deepEqual(seenIds, ["future", "future-clock"]);
+  assert.equal(rows[0].syncState, "parked");
+  assert.equal(rows[0].parkedReason, SYNC_REASON.notesRejected);
   assert.equal(rows[0].createdAt, createdAt);
+  assert.equal(rows[0].id, "future");
   assert.equal(rows[0].lastError, PHONE_CLOCK_NOTICE);
   assert.equal(phoneClockNotice(rows, "lead-1"), PHONE_CLOCK_NOTICE);
+  assert.equal(parkedNotesNotice(rows, "lead-1"), PHONE_CLOCK_NOTICE);
   await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async () => {
-    throw Error("must not resend before the backoff");
-  }, now + 1000));
+    throw Error("must not resend a parked clock failure");
+  }, now + 60 * 60 * 1000));
   assert.equal(rows[0].createdAt, createdAt);
+  resetParkedReopenForTests();
+  const reopened = reopenDeniedParked(rows, owner.id);
+  assert.equal(reopened[0].syncState, "parked");
+  const generic = note("generic-reject", "S\nL1", "S", {
+    syncState: "parked",
+    parkedReason: SYNC_REASON.notesRejected,
+    lastError: "Notes were rejected.",
+  });
+  resetParkedReopenForTests();
+  const opened = reopenDeniedParked([generic], owner.id);
+  assert.equal(opened[0].syncState, "queued");
+  resetParkedReopenForTests();
+  resetServerClockForTests();
+});
+
+test("a notes actionAt is clamped from the route Date header before the next send", async () => {
+  resetServerClockForTests();
+  try {
+  const serverNow = Date.parse("2026-10-26T15:00:00.000Z");
+  const phoneNow = serverNow + 20 * 60 * 1000;
+  const createdAt = new Date(phoneNow).toISOString();
+  const clamped = new Date(serverNow - 30_000).toISOString();
+  const dateHeader = new Date(serverNow).toUTCString();
+  let rows = [note("clock-fresh", "S\nL1", "S", { createdAt, direct: { patch: { notes: "S\nL1" }, serverDispo: true } })];
+  const seenAt: string[] = [];
+  const seenIds: string[] = [];
+  await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+    await postFieldDispo(row, owner, {
+      now: () => phoneNow,
+      getToken: async () => "token",
+      post: async (_path, init) => {
+        const body = JSON.parse(String(init?.body)) as { actionAt?: string; draftId?: string; notes?: string };
+        seenAt.push(body.actionAt || "");
+        seenIds.push(body.draftId || "");
+        const accept = body.actionAt === clamped;
+        return new Response(JSON.stringify(accept ? { ok: true } : { ok: false, field: "actionAt" }), {
+          status: accept ? 200 : 400,
+          headers: { "content-type": "application/json", date: dateHeader },
+        });
+      },
+    });
+  }, phoneNow));
+  assert.deepEqual(seenAt, [createdAt, clamped]);
+  assert.deepEqual(seenIds, ["clock-fresh", "clock-fresh-clock"]);
+  assert.equal(rows.length, 0);
+
+  const ahead = new Date(serverNow + 26 * 24 * 60 * 60 * 1000).toISOString();
+  let aged = [note("clock-age", "S\nL2", "S", { createdAt: ahead, direct: { patch: { notes: "S\nL2" }, serverDispo: true } })];
+  const agedAt: string[] = [];
+  const holder = { notes: "S" };
+  await syncOutbox(outbox(() => aged, (next) => { aged = next; }, async (row) => {
+    await deliverFieldDispo(row, owner, {
+      now: () => phoneNow,
+      getToken: async () => "token",
+      commit: async () => { throw Error("notes use the route"); },
+      post: async (path, init) => {
+        const body = JSON.parse(String(init?.body)) as { actionAt?: string; draftId?: string };
+        agedAt.push(body.actionAt || "");
+        assert.equal(body.draftId, "clock-age-clock");
+        return routePost(holder)(path, init);
+      },
+    });
+  }, phoneNow));
+  assert.deepEqual(agedAt, [clamped]);
+  assert.equal(holder.notes, "S\nL2");
+  assert.equal(aged.length, 0);
+  } finally {
+    resetServerClockForTests();
+  }
+});
+
+test("a lone notes draft older than 25 days is re-stamped before it is sent", async () => {
+  const now = Date.parse(at);
+  for (const days of [26, 31]) {
+    resetServerClockForTests();
+    const createdAt = new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
+    let rows = [note(`old-${days}`, "S\nL1", "S", {
+      createdAt,
+      direct: { patch: { notes: "S\nL1" }, serverDispo: true },
+    })];
+    const collapsed = collapseLegacyNotesQueue(rows);
+    assert.equal(collapsed[0].createdAt, createdAt, `${days} collapse keeps the old actionAt`);
+    rows = collapsed;
+    const holder = { notes: "S" };
+    const seen: { actionAt: string; draftId: string }[] = [];
+    await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+      await deliverFieldDispo(row, owner, {
+        now: () => now,
+        getToken: async () => "token",
+        commit: async () => { throw Error("notes use the route"); },
+        post: async (path, init) => {
+          const body = JSON.parse(String(init?.body)) as { actionAt?: string; draftId?: string };
+          seen.push({ actionAt: body.actionAt || "", draftId: body.draftId || "" });
+          const age = now - Date.parse(body.actionAt || "");
+          if (age > 25 * 24 * 60 * 60 * 1000) return json(400, { field: "actionAt" });
+          return routePost(holder)(path, init);
+        },
+      });
+    }, now));
+    assert.equal(seen.length, 1, String(days));
+    assert.equal(seen[0].actionAt, new Date(now).toISOString(), String(days));
+    assert.equal(seen[0].draftId, `old-${days}-stale`, String(days));
+    assert.equal(holder.notes, "S\nL1", String(days));
+    assert.equal(rows.length, 0, String(days));
+  }
+  resetServerClockForTests();
 });
 
 test("a random notes queue keeps every line once and does not drop a phone", async () => {
@@ -1521,11 +1654,15 @@ test("xK7Knock413Transient keeps the plain-patch failure queued", async () => {
   assert.equal(rows[0].syncState, "retry");
 });
 
-test("rebase keeps a typed line that repeats a base line the server removed", () => {
+test("rebase appends only lines ours added beyond the base", () => {
+  const gate = "Gate code 1234\nDog in yard";
   const cases = [
-    ["Dog", "Dog in yard\nDog", "Gate code 1234", "Gate code 1234\nDog in yard\nDog"],
-    ["Call", "Call after 5\nCall", "No answer", "No answer\nCall after 5\nCall"],
-    ["S1\nDog", "S1\nDog in yard\nDog", "S1\nGate code 1234", "S1\nGate code 1234\nDog in yard\nDog"],
+    [gate, `${gate}\nA1`, "Roof replaced 2019", "Roof replaced 2019\nA1"],
+    ["Dog\nDog", "Dog\nDog\nA1", "Gate code 1234\nDog", "Gate code 1234\nDog\nA1"],
+    ["Dog", "Dog\nDog", "Gate code 1234", "Gate code 1234\nDog"],
+    ["Dog", "Dog in yard\nDog", "Gate code 1234", "Gate code 1234\nDog in yard"],
+    ["Call", "Call after 5\nCall", "No answer", "No answer\nCall after 5"],
+    ["S1\nDog", "S1\nDog in yard\nDog", "S1\nGate code 1234", "S1\nGate code 1234\nDog in yard"],
   ] as const;
   for (const [base, ours, server, expected] of cases) {
     assert.equal(rebaseNotes(base, ours, server).notes, expected, base);
@@ -1534,28 +1671,41 @@ test("rebase keeps a typed line that repeats a base line the server removed", ()
     assert.equal(again.notes, expected, `replay ${base}`);
   }
   const random = mulberry32(27);
-  const alphabet = ["Dog", "Dog in yard", "Gate code 1234", "Call after 5", "Admin"];
-  const pick = () => Array.from({ length: Math.floor(random() * 4) }, () => alphabet[Math.floor(random() * alphabet.length)]).join("\n");
+  const alphabet = ["Dog", "Dog in yard", "Gate code 1234", "Call after 5", "Admin", ""];
+  const pick = () => Array.from({ length: Math.floor(random() * 5) }, () => alphabet[Math.floor(random() * alphabet.length)]).join("\n");
   const counts = (text: string) => {
     const map = new Map<string, number>();
     if (!text) return map;
-    for (const line of text.split("\n")) map.set(line, (map.get(line) || 0) + 1);
+    for (const line of text.split("\n")) {
+      if (line === "") continue;
+      map.set(line, (map.get(line) || 0) + 1);
+    }
     return map;
   };
-  for (let i = 0; i < 100; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     const base = pick();
     const ours = pick();
     const current = pick();
     const applied = rebaseNotes(base, ours, current);
-    assert.equal(rebaseNotes(base, ours, applied.notes).notes, applied.notes);
+    const replay = rebaseNotes(base, ours, applied.notes).notes;
+    // A result that lands on the base is an exact win the next time: the edit is sent as typed.
+    const replayExpected = applied.notes === base ? trimEdgeBlankLines(ours) : applied.notes;
+    assert.equal(replay, replayExpected);
     assert.equal(rebaseNotes(base, ours, current).notes, applied.notes);
     const baseCounts = counts(base);
     const ourCounts = counts(ours);
+    const currentCounts = counts(current);
     const resultCounts = counts(applied.notes);
-    for (const [line, count] of ourCounts) {
-      const extra = count - (baseCounts.get(line) || 0);
-      if (extra <= 0 || line === "") continue;
-      assert.ok((resultCounts.get(line) || 0) >= extra, JSON.stringify({ base, ours, current, result: applied.notes, line }));
+    const lines = new Set([...baseCounts.keys(), ...ourCounts.keys(), ...currentCounts.keys(), ...resultCounts.keys()]);
+    for (const line of lines) {
+      const baseCount = baseCounts.get(line) || 0;
+      const ourCount = ourCounts.get(line) || 0;
+      const currentCount = currentCounts.get(line) || 0;
+      const added = Math.max(0, ourCount - baseCount);
+      const resultCount = resultCounts.get(line) || 0;
+      assert.ok(resultCount >= added, JSON.stringify({ base, ours, current, result: applied.notes, line }));
+      assert.ok(resultCount <= currentCount + added, JSON.stringify({ base, ours, current, result: applied.notes, line }));
+      assert.ok(resultCount <= Math.max(currentCount, ourCount), JSON.stringify({ base, ours, current, result: applied.notes, line }));
     }
   }
 });
@@ -1612,44 +1762,78 @@ test("xK6LegacySameMsRev chain root survives collapse and a sync that skips the 
       }
       if (server === "S") assert.equal(holder.notes, "S\nA1\nB1\nC1");
       if (server === "S\nAdmin") assert.equal(holder.notes, "S\nAdmin\nA1\nB1\nC1");
-      if (server === "Roof replaced 2019") assert.equal(holder.notes, "Roof replaced 2019\nS\nA1\nB1\nC1");
+      if (server === "Roof replaced 2019") assert.equal(holder.notes, "Roof replaced 2019\nA1\nB1\nC1");
       assert.equal(rows.length, 0, `${skipCollapse} ${server}`);
     }
   }
 });
 
-test("xChMidClear manager and territory rebase a typed line onto a parked clear", async () => {
-  for (const actor of [manager, territory]) {
-    resetQueueSeqForTests();
-    const parked = note("parked-clear", "", "S\nA1", {
-      userId: actor.id,
-      userName: actor.name,
-      clearNotes: true,
-      syncState: "parked",
-      parkedReason: SYNC_REASON.notesRejected,
-      lastError: "Clearing notes isn't available right now. Your notes were kept.",
-      knownSentNotes: ["S\nA1"],
-    });
-    const saved = acceptDisposition([parked], note("c1", "\nC1", "", {
-      userId: actor.id,
-      userName: actor.name,
-      createdAt: "2026-10-26T16:00:05.000Z",
-    }));
-    assert.equal(saved.baseNotes, "S\nA1", actor.id);
-    assert.equal(saved.notes, "S\nA1\nC1", actor.id);
-    assert.equal(saved.notes.startsWith("\n"), false, actor.id);
-    assert.equal(saved.clearNotes, undefined, actor.id);
-    let rows = [saved];
-    const holder = { notes: "S\nA1" };
-    await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
-      await deliverFieldDispo(row, actor, {
-        getToken: async () => "token",
-        commit: async () => { throw Error("notes use the route"); },
-        post: routePost(holder),
+test("xChMidClear sends S+A1+C1 for owner, manager, and territory on both routes", async () => {
+  for (const actor of [owner, manager, territory]) {
+    for (const serverDispo of [true, false]) {
+      resetQueueSeqForTests();
+      const parked = note("parked-clear", "", "S\nA1", {
+        userId: actor.id,
+        userName: actor.name,
+        clearNotes: true,
+        syncState: "parked",
+        parkedReason: SYNC_REASON.notesRejected,
+        lastError: "Clearing notes isn't available right now. Your notes were kept.",
+        knownSentNotes: ["S\nA1"],
+        direct: { patch: { notes: "" }, ...(serverDispo ? { serverDispo: true } : {}) },
       });
-    }));
-    assert.equal(holder.notes, "S\nA1\nC1", actor.id);
-    assert.equal(rows.length, 0, actor.id);
+      const typed = note("c1", "\nC1", "S\nA1", {
+        userId: actor.id,
+        userName: actor.name,
+        createdAt: "2026-10-26T16:00:05.000Z",
+        direct: { patch: { notes: "\nC1" }, ...(serverDispo ? { serverDispo: true } : {}) },
+      });
+      const saved = acceptDisposition([parked], typed);
+      assert.equal(saved.baseNotes, "S\nA1", `${actor.id} ${serverDispo}`);
+      assert.equal(saved.notes, "S\nA1\nC1", `${actor.id} ${serverDispo}`);
+      assert.equal(saved.clearNotes, undefined, `${actor.id} ${serverDispo}`);
+      let rows = [saved];
+      const holder = { notes: "S\nA1" };
+      const bodies: { notes?: string; baseNotes?: string }[] = [];
+      await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+        await deliverFieldDispo(row, actor, {
+          getToken: async () => "token",
+          commit: async () => { throw Error("notes use the route"); },
+          post: async (path, init) => {
+            bodies.push(JSON.parse(String(init?.body)) as { notes?: string; baseNotes?: string });
+            return routePost(holder)(path, init);
+          },
+        });
+      }));
+      assert.equal(bodies[0].notes, "S\nA1\nC1", `${actor.id} ${serverDispo} route`);
+      assert.equal(holder.notes, "S\nA1\nC1", `${actor.id} ${serverDispo}`);
+      assert.equal(rows.length, 0, `${actor.id} ${serverDispo}`);
+
+      const directHolder = { notes: "S\nA1" };
+      await commitDirectMutation(typed, actor, leadIo(
+        () => directHolder.notes,
+        (notes) => { directHolder.notes = notes; },
+        undefined,
+        actor.id,
+      ));
+      assert.equal(directHolder.notes, "S\nA1\nC1", `${actor.id} ${serverDispo} direct`);
+
+      const conflict = { notes: "S\nA1\nAdmin" };
+      const conflictBodies: { notes?: string }[] = [];
+      await postFieldDispo(typed, actor, {
+        getToken: async () => "token",
+        post: async (_path, init) => {
+          const body = JSON.parse(String(init?.body)) as { notes?: string; baseNotes?: string };
+          conflictBodies.push(body);
+          if (conflict.notes !== (body.baseNotes || "") && conflict.notes !== (body.notes || ""))
+            return json(409, { ok: false, reasonCode: "notes_conflict", currentNotes: conflict.notes });
+          conflict.notes = body.notes || "";
+          return json(200, { ok: true });
+        },
+      });
+      assert.equal(conflictBodies[0].notes, "S\nA1\nC1", `${actor.id} ${serverDispo} first body`);
+      assert.equal(conflict.notes, "S\nA1\nAdmin\nC1", `${actor.id} ${serverDispo} 409`);
+    }
   }
 });
 
@@ -1742,6 +1926,55 @@ test("xJOldActionAt refreshes a 31-day actionAt and leaves a parked one alone", 
   assert.deepEqual(supersededNotesIds([parked], fresh), []);
   assert.equal(parked.syncState, "parked");
   assert.equal(parked.createdAt, oldAt);
+
+  for (const serverDispo of [true, false]) {
+    resetQueueSeqForTests();
+    const stale = note("collapse-old", "S\nA1", "S", {
+      createdAt: oldAt,
+      queueSeq: 1,
+      direct: { patch: { notes: "S\nA1" }, ...(serverDispo ? { serverDispo: true } : {}) },
+    });
+    const fresh = note("collapse-n1", "S\nA1\nN1", "S\nA1", {
+      createdAt: at,
+      queueSeq: 2,
+      direct: { patch: { notes: "S\nA1\nN1" }, ...(serverDispo ? { serverDispo: true } : {}) },
+    });
+    const parkedOld = note("parked-action", "S\nKept", "S", {
+      createdAt: oldAt,
+      syncState: "parked",
+      parkedReason: SYNC_REASON.notesRejected,
+      lastError: "Notes were rejected.",
+      leadId: "lead-parked",
+    });
+    const collapsed = collapseLegacyNotesQueue([fresh, stale, parkedOld]);
+    const merged = collapsed.find((row) => row.leadId === "lead-1");
+    const left = collapsed.find((row) => row.id === parkedOld.id);
+    assert.ok(merged, String(serverDispo));
+    assert.equal(merged?.createdAt, at, String(serverDispo));
+    assert.equal(merged?.notes, "S\nA1\nN1", String(serverDispo));
+    assert.notEqual(merged?.id, stale.id, String(serverDispo));
+    assert.equal(left?.createdAt, oldAt, String(serverDispo));
+    assert.equal(left?.syncState, "parked", String(serverDispo));
+    let rows = collapsed.filter((row) => row.leadId === "lead-1");
+    const holder = { notes: "S" };
+    const seenAt: string[] = [];
+    await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+      await deliverFieldDispo(row, owner, {
+        getToken: async () => "token",
+        commit: async () => { throw Error("notes use the route"); },
+        post: async (_path, init) => {
+          const body = JSON.parse(String(init?.body)) as { actionAt?: string };
+          seenAt.push(body.actionAt || "");
+          const age = Date.parse(at) - Date.parse(body.actionAt || "");
+          if (age > 30 * 24 * 60 * 60 * 1000) return json(400, { ok: false, field: "actionAt" });
+          return routePost(holder)(_path, init);
+        },
+      });
+    }));
+    assert.equal(seenAt[0], at, `collapse ${serverDispo}`);
+    assert.equal(holder.notes, "S\nA1\nN1", `collapse ${serverDispo}`);
+    assert.equal(rows.length, 0, `collapse ${serverDispo}`);
+  }
 });
 
 test("xCoOverLimit and xCoOverLimitDirect keep a 60k note and park the second", async () => {
@@ -1819,10 +2052,11 @@ function leadIo(
   read: () => string,
   write: (notes: string) => void,
   persistDraft?: (row: PendingMutation) => Promise<void>,
+  uid = owner.id,
 ): DirectCommitIo {
   return {
     db: {},
-    auth: { currentUser: { uid: owner.id } },
+    auth: { currentUser: { uid } },
     doc: () => ({ path: "leads/lead-1" }),
     persistDraft,
     runTransaction: async (_database: unknown, fn: (tx: {

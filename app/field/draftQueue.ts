@@ -2,7 +2,7 @@ import type { Lead } from "@/app/types";
 import { splitNotesAndContact } from "./contactSave";
 import { effectiveSyncState } from "./draftState";
 import { compareNotesSend, notesLineageNewer } from "./notesCoalesce";
-import { appendTypedOnto, notesMergeExceedsLimit } from "./notesRebase";
+import { appendTypedOnto, notesAgainstBase, notesMergeExceedsLimit } from "./notesRebase";
 import { splitCombinedDraft } from "./serverDispo";
 import type { FieldMutation, PendingMutation } from "./types";
 
@@ -139,11 +139,15 @@ function actionAtStale(createdAt: string | undefined, nowMs: number): boolean {
 
 /** A clear the route refused. The note text on the server is still baseNotes. */
 export function isParkedRejectedClear(row: PendingMutation): boolean {
+  return isRejectedClear(row) && effectiveSyncState(row) === "parked";
+}
+
+/** A clear that got 400 field=clearNotes, including one a cold start re-queued. */
+function isRejectedClear(row: PendingMutation): boolean {
   return row.kind === "notes"
     && row.clearNotes === true
     && notesText(row) === ""
-    && row.parkedReason === "notes_rejected"
-    && effectiveSyncState(row) === "parked";
+    && row.parkedReason === "notes_rejected";
 }
 
 function notesFoldTarget(row: PendingMutation): boolean {
@@ -215,10 +219,34 @@ function lineageNotes(rows: readonly PendingMutation[]): { notes: string; ambigu
   return { notes: notesText(byId.get(order[order.length - 1]) as PendingMutation), ambiguous: false };
 }
 
+/**
+ * Newest createdAt when the merged text comes from a later save and the root
+ * actionAt is already more than 25 days behind that save. Otherwise the root.
+ */
+function refreshedCreatedAt(root: PendingMutation, rows: readonly PendingMutation[], notes: string): string | undefined {
+  if ((notes || "") === notesText(root)) return root.createdAt;
+  let newest = root;
+  for (const row of rows) {
+    if ((row.createdAt || "") > (newest.createdAt || "")) newest = row;
+  }
+  if ((newest.createdAt || "") <= (root.createdAt || "")) return root.createdAt;
+  const newestMs = Date.parse(newest.createdAt || "");
+  if (!actionAtStale(root.createdAt, Number.isFinite(newestMs) ? newestMs : Date.now())) return root.createdAt;
+  return newest.createdAt;
+}
+
 /** One notes draft from several legacy rows. Chain-root base, newest lineage text. */
 export function collapseNotesGroup(rows: readonly PendingMutation[]): PendingMutation {
   const root = chainRoot(rows);
-  const { notes } = lineageNotes(rows);
+  let { notes } = lineageNotes(rows);
+  let baseNotes = root.baseNotes || "";
+  const rejected = rows.filter(isRejectedClear);
+  if (rejected.length) {
+    const clear = rejected.slice().sort(compareNotesSend)[0];
+    if ((clear.baseNotes || "").length >= baseNotes.length) baseNotes = clear.baseNotes || "";
+  }
+  notes = notesAgainstBase(baseNotes, notes);
+  const createdAt = refreshedCreatedAt(root, rows, notes) || root.createdAt;
   const known = capKnown([
     ...rows.flatMap((row) => row.knownSentNotes || []),
     ...rows.map((row) => notesText(row)),
@@ -229,8 +257,8 @@ export function collapseNotesGroup(rows: readonly PendingMutation[]): PendingMut
     ...root,
     id: mintDraftId(rows),
     notes,
-    baseNotes: root.baseNotes,
-    createdAt: root.createdAt,
+    baseNotes,
+    createdAt,
     knownSentNotes: known,
     syncState: "queued",
     attempts: 0,
@@ -276,10 +304,11 @@ export function foldNotesSave(existing: readonly PendingMutation[], next: Pendin
   if (!priors.length) return next;
   const prior = priors.length === 1 ? priors[0] : collapseNotesGroup(priors);
   const typed = notesText(next);
-  const replacingClear = priors.every(isParkedRejectedClear);
-  const notes = replacingClear && !(next.clearNotes === true && typed === "")
+  const replacingClear = priors.every(isRejectedClear);
+  const composed = replacingClear && !(next.clearNotes === true && typed === "")
     ? appendTypedOnto(prior.baseNotes || "", typed)
     : typed;
+  const notes = notesAgainstBase(prior.baseNotes || "", composed);
   const parts = [notesText(prior), ...priors.map((row) => notesText(row)), typed];
   if (notesMergeExceedsLimit(parts, notes)) {
     keptSiblingNotes.add(next);

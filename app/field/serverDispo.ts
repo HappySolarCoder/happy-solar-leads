@@ -3,13 +3,13 @@ import { apiFetch } from "@/app/utils/apiFetch";
 import { auth } from "@/app/utils/firebase";
 import { isScheduledGoBackStatus } from "@/app/types/disposition";
 import { coerceLegacyContactDraft, hasContactFields, notesWereEdited } from "./contactSave";
-import { freshDraftId } from "./draftQueue";
+import { ACTION_AT_STALE_MS, freshDraftId } from "./draftQueue";
 import { commitDirectMutation, historyGpsFlag, reportingPatch, type DirectCommitIo } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
-import { notesAfterConflict } from "./notesRebase";
+import { notesAfterConflict, notesAgainstBase } from "./notesRebase";
 import { deliberateNotesClear, NOTES_CLEAR_UNAVAILABLE_MESSAGE, NOTES_MAX_CHARS, NOTES_OTHER_REP_MESSAGE, NOTES_ROUTE_BODY_MAX_BYTES, NOTES_TOO_LONG_MESSAGE, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
-import { ACTION_AT_FUTURE_MS, FIELD_DISPO_UNAVAILABLE, PHONE_CLOCK_NOTICE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
+import { ACTION_AT_FUTURE_MS, ACTION_AT_SERVER_LAG_MS, FIELD_DISPO_UNAVAILABLE, NOTES_ACTION_AT_RETRY_MESSAGE, PHONE_CLOCK_NOTICE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
 
 export { rebaseNotes } from "./notesRebase";
@@ -470,7 +470,10 @@ export async function postFieldDispo(
   const notesText = m.kind === "notes" ? notesTextOf(m) : undefined;
   if (typeof notesText === "string" && !notesText.trim() && !deliberateNotesClear(m))
     throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
-  let draft = m;
+  const localNow = () => deps.now?.() ?? Date.now();
+  let draft = composeLeadingFragment(m);
+  const stamped = stampNotesActionAt(draft, localNow());
+  draft = stamped.draft;
   let rebasedDraft: PendingMutation | undefined;
   let body = fieldDispoBody(draft, user);
   if (notesCharsTooLong(draft) || notesRouteBodyTooLarge(body))
@@ -479,6 +482,7 @@ export async function postFieldDispo(
   if (!token) throw Error("Sign in again to sync your work.");
   let refreshed = false;
   let notesRetried = false;
+  let actionAtRetried = false;
   const send = (bearer: string) =>
     post(FIELD_DISPO_PATH, {
       method: "POST",
@@ -490,6 +494,7 @@ export async function postFieldDispo(
     });
   let response = await send(token);
   for (;;) {
+    rememberServerNow(localNow(), response.headers.get("date"));
     if (response.status === 401 && !refreshed) {
       refreshed = true;
       token = await getToken(true);
@@ -539,6 +544,18 @@ export async function postFieldDispo(
       response = await send(token);
       continue;
     }
+    if (response.status === 400 && !actionAtRetried && draft.kind === "notes") {
+      const data = await readJson(response.clone());
+      const field = typeof data?.field === "string" ? data.field : "";
+      if (field === "actionAt") {
+        actionAtRetried = true;
+        const serverNow = rememberServerNow(localNow(), response.headers.get("date"));
+        draft = restampNotes(draft, serverNow - ACTION_AT_SERVER_LAG_MS, "clock");
+        body = fieldDispoBody(draft, user);
+        response = await send(token);
+        continue;
+      }
+    }
     break;
   }
   if (response.status === 200 || response.status === 201) {
@@ -584,10 +601,10 @@ export async function postFieldDispo(
     const data = await readJson(response);
     const field = typeof data?.field === "string" ? data.field : "";
     const reason = typeof data?.reasonCode === "string" ? data.reasonCode : "";
-    if (draft.kind === "notes" && field === "actionAt" && actionAtAhead(draft.createdAt, deps.now?.() ?? Date.now()))
-      fail(Object.assign(Error(PHONE_CLOCK_NOTICE), { status: 400, code: "clock_ahead" }));
-    if (draft.kind === "notes" && field === "actionAt")
-      fail(routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected));
+    if (draft.kind === "notes" && field === "actionAt") {
+      const message = stamped.stale ? NOTES_ACTION_AT_RETRY_MESSAGE : PHONE_CLOCK_NOTICE;
+      fail(routeError(message, 400, SYNC_REASON.notesRejected));
+    }
     if (draft.kind === "notes" && field === "clearNotes")
       fail(routeError(NOTES_CLEAR_UNAVAILABLE_MESSAGE, 400, SYNC_REASON.notesRejected));
     if (
@@ -631,9 +648,51 @@ function permissionDenied(error: Error & { status?: number; code?: string }): bo
   return error.code === "permission-denied";
 }
 
-function actionAtAhead(createdAt: string | undefined, now: number): boolean {
-  const at = Date.parse(createdAt || "");
-  return Number.isFinite(at) && at > now + ACTION_AT_FUTURE_MS;
+/** Server time from the last route Date header. Tests start from a cleared clock. */
+let lastServerNowMs: number | undefined;
+
+export function resetServerClockForTests(): void {
+  lastServerNowMs = undefined;
+}
+
+function rememberServerNow(fallback: number, header?: string | null): number {
+  if (header) {
+    const parsed = Date.parse(header);
+    if (Number.isFinite(parsed)) lastServerNowMs = parsed;
+  }
+  return lastServerNowMs ?? fallback;
+}
+
+function restampNotes(draft: PendingMutation, atMs: number, suffix: string): PendingMutation {
+  return {
+    ...draft,
+    id: freshDraftId(draft.id, suffix, new Set([draft.id])),
+    createdAt: new Date(atMs).toISOString(),
+  };
+}
+
+/**
+ * Notes only. Server time comes from the Date header of the last route
+ * response. An actionAt more than 10 minutes ahead of that time is clamped
+ * to server time minus 30 seconds before the first send. With no Date header
+ * yet, the original actionAt is sent and a 400 field=actionAt restamps once.
+ * An actionAt more than 25 days back is re-stamped to local now before sending.
+ * Both mint a new draft id. Knocks are unchanged.
+ */
+function stampNotesActionAt(
+  draft: PendingMutation,
+  nowMs: number,
+): { draft: PendingMutation; stale: boolean } {
+  if (draft.kind !== "notes") return { draft, stale: false };
+  const at = Date.parse(draft.createdAt || "");
+  if (!Number.isFinite(at)) return { draft, stale: false };
+  if (lastServerNowMs != null && at > lastServerNowMs + ACTION_AT_FUTURE_MS) {
+    return { draft: restampNotes(draft, lastServerNowMs - ACTION_AT_SERVER_LAG_MS, "clock"), stale: false };
+  }
+  if (nowMs - at > ACTION_AT_STALE_MS) {
+    return { draft: restampNotes(draft, nowMs, "stale"), stale: true };
+  }
+  return { draft, stale: false };
 }
 
 function terminalNotesFailure(error: unknown, draft?: PendingMutation): boolean {
@@ -641,6 +700,19 @@ function terminalNotesFailure(error: unknown, draft?: PendingMutation): boolean 
   const code = (error as { reasonCode?: string }).reasonCode;
   if (code === SYNC_REASON.notesTooLong || code === SYNC_REASON.notesRejected) return true;
   return code === SYNC_REASON.notesConflict && deliberateNotesClear(draft);
+}
+
+/** An empty-editor "\nC1" is sent as the clear's base plus that line, not as a replacement. */
+function composeLeadingFragment(draft: PendingMutation): PendingMutation {
+  if (draft.kind !== "notes" || deliberateNotesClear(draft)) return draft;
+  const notes = typeof draft.notes === "string" ? draft.notes : "";
+  const composed = notesAgainstBase(draft.baseNotes || "", notes);
+  if (composed === notes) return draft;
+  return {
+    ...draft,
+    notes: composed,
+    ...(draft.direct ? { direct: { ...draft.direct, patch: { ...draft.direct.patch, notes: composed } } } : {}),
+  };
 }
 
 function notesCharsTooLong(draft: PendingMutation): boolean {

@@ -44,11 +44,17 @@ export const SYNC_REASON = {
   other: "other",
 } as const;
 
-/** Shown while a draft stays queued because the phone clock is ahead of the server. */
+/** Parked after a notes actionAt is still in the future once it has been re-stamped. */
 export const PHONE_CLOCK_NOTICE = "Check your phone's date and time";
+
+/** Parked after a notes actionAt was too old to send, including one re-stamped attempt. */
+export const NOTES_ACTION_AT_RETRY_MESSAGE = "These notes weren't saved. Save them again to retry.";
 
 /** The route rejects actionAt more than this far in the future. */
 export const ACTION_AT_FUTURE_MS = 10 * 60 * 1000;
+
+/** A notes actionAt this far ahead of server time is clamped before the first send. */
+export const ACTION_AT_SERVER_LAG_MS = 30 * 1000;
 
 export type SyncReasonCode = (typeof SYNC_REASON)[keyof typeof SYNC_REASON];
 

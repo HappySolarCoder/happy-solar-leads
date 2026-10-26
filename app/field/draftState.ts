@@ -1,4 +1,4 @@
-import { FIELD_DISPO_UNAVAILABLE, PHONE_CLOCK_NOTICE, SYNC_REASON } from "./syncReasons";
+import { FIELD_DISPO_UNAVAILABLE, SYNC_REASON } from "./syncReasons";
 import type { ParkedReason, PendingMutation, SyncState } from "./types";
 
 export function effectiveSyncState(m: PendingMutation): SyncState {
@@ -55,9 +55,6 @@ export function classifySyncFailure(
     return { kind: "transient" };
   const reason = knownReason(code) || knownReason(String((error as { reasonCode?: string }).reasonCode || ""));
   if (reason === SYNC_REASON.notesConflict || /Notes changed on another device/i.test(message))
-    return { kind: "transient" };
-  // A phone clock ahead of the server. Stay queued and do not change actionAt.
-  if (code === "clock_ahead" || message === PHONE_CLOCK_NOTICE)
     return { kind: "transient" };
   // A notes transaction that cannot finish stays queued. Never park or drop it.
   if (

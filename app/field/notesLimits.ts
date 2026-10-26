@@ -16,7 +16,7 @@
  */
 import { compareQueuedDrafts } from "./draftQueue";
 import { rebaseNotes } from "./notesRebase";
-import { PHONE_CLOCK_NOTICE, SYNC_REASON } from "./syncReasons";
+import { NOTES_ACTION_AT_RETRY_MESSAGE, PHONE_CLOCK_NOTICE, SYNC_REASON } from "./syncReasons";
 
 export const NOTES_MAX_CHARS = 100_000;
 export const NOTES_ROUTE_BODY_MAX_BYTES = 262_144;
@@ -124,6 +124,9 @@ export function absorbNotesText(parked: NotesDraftText, next: NotesDraftText): N
     return { notes: parkedText, baseNotes: parked.baseNotes || "" };
   }
   if (descended) return { notes: nextText, baseNotes: parked.baseNotes || "" };
+  if (nextText !== "" && nextText === (next.baseNotes || "")) {
+    return { notes: nextText, baseNotes: parked.baseNotes || "" };
+  }
   return rebaseNotes(next.baseNotes || "", nextText, parkedText);
 }
 
@@ -147,6 +150,8 @@ function notesWaiting(row: NotesLengthDraft): boolean {
 
 function parkedNoteCopy(row: NotesLengthDraft): string {
   if (notesWaiting(row)) return "Pending. Notes changed on another device.";
+  if (row.lastError === PHONE_CLOCK_NOTICE) return PHONE_CLOCK_NOTICE;
+  if (row.lastError === NOTES_ACTION_AT_RETRY_MESSAGE) return NOTES_ACTION_AT_RETRY_MESSAGE;
   if (row.parkedReason === SYNC_REASON.notesTooLong) return "These notes weren't saved. Too long.";
   if (row.parkedReason === SYNC_REASON.notesConflict) return "Notes changed on another device.";
   if (row.parkedReason === SYNC_REASON.combinedDraft) return "Save the knock and the note separately.";
@@ -182,14 +187,13 @@ export function parkedNotesBanner(drafts: NotesLengthDraft[] | undefined): strin
   return parkedNoteMessages(drafts);
 }
 
-/** A future actionAt stays queued. The notice is the draft's lastError. */
+/** The notice for a notes draft whose actionAt was ahead of the server. */
 export function phoneClockNotice(
   drafts: { leadId?: string; lastError?: string; syncState?: string }[] | undefined,
   leadId?: string,
 ): string | null {
   const hit = (drafts || []).some((row) =>
     (leadId == null || row.leadId === leadId)
-    && row.syncState !== "parked"
     && row.lastError === PHONE_CLOCK_NOTICE
   );
   return hit ? PHONE_CLOCK_NOTICE : null;
