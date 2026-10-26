@@ -26,7 +26,8 @@ import { EasterEgg } from '@/app/types/easterEgg';
 import EasterEggWinModal from './EasterEggWinModal';
 import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
-import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
+import { PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
+import { knockGpsPatchFromFix, knockGpsPatchUnverified, type GpsUnverifiedReason, type KnockGpsPatch } from '@/app/utils/knockGpsPatch';
 
 interface LeadDetailProps {
   lead: Lead;
@@ -177,9 +178,12 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     setIsUpdating(true);
     
     try {
-      // Capture GPS for knock verification (if disposition counts as door knock)
+      // Capture GPS for knock verification (if disposition counts as door knock).
+      // A missing fix or a far distance never blocks the disposition. The direct
+      // update carries at most gpsVerified, gpsUnverifiedReason, and gpsDistanceM
+      // plus the existing knockGps* numbers when they are in range.
       const disposition = dispositions.find(d => d.id === newStatus);
-      let gpsData = {};
+      let gpsData: KnockGpsPatch = {};
       
       if (disposition?.countsAsDoorKnock && navigator.geolocation) {
         try {
@@ -205,31 +209,19 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
             distanceFromAddress = R * c;
           }
-          
-          // Distance verification for setter, manager, sales (not admin).
-          // Per-user opt-out: users.features.proximityEnforcement === false
-          if (isProximityRequired(currentUser) && distanceFromAddress && distanceFromAddress > PROXIMITY_MAX_DISTANCE_METERS) {
-            setIsUpdating(false);
-            const distanceFeet = Math.round(distanceFromAddress * 3.281); // Convert to feet
-            alert(
-              `You are not close enough to this address to disposition it.\n\n` +
-              `Distance: ${distanceFeet} feet away\n` +
-              `Required: Within 100 feet\n\n` +
-              `Please move closer to the address and try again.`
-            );
-            return;
-          }
-          
-          gpsData = {
-            knockGpsLat: position.coords.latitude,
-            knockGpsLng: position.coords.longitude,
-            knockGpsAccuracy: position.coords.accuracy,
-            knockGpsTimestamp: new Date(),
-            knockDistanceFromAddress: distanceFromAddress,
-          };
+
+          gpsData = knockGpsPatchFromFix({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            timestamp: new Date(),
+            distanceM: distanceFromAddress,
+          }, PROXIMITY_MAX_DISTANCE_METERS);
         } catch (err) {
           console.warn('GPS capture failed:', err);
-          // Continue without GPS if it fails (allows indoor knocking where GPS might not work)
+          const code = err && typeof err === 'object' && 'code' in err ? Number((err as { code?: unknown }).code) : 0;
+          const reason: GpsUnverifiedReason = code === 2 || code === 3 ? 'no_fix' : 'other';
+          gpsData = knockGpsPatchUnverified(reason);
         }
       }
       
@@ -324,10 +316,26 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     }
   };
 
-  // Handle adding a photo
+  // Handle adding a photo.
+  // 14.17 (web and Capacitor) writes the whole photos array through this
+  // partial update: every existing item, unchanged, then one new item
+  // {id: `${Date.now()}-<up to 9 base36 chars>`, url, caption, type, uploadedBy, uploadedAt}.
+  // Rules on a non-owned lead accept only that append (max 50 photos).
   const handleAddPhoto = async (photoUrl: string, caption: string, type: 'roof' | 'meter' | 'electrical' | 'roofing' | 'other') => {
     if (!currentUser) return;
-    
+    if (photos.length >= 50 || (lead.photos || []).length >= 50) {
+      alert('This lead already has 50 photos, which is the maximum.');
+      return;
+    }
+    if (photoUrl.length > 2048) {
+      alert('Photo URL must be 2048 characters or less.');
+      return;
+    }
+    if (caption.length > 500) {
+      alert('Photo caption must be 500 characters or less.');
+      return;
+    }
+
     const newPhoto = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       url: photoUrl,
@@ -336,13 +344,20 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       uploadedBy: currentUser.id,
       uploadedAt: new Date(),
     };
-    
+
     const updatedPhotos = [...(lead.photos || []), newPhoto];
+    const previousPhotos = photos;
     setPhotos(updatedPhotos);
-    
-    const { updateLeadAsync } = await import('@/app/utils/storage');
-    await updateLeadAsync(lead.id, { photos: updatedPhotos });
-    if (onUpdate) onUpdate();
+
+    try {
+      const { updateLeadAsync } = await import('@/app/utils/storage');
+      await updateLeadAsync(lead.id, { photos: updatedPhotos });
+      if (onUpdate) onUpdate();
+    } catch (error) {
+      console.error('Error saving photo:', error);
+      setPhotos(previousPhotos);
+      alert('Photo failed to save.');
+    }
   };
 
   const handleObjectionSave = async (objectionType: ObjectionType, objectionNotes: string) => {
@@ -824,6 +839,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
                 type="text"
                 id="photoUrl"
                 placeholder="Photo URL..."
+                maxLength={2048}
                 className="flex-1 px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A]"
               />
               <select id="photoType" className="px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm">

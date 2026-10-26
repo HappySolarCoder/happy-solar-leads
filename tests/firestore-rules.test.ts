@@ -60,6 +60,53 @@ async function verdict(promise: Promise<unknown>): Promise<Outcome> {
   }
 }
 
+const STORAGE_PHOTO_URL = 'https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0395385938.firebasestorage.app/o/roof.jpg?alt=media&token=abc';
+const STORED_PHOTO_AT = new Date('2026-10-01T12:00:00Z');
+const NEW_PHOTO_AT = new Date('2026-10-25T16:30:00Z');
+const URL_HOST = 'https://example.com/';
+const URL_2048 = `${URL_HOST}${'a'.repeat(2048 - URL_HOST.length)}`;
+const URL_2049 = `${URL_HOST}${'a'.repeat(2049 - URL_HOST.length)}`;
+
+function storedPhoto(n: number, extra: Record<string, unknown> = {}) {
+  return {
+    id: `1720000000000-${String(n).padStart(9, '0')}`,
+    url: STORAGE_PHOTO_URL,
+    caption: '',
+    type: 'roof',
+    uploadedBy: 'manager',
+    uploadedAt: STORED_PHOTO_AT,
+    ...extra,
+  };
+}
+
+function storedPhotos(count: number) {
+  return Array.from({ length: count }, (_, n) => storedPhoto(n));
+}
+
+function addedPhoto(uid: string, extra: Record<string, unknown> = {}) {
+  return {
+    id: '1761364200000-abc123xyz',
+    url: STORAGE_PHOTO_URL,
+    caption: '',
+    type: 'roof',
+    uploadedBy: uid,
+    uploadedAt: NEW_PHOTO_AT,
+    ...extra,
+  };
+}
+
+const CONTACT_SAVED = {
+  name: 'Homeowner',
+  address: '1 Main St',
+  city: 'Buffalo',
+  state: 'NY',
+  zip: '14201',
+  phone: '7165550100',
+  email: 'home@example.com',
+  estimatedBill: 150,
+  notes: 'gate code 4',
+};
+
 async function seed(env: RulesTestEnvironment): Promise<void> {
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
@@ -145,6 +192,61 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
     await db.collection('leads').doc('dispoClaimedPin').set({ status: 'claimed', territoryId: 'realTerritory', claimedBy: 'manager' });
     await db.collection('leads').doc('dispoFullDoc').set({ status: 'new', name: 'Homeowner' });
     await db.collection('leads').doc('dispoFreshStranger').set({ status: 'new' });
+    const bareLead = (id: string, extra: Record<string, unknown> = {}) =>
+      db.collection('leads').doc(id).set({ status: 'new', ...extra });
+    await bareLead('gpsClaimed', { status: 'claimed', claimedBy: 'realSetter' });
+    await bareLead('gpsAssigned', { status: 'assigned', assignedTo: 'realSetter' });
+    await bareLead('gpsTerritory', { territoryId: 'realTerritory' });
+    await bareLead('gpsNone');
+    await bareLead('gpsFar');
+    await bareLead('gpsBadReason');
+    await bareLead('gpsBadType');
+    await bareLead('gpsFourth');
+    await bareLead('gpsBadLat');
+    await bareLead('gpsHugeDistance');
+    await bareLead('photoFirstManager');
+    await bareLead('photoFirstSetter', { territoryId: 'realTerritory' });
+    await bareLead('photoAppend', { photos: [storedPhoto(1)] });
+    await bareLead('photoFifty', { photos: storedPhotos(49) });
+    await bareLead('photoTwo');
+    await bareLead('photoOverwrite', { photos: [storedPhoto(1)] });
+    await bareLead('photoEditOld', { photos: [storedPhoto(1), storedPhoto(2)] });
+    await bareLead('photoReorder', { photos: [storedPhoto(0), storedPhoto(1), storedPhoto(2)] });
+    await bareLead('photoSpoof', { territoryId: 'realTerritory' });
+    await bareLead('photoBadType');
+    await bareLead('photoLongUrl');
+    await bareLead('photoLongCaption');
+    await bareLead('photoCap', { photos: storedPhotos(50) });
+    await bareLead('photoOutside');
+    await bareLead('photoDelete', { photos: [storedPhoto(1)] });
+    await bareLead('photoBadId');
+    await bareLead('photoBadTime');
+    await bareLead('photoExtra');
+    await bareLead('photoNoCaption');
+    await bareLead('photoCaption500');
+    await bareLead('photoUrl2048');
+    await bareLead('photoEmptyUrl');
+    await bareLead('ownerPhotoLead', { status: 'assigned', assignedTo: 'realSetter', photos: [storedPhoto(0)] });
+    const { email, ...contactWithoutEmail } = CONTACT_SAVED;
+    void email;
+    await bareLead('contactAllNine', contactWithoutEmail);
+    await bareLead('contactRename', CONTACT_SAVED);
+    await bareLead('contactPartialEmail', { name: 'Homeowner' });
+    await bareLead('contactPartialPhone');
+    await bareLead('contactPartialBill');
+    await bareLead('contactBillCap');
+    await bareLead('contactBillZero');
+    await bareLead('contactMissingName');
+    await bareLead('contactTerritoryPhone', { territoryId: 'realTerritory' });
+    await bareLead('contactOutside');
+    await bareLead('contactOverwriteEmail', { email: 'home@example.com' });
+    await bareLead('contactOversizeEmail');
+    await bareLead('contactNegativeBill');
+    await bareLead('contactHugeBill');
+    await bareLead('contactStringBill');
+    await bareLead('contactDeletePhone', { phone: '7165550100' });
+    await bareLead('contactEmailAndSetter');
+    await bareLead('staffAssignLead', { name: 'Homeowner' });
     await db.collection('leads').doc('demoTestClaimLead').set({
       status: 'new',
       testData: true,
@@ -312,10 +414,60 @@ function cases(): RuleCase[] {
     { id: 'setter notes-only on territory pin without notes', uid: 'realSetter', run: (db) => lead('dispoFreshPin2')(db).update({ notes: 'dog in yard' }), expectTight: 'allow' },
     { id: 'setter oversize notes on territory pin', uid: 'realSetter', run: (db) => lead('dispoFreshPin3')(db).update({ notes: 'n'.repeat(10001) }), expectTight: 'deny' },
     { id: 'setter overwrites existing notes on territory pin', uid: 'realSetter', run: (db) => lead('dispoNotedPin')(db).update({ notes: 'replaced' }), expectTight: 'deny' },
-    { id: 'setter adds photos on territory pin', uid: 'realSetter', run: (db) => lead('dispoFreshPin4')(db).update({ photos: [{ id: 'p1', url: 'https://example.com/r.jpg', type: 'roof', uploadedBy: 'realSetter', uploadedAt: new Date() }] }), expectTight: 'deny' },
+    { id: 'manager first photo on non-owned lead', uid: 'manager', run: (db) => lead('photoFirstManager')(db).update({ photos: [addedPhoto('manager')] }), expectTight: 'allow' },
+    { id: 'setter first photo on territory pin', uid: 'realSetter', run: (db) => lead('photoFirstSetter')(db).update({ photos: [addedPhoto('realSetter', { type: 'electrical', url: 'https://example.com/panel.jpg', caption: 'panel' })] }), expectTight: 'allow' },
+    { id: 'manager appends one photo on non-owned lead', uid: 'manager', run: (db) => lead('photoAppend')(db).update({ photos: [storedPhoto(1), addedPhoto('manager', { type: 'meter', caption: 'meter closeup' })] }), expectTight: 'allow' },
+    { id: 'manager adds the 50th photo on a non-owned lead', uid: 'manager', run: (db) => lead('photoFifty')(db).update({ photos: [...storedPhotos(49), addedPhoto('manager')] }), expectTight: 'allow' },
+    { id: 'manager photo caption at 500 characters', uid: 'manager', run: (db) => lead('photoCaption500')(db).update({ photos: [addedPhoto('manager', { type: 'roofing', caption: 'c'.repeat(500) })] }), expectTight: 'allow' },
+    { id: 'manager photo url at 2048 characters', uid: 'manager', run: (db) => lead('photoUrl2048')(db).update({ photos: [addedPhoto('manager', { type: 'other', url: URL_2048 })] }), expectTight: 'allow' },
+    { id: 'manager adds two photos at once', uid: 'manager', run: (db) => lead('photoTwo')(db).update({ photos: [addedPhoto('manager'), addedPhoto('manager', { id: '1761364200001-def456uvw' })] }), expectTight: 'deny' },
+    { id: 'manager overwrites photos on non-owned lead', uid: 'manager', run: (db) => lead('photoOverwrite')(db).update({ photos: [addedPhoto('manager')] }), expectTight: 'deny' },
+    { id: 'manager photo append changes an existing photo', uid: 'manager', run: (db) => lead('photoEditOld')(db).update({ photos: [storedPhoto(1, { caption: 'changed' }), storedPhoto(2), addedPhoto('manager')] }), expectTight: 'deny' },
+    { id: 'manager photo append reorders existing photos', uid: 'manager', run: (db) => lead('photoReorder')(db).update({ photos: [storedPhoto(0), storedPhoto(2), storedPhoto(1), addedPhoto('manager')] }), expectTight: 'deny' },
+    { id: 'setter photo uploadedBy is not the caller', uid: 'realSetter', run: (db) => lead('photoSpoof')(db).update({ photos: [addedPhoto('manager')] }), expectTight: 'deny' },
+    { id: 'manager photo type is not allowed', uid: 'manager', run: (db) => lead('photoBadType')(db).update({ photos: [addedPhoto('manager', { type: 'house' })] }), expectTight: 'deny' },
+    { id: 'manager photo url over 2048 characters', uid: 'manager', run: (db) => lead('photoLongUrl')(db).update({ photos: [addedPhoto('manager', { url: URL_2049 })] }), expectTight: 'deny' },
+    { id: 'manager photo caption over 500 characters', uid: 'manager', run: (db) => lead('photoLongCaption')(db).update({ photos: [addedPhoto('manager', { caption: 'c'.repeat(501) })] }), expectTight: 'deny' },
+    { id: 'manager adds a 51st photo', uid: 'manager', run: (db) => lead('photoCap')(db).update({ photos: [...storedPhotos(50), addedPhoto('manager')] }), expectTight: 'deny' },
+    { id: 'manager photo id is not the client shape', uid: 'manager', run: (db) => lead('photoBadId')(db).update({ photos: [addedPhoto('manager', { id: 'p1' })] }), expectTight: 'deny' },
+    { id: 'manager photo uploadedAt is not a timestamp', uid: 'manager', run: (db) => lead('photoBadTime')(db).update({ photos: [addedPhoto('manager', { uploadedAt: '2026-10-25T16:30:00Z' })] }), expectTight: 'deny' },
+    { id: 'manager photo has an extra field', uid: 'manager', run: (db) => lead('photoExtra')(db).update({ photos: [addedPhoto('manager', { source: 'street' })] }), expectTight: 'deny' },
+    { id: 'manager photo is missing caption', uid: 'manager', run: (db) => lead('photoNoCaption')(db).update({ photos: [(() => { const { caption, ...rest } = addedPhoto('manager'); void caption; return rest; })()] }), expectTight: 'deny' },
+    { id: 'manager photo url is empty', uid: 'manager', run: (db) => lead('photoEmptyUrl')(db).update({ photos: [addedPhoto('manager', { url: '' })] }), expectTight: 'deny' },
+    { id: 'setter photo on lead outside territory', uid: 'realSetter', run: (db) => lead('photoOutside')(db).update({ photos: [addedPhoto('realSetter')] }), expectTight: 'deny' },
+    { id: 'manager deletes photos on non-owned lead', uid: 'manager', run: (db) => lead('photoDelete')(db).update({ photos: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
+    { id: 'setter replaces photos on own lead', uid: 'realSetter', run: (db) => lead('ownerPhotoLead')(db).update({ photos: [{ id: 'not-client-shape', url: 'https://example.com/replaced.jpg' }] }), expectTight: 'allow' },
+    { id: 'manager sends all 9 contact fields with one new email', uid: 'manager', run: (db) => lead('contactAllNine')(db).update({ ...CONTACT_SAVED }), expectTight: 'allow' },
+    { id: 'manager partial email on non-owned lead', uid: 'manager', run: (db) => lead('contactPartialEmail')(db).update({ email: 'home@example.com' }), expectTight: 'allow' },
+    { id: 'manager partial phone on non-owned lead', uid: 'manager', run: (db) => lead('contactPartialPhone')(db).update({ phone: '7165550199' }), expectTight: 'allow' },
+    { id: 'manager partial estimatedBill on non-owned lead', uid: 'manager', run: (db) => lead('contactPartialBill')(db).update({ estimatedBill: 180.5 }), expectTight: 'allow' },
+    { id: 'manager estimatedBill at cap on non-owned lead', uid: 'manager', run: (db) => lead('contactBillCap')(db).update({ estimatedBill: 100000 }), expectTight: 'allow' },
+    { id: 'manager estimatedBill zero on non-owned lead', uid: 'manager', run: (db) => lead('contactBillZero')(db).update({ estimatedBill: 0 }), expectTight: 'allow' },
+    { id: 'manager partial name on lead missing name', uid: 'manager', run: (db) => lead('contactMissingName')(db).update({ name: 'Homeowner' }), expectTight: 'allow' },
+    { id: 'setter partial phone on territory pin', uid: 'realSetter', run: (db) => lead('contactTerritoryPhone')(db).update({ phone: '7165550199' }), expectTight: 'allow' },
+    { id: 'manager sends all 9 contact fields but changes name', uid: 'manager', run: (db) => lead('contactRename')(db).update({ ...CONTACT_SAVED, name: 'New Name' }), expectTight: 'deny' },
+    { id: 'manager overwrites email on non-owned lead', uid: 'manager', run: (db) => lead('contactOverwriteEmail')(db).update({ email: 'other@example.com' }), expectTight: 'deny' },
+    { id: 'setter partial email outside territory', uid: 'realSetter', run: (db) => lead('contactOutside')(db).update({ email: 'home@example.com' }), expectTight: 'deny' },
+    { id: 'manager oversize email on non-owned lead', uid: 'manager', run: (db) => lead('contactOversizeEmail')(db).update({ email: 'e'.repeat(255) }), expectTight: 'deny' },
+    { id: 'manager negative estimatedBill on non-owned lead', uid: 'manager', run: (db) => lead('contactNegativeBill')(db).update({ estimatedBill: -1 }), expectTight: 'deny' },
+    { id: 'manager huge estimatedBill on non-owned lead', uid: 'manager', run: (db) => lead('contactHugeBill')(db).update({ estimatedBill: 100001 }), expectTight: 'deny' },
+    { id: 'manager string estimatedBill on non-owned lead', uid: 'manager', run: (db) => lead('contactStringBill')(db).update({ estimatedBill: '150' }), expectTight: 'deny' },
+    { id: 'manager deletes phone on non-owned lead', uid: 'manager', run: (db) => lead('contactDeletePhone')(db).update({ phone: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
+    { id: 'manager adds email and setterId on non-owned lead', uid: 'manager', run: (db) => lead('contactEmailAndSetter')(db).update({ email: 'home@example.com', setterId: 'manager' }), expectTight: 'deny' },
+    { id: 'manager staff assign setDoc on non-owned lead', uid: 'manager', run: (db) => lead('staffAssignLead')(db).set({ status: 'assigned', name: 'Homeowner', assignedTo: 'realSetter', assignedAt: new Date() }), expectTight: 'deny' },
     { id: 'setter knock deletes another claimedBy', uid: 'realSetter', run: (db) => lead('dispoClaimedPin')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
     { id: 'manager full-doc Go Back setDoc on non-owned lead', uid: 'manager', run: (db) => lead('dispoFullDoc')(db).set({ name: 'Homeowner', createdAt: new Date(), claimedAt: null, assignedAt: null, solarTestedAt: null, ...goBack('manager') }), expectTight: 'deny' },
     { id: 'manager partial Go Back on non-owned lead', uid: 'manager', run: (db) => lead('dispoFreshStranger')(db).update(goBack('manager', { goBackScheduledTime: '', goBackNotes: '' })), expectTight: 'allow' },
+    { id: 'manager unverified GPS on a claimed pin', uid: 'manager', run: (db) => lead('gpsClaimed')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: false, gpsUnverifiedReason: 'no_fix' }), expectTight: 'allow' },
+    { id: 'manager unverified GPS on an assigned pin', uid: 'manager', run: (db) => lead('gpsAssigned')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: false, gpsUnverifiedReason: 'stale' }), expectTight: 'allow' },
+    { id: 'setter unverified GPS on a territory pin', uid: 'realSetter', run: (db) => lead('gpsTerritory')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: false, gpsUnverifiedReason: 'too_far', gpsDistanceM: 80 }), expectTight: 'allow' },
+    { id: 'manager dispo with no GPS fields', uid: 'manager', run: (db) => lead('gpsNone')(db).update({ status: 'not-home', dispositionedAt: at }), expectTight: 'allow' },
+    { id: 'manager far knock distance on non-owned lead', uid: 'manager', run: (db) => lead('gpsFar')(db).update({ status: 'not-home', dispositionedAt: at, knockGpsLat: 42.9, knockGpsLng: -78.8, knockGpsAccuracy: 30, knockDistanceFromAddress: 5000, gpsVerified: false, gpsUnverifiedReason: 'too_far', gpsDistanceM: 5000 }), expectTight: 'allow' },
+    { id: 'manager bad gpsUnverifiedReason', uid: 'manager', run: (db) => lead('gpsBadReason')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: false, gpsUnverifiedReason: 'indoors' }), expectTight: 'deny' },
+    { id: 'manager gpsVerified wrong type', uid: 'manager', run: (db) => lead('gpsBadType')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: 'false', gpsUnverifiedReason: 'no_fix' }), expectTight: 'deny' },
+    { id: 'manager dispo with a fourth GPS key', uid: 'manager', run: (db) => lead('gpsFourth')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: false, gpsUnverifiedReason: 'other', gpsDistanceM: 12, gpsAccuracy: 3 }), expectTight: 'deny' },
+    { id: 'manager knock latitude out of range', uid: 'manager', run: (db) => lead('gpsBadLat')(db).update({ status: 'not-home', dispositionedAt: at, knockGpsLat: 91 }), expectTight: 'deny' },
+    { id: 'manager knock distance above 1e6', uid: 'manager', run: (db) => lead('gpsHugeDistance')(db).update({ status: 'not-home', dispositionedAt: at, knockDistanceFromAddress: 1000001 }), expectTight: 'deny' },
     { id: 'setter knock outside territory', uid: 'realSetter', run: (db) => lead('claimedByOther')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'deny' },
     { id: 'setter manual create', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter').set({ source: 'manually-added', setterId: 'realSetter', status: 'new' }), expectTight: 'allow' },
     { id: 'setter manual create with testData', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter-testdata').set({
@@ -461,6 +613,14 @@ describe('firestore rules', { concurrency: 1 }, () => {
       // (changedKeys() on non-allowlisted keys). Bounded affectedKeys() allowlist fixes it.
       const intendedDispoFix = new Set(['setter Go Back on prior territory pin', 'manager objection on prior lead']);
       const dispoFixes: string[] = [];
+      // Live changedKeys() denies any edit of an existing photos array. Appending
+      // one valid photo is the 14.17 shape and is an intended allowance.
+      const intendedPhotoAppend = new Set([
+        'manager appends one photo on non-owned lead',
+        'manager adds the 50th photo on a non-owned lead',
+      ]);
+      const photoAppends: string[] = [];
+      const allowToDeny: string[] = [];
       for (const ruleCase of cases()) {
         const provider = ruleCase.provider ?? 'password';
         const deployedResult = client(deployed, ruleCase.uid, provider, deployedClients);
@@ -488,9 +648,14 @@ describe('firestore rules', { concurrency: 1 }, () => {
             allowedExceptions.push(line);
           } else if (intendedDispoFix.has(ruleCase.id)) {
             dispoFixes.push(line);
+          } else if (intendedPhotoAppend.has(ruleCase.id)) {
+            photoAppends.push(line);
           } else {
             loosened.push(line);
           }
+        }
+        if (before === 'allow' && after === 'deny') {
+          allowToDeny.push(`${ruleCase.id}: deployed allowed, tightened denied`);
         }
         if (after === 'allow' && ruleCase.exists != null) {
           const snap = value as { exists?: boolean };
@@ -507,8 +672,12 @@ describe('firestore rules', { concurrency: 1 }, () => {
       }
       assert.deepEqual(mismatches, []);
       for (const line of dispoFixes) console.log(`intended dispo fix: ${line}`);
+      for (const line of photoAppends) console.log(`intended photo append: ${line}`);
+      console.log(`allow-to-deny: ${allowToDeny.length}`);
+      for (const line of allowToDeny) console.log(`allow-to-deny: ${line}`);
       assert.deepEqual(loosened, []);
       assert.equal(dispoFixes.length, intendedDispoFix.size);
+      assert.equal(photoAppends.length, intendedPhotoAppend.size);
       assert.deepEqual(allowedExceptions, [
         `${intendedException}: deployed denied, tightened allowed`,
       ]);

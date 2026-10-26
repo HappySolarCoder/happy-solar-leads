@@ -98,7 +98,7 @@ app/
 
 ## GPS Proximity Enforcement
 
-Door-knock dispositions and manual map pins require the setter/manager to be within **~50 meters** of the address. Admins and closers are not gated.
+Door-knock dispositions always save. GPS is optional: a missing fix or a distance past 50 meters is recorded (`gpsVerified`, `gpsUnverifiedReason`, `gpsDistanceM`) and does not block the disposition. Manual map pins still require the setter/manager to be within **~50 meters** of the address. Admins and closers are not gated on pin creation.
 
 A per-user override lives on the Firestore user doc:
 
@@ -106,8 +106,8 @@ A per-user override lives on the Firestore user doc:
 users/{uid}.features.proximityEnforcement
 ```
 
-- **Missing or `true` (default):** keep the 50m check
-- **`false`:** skip the distance gate for that user only
+- **Missing or `true` (default):** manual map pins keep the 50m check. A door knock past 50m still saves, with `gpsVerified` false and `gpsUnverifiedReason` `too_far`.
+- **`false`:** skip the pin-creation distance gate for that user only. Dispositions are not blocked either way.
 
 ### Toggle from Admin
 
