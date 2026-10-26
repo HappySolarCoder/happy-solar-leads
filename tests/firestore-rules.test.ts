@@ -288,6 +288,16 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
     await bareLead('clearOutside', { ...clearable, claimedBy: 'manager' });
     await bareLead('clearDemoOutside', { ...clearable, claimedBy: 'manager' });
     await bareLead('clearDemoTerritory', { ...clearable, territoryId: 'demo-real-territory', claimedBy: 'manager' });
+    const mixable = { phone: '7165550100', estimatedBill: 150, notes: 'gate code 4', name: 'Homeowner' };
+    await bareLead('mixMgrPhone', mixable);
+    await bareLead('mixMgrBill', mixable);
+    await bareLead('mixMgrTestPhone', { ...mixable, testData: true });
+    await bareLead('mixMgrTestBill', { ...mixable, testData: true });
+    await bareLead('mixSetPhone', { ...mixable, territoryId: 'realTerritory', claimedBy: 'manager' });
+    await bareLead('mixSetBill', { ...mixable, territoryId: 'realTerritory', claimedBy: 'manager' });
+    await bareLead('mixSetTestPhone', { ...mixable, testData: true, territoryId: 'realTerritory', claimedBy: 'manager' });
+    await bareLead('mixSetTestBill', { ...mixable, testData: true, territoryId: 'realTerritory', claimedBy: 'manager' });
+    await bareLead('mixOutside', { ...mixable, claimedBy: 'manager' });
     await bareLead('contactEmailAndSetter');
     await bareLead('staffAssignLead', { name: 'Homeowner' });
     await db.collection('leads').doc('demoTestClaimLead').set({
@@ -542,6 +552,15 @@ function cases(): RuleCase[] {
     { id: 'setter deletes notes outside territory', uid: 'realSetter', run: (db) => lead('clearOutside')(db).update({ notes: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
     { id: 'demo deletes phone outside territory', uid: 'demo', run: (db) => lead('clearDemoOutside')(db).update({ phone: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
     { id: 'demo deletes phone on own territory pin', uid: 'demo', run: (db) => lead('clearDemoTerritory')(db).update({ phone: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
+    { id: 'manager clears phone and fills email on non-owned lead', uid: 'manager', run: (db) => lead('mixMgrPhone')(db).update({ phone: firebase.firestore.FieldValue.delete(), email: 'new@example.com' }), expectTight: 'allow' },
+    { id: 'manager clears bill and notes and fills email on non-owned lead', uid: 'manager', run: (db) => lead('mixMgrBill')(db).update({ estimatedBill: firebase.firestore.FieldValue.delete(), notes: firebase.firestore.FieldValue.delete(), email: 'new@example.com' }), expectTight: 'allow' },
+    { id: 'manager clears phone and fills email on TEST lead', uid: 'manager', run: (db) => lead('mixMgrTestPhone')(db).update({ phone: firebase.firestore.FieldValue.delete(), email: 'new@example.com' }), expectTight: 'allow' },
+    { id: 'manager clears bill and notes and fills email on TEST lead', uid: 'manager', run: (db) => lead('mixMgrTestBill')(db).update({ estimatedBill: firebase.firestore.FieldValue.delete(), notes: firebase.firestore.FieldValue.delete(), email: 'new@example.com' }), expectTight: 'allow' },
+    { id: 'setter clears phone and fills email on territory pin', uid: 'realSetter', run: (db) => lead('mixSetPhone')(db).update({ phone: firebase.firestore.FieldValue.delete(), email: 'new@example.com' }), expectTight: 'allow' },
+    { id: 'setter clears bill and notes and fills email on territory pin', uid: 'realSetter', run: (db) => lead('mixSetBill')(db).update({ estimatedBill: firebase.firestore.FieldValue.delete(), notes: firebase.firestore.FieldValue.delete(), email: 'new@example.com' }), expectTight: 'allow' },
+    { id: 'setter clears phone and fills email on TEST territory pin', uid: 'realSetter', run: (db) => lead('mixSetTestPhone')(db).update({ phone: firebase.firestore.FieldValue.delete(), email: 'new@example.com' }), expectTight: 'allow' },
+    { id: 'setter clears bill and notes and fills email on TEST territory pin', uid: 'realSetter', run: (db) => lead('mixSetTestBill')(db).update({ estimatedBill: firebase.firestore.FieldValue.delete(), notes: firebase.firestore.FieldValue.delete(), email: 'new@example.com' }), expectTight: 'allow' },
+    { id: 'setter clears phone and fills email outside territory', uid: 'realSetter', run: (db) => lead('mixOutside')(db).update({ phone: firebase.firestore.FieldValue.delete(), email: 'new@example.com' }), expectTight: 'deny' },
     { id: 'manager adds email and setterId on non-owned lead', uid: 'manager', run: (db) => lead('contactEmailAndSetter')(db).update({ email: 'home@example.com', setterId: 'manager' }), expectTight: 'deny' },
     { id: 'manager staff assign setDoc on non-owned lead', uid: 'manager', run: (db) => lead('staffAssignLead')(db).set({ status: 'assigned', name: 'Homeowner', assignedTo: 'realSetter', assignedAt: new Date() }), expectTight: 'deny' },
     { id: 'setter knock deletes another claimedBy', uid: 'realSetter', run: (db) => lead('dispoClaimedPin')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },

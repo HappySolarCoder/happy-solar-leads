@@ -123,11 +123,13 @@ service cloud.firestore {
       ]) && dispoExtrasValid();
     }
 
-    // notes: on a non-owned lead, this check allows notes only when the doc has
-    // no notes key, as a string of at most 10000 characters. Overwrite fails here.
-    // Deleting notes is contactClearsValid, not this function. Owners use ownerLeadUpdate.
+    // notes: on a non-owned lead, a new notes value is allowed only when the doc
+    // has no notes key, as a string of at most 10000 characters. Overwrite fails.
+    // deleteField() removes the key, so a notes clear passes here and does not
+    // have to be missing beforehand. Owners use ownerLeadUpdate.
     function dispoNotesValid() {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['notes'])
+        || !('notes' in request.resource.data)
         || (request.resource.data.get('notes', null) is string
             && request.resource.data.notes.size() <= 10000
             && !('notes' in resource.data));
@@ -136,8 +138,9 @@ service cloud.firestore {
     // Contact fields the scheduling-manager editor saves. Add-only when the key is
     // absent (filling a missing field). Resubmitted equal values are not in
     // affectedKeys(), so 14.17 can send all nine fields and only the real change
-    // is checked. Overwrite stays denied. Deletes of phone, email, estimatedBill,
-    // and notes are contactClearsValid.
+    // is checked. Overwrite stays denied. A removed phone, email, or estimatedBill
+    // is judged from the post-write doc, so clearing one field does not fail the
+    // missing-beforehand check for a different key in the same save.
     // Bounds: name <= 200, address <= 300, city <= 100, state <= 32, zip <= 16,
     // phone <= 40, email <= 254, estimatedBill number 0 through 100000.
     function contactFillsValid() {
@@ -155,6 +158,7 @@ service cloud.firestore {
 
     function addedContactString(k, d, field, max) {
       return !k.hasAny([field])
+        || (!(field in d) && field in ['phone', 'email'])
         || (
           !(field in resource.data)
           && (field in d)
@@ -165,6 +169,7 @@ service cloud.firestore {
 
     function addedContactBill(k, d) {
       return !k.hasAny(['estimatedBill'])
+        || !('estimatedBill' in d)
         || (
           !('estimatedBill' in resource.data)
           && ('estimatedBill' in d)
@@ -501,8 +506,10 @@ service cloud.firestore {
     // Clears match live changedKeys(): a removal is not a changed key, so a
     // manager (not a TEST account) or the territory owner, including the demo
     // on a pin in their territory, can deleteField phone, email, estimatedBill,
-    // or notes on a lead they do not own. Any other key, including photos and
-    // name, still fails. Explicit null is not a removal.
+    // or notes on a lead they do not own. The same save may also fill other
+    // contact keys. Those fills stay add-only. Removals of name or photos fail.
+    // Explicit null is not a removal. Pure clears are checked first so a
+    // delete-only write does not also run the fill checks.
     function contactClearsValid(k, d) {
       return k.hasAny(['phone', 'email', 'estimatedBill', 'notes'])
         && k.hasOnly(['phone', 'email', 'estimatedBill', 'notes'])
@@ -516,13 +523,13 @@ service cloud.firestore {
       let k = request.resource.data.diff(resource.data).affectedKeys();
       let d = request.resource.data;
       return (
-          (
+          contactClearsValid(k, d)
+          || (
             k.hasAny(['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill', 'notes'])
             && k.hasOnly(['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill', 'notes'])
             && contactFillsValid()
             && dispoNotesValid()
           )
-          || contactClearsValid(k, d)
         )
         && addsNoOwnership(['claimedBy', 'assignedTo', 'territoryId'])
         && photoAudience()

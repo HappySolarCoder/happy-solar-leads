@@ -56,6 +56,9 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
 
   const handleSave = async () => {
     setIsSaving(true);
+    const slowSave = window.setTimeout(() => {
+      alert('Still saving, check your connection');
+    }, 15000);
 
     try {
       // Partial update of only the contact fields that changed. A full-doc
@@ -81,6 +84,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       const message = error instanceof Error ? error.message : 'The lead was not updated.';
       alert(`Could not save these changes.\n\n${code ? `${code}: ${message}` : message}`);
     } finally {
+      window.clearTimeout(slowSave);
       setIsSaving(false);
     }
   };

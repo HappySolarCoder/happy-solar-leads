@@ -325,6 +325,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     if (!currentUser) return;
     
     setNotesSaving(true);
+    const slowSave = window.setTimeout(() => {
+      alert('Still saving, check your connection');
+    }, 15000);
     try {
       // Partial update: only the changed key. A full-doc setDoc adds/removes
       // unrelated keys and is denied by the dispo-only rules on non-owned leads.
@@ -339,6 +342,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       const message = error instanceof Error ? error.message : 'Notes were not updated.';
       alert(`Notes failed to save.\n\n${code ? `${code}: ${message}` : message}`);
     } finally {
+      window.clearTimeout(slowSave);
       setNotesSaving(false);
     }
   };
