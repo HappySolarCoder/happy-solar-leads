@@ -14,8 +14,8 @@ import { insideTerritory } from '@/app/utils/territoryManager';
  * (accuracy >= 1000) is chosen before low_accuracy (accuracy > 65). The
  * coarser band is inside the low-accuracy band, so the other order would
  * make reduced_accuracy unreachable.
- * After those, out_of_area wins over too_far. `other` is only a usable fix
- * whose lead has no coordinates. Malformed client GPS is `no_fix`.
+ * After those, out_of_area wins over too_far. Clients send `other` only for
+ * a usable fix whose lead has no coordinates. Malformed client GPS is `no_fix`.
  */
 export const RADIUS_M = 35;
 export const GPS_ACCURACY_CREDIT_CAP_M = 15;
@@ -165,8 +165,8 @@ function outsideEveryPolygon(fix: KnockFix, polygons: ReadonlyArray<ReadonlyArra
 
 /**
  * Reason for an unverified fix. Missing and malformed fixes are no_fix and
- * do not touch geofire. A usable fix with no lead coordinates is other,
- * unless a quality or area reason already won.
+ * do not touch geofire. Clients send other only for a usable fix whose lead
+ * has no coordinates, and only when no quality or area reason already won.
  */
 export function decideKnockGps(input: {
   fix: KnockFix | 'absent' | 'malformed';

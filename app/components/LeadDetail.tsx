@@ -26,7 +26,40 @@ import { EasterEgg } from '@/app/types/easterEgg';
 import EasterEggWinModal from './EasterEggWinModal';
 import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
-import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
+import { deleteField } from 'firebase/firestore';
+import {
+  GPS_UNVERIFIED_REASONS,
+  RADIUS_M,
+  type GpsUnverifiedReason,
+} from '@/app/utils/gpsRule';
+import { leadDetailKnockGps } from '@/app/utils/leadDetailGps';
+import { useSlowSaveAlert } from '@/app/utils/useSlowSaveAlert';
+
+/** Shared reason. Removing out_of_area from gpsRule.ts fails this file. */
+const SHARED_AREA_REASON: (typeof GPS_UNVERIFIED_REASONS)[number] = 'out_of_area';
+
+function gpsPatchForWrite(patch: {
+  gpsVerified: boolean;
+  gpsUnverifiedReason: GpsUnverifiedReason | null;
+  gpsDistanceM: number | null;
+  knockGpsLat?: number;
+  knockGpsLng?: number;
+  knockGpsAccuracy?: number;
+  knockGpsTimestamp?: Date;
+  knockDistanceFromAddress?: number;
+}): Record<string, unknown> {
+  const write: Record<string, unknown> = {
+    gpsVerified: patch.gpsVerified,
+    gpsUnverifiedReason: patch.gpsUnverifiedReason ?? deleteField(),
+    gpsDistanceM: patch.gpsDistanceM ?? deleteField(),
+  };
+  if (patch.knockGpsLat != null) write.knockGpsLat = patch.knockGpsLat;
+  if (patch.knockGpsLng != null) write.knockGpsLng = patch.knockGpsLng;
+  if (patch.knockGpsAccuracy != null) write.knockGpsAccuracy = patch.knockGpsAccuracy;
+  if (patch.knockGpsTimestamp != null) write.knockGpsTimestamp = patch.knockGpsTimestamp;
+  if (patch.knockDistanceFromAddress != null) write.knockDistanceFromAddress = patch.knockDistanceFromAddress;
+  return write;
+}
 
 interface LeadDetailProps {
   lead: Lead;
@@ -95,6 +128,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
   const [notesSaving, setNotesSaving] = useState(false);
+  const slowNotesSave = useSlowSaveAlert();
   const [showAllStatuses, setShowAllStatuses] = useState(false);
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
@@ -177,9 +211,12 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     setIsUpdating(true);
     
     try {
-      // Capture GPS for knock verification (if disposition counts as door knock)
+      // GPS never blocks the disposition, and the rep is shown no GPS text.
+      // RADIUS_M and GPS_UNVERIFIED_REASONS (including out_of_area) live in
+      // gpsRule.ts. A malformed fix is no_fix. Clients send other only for a
+      // usable fix whose lead has no coordinates. This screen does not keep a second radius.
       const disposition = dispositions.find(d => d.id === newStatus);
-      let gpsData = {};
+      let gpsData: Record<string, unknown> = {};
       
       if (disposition?.countsAsDoorKnock && navigator.geolocation) {
         try {
@@ -190,46 +227,25 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               maximumAge: 0,
             });
           });
-          
-          // Calculate distance from lead address
-          let distanceFromAddress: number | undefined;
-          if (lead.lat && lead.lng) {
-            const R = 6371000; // Earth's radius in meters
-            const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
-            const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
-            const a = 
-              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(position.coords.latitude * Math.PI / 180) * 
-              Math.cos(lead.lat * Math.PI / 180) *
-              Math.sin(dLng / 2) * Math.sin(dLng / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            distanceFromAddress = R * c;
-          }
-          
-          // Distance verification for setter, manager, sales (not admin).
-          // Per-user opt-out: users.features.proximityEnforcement === false
-          if (isProximityRequired(currentUser) && distanceFromAddress && distanceFromAddress > PROXIMITY_MAX_DISTANCE_METERS) {
-            setIsUpdating(false);
-            const distanceFeet = Math.round(distanceFromAddress * 3.281); // Convert to feet
-            alert(
-              `You are not close enough to this address to disposition it.\n\n` +
-              `Distance: ${distanceFeet} feet away\n` +
-              `Required: Within 100 feet\n\n` +
-              `Please move closer to the address and try again.`
-            );
-            return;
-          }
-          
-          gpsData = {
-            knockGpsLat: position.coords.latitude,
-            knockGpsLng: position.coords.longitude,
-            knockGpsAccuracy: position.coords.accuracy,
-            knockGpsTimestamp: new Date(),
-            knockDistanceFromAddress: distanceFromAddress,
-          };
+          const patch = leadDetailKnockGps({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            capturedAtMs: position.timestamp,
+            actionAtMs: Date.now(),
+            leadLat: lead.lat,
+            leadLng: lead.lng,
+            radiusM: RADIUS_M,
+          });
+          void SHARED_AREA_REASON;
+          gpsData = gpsPatchForWrite(patch);
         } catch (err) {
           console.warn('GPS capture failed:', err);
-          // Continue without GPS if it fails (allows indoor knocking where GPS might not work)
+          gpsData = gpsPatchForWrite({
+            gpsVerified: false,
+            gpsUnverifiedReason: 'no_fix',
+            gpsDistanceM: null,
+          });
         }
       }
       
@@ -309,27 +325,49 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   // Handle saving notes
   const handleSaveNotes = async () => {
     if (!currentUser) return;
-    
+    // Ignore a second click while the 15s timer from this attempt is running.
+    if (!slowNotesSave.arm()) return;
+
     setNotesSaving(true);
     try {
-      const { saveLeadAsync } = await import('@/app/utils/storage');
-      const updatedLead: Lead = {
-        ...lead,
-        notes,
-      };
-      await saveLeadAsync(updatedLead);
+      // Partial update: only the changed key. A full-doc setDoc adds/removes
+      // unrelated keys and is denied by the dispo-only rules on non-owned leads.
+      const { updateLeadAsync } = await import('@/app/utils/storage');
+      await updateLeadAsync(lead.id, { notes });
       if (onUpdate) onUpdate();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error saving notes:', error);
+      const code = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+      const message = error instanceof Error ? error.message : 'Notes were not updated.';
+      slowNotesSave.fail(`Notes failed to save.\n\n${code ? `${code}: ${message}` : message}`);
     } finally {
+      slowNotesSave.finish();
       setNotesSaving(false);
     }
   };
 
-  // Handle adding a photo
+  // Handle adding a photo.
+  // 14.17 (web and Capacitor) writes the whole photos array through this
+  // partial update: every existing item, unchanged, then one new item
+  // {id: `${Date.now()}-<up to 9 base36 chars>`, url, caption, type, uploadedBy, uploadedAt}.
+  // Rules on a non-owned lead accept only that append (max 50 photos).
   const handleAddPhoto = async (photoUrl: string, caption: string, type: 'roof' | 'meter' | 'electrical' | 'roofing' | 'other') => {
     if (!currentUser) return;
-    
+    if (photos.length >= 50 || (lead.photos || []).length >= 50) {
+      alert('This lead already has 50 photos, which is the maximum.');
+      return;
+    }
+    if (photoUrl.length > 2048) {
+      alert('Photo URL must be 2048 characters or less.');
+      return;
+    }
+    if (caption.length > 500) {
+      alert('Photo caption must be 500 characters or less.');
+      return;
+    }
+
     const newPhoto = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       url: photoUrl,
@@ -338,17 +376,20 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       uploadedBy: currentUser.id,
       uploadedAt: new Date(),
     };
-    
+
     const updatedPhotos = [...(lead.photos || []), newPhoto];
+    const previousPhotos = photos;
     setPhotos(updatedPhotos);
-    
-    const { saveLeadAsync } = await import('@/app/utils/storage');
-    const updatedLead: Lead = {
-      ...lead,
-      photos: updatedPhotos,
-    };
-    await saveLeadAsync(updatedLead);
-    if (onUpdate) onUpdate();
+
+    try {
+      const { updateLeadAsync } = await import('@/app/utils/storage');
+      await updateLeadAsync(lead.id, { photos: updatedPhotos });
+      if (onUpdate) onUpdate();
+    } catch (error) {
+      console.error('Error saving photo:', error);
+      setPhotos(previousPhotos);
+      alert('Photo failed to save.');
+    }
   };
 
   const handleObjectionSave = async (objectionType: ObjectionType, objectionNotes: string) => {
@@ -357,8 +398,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     setIsUpdating(true);
     
     try {
-      // Update lead with objection data using async Firestore
-      const { saveLeadAsync } = await import('@/app/utils/storage');
+      // Partial update with only the disposition/objection keys (no full-doc setDoc).
+      const { updateLeadAsync } = await import('@/app/utils/storage');
       
       // Add to disposition history
       const historyEntry: LeadDispositionHistoryEntry = {
@@ -368,21 +409,17 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         userName: currentUser.name,
       };
       
-      const updatedLead: Lead = {
-        ...lead,
+      const at = historyEntry.timestamp;
+      // Never include ownership fields (claimedBy/assignedTo/territoryId) here.
+      await updateLeadAsync(lead.id, {
         status: 'not-interested',
         objectionType,
-        objectionNotes,
-        objectionRecordedAt: new Date(),
+        objectionNotes: objectionNotes || '',
+        objectionRecordedAt: at,
         objectionRecordedBy: currentUser.id,
-        // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
-        claimedBy: lead.claimedBy,
-        assignedTo: lead.assignedTo,
-        dispositionedAt: new Date(),
+        dispositionedAt: at,
         dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-      };
-      
-      await saveLeadAsync(updatedLead);
+      });
       
       setShowObjectionTracker(false);
       onUpdate();
@@ -397,8 +434,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     setIsUpdating(true);
     
     try {
-      // Update lead with go back schedule data using async Firestore
-      const { saveLeadAsync } = await import('@/app/utils/storage');
+      // Partial update with only the disposition/Go Back keys (no full-doc setDoc).
+      const { updateLeadAsync } = await import('@/app/utils/storage');
       
       const scheduledDisposition = dispositions.find((d) => d.id === pendingGoBackStatus);
       const statusId = pendingGoBackStatus || 'go-back';
@@ -412,22 +449,18 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         userName: currentUser.name,
       };
       
-      const updatedLead: Lead = {
-        ...lead,
+      // Never include ownership fields (claimedBy/assignedTo/territoryId) here.
+      // updateDoc rejects undefined, so optional fields default to ''.
+      await updateLeadAsync(lead.id, {
         status: statusId,
         disposition: statusName,
-        dispositionedAt: new Date(),
-        // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
-        claimedBy: lead.claimedBy,
-        assignedTo: lead.assignedTo,
+        dispositionedAt: historyEntry.timestamp,
         goBackScheduledDate: scheduleData.date,
-        goBackScheduledTime: scheduleData.time,
-        goBackNotes: scheduleData.notes,
+        goBackScheduledTime: scheduleData.time || '',
+        goBackNotes: scheduleData.notes || '',
         goBackScheduledBy: currentUser.id,
         dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-      };
-      
-      await saveLeadAsync(updatedLead);
+      });
       
       setShowGoBackSchedule(false);
       onUpdate();
@@ -808,6 +841,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
               rows={3}
             />
+            {slowNotesSave.notice && (
+              <p role="alert" className="mt-2 text-sm text-[#C53030]">{slowNotesSave.notice}</p>
+            )}
             <button
               onClick={handleSaveNotes}
               disabled={notesSaving}
@@ -838,6 +874,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
                 type="text"
                 id="photoUrl"
                 placeholder="Photo URL..."
+                maxLength={2048}
                 className="flex-1 px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A]"
               />
               <select id="photoType" className="px-3 py-2 border border-[#E2E8F0] rounded-lg text-sm">

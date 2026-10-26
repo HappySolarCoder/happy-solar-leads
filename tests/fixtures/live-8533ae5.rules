@@ -1,0 +1,440 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ====================== HELPER FUNCTIONS ======================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function me() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function notAnonymous() {
+      return request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    // One get() per call. Call only after hasProfile(); a missing doc errors
+    // and the rule denies, which is the same outcome as a false predicate.
+    function profileApprovedActive() {
+      let user = me();
+      return user.role in ['admin', 'manager', 'setter', 'closer']
+        && user.get('isActive', true) != false
+        && user.get('approved', true) != false
+        && user.get('approvalStatus', 'approved') == 'approved'
+        && user.get('status', 'active') == 'active'          // blocks 'deletion-requested', 'pending', deactivated
+        && user.get('deleted', false) != true
+        && user.get('deletedAt', null) == null
+        && user.get('deletionPending', false) != true;
+    }
+
+    // Same field defaults as the deployed homeowners predicate, which already
+    // works for real reps. Missing flags stay allowed so legacy docs pass.
+    function approvedActive() {
+      return hasProfile() && notAnonymous() && profileApprovedActive();
+    }
+
+    function isTest() {
+      let user = me();
+      return user.get('isTestAccount', false) == true
+        || user.get('testData', false) == true
+        || user.get('team', '') == 'TEST';
+    }
+
+    // AND form of !isTest(). Keeps claim/knock rules under the expression budget.
+    function notTest() {
+      let user = me();
+      return user.get('isTestAccount', false) != true
+        && user.get('testData', false) != true
+        && user.get('team', '') != 'TEST';
+    }
+
+    function isAdmin() {
+      return hasProfile() && notAnonymous() && me().role == 'admin' && profileApprovedActive();
+    }
+
+    function isManager() {
+      return hasProfile() && notAnonymous() && me().role == 'manager' && profileApprovedActive();
+    }
+
+    function isStaff() {
+      return (isAdmin() || isManager()) && !isTest();
+    }
+
+    // Any approved active role, including setter and closer.
+    function isRep() {
+      return approvedActive();
+    }
+
+    function canManageEasterEggs() {
+      return isAdmin() || isManager();
+    }
+
+    // Helper: allows a field to be either unchanged OR completely omitted in the update
+    function unchangedOrMissing(field) {
+      return !(field in request.resource.data) ||
+             request.resource.data[field] == resource.data[field];
+    }
+
+    // Lead ownership checks
+    function leadIsClaimedByMe() {
+      return signedIn() && resource.data.claimedBy == uid();
+    }
+
+    // Disposition/door-knock-only updates.
+    // Prevents ownership/assignment edits while allowing status saves across existing pins.
+    function dispositionUpdateOnly() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        'status',
+        'disposition',
+        'dispositionedAt',
+        'dispositionHistory',
+        'knockGpsLat',
+        'knockGpsLng',
+        'knockGpsAccuracy',
+        'knockGpsTimestamp',
+        'knockDistanceFromAddress'
+      ]);
+    }
+
+    // changedKeys() ignores keys the write ADDS. Block adding ownership fields,
+    // matching the deployed unchangedOrMissing() guards on these branches.
+    function addsNoOwnership(fields) {
+      return !request.resource.data.diff(resource.data).addedKeys().hasAny(fields);
+    }
+
+    function leadIsAssignedToMe() {
+      return signedIn() && resource.data.assignedTo == uid();
+    }
+
+    function leadIsManualByMe() {
+      return signedIn()
+        && resource.data.source == "manually-added"
+        && resource.data.setterId == uid();
+    }
+
+    function requestIsManualByMe() {
+      return signedIn()
+        && request.resource.data.source == "manually-added"
+        && request.resource.data.setterId == uid();
+    }
+
+    // App Review territory id is TEST-appreview-territory. That id prefix is
+    // what marks a territory TEST. Owner is userId, the same field
+    // leadInMyTerritory() reads. source stays manually-added so this create
+    // is still inside the deployed rules.
+    function testAccountTestLeadCreate() {
+      return request.resource.data.testData == true
+        && request.resource.data.claimedBy == uid()
+        && request.resource.data.setterId == uid()
+        && request.resource.data.source == "manually-added"
+        && request.resource.data.territoryId is string
+        && request.resource.data.territoryId.matches('^TEST-.*')
+        && (
+          !("assignedTo" in request.resource.data)
+          || request.resource.data.assignedTo == uid()
+        )
+        && request.resource.data.get('hasEasterEgg', false) != true
+        && approvedActive()
+        && isTest()
+        && get(/databases/$(database)/documents/territories/$(request.resource.data.territoryId)).data.userId == uid();
+    }
+
+    // Web knocks on pins inside the rep's territory polygon are not always
+    // assigned to that rep. territoryId must be set on those leads.
+    function leadInMyTerritory() {
+      return resource.data.get('territoryId', null) != null
+        && get(/databases/$(database)/documents/territories/$(resource.data.territoryId)).data.userId == request.auth.uid;
+    }
+
+    // Allow first-time claim transition: unowned lead -> claimed by current user.
+    // Demo does not need this path.
+    function claimTransitionByMe() {
+      // Cheap rejects first. Diff plus the profile checks blow the rules
+      // expression budget when every other update branch evaluates them too.
+      return request.resource.data.get('claimedBy', '') == uid()
+        && (
+          !("claimedBy" in resource.data)
+          || resource.data.get('claimedBy', null) == null
+          || resource.data.get('claimedBy', '') == ''
+        )
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "claimedBy",
+          "claimedAt",
+          "status"
+        ])
+        && addsNoOwnership(['assignedTo', 'territoryId'])
+        && approvedActive()
+        && notTest();
+    }
+
+    // App Review claim/unclaim. Every condition is required together.
+    // Claim: claimedBy goes from absent/null/empty to uid().
+    // Unclaim: claimedBy goes from uid() to absent/null.
+    // Same changed fields as claimTransitionByMe. testData stays true.
+    function testAccountClaimOrUnclaim() {
+      let territoryId = resource.data.get('territoryId', '');
+      return resource.data.get('testData', false) == true
+        && resource.data.get('assignedTo', '') == uid()
+        && territoryId is string
+        && territoryId.matches('^TEST-.*')
+        && request.resource.data.get('testData', false) == true
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "claimedBy",
+          "claimedAt",
+          "status"
+        ])
+        && addsNoOwnership(['assignedTo', 'territoryId'])
+        && (
+          (
+            request.resource.data.get('claimedBy', '') == uid()
+            && (
+              !("claimedBy" in resource.data)
+              || resource.data.get('claimedBy', null) == null
+              || resource.data.get('claimedBy', '') == ''
+            )
+          )
+          || (
+            resource.data.get('claimedBy', '') == uid()
+            && (
+              !("claimedBy" in request.resource.data)
+              || request.resource.data.claimedBy == null
+            )
+          )
+        )
+        && isTest()
+        && approvedActive()
+        && get(/databases/$(database)/documents/territories/$(territoryId)).data.userId == uid();
+    }
+
+    // Approved owners, including the demo, may edit a lead they already own
+    // without changing claim, assignment, or territory.
+    function ownerLeadUpdate() {
+      return (leadIsClaimedByMe() || leadIsAssignedToMe() || leadIsManualByMe())
+        && unchangedOrMissing("claimedBy")
+        && unchangedOrMissing("assignedTo")
+        && unchangedOrMissing("territoryId")
+        && approvedActive();
+    }
+
+    // Door knocks are split so each branch stays under the expression budget.
+    // Owners are covered by ownerLeadUpdate, which already allows these fields.
+    function staffDisposition() {
+      let user = me();
+      return (user.role == 'admin' || user.role == 'manager')
+        && notTest()
+        && dispositionUpdateOnly()
+        && addsNoOwnership(['claimedBy', 'assignedTo', 'territoryId'])
+        && approvedActive();
+    }
+
+    // Territory owners, including the demo, can knock pins in their territory.
+    // addedKeys blocks ownership fields that changedKeys() does not see.
+    function territoryDisposition() {
+      return leadInMyTerritory()
+        && dispositionUpdateOnly()
+        && addsNoOwnership(['claimedBy', 'assignedTo', 'territoryId'])
+        && approvedActive();
+    }
+
+    function easterEggLeadPlacementUpdate() {
+      return request.resource.data.get('hasEasterEgg', false) == true
+        && ("easterEggId" in request.resource.data)
+        && request.resource.data.easterEggId != null
+        && canManageEasterEggs()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "hasEasterEgg",
+          "easterEggId"
+        ]);
+    }
+
+    function easterEggLeadClearUpdate() {
+      return resource.data.get('hasEasterEgg', false) == true
+        && approvedActive()
+        && notTest()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "hasEasterEgg",
+          "easterEggId"
+        ])
+        && (
+          !("hasEasterEgg" in request.resource.data)
+          || request.resource.data.hasEasterEgg == false
+        )
+        && (
+          !("easterEggId" in request.resource.data)
+          || request.resource.data.easterEggId == null
+        );
+    }
+
+    function easterEggWinUpdateOnly() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        "wonBy",
+        "currentWinners",
+        "active"
+      ]);
+    }
+
+    // ====================== USERS ======================
+    // Own doc stays readable so pending-approval routing and the deletion
+    // notice keep working. Staff can read the directory. Phase 1 also lets
+    // real reps list it for installed Raydar <=14.14 and web name/color lookups.
+    // Self-signups, inactive, deletion-requested, and the App Review TEST
+    // account cannot list or read other users.
+    match /users/{userId} {
+      allow get: if signedIn()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && userId == request.auth.uid;
+      allow get, list: if isStaff();
+      // TODO(phase 2): drop this once GET /api/users/directory ships in web +
+      // native and installed builds have updated.
+      allow get, list: if isRep() && !isTest();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ====================== DISPOSITIONS ======================
+    // Approved active users can read dispositions (the demo needs labels).
+    // Only admins can modify.
+    match /dispositions/{dispositionId} {
+      allow read: if approvedActive();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ====================== ADMIN SETTINGS ======================
+    // Phase 1: real reps still read the scheduling webhook. Self-signups and
+    // the demo cannot. Writes stay server-only.
+    // Phase 2 (separate PR): /api/scheduling-handoff, then admin-only read.
+    match /adminSettings/{docId} {
+      allow read: if approvedActive() && !isTest();
+      allow write: if false;
+    }
+
+    // ====================== USER SESSIONS ======================
+    // Own doc only. Anonymous tokens are denied with everything else.
+    match /userSessions/{docId} {
+      allow read, write: if signedIn()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && docId == uid();
+    }
+
+    // ====================== USER GOALS ======================
+    // Users can read only their own goals; admins can read all.
+    // Writes are admin-only (preferably via Admin SDK route).
+    match /userGoals/{docId} {
+      allow read: if isAdmin() || (
+        signedIn()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && resource.data.uid == uid()
+      );
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ====================== TERRITORIES ======================
+    // Admins see everything; reps can only read their own assigned territory.
+    // Managers are not added. Own branch now requires an approved active profile.
+    match /territories/{territoryId} {
+      allow read: if isAdmin() || (approvedActive() && resource.data.userId == uid());
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ====================== EASTER EGGS ======================
+    // Real approved users can read active egg state and record wins.
+    // The demo cannot. Admins/managers can fully manage eggs.
+    match /easterEggs/{eggId} {
+      allow read: if approvedActive() && !isTest();
+      allow create, delete: if canManageEasterEggs();
+      allow update: if canManageEasterEggs() || (approvedActive() && !isTest() && easterEggWinUpdateOnly());
+    }
+
+    // ====================== LEADS ======================
+    match /leads/{leadId} {
+
+      // READ: Admins/managers = all (active only); reps = claimed / assigned / manual.
+      // The demo still reads leads assigned to it. This stays aligned with
+      // canSeeAllLeads() in app/types/index.ts.
+      allow read: if isAdmin()
+        || isManager()
+        || (
+          approvedActive()
+          && (leadIsClaimedByMe() || leadIsAssignedToMe() || leadIsManualByMe())
+        );
+
+      // CREATE: Admins = anything; real reps = only manual leads they set themselves.
+      // TEST accounts get a separate branch for a test-only lead in their own
+      // TEST territory, and nothing else.
+      allow create: if isAdmin();
+      allow create: if approvedActive() && !isTest() && requestIsManualByMe();
+      allow create: if testAccountTestLeadCreate();
+
+      // UPDATE: split so each branch stays under the rules expression budget.
+      //   Admins = anything
+      //   Managers = easter-egg placement
+      //   Real reps clear an egg they can see
+      //   Approved owners (including the demo) = normal updates without ownership edits
+      //   Staff, owners, or the territory owner = disposition/door-knock only
+      //   Real reps = first claim
+      //   TEST accounts = claim or unclaim only their assigned testData lead
+      //   in a TEST territory they own
+      allow update: if isAdmin();
+      allow update: if easterEggLeadPlacementUpdate();
+      allow update: if easterEggLeadClearUpdate();
+      allow update: if ownerLeadUpdate();
+      allow update: if staffDisposition();
+      allow update: if territoryDisposition();
+      allow update: if claimTransitionByMe();
+      allow update: if testAccountClaimOrUnclaim();
+
+      // DELETE: admin only
+      allow delete: if isAdmin();
+    }
+
+    // ====================== DISPOSITION HISTORY ======================
+    match /disposition_history/{id} {
+      allow read: if isAdmin();
+      allow create: if approvedActive() && request.resource.data.userId == uid();
+      allow update, delete: if isAdmin();
+    }
+
+    // ====================== HOMEOWNERS (Raydar mobile v12.2) ======================
+    // Read-only public-record homeowner data for map pins. Bounded list only.
+    // Deployed activeHomeownerReader, plus an explicit profile and a TEST deny.
+    // The emulator exposes request.query.orderBy as a map of field to ASC/DESC
+    // (plus implicit __name__). Mobile source.ts always orderBy('geohash').
+    match /homeowners/{homeownerId} {
+      function activeHomeownerReader() {
+        let user = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+        return user.role in ['admin', 'manager', 'setter', 'closer']
+          && user.get('isActive', true) != false
+          && user.get('approved', true) != false
+          && user.get('approvalStatus', 'approved') == 'approved'
+          && user.get('status', 'active') == 'active'
+          && user.get('deleted', false) != true
+          && user.get('deletedAt', null) == null
+          && user.get('deletionPending', false) != true;
+      }
+      allow list: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.query.limit != null
+        && request.query.limit <= 500
+        && request.query.orderBy['geohash'] == 'ASC'
+        && hasProfile()
+        && !isTest()
+        && activeHomeownerReader();
+      allow get, create, update, delete: if false;
+    }
+
+    // ====================== DEFAULT DENY (critical security rule) ======================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

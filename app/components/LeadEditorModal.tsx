@@ -2,8 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
+import { deleteField } from 'firebase/firestore';
 import { Lead } from '@/app/types';
-import { saveLeadAsync, invalidateLeadsCache } from '@/app/utils/storage';
+import { buildLeadEditorPatch } from '@/app/utils/leadEditorPatch';
+import { useSlowSaveAlert } from '@/app/utils/useSlowSaveAlert';
+import { updateLeadAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 import { postDiscordNotification, readNotificationError } from '@/app/utils/notificationsClient';
 import {
@@ -26,10 +29,11 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     zip: lead.zip,
     phone: lead.phone || '',
     email: lead.email || '',
-    estimatedBill: lead.estimatedBill || '',
+    estimatedBill: lead.estimatedBill ?? '',
     notes: lead.notes || '',
   });
   const [isSaving, setIsSaving] = useState(false);
+  const slowSave = useSlowSaveAlert();
   const [isSending, setIsSending] = useState(false);
   const [infoSent, setInfoSent] = useState(false);
   // Cached before the call tap. Reading this during the click must not await.
@@ -53,26 +57,35 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
   }, []);
 
   const handleSave = async () => {
+    // Ignore a second click while the 15s timer from this attempt is running.
+    if (!slowSave.arm()) return;
     setIsSaving(true);
 
     try {
-      const updatedLead: Lead = {
-        ...lead,
-        name: formData.name,
-        address: formData.address,
-        city: formData.city,
-        state: formData.state,
-        zip: formData.zip,
-        phone: formData.phone || undefined,
-        email: formData.email || undefined,
-        estimatedBill: formData.estimatedBill ? Number(formData.estimatedBill) : undefined,
-        notes: formData.notes || undefined,
-      };
+      // Partial update of only the contact fields that changed. A full-doc
+      // setDoc rewrites every key and is denied for a manager on a lead they
+      // do not own. 14.17 still submits all nine fields; rules use
+      // affectedKeys(), which ignores values that did not change.
+      const patch: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(buildLeadEditorPatch(lead, formData))) {
+        patch[key] = value === null ? deleteField() : value;
+      }
+      if (Object.keys(patch).length === 0) {
+        onSave();
+        return;
+      }
 
-      await saveLeadAsync(updatedLead);
-      invalidateLeadsCache(); // Ensure fresh data after update
+      await updateLeadAsync(lead.id, patch as Partial<Lead>);
+      invalidateLeadsCache();
       onSave();
+    } catch (error: unknown) {
+      const code = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+      const message = error instanceof Error ? error.message : 'The lead was not updated.';
+      slowSave.fail(`Could not save these changes.\n\n${code ? `${code}: ${message}` : message}`);
     } finally {
+      slowSave.finish();
       setIsSaving(false);
     }
   };
@@ -182,6 +195,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A]"
+                maxLength={200}
                 required
               />
             </div>
@@ -196,6 +210,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
                 value={formData.address}
                 onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                 className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A]"
+                maxLength={300}
                 required
               />
             </div>
@@ -211,6 +226,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
                   value={formData.city}
                   onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                   className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A]"
+                  maxLength={100}
                   required
                 />
               </div>
@@ -238,6 +254,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
                 value={formData.zip}
                 onChange={(e) => setFormData({ ...formData, zip: e.target.value })}
                 className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A]"
+                maxLength={16}
                 required
               />
             </div>
@@ -252,6 +269,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A]"
+                maxLength={40}
                 placeholder="(555) 123-4567"
               />
             </div>
@@ -266,6 +284,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A]"
+                maxLength={254}
                 placeholder="customer@email.com"
               />
             </div>
@@ -294,6 +313,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A]"
                 rows={3}
+                maxLength={10000}
                 placeholder="Any additional notes..."
               />
             </div>
@@ -313,6 +333,9 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
 
           {/* Footer Actions */}
           <div className="sticky bottom-0 bg-white border-t border-[#E2E8F0] px-6 py-4 space-y-3">
+            {slowSave.notice && (
+              <p role="alert" className="text-sm text-center text-[#C53030]">{slowSave.notice}</p>
+            )}
             {/* Save Button */}
             <button
               onClick={handleSave}
