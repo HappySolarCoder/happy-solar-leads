@@ -13,7 +13,18 @@ import {
 } from "./types";
 import { cleanConfig } from "./config";
 import { pilotFlags } from "./analysis";
-import { DIRECT_MOBILE_WRITES, commitDirectMutation, directPatch, reportingPatch } from './directWrites';
+import { DIRECT_MOBILE_WRITES, directPatch, rejectCombinedKnockAndNotes } from './directWrites';
+import { acceptDisposition, collapseLegacyNotesQueue, supersededNotesIds } from './draftQueue';
+import { migrateDraft, reopenDeniedParked } from './draftMigration';
+import { schedulingHold } from './draftState';
+import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
+import { enqueueDirectSave } from './enqueueDirectSave';
+import { CONTACT_NOT_SENT_MESSAGE, contactDraftBlocksSendInfo, parkContactDeniedDrafts, sendInfoMayWriteContact } from './sendInfoGate';
+import { readSyncLog, recordSyncEvent, reportParked, type SyncEvent } from './syncDiagnostics';
+import { displayedKnockPoint, type KnockPoint } from './knockPoint';
+import { GPS_WINDOW_AFTER_MS } from './gpsPolicy';
+import { noteAreaActor } from './areaGate';
+import { resolveDraftGps, stageKnockGps } from './pendingGps';
 import {
   putArea,
   readArea,
@@ -54,16 +65,20 @@ export async function fieldRequest(path: string, body?: unknown) {
     });
   return data;
 }
-import { resolveDraftGps } from './pendingGps';
 import { isProximityRequired } from '@/app/utils/proximityEnforcement';
 import { syncOutbox } from "./syncOutbox";
+import { SYNC_REASON } from "./syncReasons";
 import { unreflectedKnocks } from "./confirmedKnocks";
 const locks = new Map<string, Promise<void>>();
+// NOTES-MERGE-SPEC V4 / v5 ruling 6: notes drafts that went pending in the current sync burst. A fresh sync()
+// (no flush running) starts a new burst; a sync() that waited on a running flush reruns inside the same burst.
+const heldNotesPending = new Map<string, Set<string>>();
 export function useFieldData(user: User | null, liveLeads: Lead[]) {
   const uid = user?.id || "",
     active = useRef(uid);
   active.current = uid;
   const latest = useRef({user,liveLeads});latest.current={user,liveLeads};
+  useEffect(() => { noteAreaActor(user); }, [user]);
   const [confirmedKnocks, setConfirmedKnocks] = useState<PendingMutation[]>([]);
   useEffect(() => {
     setConfirmedKnocks(previous => {
@@ -87,7 +102,8 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     ready: false,
   });
   const [offline, setOffline] = useState(false),
-    [syncing, setSyncing] = useState(false);
+    [syncing, setSyncing] = useState(false),
+    [diagnostics, setDiagnostics] = useState<SyncEvent[]>([]);
   const current =
     state.uid === uid
       ? state
@@ -121,6 +137,15 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
   const reloadDrafts = useCallback(async () => {
     if (uid) update({ drafts: await readDrafts(uid) });
   }, [uid, update]);
+  const reloadDiagnostics = useCallback(async () => {
+    if (uid && active.current === uid) setDiagnostics(await readSyncLog(uid));
+  }, [uid]);
+  useEffect(() => {
+    if (!uid || typeof window === "undefined") return;
+    const refresh = () => { void reloadDiagnostics(); };
+    window.addEventListener("raydar-sync-log", refresh);
+    return () => window.removeEventListener("raydar-sync-log", refresh);
+  }, [uid, reloadDiagnostics]);
   const loadConfig = useCallback(async () => {
     if (DIRECT_MOBILE_WRITES) {
       update({ config: DEFAULT_FIELD_CONFIG, ready: true });
@@ -134,7 +159,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       update({ config: DEFAULT_FIELD_CONFIG, error: (e as Error).message });
     }
   }, [uid, update]);
-  const sync = useCallback(async () => {
+  const runSync = useCallback(async (followUp: boolean): Promise<void> => {
     if (
       !uid ||
       !isDeviceOnline() ||
@@ -145,27 +170,36 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     if (ongoing) {
       await ongoing;
       if (locks.get(uid) === ongoing) locks.delete(uid);
-      return sync();
+      return runSync(true);
     }
+    if (!followUp) heldNotesPending.delete(uid);
+    const held = heldNotesPending.get(uid) ?? new Set<string>();
+    heldNotesPending.set(uid, held);
     const task = (async () => {
     try {
       const queued = await readDrafts(uid);
       if (!queued.length) return;
       // GPS resolves independently of network availability and never blocks another door.
-      for (const m of queued) if (m.direct?.gps && !m.blocked) void resolveDraftGps(m, {
+      for (const m of queued) if (m.syncState === 'gps' && m.direct?.gps) void resolveDraftGps(m, {
         read: () => readDrafts(uid), put: updatePendingGpsDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid,
-      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => update({error: (e as Error).message}));
+      }).then(async () => { await reloadDrafts(); void runSync(false); }).catch(e => console.warn('[raydar-sync]', (e as Error).message));
       setSyncing(true);
-      const result = await syncOutbox({
+      await syncOutbox({
         read: () => readDrafts(uid),
         send: async m => {
           const actor = latest.current.user;
           if (!actor || actor.id !== uid) throw Error('Sign in again to sync your work.');
           const result = DIRECT_MOBILE_WRITES
-            ? await commitDirectMutation(m, actor)
+            ? await deliverFieldDispo(m, actor, {
+              getToken: async () => (await auth?.currentUser?.getIdToken()) || '',
+              persistDraft: putDraft,
+            })
             : await fieldRequest('/api/field-work', m);
           if (DIRECT_MOBILE_WRITES && result.lead && active.current === uid) acknowledgeMobileLead(actor, result.lead);
+          // NOTES-MERGE-SPEC V4: a clear that kept other people's new notes says so.
+          const notice = (result as { notice?: string }).notice;
+          if (notice && active.current === uid) update({ error: notice });
           if (DIRECT_MOBILE_WRITES && m.kind === 'knock' && active.current === uid) {
             setConfirmedKnocks(previous => [...unreflectedKnocks(previous, latest.current.liveLeads, uid).filter(item => item.leadId !== m.leadId), m]);
           }
@@ -181,20 +215,28 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
           return result;
         },
         remove: removeDraft,
-        block: putDraft,
+        update: putDraft,
+        insert: putDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid && isDeviceOnline(),
+        heldNotesPending: held,
       });
-      update({ error: result.error || '' });
+      void reportParked(uid);
       await reloadDrafts();
+      await reloadDiagnostics();
     } catch (e) {
-      update({ error: (e as Error).message });
+      console.warn('[raydar-sync]', (e as Error).message);
+      void recordSyncEvent({
+        id: crypto.randomUUID(), userId: uid, at: Date.now(), draftId: '', leadId: '',
+        createdAt: new Date().toISOString(), state: 'retry', lastError: (e as Error).message, attempts: 0,
+      });
     } finally {
       if (active.current === uid) setSyncing(false);
     }
     })();
     locks.set(uid, task);
     try { await task; } finally { if (locks.get(uid) === task) locks.delete(uid); }
-  }, [uid, update, reloadDrafts]);
+  }, [uid, reloadDrafts, reloadDiagnostics]);
+  const sync = useCallback(() => runSync(false), [runSync]);
   useEffect(() => {
     if (!uid) return;
     let alive = true;
@@ -205,17 +247,21 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         // their original time and rep; Firestore rules still authorize every write.
         const actor = latest.current.user;
         if (DIRECT_MOBILE_WRITES && actor?.id === uid && auth?.currentUser?.uid === uid) {
-          for (const m of drafts) if (!m.direct && m.kind !== 'handoff') {
-            try {
-              await putDraft({ ...m, userName: m.userName || actor.name,
-                direct: { patch: reportingPatch(m, actor), legacy: true }, blocked: false, error: undefined });
-            } catch (e) { await putDraft({ ...m, blocked: true, error: (e as Error).message }); }
+          const migrated = drafts.map((m) => migrateDraft(m, actor));
+          const opened = releaseFieldDispoHolds(reopenDeniedParked(migrated, uid));
+          const collapsed = collapseLegacyNotesQueue(opened);
+          const kept = new Set(collapsed.map((row) => row.id));
+          for (const row of collapsed) {
+            const prev = drafts.find((item) => item.id === row.id);
+            if (prev !== row) await putDraft(row);
           }
+          for (const row of drafts) if (!kept.has(row.id)) await removeDraft(row.id);
           drafts = await readDrafts(uid);
-          for (const m of drafts) if (m.direct?.gps && !m.blocked) void resolveDraftGps(m, {
+          for (const m of drafts) if (m.syncState === 'gps' && m.direct?.gps) void resolveDraftGps(m, {
             read: () => readDrafts(uid), put: updatePendingGpsDraft,
             active: () => active.current === uid && auth?.currentUser?.uid === uid,
-          }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => update({error:(e as Error).message}));
+          }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => console.warn('[raydar-sync]', (e as Error).message));
+          void reloadDiagnostics();
         }
         if (alive) {
           update({
@@ -262,23 +308,50 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
   }, [uid, update, loadConfig, sync]);
   const enqueue = useCallback(
     async (m: FieldMutation) => {
-      if (!uid || m.userId !== uid || auth?.currentUser?.uid !== uid)
-        throw Error("Your account changed. Sign in again.");
-      const drafts = await readDrafts(uid);
-      if (drafts.length >= 500)
-        throw Error(
-          "You have 500 pending changes. Sync or review them before adding more.",
-        );
-      if (drafts.some((x) => x.leadId === m.leadId && x.blocked))
-        throw Error(
-          "This pin has a sync conflict. Open Field tools → Sync to review it first.",
-        );
-      await putDraft(m);
+      if (!uid || m.userId !== uid || auth?.currentUser?.uid !== uid) {
+        const message = "Your account changed. Sign in again.";
+        console.warn("[raydar-sync]", message);
+        void recordSyncEvent({
+          id: crypto.randomUUID(), userId: m.userId, at: Date.now(), draftId: m.id, leadId: m.leadId,
+          createdAt: m.createdAt, state: "retry", lastError: message, attempts: 0,
+          parkedReason: SYNC_REASON.permissionDenied,
+        });
+        throw Error(message);
+      }
+      let drafts = await readDrafts(uid);
+      const expanded = collapseLegacyNotesQueue(drafts);
+      if (expanded !== drafts) {
+        const expandedIds = new Set(expanded.map((row) => row.id));
+        for (const row of expanded) {
+          const prev = drafts.find((item) => item.id === row.id);
+          if (prev !== row) await putDraft(row);
+        }
+        for (const row of drafts) if (!expandedIds.has(row.id)) await removeDraft(row.id);
+        drafts = expanded;
+      }
+      let stored;
+      try { stored = acceptDisposition(drafts, m); }
+      catch (e) {
+        console.warn("[raydar-sync]", (e as Error).message);
+        void recordSyncEvent({
+          id: crypto.randomUUID(), userId: uid, at: Date.now(), draftId: m.id, leadId: m.leadId,
+          createdAt: m.createdAt, status: m.status, disposition: m.disposition, state: "retry",
+          lastError: (e as Error).message, attempts: 0,
+        });
+        throw e;
+      }
+      await putDraft(stored);
+      for (const id of supersededNotesIds(drafts, stored)) await removeDraft(id);
       await reloadDrafts();
-      if (m.direct?.gps) void resolveDraftGps(m, {
+      if (stored.syncState === "parked") void recordSyncEvent({
+        id: crypto.randomUUID(), userId: uid, at: Date.now(), draftId: stored.id, leadId: stored.leadId,
+        createdAt: stored.createdAt, status: stored.status, disposition: stored.disposition,
+        state: "parked", parkedReason: stored.parkedReason, lastError: stored.lastError, attempts: stored.attempts ?? 0,
+      });
+      if (stored.syncState === "gps" && stored.direct?.gps) void resolveDraftGps(stored, {
         read: () => readDrafts(uid), put: updatePendingGpsDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid,
-      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => update({error: (e as Error).message}));
+      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => console.warn("[raydar-sync]", (e as Error).message));
       void sync();
     },
     [uid, reloadDrafts, sync, update],
@@ -292,11 +365,14 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     },
     [uid, reloadDrafts],
   );
-  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead, deferGps = false) => {
+  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead, deferGps = false, point?: KnockPoint | null) => {
     const actor = latest.current.user;
     if (!DIRECT_MOBILE_WRITES || !actor || actor.id !== uid || auth?.currentUser?.uid !== uid)
       throw Error('Sign in with the rep who is recording this action.');
+    const recordedAt = new Date();
+    rejectCombinedKnockAndNotes(patch);
     const clean = directPatch(patch), entry = clean.dispositionHistory?.[0];
+    const tappedAt = entry?.timestamp ? new Date(entry.timestamp) : recordedAt;
     if (entry) clean.dispositionHistory = [entry];
     if (entry && (entry.userId !== uid || entry.userName !== actor.name))
       throw Error('The knock identity does not match the signed-in rep.');
@@ -305,28 +381,112 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         leads: [lead, ...(current.area?.leads || latest.current.liveLeads).filter(l => l.id !== lead.id).slice(0, 24)] };
       await putArea(area); update({ area });
     }
-    await enqueue({ id: crypto.randomUUID(), userId: uid, userName: actor.name,
-      leadId: lead.id, createdAt: (entry ? new Date(entry.timestamp) : new Date()).toISOString(),
-      kind: entry ? 'knock' : 'notes', baseStatus: lead.status, baseNotes: lead.notes || '',
-      ...(entry ? { status: clean.status, disposition: entry.disposition } : {}),
-      direct: { patch: clean, ...(create ? { create } : {}), ...(deferGps && entry ? {gps: {
-        ...(Number.isFinite(lead.lat) ? {lat:lead.lat} : {}), ...(Number.isFinite(lead.lng) ? {lng:lead.lng} : {}),
-        deadline: Date.now() + 15000, required: isProximityRequired(actor),
-      }} : {}) } });
+    if (!entry) {
+      const priors = (await readDrafts(uid)).filter((row) =>
+        row.leadId === lead.id && row.kind === "notes" && row.parkedReason === SYNC_REASON.notesTooLong);
+      await enqueueDirectSave({
+        lead,
+        patch: clean,
+        actor,
+        create,
+        createdAt: tappedAt.toISOString(),
+        parkedNotes: priors,
+        enqueue,
+      });
+      return;
+    }
+    // History timestamp is the tap, captured before any GPS await. Save time is not the window.
+    const shown = point === undefined ? displayedKnockPoint(lead, lead.homeowner) : point;
+    const draftId = crypto.randomUUID();
+    let staged: import('./types').PendingMutation = {
+      id: draftId, userId: uid, userName: actor.name,
+      leadId: lead.id, createdAt: tappedAt.toISOString(),
+      kind: 'knock', baseStatus: lead.status, baseNotes: lead.notes || '',
+      status: clean.status, disposition: entry.disposition,
+      direct: {
+        patch: clean,
+        ...(create ? { create } : {}),
+        ...(prefersServerDispo(lead, uid, actor.role) ? { serverDispo: true } : {}),
+        ...(shown?.source === 'homeowner_corrected' && shown.homeownerId ? { homeownerId: shown.homeownerId } : {}),
+        ...(shown ? { gpsPointSource: shown.source } : {}),
+        ...(deferGps ? { gps: {
+          ...(shown ? { lat: shown.lat, lng: shown.lng, source: shown.source } : {}),
+          ...(shown?.homeownerId ? { homeownerId: shown.homeownerId } : {}),
+          tappedAt: tappedAt.getTime(),
+          deadline: tappedAt.getTime() + GPS_WINDOW_AFTER_MS,
+          required: isProximityRequired(actor),
+          areaOwned: leadOwnedBy(lead, uid),
+        } } : {}),
+      },
+    };
+    if (deferGps) staged = stageKnockGps(staged, Date.now());
+    await enqueue(staged);
   }, [uid, enqueue, current.area, update]);
+  const parkDeniedContact = useCallback(async (leadId: string) => {
+    const drafts = await readDrafts(uid);
+    for (const row of parkContactDeniedDrafts(drafts, leadId)) {
+      await putDraft(row);
+      await recordSyncEvent({
+        id: crypto.randomUUID(),
+        userId: uid,
+        at: Date.now(),
+        draftId: row.id,
+        leadId: row.leadId,
+        createdAt: row.createdAt,
+        state: "parked",
+        parkedReason: row.parkedReason,
+        lastError: row.lastError,
+        attempts: row.attempts ?? 0,
+      });
+    }
+    await reloadDrafts();
+  }, [uid, reloadDrafts]);
+  const prepareSendInfo = useCallback(async (leadId: string) => {
+    const actor = latest.current.user;
+    const known = latest.current.liveLeads.find((row) => row.id === leadId)
+      || current.area?.leads.find((row) => row.id === leadId);
+    if (!DIRECT_MOBILE_WRITES) {
+      if (!isDeviceOnline()) throw Error('Connect before sending the scheduling request.');
+      await sync();
+      const hold = schedulingHold(await readDrafts(uid), leadId);
+      if (hold) throw Error(hold);
+      return;
+    }
+    const canWrite = !actor || sendInfoMayWriteContact(true, known, uid, actor.role);
+    const refused = () => Object.assign(Error(CONTACT_NOT_SENT_MESSAGE), { code: "contact_denied" });
+    if (!canWrite && !isDeviceOnline()) {
+      await parkDeniedContact(leadId);
+      throw refused();
+    }
+    if (!isDeviceOnline()) {
+      const offlineDrafts = await readDrafts(uid);
+      if (offlineDrafts.some((row) => row.leadId === leadId && row.kind === "contact" && row.syncState === "parked"))
+        throw refused();
+      // Offline, and this role may write contact fields: the draft stays durably
+      // queued. Send Info does not post. That is unchanged. An ambiguous
+      // notification response is never retried.
+      throw Error('Connect before sending the scheduling request.');
+    }
+    await sync();
+    const drafts = await readDrafts(uid);
+    if (!canWrite) {
+      if (drafts.some((row) => row.leadId === leadId && row.kind === "contact" && row.syncState !== "parked"))
+        await parkDeniedContact(leadId);
+      throw refused();
+    }
+    if (contactDraftBlocksSendInfo(drafts, leadId)) throw refused();
+    const hold = schedulingHold(drafts, leadId);
+    if (hold) throw Error(hold);
+  }, [uid, sync, current.area, parkDeniedContact]);
   const ensureLeadSynced = useCallback(async (leadId: string) => {
     if (!isDeviceOnline()) throw Error('Connect before sending the scheduling request.');
     await sync();
-    if ((await readDrafts(uid)).some(m => m.leadId === leadId))
-      throw Error('This lead is still unsynced. Wait for sync or review its error before sending.');
+    const hold = schedulingHold(await readDrafts(uid), leadId);
+    if (hold) throw Error(hold);
   }, [uid, sync]);
   const retrySync = useCallback(async () => {
-    if (auth?.currentUser?.uid !== uid) return;
-    for (const m of await readDrafts(uid)) if (m.direct && m.blocked && !m.direct.gps)
-      await putDraft({ ...m, blocked: false, error: undefined });
-    await reloadDrafts();
     await sync();
-  }, [uid, sync, reloadDrafts]);
+  }, [sync]);
   const prepare = useCallback(
     async (leads: Lead[]) => {
       if (!user || !current.ready || !isDeviceOnline())
@@ -364,9 +524,11 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     leads,
     offline,
     syncing,
+    diagnostics,
     enqueue,
     enqueueDirect,
     ensureLeadSynced,
+    prepareSendInfo,
     retrySync,
     sync,
     discard,

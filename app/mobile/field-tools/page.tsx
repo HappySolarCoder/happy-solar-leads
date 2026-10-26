@@ -22,14 +22,12 @@ export default function FieldToolsPage() {
         flags={field.flags}
         now={now}
         offline={field.offline}
+        diagnostics={field.diagnostics}
         drafts={field.drafts}
-        syncing={field.syncing}
         error={field.error}
         prepared={field.area?.at}
         onSelect={setSelected}
         onPrepare={field.prepare}
-        onSync={field.retrySync}
-        onDiscard={field.discard}
         onHandoff={async (lead, state) => {
           await field.enqueue({
             id: crypto.randomUUID(),

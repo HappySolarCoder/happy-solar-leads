@@ -16,6 +16,12 @@ import { fieldPinArtwork, fieldPinZoomTier } from '@/app/utils/fieldPin';
 import { buildLeadViewportIndex, queryLeadViewport } from '@/app/utils/mapViewport';
 import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { getLocation } from '@/app/utils/geolocation';
+import { displayedKnockPoint } from '@/app/field/knockPoint';
+import { AREA_BLOCK_MESSAGE, assertDropPinArea, knownPolygonsSync } from '@/app/field/areaGate';
+import { droppedPinGps } from '@/app/field/pendingGps';
+import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
+import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
+import { bestFixInWindow, noteWarmFix } from '@/app/field/warmGps';
 
 import { apiFetch } from '@/app/utils/apiFetch';
 
@@ -34,7 +40,6 @@ import { getTerritoriesAsync } from '@/app/utils/territories';
 import { findLeadTerritory } from '@/app/utils/territoryAssignment';
 import { formatTimeEST } from '@/app/utils/timezone';
 import { colorForTerritory, shouldRenderTerritoryOverlay, type TeamAreaMember } from '@/app/utils/teamAreas';
-import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 import { isAppointmentSetOrSoldLead, pastPinPopupLines } from '@/app/utils/historicalTerritoryPins';
 
 interface UserRoute {
@@ -221,6 +226,7 @@ export default function LeadMap({
   const hasFitRouteBoundsRef = useRef<boolean>(false); // Track if we've already fit bounds for single route mode
   const userInteractedRef = useRef<boolean>(false); // After user pans/zooms, never auto-fit/auto-pan
   const [isClient, setIsClient] = useState(false);
+  const proximity = useProximityPrompt();
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [loadedDispositions, setDispositions] = useState<Disposition[]>([]);
   const dispositions = dispositionOptions ?? loadedDispositions;
@@ -284,8 +290,9 @@ export default function LeadMap({
       if(matched){houseAnchors.delete(l.id);houseAnchors.set(l.id,matched);}
       const home=matched || houseAnchors.get(l.id);
       while(houseAnchors.size>6000)houseAnchors.delete(houseAnchors.keys().next().value!);
-      // Display corrected rooftop coordinates without editing any saved lead.
-      return home && (home.lat!==l.lat || home.lng!==l.lng) ? {...l,lat:home.lat,lng:home.lng} : l;
+      // Same helper as the knock gate. Display only; stored lead coordinates stay put.
+      const point = displayedKnockPoint(l, home);
+      return point?.source === 'homeowner_corrected' ? {...l, lat: point.lat, lng: point.lng} : l;
     });
   }, [leadsProp, houseIndex, homeMerge, houseAnchors]);
 
@@ -1451,49 +1458,42 @@ export default function LeadMap({
   // Handle saving new lead from dropped pin
   const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
     try {
-      if (!saveManualLead && isProximityRequired(currentUser)) {
-        try {
-          const position = await getLocation({
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0,
-          });
-
-          const pinLat = typeof leadData.lat === 'number' ? leadData.lat : dropPinLocation?.lat;
-          const pinLng = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
-
-          if (typeof pinLat === 'number' && typeof pinLng === 'number') {
-            const R = 6371000;
-            const dLat = (pinLat - position.coords.latitude) * Math.PI / 180;
-            const dLng = (pinLng - position.coords.longitude) * Math.PI / 180;
-            const a =
-              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(position.coords.latitude * Math.PI / 180) *
-              Math.cos(pinLat * Math.PI / 180) *
-              Math.sin(dLng / 2) * Math.sin(dLng / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            const distanceFromPin = R * c;
-
-            if (distanceFromPin > PROXIMITY_MAX_DISTANCE_METERS) {
-              const distanceFeet = Math.round(distanceFromPin * 3.281);
-              alert(
-                `You are not close enough to this pin to create it.\n\n` +
-                `Distance: ${distanceFeet} feet away\n` +
-                `Required: Within 100 feet\n\n` +
-                `Please move closer to the location and try again.`
-              );
-              return;
-            }
-          }
-        } catch (err) {
-          console.warn('[LeadMap] Manual pin GPS capture failed:', err);
-          alert('Your location could not be verified. Enable precise location and try again.');
-          return;
-        }
-      }
-
-      // Generate ID
+      const pinLat = typeof leadData.lat === 'number' ? leadData.lat : dropPinLocation?.lat;
+      const pinLng = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
+      let gpsFields: Partial<Lead> = {};
       const id = manualDraftId.current || (manualDraftId.current = crypto.randomUUID());
+      try {
+        const tappedAt = Date.now();
+        const warm = bestFixInWindow(tappedAt, tappedAt);
+        const position = warm ?? await getLocation({ enableHighAccuracy: true, timeout: 10000 });
+        if (!warm) noteWarmFix(position);
+        const pin = typeof pinLat === 'number' && typeof pinLng === 'number' ? { lat: pinLat, lng: pinLng } : null;
+        if (currentUser) {
+          await saveWithProximityWarning({
+            guardId: `drop:${id}:${currentUser.id}`,
+            checkArea: () => assertDropPinArea({ user: currentUser, fix: position, leadId: id, tappedAt }),
+            verdict: proximityVerdictAtTap({
+              fix: warm,
+              tappedAt,
+              pin,
+              role: currentUser.role,
+              optOut: currentUser.features?.proximityEnforcement === false,
+              polygons: knownPolygonsSync(currentUser.id)?.polygons,
+            }),
+            ask: proximity.ask,
+            save: async () => {
+              if (pin) gpsFields = droppedPinGps(position, pin.lat, pin.lng);
+            },
+          });
+        } else if (pin) {
+          gpsFields = droppedPinGps(position, pin.lat, pin.lng);
+        }
+      } catch (err) {
+        if (isProximityWarningCancelled(err)) throw err;
+        if (err instanceof Error && err.message === AREA_BLOCK_MESSAGE) throw err;
+        console.warn('[LeadMap] Manual pin GPS capture failed:', err);
+        gpsFields = { gpsVerified: false, gpsUnverifiedReason: 'no_fix' };
+      }
 
       const firebaseUid = auth?.currentUser?.uid;
       if (!firebaseUid) {
@@ -1513,6 +1513,7 @@ export default function LeadMap({
 
       const newLead: Lead = {
         ...leadData,
+        ...gpsFields,
         id,
         status: manualStatus || 'available',
         disposition: manualDisposition,
@@ -1602,6 +1603,8 @@ export default function LeadMap({
         onLeadAdded(newLead);
       }
     } catch (error: any) {
+      if (isProximityWarningCancelled(error)) throw error;
+      if (error?.message === AREA_BLOCK_MESSAGE) throw error;
       console.error('Error saving dropped lead:', error);
       // Surface the real reason up to UI (permission-denied vs auth-not-ready)
       const msg = error?.message || String(error);
@@ -1630,6 +1633,7 @@ export default function LeadMap({
 
   return (
     <div className="relative w-full h-full">
+      {proximity.dialog}
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       
       {showHomeowners && <HomeownerStatus state={homeState} onSelect={selectListedHome} />}

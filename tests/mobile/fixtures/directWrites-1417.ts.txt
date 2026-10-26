@@ -1,0 +1,115 @@
+// Vendored from 053ae9e app/field/directWrites.ts (Raydar 14.17).
+// The contact-save baseline loads this file so the test runs without a .git directory.
+import { Timestamp, doc, runTransaction } from 'firebase/firestore';
+import { auth, db } from '@/app/utils/firebase';
+import type { Lead, User } from '@/app/types';
+import type { PendingMutation } from './types';
+import { mapLeadDoc } from '@/app/utils/firestore';
+import { createLeadOnce } from './createLeadOnce';
+import { distanceBetween } from 'geofire-common';
+
+// Bundled mobile releases never depend on the undeployed field APIs.
+export const DIRECT_MOBILE_WRITES = process.env.NEXT_PUBLIC_NATIVE_BUILD === '1';
+const fields = new Set(['status', 'disposition', 'dispositionedAt', 'dispositionHistory',
+  'knockGpsLat', 'knockGpsLng', 'knockGpsAccuracy', 'knockGpsTimestamp', 'knockDistanceFromAddress',
+  'objectionType', 'objectionNotes', 'objectionRecordedAt', 'objectionRecordedBy',
+  'goBackScheduledDate', 'goBackScheduledTime', 'goBackNotes', 'goBackScheduledBy',
+  'notes', 'photos', 'name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill']);
+const dateFields = ['dispositionedAt', 'knockGpsTimestamp', 'objectionRecordedAt', 'goBackScheduledDate'];
+export function dateValue(value: unknown): Date {
+  const date = value instanceof Date ? value : value && typeof (value as Timestamp).toDate === 'function'
+    ? (value as Timestamp).toDate() : new Date(value as string);
+  if (!Number.isFinite(date.getTime())) throw Error('Invalid knock time. Check the device clock.');
+  return date;
+}
+export function directPatch(patch: Partial<Lead>): Partial<Lead> {
+  return Object.fromEntries(Object.entries(patch).filter(([k, v]) => fields.has(k) && v !== undefined));
+}
+/** No new server fields/collections. Ownership is never part of an update. */
+export function reportingPatch(m: PendingMutation, user: User): Partial<Lead> {
+  if (m.userId !== user.id) throw Error('This saved action belongs to a different account.');
+  const at = dateValue(m.createdAt);
+  let patch = m.direct ? directPatch(m.direct.patch) : m.kind === 'notes' ? { notes: m.notes || '' } : {};
+  if (m.kind === 'handoff') throw Object.assign(Error('Legacy handoff needs review; it was not sent.'), { status: 409 });
+  if (m.kind === 'knock') {
+    if (!m.status || ['claimed', 'unclaimed'].includes(m.status)) throw Error('Use the claim/unclaim action for ownership changes.');
+    const gps = m.observation?.gps;
+    patch = { ...patch, status: m.status, dispositionedAt: at,
+      dispositionHistory: [{ disposition: m.disposition || m.status, timestamp: at,
+        userId: m.userId, userName: m.userName || user.name }],
+      ...(!m.direct && gps ? { knockGpsLat: gps.lat, knockGpsLng: gps.lng,
+        knockGpsAccuracy: gps.accuracy, knockGpsTimestamp: dateValue(gps.timestamp) } : {}),
+      ...(!m.direct && m.objectionType ? { objectionType: m.objectionType as Lead['objectionType'],
+        objectionNotes: m.objectionNotes || '', objectionRecordedAt: at, objectionRecordedBy: m.userId } : {}),
+      ...(!m.direct && m.goBackScheduledDate ? { disposition: m.disposition || m.status,
+        goBackScheduledDate: dateValue(m.goBackScheduledDate), goBackScheduledTime: m.goBackScheduledTime || '',
+        goBackNotes: m.goBackNotes || '', goBackScheduledBy: m.userId } : {}),
+    };
+  }
+  for (const key of dateFields) {
+    const values = patch as Record<string, unknown>;
+    if (values[key] != null) values[key] = dateValue(values[key]);
+  }
+  return patch;
+}
+/** Merge against current server history; an uncertain acknowledgement can safely retry.
+ * The same uid/time/disposition identifies a replay without adding server schema.
+ */
+export function mergeReportingPatch(current: Partial<Lead>, patch: Partial<Lead>) {
+  const entry = patch.dispositionHistory?.[0];
+  if (!entry) return { patch, replayed: false };
+  const history = current.dispositionHistory || [];
+  const at = dateValue(entry.timestamp).getTime();
+  if (history.some(h => h.userId === entry.userId && h.disposition === entry.disposition && dateValue(h.timestamp).getTime() === at))
+    return { patch: {}, replayed: true };
+  const merged = [entry, ...history].sort((a, b) => dateValue(b.timestamp).getTime() - dateValue(a.timestamp).getTime());
+  // A delayed offline knock must not roll a newer disposition/GPS back in time.
+  if (current.dispositionedAt && dateValue(current.dispositionedAt).getTime() > at)
+    return { patch: { dispositionHistory: merged }, replayed: false };
+  return { patch: { ...patch, dispositionHistory: merged }, replayed: false };
+}
+export function firestoreValue(value: unknown): unknown {
+  if (value instanceof Date) return Timestamp.fromDate(value);
+  if (value instanceof Timestamp) return value;
+  if (Array.isArray(value)) return value.map(firestoreValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
+    .filter(([, v]) => v !== undefined).map(([k, v]) => [k, firestoreValue(v)]));
+  return value;
+}
+export async function commitDirectMutation(m: PendingMutation, user: User) {
+  if (!db) throw Error('Firestore is not configured. Your action stays unsynced.');
+  const check = () => { if (auth?.currentUser?.uid !== m.userId || user.id !== m.userId)
+    throw Error('Account changed. Reconnect with the rep who recorded this action.'); };
+  check();
+  if (m.direct?.gps) throw Object.assign(Error('GPS verification is still pending. Your knock is saved on this phone.'), {status:409});
+  const ref = doc(db, 'leads', m.leadId), patch = reportingPatch(m, user);
+  try {
+    const seed = m.direct?.create;
+    if (seed) {
+      if (seed.id !== m.leadId || seed.setterId !== m.userId || seed.claimedBy !== m.userId || seed.source !== 'manually-added')
+        throw Object.assign(Error('New lead ownership must match the signed-in rep.'), { status: 403 });
+      if (await createLeadOnce(m.leadId, m.userId, { ...seed, ...patch })) return { replayed: false, lead: { ...seed, ...patch } as Lead };
+    }
+    return await runTransaction(db, async tx => {
+      check();
+      const snapshot = await tx.get(ref);
+      check();
+      if (!snapshot.exists()) {
+        throw Object.assign(Error('This lead is missing. The action remains unsynced for review.'), { status: 404 });
+      }
+      const current = snapshot.data() as Lead;
+      if (m.direct?.legacy && patch.knockGpsLat != null && patch.knockGpsLng != null && current.lat != null && current.lng != null)
+        patch.knockDistanceFromAddress = distanceBetween([patch.knockGpsLat, patch.knockGpsLng], [current.lat, current.lng]) * 1000;
+      if (current.historicalTerritoryPin) throw Object.assign(Error('Historical pins cannot be dispositioned.'), { status: 403 });
+      if ((!m.direct || m.direct.legacy) && m.kind === 'notes' && (current.notes || '') !== m.baseNotes && current.notes !== m.notes)
+        throw Object.assign(Error('Notes changed on another device. Review this draft.'), { status: 409 });
+      const merged = mergeReportingPatch(current, patch);
+      if (!merged.replayed) tx.update(ref, firestoreValue(merged.patch) as Record<string, unknown>);
+      return { replayed: merged.replayed, lead: mapLeadDoc({id:m.leadId, data:()=>({...current, ...merged.patch})}) };
+    });
+  } catch (error) {
+    const e = error as Error & { code?: string; status?: number };
+    if (e.code === 'permission-denied') e.status = 403;
+    throw e;
+  }
+}

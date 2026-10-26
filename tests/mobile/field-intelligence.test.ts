@@ -433,6 +433,7 @@ test("offline overlays do not mutate source, duplicate accepted events, or apply
   assert.equal(l.status, "unclaimed");
   assert.equal(output[0].status, "not-home");
   assert.equal(overlayDrafts(output, [m])[0].dispositionHistory?.length, 1);
+  // Parked and blocked drafts still overlay the local dispo; later notes are not dropped.
   assert.equal(
     overlayDrafts(
       [l],
@@ -441,7 +442,7 @@ test("offline overlays do not mutate source, duplicate accepted events, or apply
         { ...m, id: "second", kind: "notes", notes: "dependent" },
       ],
     )[0].notes,
-    undefined,
+    "dependent",
   );
 });
 test("public tickets are encrypted, expire and reject tampering before database access", () => {

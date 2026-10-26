@@ -89,7 +89,7 @@
         localStorage.setItem('happysolar_leads', JSON.stringify(allLeads));
         output.innerHTML += `✅ Saved ${withSolar.length} new leads (total: ${allLeads.length})\n`;
       } catch (err) {
-        output.innerHTML += `❌ Save failed: ${err.message}\n`;
+        output.innerHTML += `❌ Upload failed: ${err.message}\n`;
       }
       
       // Summary

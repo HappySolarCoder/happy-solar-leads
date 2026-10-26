@@ -3,6 +3,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
+import { NOTES_BLANK_MESSAGE, NOTES_TOO_LONG_MESSAGE, notesEditTooLong, parkedNotesNotice, phoneClockNotice, whitespaceNotesChange, type NotesLengthDraft } from '@/app/field/notesLimits';
+import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
+import { contactSaveFields, editorSavePatch, officeLeadSave } from './contactPatch';
+import { isDeviceOnline } from '@/app/utils/connectivity';
+import {
+  CONTACT_NOT_SENT_MESSAGE,
+  contactSaveDeniedError,
+  finishSendInfo,
+  sendInfoMayWriteContact,
+} from '@/app/field/sendInfoGate';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 import { auth } from '@/app/utils/firebase';
@@ -27,11 +37,12 @@ interface LeadEditorModalProps {
   fieldContext?: string;
   onInfoSent?: () => Promise<void>;
   lead: Lead;
+  pendingDrafts?: NotesLengthDraft[];
   onClose: () => void;
   onSave: () => void;
 }
 
-export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, signedInRep, fieldContext, onInfoSent, mobileMode = false, pendingFieldWork = false, saveLeadPatch }: LeadEditorModalProps) {
+export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, signedInRep, fieldContext, onInfoSent, mobileMode = false, pendingFieldWork = false, saveLeadPatch, pendingDrafts }: LeadEditorModalProps) {
   const [formData, setFormData] = useState({
     name: lead.name,
     address: lead.address,
@@ -48,6 +59,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
   const [infoSent, setInfoSent] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [sendNotice, setSendNotice] = useState<string | null>(null);
+  const [notesNotice, setNotesNotice] = useState<string | null>(null);
   const [accountBlocked, setAccountBlocked] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(0);
@@ -94,33 +106,57 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
     return () => window.clearInterval(id);
   }, [cooldownUntil]);
 
+  const notesTooLong = notesEditTooLong({
+    currentNotes: lead.notes || '',
+    notes: formData.notes,
+    leadId: lead.id,
+    baseNotes: lead.notes || '',
+    parkedNotes: pendingDrafts,
+  });
+  const parkedNotesMessage = parkedNotesNotice(pendingDrafts, lead.id);
+  const clockNotice = phoneClockNotice(pendingDrafts, lead.id);
+
+  const persistEditor = async (notesBlocked: boolean) => {
+    const form = notesBlocked ? { ...formData, notes: lead.notes || '' } : formData;
+    if (saveLeadPatch) {
+      if (DIRECT_MOBILE_WRITES) {
+        const patch = editorSavePatch(lead, form, false);
+        if (patch) await saveLeadPatch(patch);
+      } else await saveLeadPatch(contactSaveFields(lead, form));
+      return;
+    }
+    if (mobileMode) {
+      const { updateLeadAsync } = await import('@/app/utils/storage');
+      await updateLeadAsync(lead.id, contactSaveFields(lead, form));
+      return;
+    }
+    await saveLeadAsync(officeLeadSave(lead, form));
+  };
+
   const handleSave = async () => {
     if (mobileMode && pendingFieldWork) { alert('Sync or review this pin’s pending changes in Field tools before editing contact details. You can still send the scheduling information.'); return; }
+    if (whitespaceNotesChange(lead.notes || '', formData.notes)) {
+      setNotesNotice(NOTES_BLANK_MESSAGE);
+      setIsSaving(true);
+      try {
+        await persistEditor(true);
+        invalidateLeadsCache();
+      } catch (error) {
+        alert(`Changes could not be saved. ${(error as Error).message}`);
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+    setNotesNotice(null);
     setIsSaving(true);
 
     try {
-      const updatedLead: Lead = {
-        ...lead,
-        name: formData.name,
-        address: formData.address,
-        city: formData.city,
-        state: formData.state,
-        zip: formData.zip,
-        phone: formData.phone || undefined,
-        email: formData.email || undefined,
-        estimatedBill: formData.estimatedBill ? Number(formData.estimatedBill) : undefined,
-        notes: formData.notes || undefined,
-      };
-
-      if (saveLeadPatch) {
-        await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
-      } else if (mobileMode) {
-        const { updateLeadAsync } = await import('@/app/utils/storage');
-        await updateLeadAsync(lead.id, { name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
-      } else await saveLeadAsync(updatedLead);
-      invalidateLeadsCache(); // Ensure fresh data after update
-      onSave();
+      await persistEditor(notesTooLong);
+      invalidateLeadsCache();
+      if (!notesTooLong) onSave();
     } catch (error) {
+      if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) return;
       alert(`Changes could not be saved. ${(error as Error).message}`);
     } finally {
       setIsSaving(false);
@@ -152,47 +188,80 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
           return;
         }
       }
-      if (mobileMode && (!user || auth?.currentUser?.uid !== user.id)) {
+      if (!user || (mobileMode && auth?.currentUser?.uid !== user.id)) {
         setSendNotice(SIGN_IN_AGAIN_MESSAGE);
         return;
       }
 
-      // Persist the lead before the notification so the request has a real visit.
+      // Persist contact fields before the notification. Over-long notes are not part of that write.
+      let notesBlocked = false;
       try {
-        if (saveLeadPatch) await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
-        await beforeSend?.();
+        await persistEditor(notesTooLong);
       } catch (error) {
-        alert(`Changes could not be saved. ${(error as Error).message}`);
+        if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) notesBlocked = true;
+        else if (contactSaveDeniedError(error)) {
+          setSendNotice(CONTACT_NOT_SENT_MESSAGE);
+          return;
+        } else {
+          alert(`Changes could not be saved. ${(error as Error).message}`);
+          return;
+        }
+      }
+      const canWrite = sendInfoMayWriteContact(DIRECT_MOBILE_WRITES, lead, user.id, user.role);
+      if (notesTooLong && canWrite) {
+        setSendNotice(NOTES_TOO_LONG_MESSAGE);
+        return;
+      }
+      if (notesBlocked && canWrite) {
+        setSendNotice(NOTES_TOO_LONG_MESSAGE);
         return;
       }
 
-      const outcome = await sendSchedulingNotification(built.payload, {
-        accountId: uid,
-        getToken: async (forceRefresh) => {
-          const current = auth?.currentUser;
-          if (!current) throw new Error('signed-out');
-          return current.getIdToken(forceRefresh);
-        },
-      });
-
-      if (outcome.status === 'sent') {
-        setInfoSent(true);
-        void onInfoSent?.().catch(() => {});
-        return;
+      let result: { posted: number; notice: string | null };
+      try {
+        result = await finishSendInfo({
+          online: isDeviceOnline(),
+          canWriteContact: canWrite,
+          confirm: async () => { await beforeSend?.(); },
+          post: async () => {
+            // One attempt. An ambiguous response is never retried.
+            const outcome = await sendSchedulingNotification(built.payload, {
+              accountId: uid,
+              getToken: async (forceRefresh) => {
+                const current = auth?.currentUser;
+                if (!current) throw new Error('signed-out');
+                return current.getIdToken(forceRefresh);
+              },
+            });
+            if (outcome.status === 'sent') {
+              setInfoSent(true);
+              void onInfoSent?.().catch(() => {});
+              return;
+            }
+            if (outcome.status === 'blocked') {
+              setAccountBlocked(true);
+              setSendNotice(outcome.message);
+              return;
+            }
+            if (outcome.status === 'rateLimited') {
+              const until = Date.now() + outcome.retryAfterSec * 1000;
+              setCooldownUntil(until);
+              setNow(Date.now());
+              return;
+            }
+            setSendNotice(outcome.message);
+          },
+        });
+      } catch (error) {
+        if ((error as { sendInfoSave?: boolean }).sendInfoSave) {
+          alert(`Changes could not be saved. ${(error as Error).message}`);
+          return;
+        }
+        throw error;
       }
-      if (outcome.status === 'blocked') {
-        setAccountBlocked(true);
-        setSendNotice(outcome.message);
-        return;
-      }
-      if (outcome.status === 'rateLimited') {
-        const until = Date.now() + outcome.retryAfterSec * 1000;
-        setCooldownUntil(until);
-        setNow(Date.now());
-        return;
-      }
-      setSendNotice(outcome.message);
+      if (result.notice) setSendNotice(result.notice);
     } catch {
+      // An ambiguous response is never retried.
       setSendNotice(AMBIGUOUS_SEND_MESSAGE);
     } finally {
       sendingRef.current = false;
@@ -351,11 +420,18 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
               </label>
               <textarea
                 value={formData.notes}
-                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, notes: e.target.value });
+                  if (notesNotice) setNotesNotice(null);
+                }}
                 className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF5F5A]"
                 rows={3}
                 placeholder="Any additional notes..."
               />
+              {notesTooLong ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_TOO_LONG_MESSAGE}</p> : null}
+              {notesNotice ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{notesNotice}</p> : null}
+              {parkedNotesMessage ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{parkedNotesMessage}</p> : null}
+              {clockNotice ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{clockNotice}</p> : null}
             </div>
 
             {/* Solar Info (Read-only) */}
@@ -376,7 +452,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
             {/* Save Button */}
             <button
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || notesTooLong}
               className="w-full px-4 py-3 bg-[#4299E1] hover:bg-[#3182CE] text-white rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <Save className="w-5 h-5" />

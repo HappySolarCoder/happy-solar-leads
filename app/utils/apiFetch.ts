@@ -1,4 +1,17 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import release from '@/app/mobile/_lib/release.json';
+
+/** Native CapacitorHttp does not preflight. Web fetch does not send these headers. */
+export const SEND_BUILD_HEADERS = true;
+
+export function raydarNativeHeaders(platform: string, build = release.build): Record<string, string> {
+  if (!SEND_BUILD_HEADERS) return {};
+  if (platform !== 'ios' && platform !== 'android') return {};
+  return {
+    'X-Raydar-Build': String(build),
+    'X-Raydar-Platform': platform,
+  };
+}
 
 /** Only app API paths can be sent to the configured backend. */
 export function resolveApiUrl(path: string, origin: string): string {
@@ -30,21 +43,29 @@ export async function nativeApiFetch(
   path: string,
   init: RequestInit = {},
   request: typeof CapacitorHttp.request = options => CapacitorHttp.request(options),
+  platform = Capacitor.getPlatform(),
 ): Promise<Response> {
   const origin = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (!origin) throw new Error('The mobile API origin is not configured');
   const url = resolveApiUrl(path, origin);
   init.signal?.throwIfAborted();
   const headers = new Headers(init.headers);
+  const buildHeaders = raydarNativeHeaders(platform);
+  for (const [key, value] of Object.entries(buildHeaders)) headers.set(key, value);
   if (init.body != null && typeof init.body !== 'string') {
     throw new Error('Native API requests require a serialized JSON or text body');
   }
   const data = typeof init.body === 'string' && headers.get('content-type')?.includes('application/json')
     ? JSON.parse(init.body) : init.body ?? undefined;
+  const headerRecord = Object.fromEntries(headers.entries());
+  for (const [key, value] of Object.entries(buildHeaders)) {
+    delete headerRecord[key.toLowerCase()];
+    headerRecord[key] = value;
+  }
   const result = await request({
     url,
     method: init.method ?? 'GET',
-    headers: Object.fromEntries(headers.entries()),
+    headers: headerRecord,
     data,
     responseType: 'text',
     connectTimeout: 15000,

@@ -458,11 +458,6 @@
   font-size: 10px;
   color: var(--rm-muted);
 }
-.rm-unsynced { position:fixed; right:12px; bottom:calc(148px + env(safe-area-inset-bottom, 0px)); z-index:145; max-width:min(320px, calc(100vw - 24px)); color:#304B5E; background:#fff6d6; border:1px solid #d6ad44; border-radius:14px; box-shadow:0 3px 12px #20304020; font-size:13px; }
-.rm-unsynced summary { cursor:pointer; padding:10px 14px; font-weight:700; }
-.rm-unsynced > div { padding:0 14px 12px; }
-.rm-unsynced p { margin:0 0 10px; }
-.rm-unsynced button, .rm-unsynced a { display:inline-block; padding:8px; font-weight:600; text-decoration:underline; }
 .rm-nav {
   position: relative;
   flex-shrink: 0;

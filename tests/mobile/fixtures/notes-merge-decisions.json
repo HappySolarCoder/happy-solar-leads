@@ -1,0 +1,1327 @@
+[
+ {
+  "id": "d1-earliest-mobile-b",
+  "decision": "D1",
+  "base": "G\nD",
+  "cur": "G\nD\nG",
+  "ours": "Dog\nD\nG",
+  "known": [],
+  "expect": {
+   "notes": "Dog\nD\nG",
+   "rule": 4,
+   "write": true
+  },
+  "note": "repro (b): earliest copy is the base line; server's added G is the G in the result"
+ },
+ {
+  "id": "d1-earliest-GG",
+  "decision": "D1",
+  "base": "G\nG",
+  "cur": "Dog\nG",
+  "ours": "G",
+  "known": [],
+  "expect": {
+   "notes": "Dog",
+   "rule": 4,
+   "write": true
+  },
+  "note": "earliest: ours kept base G#0 (deleted G#1), server replaced G#0 -> 'Dog' (late alignment would give 'Dog\\nG')"
+ },
+ {
+  "id": "d1-repro-a",
+  "decision": "D1",
+  "base": "Dog",
+  "cur": "Gate code 1234\nDog",
+  "ours": "Dog\nA1\nDog",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\nDog\nA1\nDog",
+   "rule": 4,
+   "write": true
+  },
+  "judge": {
+   "result": "Gate code 1234\nDog\nA1",
+   "classes": {
+    "typedLineLost": 1,
+    "typedRepeatLost": 1
+   }
+  },
+  "note": "repro (a), 57a3ccd output loses the typed second Dog"
+ },
+ {
+  "id": "d2-overlap-once",
+  "decision": "D2",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\nX\nA1",
+  "ours": "Gate code 1234\nDog in yard\nA1\nY",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\nX\nA1\nY",
+   "rule": 4,
+   "write": true
+  }
+ },
+ {
+  "id": "d2-overlap-by-count",
+  "decision": "D2",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\nA1",
+  "ours": "Gate code 1234\nDog in yard\nA1\nA1",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\nA1\nA1",
+   "rule": 4,
+   "write": true
+  },
+  "note": "ours typed A1 twice, current once: one is already in current's hunk, the second is kept"
+ },
+ {
+  "id": "d2-nonoverlap-both-kept",
+  "decision": "D2",
+  "base": "P\nQ\nR",
+  "cur": "P\nX\nQ\nR",
+  "ours": "P\nQ\nR\nX",
+  "known": [],
+  "expect": {
+   "notes": "P\nX\nQ\nR\nX",
+   "rule": 4,
+   "write": true
+  }
+ },
+ {
+  "id": "d3-xMBlankTypedMoved",
+  "decision": "D3",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\n\nAdmin",
+  "ours": "Gate code 1234\nDog in yard\n\nA1",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\n\nAdmin\n\nA1",
+   "rule": 4,
+   "write": true
+  },
+  "judge": {
+   "result": "Gate code 1234\nDog in yard\n\nAdmin\nA1",
+   "classes": {
+    "interiorBlankLost": 1
+   }
+  },
+  "note": "G keeps the typed blank; 57a3ccd output loses it"
+ },
+ {
+  "id": "d3-ws-only-line-kept-v3",
+  "decision": "D3",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\n \nAdmin",
+  "ours": "Gate code 1234\nDog in yard\n \nA1",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\n \nAdmin\n \nA1",
+   "rule": 4,
+   "write": true
+  },
+  "note": "SUPERSEDED by v3 B2 (no blank line of any kind is deduped); v2 expectation kept in v2expect. Was: literal D4: a spaces-only line is 'blank for trimming only', so the D2 dedupe applies to it",
+  "v2expect": {
+   "notes": "Gate code 1234\nDog in yard\n \nAdmin\nA1",
+   "rule": 4,
+   "write": true
+  }
+ },
+ {
+  "id": "d4-rule1-trimmed-compare",
+  "decision": "D4",
+  "base": "X",
+  "cur": "X\n",
+  "ours": "X\nA1",
+  "known": [],
+  "expect": {
+   "notes": "X\nA1",
+   "rule": 1,
+   "write": true
+  }
+ },
+ {
+  "id": "d4-rule1-result-trimmed",
+  "decision": "D4",
+  "base": "X",
+  "cur": "X",
+  "ours": "\nX\nA1\n\n",
+  "known": [],
+  "expect": {
+   "notes": "X\nA1",
+   "rule": 1,
+   "write": true
+  }
+ },
+ {
+  "id": "d4-rule2-trimmed",
+  "decision": "D4",
+  "base": "X",
+  "cur": "X\nS1",
+  "ours": "X\n",
+  "known": [],
+  "expect": {
+   "notes": "X\nS1",
+   "rule": 2,
+   "write": false
+  }
+ },
+ {
+  "id": "d4-rule2-trims-current",
+  "decision": "D4",
+  "base": "",
+  "cur": "Dog in yard\n",
+  "ours": "",
+  "known": [],
+  "expect": {
+   "notes": "Dog in yard",
+   "rule": 2,
+   "write": false
+  }
+ },
+ {
+  "id": "d4-rule3-trimmed",
+  "decision": "D4",
+  "base": "X",
+  "cur": "Y\n",
+  "ours": " \nY",
+  "known": [],
+  "expect": {
+   "notes": "Y",
+   "rule": 3,
+   "write": false
+  }
+ },
+ {
+  "id": "d4-interior-ws-kept-exactly",
+  "decision": "D4",
+  "base": "X",
+  "cur": "X",
+  "ours": "X\n \t\nA1",
+  "known": [],
+  "expect": {
+   "notes": "X\n \t\nA1",
+   "rule": 1,
+   "write": true
+  }
+ },
+ {
+  "id": "d4-edge-ws-trimmed",
+  "decision": "D4",
+  "base": "X",
+  "cur": "X",
+  "ours": " \t\nX\nA1\n  ",
+  "known": [],
+  "expect": {
+   "notes": "X\nA1",
+   "rule": 1,
+   "write": true
+  }
+ },
+ {
+  "id": "d4-cr-blank-v3",
+  "decision": "D4",
+  "base": "X",
+  "cur": "X",
+  "ours": "X\n\r",
+  "known": [],
+  "expect": {
+   "notes": "X",
+   "rule": 1,
+   "write": false
+  },
+  "note": "SUPERSEDED by v3 B1 ('\\r' is JS-trim whitespace, so the line is blank); v2 expectation kept in v2expect. Was: '\\r' is not spaces/tabs, so it is not trimmed",
+  "v2expect": {
+   "notes": "X\n\r",
+   "rule": 1,
+   "write": true
+  }
+ },
+ {
+  "id": "d4-rule4-output-trimmed",
+  "decision": "D4",
+  "base": "X\nY",
+  "cur": "Y",
+  "ours": "X\n\nY",
+  "known": [],
+  "expect": {
+   "notes": "Y",
+   "rule": 4,
+   "write": false
+  },
+  "note": "diff3 gives \\nY (typed blank becomes leading after server deleted X) -> trimmed; equals current, no write"
+ },
+ {
+  "id": "d4-blank-fallback-xRpContested",
+  "decision": "D4",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234",
+  "ours": "Dog in yard",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234",
+   "rule": 5,
+   "write": false
+  }
+ },
+ {
+  "id": "d4-user-clear-allowed",
+  "decision": "D4",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard",
+  "ours": "",
+  "known": [],
+  "expect": {
+   "notes": "",
+   "rule": 1,
+   "write": true
+  }
+ },
+ {
+  "id": "d4-E-folded-clear",
+  "decision": "D4/E",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard",
+  "ours": "\nC1",
+  "known": [],
+  "expect": {
+   "notes": "C1",
+   "rule": 1,
+   "write": true
+  },
+  "judge": {
+   "result": "\nC1",
+   "classes": {
+    "edgeBlankSent": 1
+   }
+  },
+  "note": "8d611e6 sends '\\nC1' -> edgeBlankSent"
+ },
+ {
+  "id": "d4-E-folded-clear-57a",
+  "decision": "D4/E",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard",
+  "ours": "\nC1",
+  "known": [],
+  "expect": {
+   "notes": "C1",
+   "rule": 1,
+   "write": true
+  },
+  "judge": {
+   "result": "Gate code 1234\nDog in yard\nC1",
+   "classes": {
+    "oursDeletionIgnored": 2
+   }
+  },
+  "note": "57a3ccd sends S+C1: not the editor text; MISMATCH, not a must-be-0 class"
+ },
+ {
+  "id": "d5-knownSent-overwrite",
+  "decision": "D5",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\nA1",
+  "ours": "Gate code 1234\nDog in yard\nA1\nB1",
+  "known": [
+   "Gate code 1234\nDog in yard\nA1\n"
+  ],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\nA1\nB1",
+   "rule": 1,
+   "write": true
+  }
+ },
+ {
+  "id": "d5-knownSent-no-hit",
+  "decision": "D5",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\nAdmin",
+  "ours": "Gate code 1234\nDog in yard\nB1",
+  "known": [
+   "zz"
+  ],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\nAdmin\nB1",
+   "rule": 4,
+   "write": true
+  }
+ },
+ {
+  "id": "e1-leading-newline",
+  "decision": "v3-E1",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard",
+  "ours": "\nC1",
+  "known": [],
+  "expect": {
+   "notes": "C1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "editor text '\\nC1' (clear then type, folded) is sent as 'C1'"
+ },
+ {
+  "id": "e1-S-C1-not-accepted",
+  "decision": "v3-E1",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard",
+  "ours": "\nC1",
+  "known": [],
+  "expect": {
+   "notes": "C1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "v2 PASS_ALT reading 'S\\nC1' is now a plain spec deviation (not a gating class)",
+  "judge": {
+   "result": "Gate code 1234\nDog in yard\nC1",
+   "classes": {
+    "oursDeletionIgnored": 2
+   },
+   "gate": []
+  }
+ },
+ {
+  "id": "e1-bare-newline-sent",
+  "decision": "v3-E1",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard",
+  "ours": "\nC1",
+  "known": [],
+  "expect": {
+   "notes": "C1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "sending '\\nC1' untrimmed is edgeBlankSent -> gating FAIL (G1)",
+  "judge": {
+   "result": "\nC1",
+   "classes": {
+    "edgeBlankSent": 1
+   },
+   "gate": [
+    "edgeBlankSent"
+   ]
+  }
+ },
+ {
+  "id": "b1-cr-edge",
+  "decision": "v3-B1",
+  "base": "",
+  "cur": "",
+  "ours": "A1\n\r",
+  "known": [],
+  "expect": {
+   "notes": "A1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "'\\r' line is blank (JS trim) -> trimmed"
+ },
+ {
+  "id": "b1-nbsp-u2028-edge",
+  "decision": "v3-B1",
+  "base": "",
+  "cur": "",
+  "ours": " \nA1\n ",
+  "known": [],
+  "expect": {
+   "notes": "A1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "NBSP and U+2028 lines are blank -> trimmed"
+ },
+ {
+  "id": "b1-feff-edge",
+  "decision": "v3-B1",
+  "base": "",
+  "cur": "",
+  "ours": "﻿\nA1\n　",
+  "known": [],
+  "expect": {
+   "notes": "A1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "U+FEFF and U+3000 lines are blank under JS trim (str.strip keeps U+FEFF)"
+ },
+ {
+  "id": "b1-x85-not-blank",
+  "decision": "v3-B1",
+  "base": "",
+  "cur": "",
+  "ours": "\nA1\n\u001c",
+  "known": [],
+  "expect": {
+   "notes": "\nA1\n\u001c",
+   "rule": 1,
+   "write": true
+  },
+  "note": "U+0085 and U+001C are NOT JS-trim whitespace (str.strip would drop them): kept"
+ },
+ {
+  "id": "b1-interior-cr-typed-kept",
+  "decision": "v3-B1",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234",
+  "ours": "Gate code 1234\nDog in yard\n\r\nA1",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\n\r\nA1",
+   "rule": 4,
+   "write": true
+  },
+  "note": "an interior '\\r' line ours typed is a blank line ours inserted: kept"
+ },
+ {
+  "id": "b1-interior-cr-typed-lost",
+  "decision": "v3-B1",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234",
+  "ours": "Gate code 1234\nDog in yard\n\r\nA1",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\n\r\nA1",
+   "rule": 4,
+   "write": true
+  },
+  "note": "losing it is interiorBlankLost (gating)",
+  "judge": {
+   "result": "Gate code 1234\nA1",
+   "classes": {
+    "interiorBlankLost": 1
+   },
+   "gate": [
+    "interiorBlankLost"
+   ]
+  }
+ },
+ {
+  "id": "b1-rule1-trimmed-compare",
+  "decision": "v3-B1",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": " \nGate code 1234\nDog in yard\n\r",
+  "ours": "Gate code 1234\nDog in yard\nA1",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\nA1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "current differs from base only by NBSP/\\r edge lines -> trimmed equal -> rule 1"
+ },
+ {
+  "id": "b2-nbsp-not-deduped",
+  "decision": "v3-B2",
+  "base": "G",
+  "cur": "G\n \nC",
+  "ours": "G\n \nO",
+  "known": [],
+  "expect": {
+   "notes": "G\n \nC\n \nO",
+   "rule": 4,
+   "write": true
+  },
+  "note": "NBSP line in both overlapping hunks is written twice (never deduped)"
+ },
+ {
+  "id": "b2-tab-not-deduped",
+  "decision": "v3-B2",
+  "base": "G",
+  "cur": "G\n\t\nC",
+  "ours": "G\n\t\nO",
+  "known": [],
+  "expect": {
+   "notes": "G\n\t\nC\n\t\nO",
+   "rule": 4,
+   "write": true
+  },
+  "note": "tab-only line: v2 deduped it (only exact '' was exempt); v3 keeps both"
+ },
+ {
+  "id": "b2-cr-not-deduped",
+  "decision": "v3-B2",
+  "base": "G",
+  "cur": "G\n\r\nC",
+  "ours": "G\n\r\nO",
+  "known": [],
+  "expect": {
+   "notes": "G\n\r\nC\n\r\nO",
+   "rule": 4,
+   "write": true
+  },
+  "note": "'\\r' line in both hunks kept twice"
+ },
+ {
+  "id": "b2-nonblank-deduped",
+  "decision": "v3-B2",
+  "base": "G",
+  "cur": "G\nX\nC",
+  "ours": "G\nX\nO",
+  "known": [],
+  "expect": {
+   "notes": "G\nX\nC\nO",
+   "rule": 4,
+   "write": true
+  },
+  "note": "non-blank X in both hunks written once"
+ },
+ {
+  "id": "b2-crlf-text-exact",
+  "decision": "v3-B2",
+  "base": "G",
+  "cur": "G\nA\r\nC",
+  "ours": "G\nA\nO",
+  "known": [],
+  "expect": {
+   "notes": "G\nA\r\nC\nA\nO",
+   "rule": 4,
+   "write": true
+  },
+  "note": "'A\\r' and 'A' are different non-blank texts: no dedupe"
+ },
+ {
+  "id": "b2-crlf-text-same",
+  "decision": "v3-B2",
+  "base": "G",
+  "cur": "G\nA\r\nC",
+  "ours": "G\nA\r\nO",
+  "known": [],
+  "expect": {
+   "notes": "G\nA\r\nC\nO",
+   "rule": 4,
+   "write": true
+  },
+  "note": "'A\\r' in both hunks (same exact text) written once"
+ },
+ {
+  "id": "t1-skip-base-first",
+  "decision": "v3-T1",
+  "base": "A\nB",
+  "cur": "B\nA",
+  "ours": "A\nO1\nB",
+  "known": [],
+  "expect": {
+   "notes": "O1\nB\nA",
+   "rule": 4,
+   "write": true
+  },
+  "note": "DP tie at (A,B): skip the base line A first -> B matched; 'O1\\nB\\nA' (skipping current first would give 'B\\nA\\nO1')"
+ },
+ {
+  "id": "g1-leading-blank-fails",
+  "decision": "v3-G1",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard",
+  "ours": "Gate code 1234\nDog in yard\nA1",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\nA1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "leading blank line sent: edgeBlankSent=1, gating",
+  "judge": {
+   "result": "\nGate code 1234\nDog in yard\nA1",
+   "classes": {
+    "edgeBlankSent": 1
+   },
+   "gate": [
+    "edgeBlankSent"
+   ]
+  }
+ },
+ {
+  "id": "g1-trailing-nbsp-fails",
+  "decision": "v3-G1",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard",
+  "ours": "Gate code 1234\nDog in yard\nA1",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\nA1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "trailing NBSP line sent: edgeBlankSent=1, gating (B1 set)",
+  "judge": {
+   "result": "Gate code 1234\nDog in yard\nA1\n ",
+   "classes": {
+    "edgeBlankSent": 1
+   },
+   "gate": [
+    "edgeBlankSent"
+   ]
+  }
+ },
+ {
+  "id": "g1-trailing-x85-not-edge",
+  "decision": "v3-G1",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard",
+  "ours": "Gate code 1234\nDog in yard\nA1",
+  "known": [],
+  "expect": {
+   "notes": "Gate code 1234\nDog in yard\nA1",
+   "rule": 1,
+   "write": true
+  },
+  "note": "trailing U+0085 line is not blank: not edgeBlankSent; it is a novel line (MISMATCH, not gating)",
+  "judge": {
+   "result": "Gate code 1234\nDog in yard\nA1\n",
+   "classes": {
+    "novel": 1
+   },
+   "gate": []
+  }
+ },
+ {
+  "id": "v4-nonblank-server-appended",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\nX1",
+  "note": "xClrStale409 shape: stale base S, another device appended X1 -> keep X1 only; plain POST, baseNotes=current, notice",
+  "expect": {
+   "result": "X1",
+   "rule": 4,
+   "mode": "notes",
+   "body": {
+    "notes": "X1",
+    "baseNotes": "Gate code 1234\nDog in yard\nX1"
+   },
+   "notice": "Notes changed on another device. Other people's new notes were kept."
+  }
+ },
+ {
+  "id": "v4-nonblank-server-inserted-middle",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nX1\nDog in yard",
+  "note": "server line inserted between base lines survives, both base lines deleted",
+  "expect": {
+   "result": "X1",
+   "rule": 4,
+   "mode": "notes",
+   "body": {
+    "notes": "X1",
+    "baseNotes": "Gate code 1234\nX1\nDog in yard"
+   },
+   "notice": "Notes changed on another device. Other people's new notes were kept."
+  }
+ },
+ {
+  "id": "v4-nonblank-server-replaced-all",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "X1",
+  "note": "server already deleted base and wrote X1: result equals current, still one plain POST (route: current===notes, no write)",
+  "expect": {
+   "result": "X1",
+   "rule": 4,
+   "mode": "notes",
+   "body": {
+    "notes": "X1",
+    "baseNotes": "X1"
+   },
+   "notice": "Notes changed on another device. Other people's new notes were kept."
+  }
+ },
+ {
+  "id": "v4-nonblank-interior-blank-kept",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nX1\n\nX2\nDog in yard",
+  "note": "server-added interior blank line is kept (B2: blanks never deduped)",
+  "expect": {
+   "result": "X1\n\nX2",
+   "rule": 4,
+   "mode": "notes",
+   "body": {
+    "notes": "X1\n\nX2",
+    "baseNotes": "Gate code 1234\nX1\n\nX2\nDog in yard"
+   },
+   "notice": "Notes changed on another device. Other people's new notes were kept."
+  }
+ },
+ {
+  "id": "v4-nonblank-edge-blanks-trimmed",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "\nGate code 1234\nX1\nDog in yard\n\n",
+  "note": "server edge blank lines are trimmed (D4); baseNotes stays the raw current",
+  "expect": {
+   "result": "X1",
+   "rule": 4,
+   "mode": "notes",
+   "body": {
+    "notes": "X1",
+    "baseNotes": "\nGate code 1234\nX1\nDog in yard\n\n"
+   },
+   "notice": "Notes changed on another device. Other people's new notes were kept."
+  }
+ },
+ {
+  "id": "v4-nonblank-nbsp-prefixed-line",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\n X1",
+  "note": "NBSP-prefixed text line is not blank: kept verbatim",
+  "expect": {
+   "result": " X1",
+   "rule": 4,
+   "mode": "notes",
+   "body": {
+    "notes": " X1",
+    "baseNotes": "Gate code 1234\nDog in yard\n X1"
+   },
+   "notice": "Notes changed on another device. Other people's new notes were kept."
+  }
+ },
+ {
+  "id": "v4-blank-server-subset",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard\nA1",
+  "cur": "Gate code 1234\nDog in yard",
+  "note": "server deleted A1 (current is a subset of base): nothing added -> clearNotes:true, notes \"\", baseNotes=current, no notice",
+  "expect": {
+   "result": "",
+   "rule": 4,
+   "mode": "clear",
+   "body": {
+    "clearNotes": true,
+    "notes": "",
+    "baseNotes": "Gate code 1234\nDog in yard"
+   },
+   "notice": null
+  }
+ },
+ {
+  "id": "v4-blank-nbsp-only-added",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\n ",
+  "note": "server added only an NBSP line: blank under JS trim (B1) -> trimmed current == base (rule 1) -> clear",
+  "expect": {
+   "result": "",
+   "rule": 1,
+   "mode": "clear",
+   "body": {
+    "clearNotes": true,
+    "notes": "",
+    "baseNotes": "Gate code 1234\nDog in yard\n "
+   },
+   "notice": null
+  }
+ },
+ {
+  "id": "v4-blank-ws-lines-added",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\n　\n\t",
+  "note": "server added U+3000 and tab lines only -> blank -> clear",
+  "expect": {
+   "result": "",
+   "rule": 1,
+   "mode": "clear",
+   "body": {
+    "clearNotes": true,
+    "notes": "",
+    "baseNotes": "Gate code 1234\nDog in yard\n　\n\t"
+   },
+   "notice": null
+  }
+ },
+ {
+  "id": "v4-blank-server-cleared",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "",
+  "note": "server already empty: rule 3 (current == ours \"\"), blank -> clearNotes:true, baseNotes \"\". Unreachable on 15efe05 in practice: the route answers 200 (current === notes) instead of 409",
+  "expect": {
+   "result": "",
+   "rule": 3,
+   "mode": "clear",
+   "body": {
+    "clearNotes": true,
+    "notes": "",
+    "baseNotes": ""
+   },
+   "notice": null
+  }
+ },
+ {
+  "id": "v4-blank-server-deleted-one",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Dog in yard",
+  "note": "server deleted a base line, added nothing -> clear",
+  "expect": {
+   "result": "",
+   "rule": 4,
+   "mode": "clear",
+   "body": {
+    "clearNotes": true,
+    "notes": "",
+    "baseNotes": "Dog in yard"
+   },
+   "notice": null
+  }
+ },
+ {
+  "id": "v4-nonblank-x85-not-blank",
+  "decision": "v4-V4",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\n",
+  "note": "U+0085 line is NOT blank under JS trim (B1) -> non-blank result, plain POST",
+  "expect": {
+   "result": "",
+   "rule": 4,
+   "mode": "notes",
+   "body": {
+    "notes": "",
+    "baseNotes": "Gate code 1234\nDog in yard\n"
+   },
+   "notice": "Notes changed on another device. Other people's new notes were kept."
+  }
+ },
+ {
+  "id": "v5-own-known-rule1-clear",
+  "decision": "v5-Own",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\nA1",
+  "known": [
+   "Gate code 1234\nDog in yard\nA1"
+  ],
+  "note": "current is this device's own sent S\\nA1 (knownSentNotes) -> rule 1, ours '' -> clear lands ''",
+  "expect": {
+   "result": "",
+   "rule": 1,
+   "mode": "clear",
+   "body": {
+    "clearNotes": true,
+    "notes": "",
+    "baseNotes": "Gate code 1234\nDog in yard\nA1"
+   },
+   "notice": null
+  }
+ },
+ {
+  "id": "v5-own-unknown-rule4-keeps",
+  "decision": "v5-Own",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\nA1",
+  "known": [],
+  "note": "same texts without knownSentNotes: another device's A1 -> rule 4, keep 'A1' (= xClrStale409)",
+  "expect": {
+   "result": "A1",
+   "rule": 4,
+   "mode": "notes",
+   "body": {
+    "notes": "A1",
+    "baseNotes": "Gate code 1234\nDog in yard\nA1"
+   },
+   "notice": "Notes changed on another device. Other people's new notes were kept."
+  }
+ },
+ {
+  "id": "v5-own-known-trim",
+  "decision": "v5-Own",
+  "kind": "clearConflict",
+  "base": "Gate code 1234\nDog in yard",
+  "cur": "Gate code 1234\nDog in yard\nA1\n",
+  "known": [
+   "Gate code 1234\nDog in yard\nA1"
+  ],
+  "note": "known compared after edge trim (E1); baseNotes stays the untrimmed current",
+  "expect": {
+   "result": "",
+   "rule": 1,
+   "mode": "clear",
+   "body": {
+    "clearNotes": true,
+    "notes": "",
+    "baseNotes": "Gate code 1234\nDog in yard\nA1\n"
+   },
+   "notice": null
+  }
+ },
+ {
+  "id": "v5-repeat-4x409",
+  "decision": "v5-Repeat",
+  "kind": "chain",
+  "base": "Gate code 1234\nDog in yard",
+  "currents": [
+   "Gate code 1234\nDog in yard\nX1",
+   "Gate code 1234\nDog in yard\nX1\nX2",
+   "Gate code 1234\nDog in yard\nX1\nX2\nX3",
+   "Gate code 1234\nDog in yard\nX1\nX2\nX3\nX4"
+  ],
+  "known": [],
+  "note": "xClrRepeat409: 4 consecutive 409s, server adds X1..X4; each send re-merges the pending draft against the fresh current",
+  "expect": {
+   "bodies": [
+    {
+     "notes": "X1",
+     "baseNotes": "Gate code 1234\nDog in yard\nX1"
+    },
+    {
+     "notes": "X1\nX2",
+     "baseNotes": "Gate code 1234\nDog in yard\nX1\nX2"
+    },
+    {
+     "notes": "X1\nX2\nX3",
+     "baseNotes": "Gate code 1234\nDog in yard\nX1\nX2\nX3"
+    },
+    {
+     "notes": "X1\nX2\nX3\nX4",
+     "baseNotes": "Gate code 1234\nDog in yard\nX1\nX2\nX3\nX4"
+    }
+   ],
+   "final": "X1\nX2\nX3\nX4"
+  }
+ },
+ {
+  "id": "v5-repeat-other-deletes",
+  "decision": "v5-Repeat",
+  "kind": "chain",
+  "base": "Gate code 1234\nDog in yard",
+  "currents": [
+   "Gate code 1234\nDog in yard\nX1",
+   "Gate code 1234\nDog in yard\nX2"
+  ],
+  "known": [],
+  "note": "other device swaps X1 for X2 between sends: the re-merge drops X1 (their delete) and keeps X2",
+  "expect": {
+   "bodies": [
+    {
+     "notes": "X1",
+     "baseNotes": "Gate code 1234\nDog in yard\nX1"
+    },
+    {
+     "notes": "X2",
+     "baseNotes": "Gate code 1234\nDog in yard\nX2"
+    }
+   ],
+   "final": "X2"
+  }
+ },
+ {
+  "id": "v5-repeat-reverts-to-blank",
+  "decision": "v5-Repeat",
+  "kind": "chain",
+  "base": "Gate code 1234\nDog in yard",
+  "currents": [
+   "Gate code 1234\nDog in yard\nX1",
+   "Gate code 1234\nDog in yard"
+  ],
+  "known": [],
+  "note": "other device reverts to S between sends: intent form (gated) = clear_conflict(S, S, '') rule 1 -> clear ''",
+  "expect": {
+   "bodies": [
+    {
+     "notes": "X1",
+     "baseNotes": "Gate code 1234\nDog in yard\nX1"
+    },
+    {
+     "clearNotes": true,
+     "notes": "",
+     "baseNotes": "Gate code 1234\nDog in yard"
+    }
+   ],
+   "final": ""
+  },
+  "mode": "intent"
+ },
+ {
+  "id": "v5-repeat-reverts-draft-form",
+  "decision": "v5-Repeat",
+  "kind": "chain",
+  "mode": "draft",
+  "base": "Gate code 1234\nDog in yard",
+  "currents": [
+   "Gate code 1234\nDog in yard\nX1",
+   "Gate code 1234\nDog in yard"
+  ],
+  "known": [],
+  "note": "same, draft form (informational): remerge('X1', S\\nX1, S) hits rule 5 (empty merge of two non-empty sides keeps current) -> 'S'; contradiction with the intent form, reported",
+  "expect": {
+   "bodies": [
+    {
+     "notes": "X1",
+     "baseNotes": "Gate code 1234\nDog in yard\nX1"
+    },
+    {
+     "notes": "Gate code 1234\nDog in yard",
+     "baseNotes": "Gate code 1234\nDog in yard"
+    }
+   ],
+   "final": "Gate code 1234\nDog in yard"
+  }
+ },
+ {
+  "id": "v5-blankSent-6",
+  "decision": "v5-blankSentUnflagged",
+  "kind": "blankSent",
+  "body": {
+   "notes": ""
+  },
+  "note": "JS trim set; clearNotes must be the boolean true",
+  "expect": true
+ },
+ {
+  "id": "v5-blankSent-7",
+  "decision": "v5-blankSentUnflagged",
+  "kind": "blankSent",
+  "body": {
+   "notes": "  　"
+  },
+  "note": "JS trim set; clearNotes must be the boolean true",
+  "expect": true
+ },
+ {
+  "id": "v5-blankSent-8",
+  "decision": "v5-blankSentUnflagged",
+  "kind": "blankSent",
+  "body": {
+   "notes": "\n\t"
+  },
+  "note": "JS trim set; clearNotes must be the boolean true",
+  "expect": true
+ },
+ {
+  "id": "v5-blankSent-9",
+  "decision": "v5-blankSentUnflagged",
+  "kind": "blankSent",
+  "body": {
+   "notes": "",
+   "clearNotes": true
+  },
+  "note": "JS trim set; clearNotes must be the boolean true",
+  "expect": false
+ },
+ {
+  "id": "v5-blankSent-10",
+  "decision": "v5-blankSentUnflagged",
+  "kind": "blankSent",
+  "body": {
+   "notes": "",
+   "clearNotes": "true"
+  },
+  "note": "JS trim set; clearNotes must be the boolean true",
+  "expect": true
+ },
+ {
+  "id": "v5-blankSent-11",
+  "decision": "v5-blankSentUnflagged",
+  "kind": "blankSent",
+  "body": {
+   "notes": ""
+  },
+  "note": "JS trim set; clearNotes must be the boolean true",
+  "expect": false
+ },
+ {
+  "id": "v5-blankSent-12",
+  "decision": "v5-blankSentUnflagged",
+  "kind": "blankSent",
+  "body": {
+   "kind": "np",
+   "np": true
+  },
+  "note": "JS trim set; clearNotes must be the boolean true",
+  "expect": false
+ },
+ {
+  "id": "v5-blankSent-13",
+  "decision": "v5-blankSentUnflagged",
+  "kind": "blankSent",
+  "body": {
+   "notes": "A1"
+  },
+  "note": "JS trim set; clearNotes must be the boolean true",
+  "expect": false
+ },
+ {
+  "id": "v6-sweepBlank-1",
+  "decision": "v6-ruling1-sweepExempt",
+  "kind": "sweepBlank",
+  "result": "",
+  "expected": "",
+  "note": "merged empty, spec also expects empty: client sends a flagged clear (exempt)",
+  "expect": "exempt"
+ },
+ {
+  "id": "v6-sweepBlank-2",
+  "decision": "v6-ruling1-sweepExempt",
+  "kind": "sweepBlank",
+  "result": "",
+  "expected": "X1",
+  "note": "spec expects kept server notes, merge returned empty",
+  "expect": "unflagged"
+ },
+ {
+  "id": "v6-sweepBlank-3",
+  "decision": "v6-ruling1-sweepExempt",
+  "kind": "sweepBlank",
+  "result": " ",
+  "expected": "",
+  "note": "whitespace-only is not empty: cannot be sent as a flagged clear",
+  "expect": "unflagged"
+ },
+ {
+  "id": "v6-sweepBlank-4",
+  "decision": "v6-ruling1-sweepExempt",
+  "kind": "sweepBlank",
+  "result": " \n　",
+  "expected": " \n　",
+  "note": "whitespace-only blank, even when the spec merge returns the same: not empty, never flaggable",
+  "expect": "unflagged"
+ },
+ {
+  "id": "v6-sweepBlank-5",
+  "decision": "v6-ruling1-sweepExempt",
+  "kind": "sweepBlank",
+  "result": "",
+  "expected": "",
+  "note": "U+0085 is not blank under JS trim",
+  "expect": null
+ },
+ {
+  "id": "v6-sweepBlank-6",
+  "decision": "v6-ruling1-sweepExempt",
+  "kind": "sweepBlank",
+  "result": "Gate code 1234",
+  "expected": "Gate code 1234",
+  "note": "non-blank",
+  "expect": null
+ },
+ {
+  "id": "v6-chain-1",
+  "decision": "v6-ruling3-intent",
+  "kind": "chain",
+  "base": "S",
+  "currents": [
+   "S\nX1",
+   "S\nX1\nX2"
+  ],
+  "known": [],
+  "mode": "intent",
+  "draft": "S\nT",
+  "note": "intent with a non-empty draft: diff3(S, fresh current, draft) each send",
+  "expect": {
+   "bodies": [
+    {
+     "notes": "S\nX1\nT",
+     "baseNotes": "S\nX1"
+    },
+    {
+     "notes": "S\nX1\nX2\nT",
+     "baseNotes": "S\nX1\nX2"
+    }
+   ],
+   "final": "S\nX1\nX2\nT"
+  }
+ },
+ {
+  "id": "v6-chain-2",
+  "decision": "v6-ruling3-intent",
+  "kind": "chain",
+  "base": "S\nA",
+  "currents": [
+   "S\nA\nX1",
+   "S"
+  ],
+  "known": [],
+  "mode": "intent",
+  "draft": "S",
+  "note": "intent: other device reverts to base; the draft deletion of A still applies",
+  "expect": {
+   "bodies": [
+    {
+     "notes": "S\nX1",
+     "baseNotes": "S\nA\nX1"
+    },
+    {
+     "notes": "S",
+     "baseNotes": "S"
+    }
+   ],
+   "final": "S"
+  }
+ },
+ {
+  "id": "v6-chain-3",
+  "decision": "v6-ruling3-intent",
+  "kind": "chain",
+  "base": "S\nA",
+  "currents": [
+   "S\nA\nX1",
+   "S"
+  ],
+  "known": [],
+  "mode": "draft",
+  "draft": "S",
+  "note": "draft form (informational) with the same inputs",
+  "expect": {
+   "bodies": [
+    {
+     "notes": "S\nX1",
+     "baseNotes": "S\nA\nX1"
+    },
+    {
+     "notes": "S",
+     "baseNotes": "S"
+    }
+   ],
+   "final": "S"
+  }
+ },
+ {
+  "id": "v6-chain-4",
+  "decision": "v6-ruling3-intent",
+  "kind": "chain",
+  "base": "S",
+  "currents": [
+   "S\nX1",
+   "S\nX1\nX2",
+   "S\nX1\nX2\nX3"
+  ],
+  "known": [],
+  "mode": "intent",
+  "draft": "",
+  "note": "draft empty == v5 clear chain",
+  "expect": {
+   "bodies": [
+    {
+     "notes": "X1",
+     "baseNotes": "S\nX1"
+    },
+    {
+     "notes": "X1\nX2",
+     "baseNotes": "S\nX1\nX2"
+    },
+    {
+     "notes": "X1\nX2\nX3",
+     "baseNotes": "S\nX1\nX2\nX3"
+    }
+   ],
+   "final": "X1\nX2\nX3"
+  }
+ }
+]

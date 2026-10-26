@@ -1,4 +1,5 @@
 import type { Lead } from "@/app/types";
+import type { SyncReasonCode } from "./syncReasons";
 export const FEATURE_KEYS = [
   "capture",
   "scoring",
@@ -136,14 +137,70 @@ export const DEFAULT_FIELD_CONFIG: FieldConfig = {
 export type FieldMutation = {
   // Device-only queue payload. Never written as a new Firestore document/field.
   userName?: string;
-  direct?: { patch: Partial<Lead>; create?: Lead; legacy?: boolean; gps?: { lat?: number; lng?: number; deadline: number; required: boolean } };
+  direct?: {
+    patch: Partial<Lead>;
+    create?: Lead;
+    legacy?: boolean;
+    /** Territory-API pin, or a pin with no territory that this rep does not own. */
+    serverDispo?: boolean;
+    /** Route body only. Never copied onto the Firestore patch. */
+    homeownerId?: string;
+    /** Diagnostics only. Never copied onto the Firestore patch or sync-report. */
+    gpsPointSource?: "homeowner_corrected" | "lead_stored";
+    gps?: {
+      lat?: number;
+      lng?: number;
+      deadline: number;
+      required: boolean;
+      /** Tap instant. The fix window is [tappedAt−30s, tappedAt+15s], not save time. */
+      tappedAt?: number;
+      source?: "homeowner_corrected" | "lead_stored";
+      homeownerId?: string;
+      /** Device-only. Owned leads flag out_of_area instead of blocking. Never sent to Firestore. */
+      areaOwned?: boolean;
+    };
+  };
   id: string;
   userId: string;
   leadId: string;
   createdAt: string;
-  kind: "knock" | "notes" | "handoff";
+  /**
+   * Device queue only. Monotonic per account, assigned when the draft is queued.
+   * Same-millisecond saves sort by this, not by the random id. Absent on drafts
+   * queued before this build; those still sort by createdAt. Never sent.
+   */
+  queueSeq?: number;
+  kind: "knock" | "notes" | "handoff" | "contact";
   baseStatus: string;
   baseNotes?: string;
+  /**
+   * Device queue only. Set when this build queues an explicit notes clear,
+   * and sent as clearNotes:true with notes:"" and baseNotes. Never inferred
+   * from notes:"" plus a base. Never copied onto a Firestore patch. Never
+   * removed once set. Route reference: main 15efe05.
+   */
+  clearNotes?: boolean;
+  /**
+   * Device queue only. Defense in depth if a notes draft is ever written
+   * directly. The route dedupes by draftId and is the notes path. Never sent.
+   * Never copied onto the lead.
+   */
+  appliedNotes?: string;
+  appliedAgainst?: string;
+  /**
+   * Device queue only. Notes text this draft replaced, which may already
+   * have been received under an older draftId. Capped at 10. Never sent.
+   * Never copied onto the lead.
+   */
+  knownSentNotes?: string[];
+  /**
+   * Device queue only. Set on a notes draft left pending after repeated 409s
+   * (NOTES-MERGE-SPEC v5 ruling 3): the rep's original text and base. The
+   * stored notes/baseNotes are that intent merged against the last current;
+   * every later 409 re-merges this intent, never the stored merge. Never
+   * sent. Never copied onto the lead.
+   */
+  notesIntent?: { notes: string; baseNotes: string; clearNotes?: true };
   status?: string;
   disposition?: string;
   notes?: string;
@@ -156,9 +213,20 @@ export type FieldMutation = {
   handoff?: FieldHandoff["state"];
   callbackAt?: string;
 };
+export type SyncState = "queued" | "gps" | "retry" | "parked";
+export type ParkedReason = SyncReasonCode;
 export type PendingMutation = FieldMutation & {
+  /** Legacy flag. Readable only while migrating a draft from 14.17 or earlier. */
   error?: string;
+  /** Legacy flag. Readable only while migrating a draft from 14.17 or earlier. */
   blocked?: boolean;
+  syncState?: SyncState;
+  attempts?: number;
+  nextAttemptAt?: number;
+  parkedReason?: ParkedReason;
+  lastError?: string;
+  /** Set when /api/field/dispo is not deployed. The draft stays queued for a slow retry. */
+  routeHold?: "field-dispo";
 };
 export type FieldEvent = {
   id: string;
