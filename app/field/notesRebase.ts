@@ -2,13 +2,15 @@
  * Combine a notes edit with the text on the server.
  * Server text still equals baseNotes: the edit wins exactly, including a
  * deletion or a full rewrite.
- * Otherwise the lines we added, minus lines already in the server text, are
- * appended to that text. A line the server already has is not written again.
- * A pure deletion keeps the server text and restores a kept line the server
- * dropped. Both versions stay when we and the server rewrote the same line.
- * Leading and trailing blank lines of a merge are removed. Blank lines inside
- * the text stay. A merge that is only blank lines is left as it is.
- * An empty edit does not wipe a server change.
+ * Otherwise each non-blank line of the edit is appended when the server has
+ * fewer copies than the edit. A line is skipped only when the server already
+ * has that copy. A line the server removed is kept, even when the base had it.
+ * Blank lines are not deduped against the server. A typed blank that belongs
+ * to an appended line is kept. Leading and trailing blank lines of a merge
+ * are removed. Blank lines inside the text stay. A merge that is only blank
+ * lines is left as it is. An empty edit does not wipe a server change.
+ * The same inputs always return the same text. Replaying the result against
+ * a server that already has it adds nothing.
  */
 function splitLines(text: string): string[] {
   return text === "" ? [] : text.split("\n");
@@ -20,15 +22,21 @@ function tally(lines: readonly string[]): Map<string, number> {
   return counts;
 }
 
-function multisetDiff(source: readonly string[], subtract: readonly string[]): string[] {
-  const left = tally(subtract);
-  const out: string[] = [];
-  for (const line of source) {
-    const n = left.get(line) || 0;
-    if (n > 0) left.set(line, n - 1);
-    else out.push(line);
+/** Matches NOTES_MAX_CHARS. A merged note past this stays as separate drafts. */
+export const NOTES_MERGE_MAX_CHARS = 100_000;
+
+/**
+ * True when keeping `kept` together with any prior text it does not already
+ * contain would pass the notes character limit.
+ */
+export function notesMergeExceedsLimit(parts: readonly string[], kept: string): boolean {
+  if (kept.length > NOTES_MERGE_MAX_CHARS) return true;
+  let extra = 0;
+  for (const text of parts) {
+    if (!text || kept.includes(text)) continue;
+    extra += text.length;
   }
-  return out;
+  return extra > 0 && kept.length + extra > NOTES_MERGE_MAX_CHARS;
 }
 
 /** Drop blank lines at the ends. Never erase a non-empty merge down to "". */
@@ -61,34 +69,65 @@ export function notesAfterConflict(
   return rebaseNotes(base, edited, currentNotes);
 }
 
+/**
+ * Append edit lines the server does not already have.
+ * Non-blank lines use multiset counts. Blank lines are kept when they sit
+ * with a line that is actually appended, and are never dropped just because
+ * the server has some other blank line.
+ * Returns the current text unchanged when nothing is appended, so a replay
+ * against that result adds nothing.
+ */
+function mergeNoteLines(current: string, edit: string): string {
+  if (!edit) return current ? trimEdgeBlankLines(current) : current;
+  if (!current) return trimEdgeBlankLines(edit);
+  const ourLines = splitLines(edit);
+  const currentLines = splitLines(current);
+  const present = tally(currentLines.filter((line) => line !== ""));
+  const extras: string[] = [];
+  let pendingBlanks: string[] = [];
+  for (const line of ourLines) {
+    if (line === "") {
+      pendingBlanks.push("");
+      continue;
+    }
+    const have = present.get(line) || 0;
+    if (have > 0) {
+      present.set(line, have - 1);
+      pendingBlanks = [];
+      continue;
+    }
+    extras.push(...pendingBlanks, line);
+    pendingBlanks = [];
+  }
+  if (!extras.length) return current;
+  return trimEdgeBlankLines([...currentLines, ...extras].join("\n"));
+}
+
 export function rebaseNotes(baseNotes: string, edited: string, currentNotes: string): { notes: string; baseNotes: string } {
   const base = baseNotes || "";
   const current = currentNotes || "";
   const edit = edited || "";
-  if (current === base) return { notes: edit, baseNotes: current };
-  if (!current) return { notes: trimEdgeBlankLines(edit), baseNotes: current };
-  if (!edit) return { notes: trimEdgeBlankLines(current), baseNotes: current };
-  // Our text already begins with the server text. Keep that tail once.
-  if (edit.startsWith(current))
-    return { notes: edit.length === current.length ? current : trimEdgeBlankLines(edit), baseNotes: current };
-
-  const baseLines = splitLines(base);
-  const ourLines = splitLines(edit);
-  const currentLines = splitLines(current);
-  const weAdded = multisetDiff(ourLines, baseLines);
-  const ourCounts = tally(ourLines);
-  const present = tally(currentLines);
-  // New lines are appended once. A line the server already has is not written
-  // again. A pure deletion restores a kept line the server dropped.
-  const extras: string[] = [];
-  for (const line of (weAdded.length > 0 ? weAdded : ourLines)) {
-    const have = present.get(line) || 0;
-    const cap = ourCounts.get(line) || 0;
-    if (have >= cap) continue;
-    extras.push(line);
-    present.set(line, have + 1);
+  if (current === base) {
+    // An edit that only repeats the server text plus edge blanks is already stored.
+    if (edit && trimEdgeBlankLines(edit) === current && mergeNoteLines(current, edit) === current)
+      return { notes: current, baseNotes: current };
+    return { notes: edit, baseNotes: current };
   }
-  return { notes: trimEdgeBlankLines([...currentLines, ...extras].join("\n")), baseNotes: current };
+  if (!edit) return { notes: trimEdgeBlankLines(current), baseNotes: current };
+  return { notes: mergeNoteLines(current, edit), baseNotes: current };
+}
+
+/**
+ * A clear was rejected, so the server still has the clear's base. Append the
+ * new typing onto that text even when the two are equal, and drop a leading
+ * newline the empty editor left in front of the new line.
+ */
+export function appendTypedOnto(serverText: string, typed: string): string {
+  const current = serverText || "";
+  const edit = trimEdgeBlankLines(typed || "");
+  if (!edit.trim()) return current;
+  if (!current) return edit;
+  return mergeNoteLines(current, edit);
 }
 
 /**

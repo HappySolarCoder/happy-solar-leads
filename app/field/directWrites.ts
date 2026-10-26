@@ -6,7 +6,7 @@ import { mapLeadDoc } from '@/app/utils/firestore';
 import { createLeadOnce } from './createLeadOnce';
 import { distanceBetween } from 'geofire-common';
 import { AREA_REASON_DIRECT_WRITE_SUPPORTED, isGpsUnverifiedReason, validGpsMeters } from './gpsPolicy';
-import { deliberateNotesClear, notesTextOf } from './notesLimits';
+import { deliberateNotesClear, NOTES_MAX_CHARS, NOTES_TOO_LONG_MESSAGE, notesTextOf } from './notesLimits';
 import { planNotesWrite } from './notesRebase';
 import { SYNC_REASON } from './syncReasons';
 import { gpsFlagOf, type GpsFlag } from '@/app/utils/gpsRule';
@@ -207,6 +207,9 @@ export async function commitDirectMutation(m: PendingMutation, user: User, io?: 
           appliedNotes: m.appliedNotes,
           appliedAgainst: m.appliedAgainst,
         });
+        if (applied.notes.length > NOTES_MAX_CHARS) {
+          throw Object.assign(Error(NOTES_TOO_LONG_MESSAGE), { status: 413, reasonCode: SYNC_REASON.notesTooLong });
+        }
         const rest = { ...patch };
         delete rest.notes;
         const lead = mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...rest, notes: applied.notes }) });

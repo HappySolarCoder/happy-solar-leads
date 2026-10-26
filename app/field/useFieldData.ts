@@ -307,7 +307,17 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         });
         throw Error(message);
       }
-      const drafts = await readDrafts(uid);
+      let drafts = await readDrafts(uid);
+      const expanded = collapseLegacyNotesQueue(drafts);
+      if (expanded !== drafts) {
+        const expandedIds = new Set(expanded.map((row) => row.id));
+        for (const row of expanded) {
+          const prev = drafts.find((item) => item.id === row.id);
+          if (prev !== row) await putDraft(row);
+        }
+        for (const row of drafts) if (!expandedIds.has(row.id)) await removeDraft(row.id);
+        drafts = expanded;
+      }
       let stored;
       try { stored = acceptDisposition(drafts, m); }
       catch (e) {

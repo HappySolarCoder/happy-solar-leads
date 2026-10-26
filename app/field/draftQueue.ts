@@ -1,8 +1,15 @@
+import type { Lead } from "@/app/types";
 import { splitNotesAndContact } from "./contactSave";
 import { effectiveSyncState } from "./draftState";
 import { compareNotesSend, notesLineageNewer } from "./notesCoalesce";
+import { appendTypedOnto, notesMergeExceedsLimit } from "./notesRebase";
 import { splitCombinedDraft } from "./serverDispo";
 import type { FieldMutation, PendingMutation } from "./types";
+
+/** A new save refreshes actionAt once the unsent draft is older than this. The route rejects 30 days. */
+export const ACTION_AT_STALE_MS = 25 * 24 * 60 * 60 * 1000;
+
+const keptSiblingNotes = new WeakSet<PendingMutation>();
 
 /**
  * Queue order. createdAt wins when it differs, so a draft saved before sequences
@@ -114,12 +121,39 @@ export function keepBothOnce(left: string, right: string): string {
   return lines.join("\n");
 }
 
-function oldestNotes(rows: readonly PendingMutation[]): PendingMutation {
-  return rows.slice().sort((a, b) => {
-    const byTime = (a.createdAt || "").localeCompare(b.createdAt || "");
-    if (byTime !== 0) return byTime;
-    return (a.id || "").localeCompare(b.id || "");
-  })[0];
+/**
+ * The first draft in a chain: its baseNotes is not another draft's text.
+ * Several roots tie-break by queueSeq, then createdAt, then id.
+ */
+function chainRoot(rows: readonly PendingMutation[]): PendingMutation {
+  const texts = new Set(rows.map((row) => notesText(row)).filter((text) => text !== ""));
+  const roots = rows.filter((row) => !texts.has(row.baseNotes || ""));
+  const pool = roots.length ? roots : [...rows];
+  return pool.slice().sort(compareNotesSend)[0];
+}
+
+function actionAtStale(createdAt: string | undefined, nowMs: number): boolean {
+  const at = Date.parse(createdAt || "");
+  return Number.isFinite(at) && nowMs - at > ACTION_AT_STALE_MS;
+}
+
+/** A clear the route refused. The note text on the server is still baseNotes. */
+export function isParkedRejectedClear(row: PendingMutation): boolean {
+  return row.kind === "notes"
+    && row.clearNotes === true
+    && notesText(row) === ""
+    && row.parkedReason === "notes_rejected"
+    && effectiveSyncState(row) === "parked";
+}
+
+function notesFoldTarget(row: PendingMutation): boolean {
+  return isUnsentNotesDraft(row) || isParkedRejectedClear(row);
+}
+
+function contactPatchOf(row: PendingMutation): Partial<Lead> {
+  const patch = { ...(row.direct?.patch || {}) };
+  delete patch.notes;
+  return patch;
 }
 
 /**
@@ -181,9 +215,9 @@ function lineageNotes(rows: readonly PendingMutation[]): { notes: string; ambigu
   return { notes: notesText(byId.get(order[order.length - 1]) as PendingMutation), ambiguous: false };
 }
 
-/** One notes draft from several legacy rows. Oldest base, newest lineage text. */
+/** One notes draft from several legacy rows. Chain-root base, newest lineage text. */
 export function collapseNotesGroup(rows: readonly PendingMutation[]): PendingMutation {
-  const root = oldestNotes(rows);
+  const root = chainRoot(rows);
   const { notes } = lineageNotes(rows);
   const known = capKnown([
     ...rows.flatMap((row) => row.knownSentNotes || []),
@@ -202,7 +236,7 @@ export function collapseNotesGroup(rows: readonly PendingMutation[]): PendingMut
     attempts: 0,
     direct: {
       ...(root.direct || { patch: { notes } }),
-      patch: { notes },
+      patch: { ...contactPatchOf(root), notes },
       ...(serverDispo ? { serverDispo: true } : {}),
     },
   };
@@ -225,35 +259,50 @@ export function collapseNotesGroup(rows: readonly PendingMutation[]): PendingMut
 
 /**
  * A new notes save replaces the unsent notes draft for that lead and account.
- * The original baseNotes and actionAt stay. The id is new, because the old
- * one may already have been received.
+ * The chain base stays. actionAt stays too, unless that draft is already
+ * older than 25 days: the replacement then uses the new save's actionAt.
+ * The id is new, because the old one may already have been received.
+ * A parked actionAt rejection is not a fold target. A merge past 100,000
+ * characters keeps both drafts.
  */
 export function foldNotesSave(existing: readonly PendingMutation[], next: PendingMutation): PendingMutation {
   if (next.kind !== "notes") return next;
   const priors = existing.filter((row) =>
-    isUnsentNotesDraft(row)
+    notesFoldTarget(row)
     && row.leadId === next.leadId
     && row.userId === next.userId
     && row.id !== next.id
   );
   if (!priors.length) return next;
   const prior = priors.length === 1 ? priors[0] : collapseNotesGroup(priors);
-  const notes = notesText(next);
+  const typed = notesText(next);
+  const replacingClear = priors.every(isParkedRejectedClear);
+  const notes = replacingClear && !(next.clearNotes === true && typed === "")
+    ? appendTypedOnto(prior.baseNotes || "", typed)
+    : typed;
+  const parts = [notesText(prior), ...priors.map((row) => notesText(row)), typed];
+  if (notesMergeExceedsLimit(parts, notes)) {
+    keptSiblingNotes.add(next);
+    return next;
+  }
   const clearing = next.clearNotes === true && notes === "";
   const serverDispo = next.direct?.serverDispo === true || prior.direct?.serverDispo === true;
+  const nowMs = Date.parse(next.createdAt || "");
+  const refreshActionAt = actionAtStale(prior.createdAt, Number.isFinite(nowMs) ? nowMs : Date.now());
+  const createdAt = refreshActionAt ? (next.createdAt || prior.createdAt) : prior.createdAt;
   const folded: PendingMutation = {
     ...prior,
     id: mintDraftId([...existing, next]),
     notes,
     baseNotes: prior.baseNotes,
-    createdAt: prior.createdAt,
+    createdAt,
     knownSentNotes: rememberSent(prior),
     syncState: "queued",
     attempts: 0,
     userName: next.userName || prior.userName,
     direct: {
       ...(prior.direct || { patch: { notes } }),
-      patch: { notes },
+      patch: { ...contactPatchOf(prior), notes },
       ...(serverDispo ? { serverDispo: true } : {}),
     },
   };
@@ -274,10 +323,10 @@ export function foldNotesSave(existing: readonly PendingMutation[], next: Pendin
 
 /** Ids of unsent notes drafts that foldNotesSave replaced. The caller deletes them. */
 export function supersededNotesIds(existing: readonly PendingMutation[], stored: PendingMutation): string[] {
-  if (stored.kind !== "notes") return [];
+  if (stored.kind !== "notes" || keptSiblingNotes.has(stored)) return [];
   return existing
     .filter((row) =>
-      isUnsentNotesDraft(row)
+      notesFoldTarget(row)
       && row.leadId === stored.leadId
       && row.userId === stored.userId
       && row.id !== stored.id
@@ -333,8 +382,14 @@ export function collapseLegacyNotesQueue(drafts: readonly PendingMutation[]): Pe
       if (seeded !== list[0]) structural = true;
       notes.push(seeded);
     } else {
-      structural = true;
-      notes.push(collapseNotesGroup(list));
+      const collapsed = collapseNotesGroup(list);
+      const kept = notesText(collapsed);
+      if (notesMergeExceedsLimit(list.map((row) => notesText(row)), kept)) {
+        notes.push(...list);
+      } else {
+        structural = true;
+        notes.push(collapsed);
+      }
     }
   }
   if (!structural) return drafts as PendingMutation[];

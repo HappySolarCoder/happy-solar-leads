@@ -7,7 +7,7 @@ import { freshDraftId } from "./draftQueue";
 import { commitDirectMutation, historyGpsFlag, reportingPatch, type DirectCommitIo } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
 import { notesAfterConflict } from "./notesRebase";
-import { deliberateNotesClear, NOTES_CLEAR_UNAVAILABLE_MESSAGE, NOTES_OTHER_REP_MESSAGE, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
+import { deliberateNotesClear, NOTES_CLEAR_UNAVAILABLE_MESSAGE, NOTES_MAX_CHARS, NOTES_OTHER_REP_MESSAGE, NOTES_ROUTE_BODY_MAX_BYTES, NOTES_TOO_LONG_MESSAGE, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
 import { ACTION_AT_FUTURE_MS, FIELD_DISPO_UNAVAILABLE, PHONE_CLOCK_NOTICE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
@@ -473,8 +473,8 @@ export async function postFieldDispo(
   let draft = m;
   let rebasedDraft: PendingMutation | undefined;
   let body = fieldDispoBody(draft, user);
-  if (notesRouteBodyTooLarge(body))
-    throw routeError("Notes too long", 413, SYNC_REASON.notesTooLong);
+  if (notesCharsTooLong(draft) || notesRouteBodyTooLarge(body))
+    throw routeError(NOTES_TOO_LONG_MESSAGE, 413, SYNC_REASON.notesTooLong);
   let token = await getToken(false);
   if (!token) throw Error("Sign in again to sync your work.");
   let refreshed = false;
@@ -529,8 +529,12 @@ export async function postFieldDispo(
       };
       rebasedDraft = draft;
       body = fieldDispoBody(draft, user);
-      if (notesRouteBodyTooLarge(body)) {
-        throw Object.assign(routeError("Notes too long", 413, SYNC_REASON.notesTooLong), { rebasedDraft: draft });
+      if (notesCharsTooLong(draft) || notesRouteBodyTooLarge(body)) {
+        const overChars = notesCharsTooLong(draft);
+        throw Object.assign(
+          routeError(NOTES_TOO_LONG_MESSAGE, 413, SYNC_REASON.notesTooLong),
+          overChars ? {} : { rebasedDraft: draft },
+        );
       }
       response = await send(token);
       continue;
@@ -639,12 +643,9 @@ function terminalNotesFailure(error: unknown, draft?: PendingMutation): boolean 
   return code === SYNC_REASON.notesConflict && deliberateNotesClear(draft);
 }
 
-/** A knock 413 stays queued. A knock 400 whose field is actionAt parks. Neither falls back to a direct write. */
-function knockRouteStands(draft: PendingMutation, error: unknown): boolean {
-  if (draft.kind !== "knock") return false;
-  const failure = error as { status?: number; field?: string };
-  if (failure.status === 413) return true;
-  return failure.status === 400 && failure.field === "actionAt";
+function notesCharsTooLong(draft: PendingMutation): boolean {
+  if (draft.kind !== "notes") return false;
+  return (draft.notes || "").length > NOTES_MAX_CHARS || (draft.baseNotes || "").length > NOTES_MAX_CHARS;
 }
 
 /** Offline and transport failures must stay queued. They do not adopt the route status. */
@@ -741,7 +742,7 @@ export async function deliverFieldDispo(
     try {
       return await postFieldDispo(prepared, user, deps);
     } catch (routeFailure) {
-      if (terminalNotesFailure(routeFailure, prepared) || knockRouteStands(prepared, routeFailure)) throw routeFailure;
+      if (terminalNotesFailure(routeFailure, prepared)) throw routeFailure;
       return plainPatchAfterRoute(prepared, user, routeFailure, commit);
     }
   }
@@ -752,7 +753,7 @@ export async function deliverFieldDispo(
     try {
       return await postFieldDispo(prepared, user, deps);
     } catch (routeFailure) {
-      if (terminalNotesFailure(routeFailure, prepared) || knockRouteStands(prepared, routeFailure)) throw routeFailure;
+      if (terminalNotesFailure(routeFailure, prepared)) throw routeFailure;
       return plainPatchAfterRoute(prepared, user, routeFailure, commit);
     }
   }

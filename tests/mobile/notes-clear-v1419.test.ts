@@ -479,10 +479,10 @@ test("legacy blank notes and reopened notes_too_long blanks park as notes_reject
 test("rebaseNotes keeps typed text and does not duplicate a clear-then-type", () => {
   const server = "Gate code 1234\nDog in yard";
   const dog = rebaseNotes("Older text", "Older text\nDog", server);
-  assert.equal(dog.notes, `${server}\nDog`);
+  assert.equal(dog.notes, `${server}\nOlder text\nDog`);
   assert.equal(rebaseNotes(dog.baseNotes, dog.notes, dog.notes).notes, dog.notes);
   const call = rebaseNotes("Older text", "Older text\nCall", "Call after 5");
-  assert.equal(call.notes, "Call after 5\nCall");
+  assert.equal(call.notes, "Call after 5\nOlder text\nCall");
   assert.equal(rebaseNotes(call.baseNotes, call.notes, call.notes).notes, call.notes);
   const middle = rebaseNotes("", "Dog", "prefix Dog suffix");
   assert.equal(middle.notes, "prefix Dog suffix\nDog");

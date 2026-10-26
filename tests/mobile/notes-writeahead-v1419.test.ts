@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { acceptDisposition, collapseLegacyNotesQueue, resetQueueSeqForTests } from "../../app/field/draftQueue";
+import { acceptDisposition, collapseLegacyNotesQueue, collapseNotesGroup, resetQueueSeqForTests, supersededNotesIds } from "../../app/field/draftQueue";
 import { splitNotesAndContact } from "../../app/field/contactSave";
 import { commitDirectMutation, reportingPatch, type DirectCommitIo } from "../../app/field/directWrites";
 import { compareNotesSend, orderQueuedNotes } from "../../app/field/notesCoalesce";
-import { rebaseNotes } from "../../app/field/notesRebase";
+import { notesAfterConflict, rebaseNotes } from "../../app/field/notesRebase";
 import { PHONE_CLOCK_NOTICE, SYNC_REASON } from "../../app/field/syncReasons";
 import { putDraft, readDrafts } from "../../app/field/deviceStore";
-import { NOTES_OTHER_REP_MESSAGE, parkedNotesNotice, phoneClockNotice } from "../../app/field/notesLimits";
+import { NOTES_MAX_CHARS, NOTES_OTHER_REP_MESSAGE, NOTES_TOO_LONG_MESSAGE, parkedNotesNotice, phoneClockNotice } from "../../app/field/notesLimits";
 import { SERVER_DISPO_SLOW_RETRY_MS, deliverFieldDispo, postFieldDispo } from "../../app/field/serverDispo";
 import { syncOutbox } from "../../app/field/syncOutbox";
 import type { PendingMutation } from "../../app/field/types";
@@ -1034,6 +1034,7 @@ test("rebase does not re-append a line the server already has", () => {
     const ourCounts = lineCounts(ours);
     const resultCounts = lineCounts(applied.notes);
     for (const line of new Set([...currentCounts.keys(), ...ourCounts.keys(), ...resultCounts.keys()])) {
+      if (line === "") continue;
       const cap = Math.max(currentCounts.get(line) || 0, ourCounts.get(line) || 0);
       assert.ok(
         (resultCounts.get(line) || 0) <= cap,
@@ -1355,7 +1356,9 @@ test("xK7Knock413 keeps a knock queued as payload_too_large and resends it", asy
     read: async () => rows,
     send: async (row) => deliverFieldDispo(row, owner, {
       getToken: async () => "token",
-      commit: async () => { throw Error("direct write must not run"); },
+      commit: async () => {
+        throw Object.assign(Error("permission-denied"), { code: "permission-denied" });
+      },
       post: async () => {
         posts += 1;
         if (posts === 1) return json(413, { ok: false, error: "payload_too_large", reasonCode: "payload_too_large" });
@@ -1410,7 +1413,9 @@ test("xK7Knock413AfterNotes resends the knock and leaves the note saved", async 
     read: async () => rows,
     send: async (row) => deliverFieldDispo(row, owner, {
       getToken: async () => "token",
-      commit: async () => { throw Error("direct write must not run"); },
+      commit: async () => {
+        throw Object.assign(Error("permission-denied"), { code: "permission-denied" });
+      },
       post: async (path, init) => {
         if (row.kind === "knock") {
           knockPosts += 1;
@@ -1440,6 +1445,352 @@ test("xK7Knock413AfterNotes resends the knock and leaves the note saved", async 
   assert.equal(knockPosts, 2);
   assert.equal(rows.length, 0);
   assert.equal(holder.notes, "S\nL1");
+});
+
+test("xK7Knock413PlainPatch saves the knock when the plain patch succeeds", async () => {
+  let commits = 0;
+  let rows: PendingMutation[] = [{
+    id: "knock-plain",
+    userId: owner.id,
+    userName: owner.name,
+    leadId: "lead-plain",
+    createdAt: at,
+    queueSeq: 1,
+    kind: "knock",
+    baseStatus: "claimed",
+    status: "not-home",
+    disposition: "Not Home",
+    syncState: "queued",
+    attempts: 0,
+    direct: { patch: { status: "not-home" }, serverDispo: true },
+  }];
+  await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+    await deliverFieldDispo(row, owner, {
+      getToken: async () => "token",
+      commit: async () => {
+        commits += 1;
+        return { replayed: false };
+      },
+      post: async () => json(413, { ok: false, reasonCode: "payload_too_large" }),
+    });
+  }));
+  assert.equal(commits, 1);
+  assert.equal(rows.length, 0);
+});
+
+test("xK7Knock413Transient keeps the plain-patch failure queued", async () => {
+  let now = Date.parse(at);
+  let rows: PendingMutation[] = [{
+    id: "knock-transient",
+    userId: owner.id,
+    userName: owner.name,
+    leadId: "lead-transient",
+    createdAt: at,
+    queueSeq: 1,
+    kind: "knock",
+    baseStatus: "claimed",
+    status: "not-home",
+    disposition: "Not Home",
+    syncState: "queued",
+    attempts: 0,
+    direct: { patch: { status: "not-home" }, serverDispo: true },
+  }];
+  const run = () => syncOutbox({
+    read: async () => rows,
+    send: async (row) => deliverFieldDispo(row, owner, {
+      getToken: async () => "token",
+      commit: async () => {
+        throw Object.assign(Error("offline"), { code: "unavailable" });
+      },
+      post: async () => json(413, { ok: false, reasonCode: "payload_too_large" }),
+    }),
+    remove: async () => { throw Error("must not drop"); },
+    update: async (row) => { rows = [row]; },
+    insert: async (row) => { rows = [...rows, row]; },
+    report: async () => {},
+    active: () => true,
+    now: () => now,
+    random: () => 0,
+  });
+  await run();
+  assert.equal(rows[0].syncState, "retry");
+  assert.equal(rows[0].parkedReason, undefined);
+  assert.notEqual(rows[0].parkedReason, SYNC_REASON.payloadTooLarge);
+  now += 60_000;
+  await run();
+  assert.equal(rows[0].syncState, "retry");
+});
+
+test("rebase keeps a typed line that repeats a base line the server removed", () => {
+  const cases = [
+    ["Dog", "Dog in yard\nDog", "Gate code 1234", "Gate code 1234\nDog in yard\nDog"],
+    ["Call", "Call after 5\nCall", "No answer", "No answer\nCall after 5\nCall"],
+    ["S1\nDog", "S1\nDog in yard\nDog", "S1\nGate code 1234", "S1\nGate code 1234\nDog in yard\nDog"],
+  ] as const;
+  for (const [base, ours, server, expected] of cases) {
+    assert.equal(rebaseNotes(base, ours, server).notes, expected, base);
+    assert.equal(notesAfterConflict({ notes: ours, baseNotes: base }, server).notes, expected, base);
+    const again = rebaseNotes(base, ours, expected);
+    assert.equal(again.notes, expected, `replay ${base}`);
+  }
+  const random = mulberry32(27);
+  const alphabet = ["Dog", "Dog in yard", "Gate code 1234", "Call after 5", "Admin"];
+  const pick = () => Array.from({ length: Math.floor(random() * 4) }, () => alphabet[Math.floor(random() * alphabet.length)]).join("\n");
+  const counts = (text: string) => {
+    const map = new Map<string, number>();
+    if (!text) return map;
+    for (const line of text.split("\n")) map.set(line, (map.get(line) || 0) + 1);
+    return map;
+  };
+  for (let i = 0; i < 100; i += 1) {
+    const base = pick();
+    const ours = pick();
+    const current = pick();
+    const applied = rebaseNotes(base, ours, current);
+    assert.equal(rebaseNotes(base, ours, applied.notes).notes, applied.notes);
+    assert.equal(rebaseNotes(base, ours, current).notes, applied.notes);
+    const baseCounts = counts(base);
+    const ourCounts = counts(ours);
+    const resultCounts = counts(applied.notes);
+    for (const [line, count] of ourCounts) {
+      const extra = count - (baseCounts.get(line) || 0);
+      if (extra <= 0 || line === "") continue;
+      assert.ok((resultCounts.get(line) || 0) >= extra, JSON.stringify({ base, ours, current, result: applied.notes, line }));
+    }
+  }
+});
+
+test("typed blank lines are not dropped because the server has a different blank", () => {
+  const merged = rebaseNotes("Dog", "Dog in yard\n\nA1", "Dog\n\nAdmin");
+  assert.equal(merged.notes, "Dog\n\nAdmin\nDog in yard\n\nA1");
+  assert.equal(rebaseNotes("Dog", "Dog in yard\n\nA1", merged.notes).notes, merged.notes);
+  const random = mulberry32(11);
+  const words = ["Dog", "A1", "Admin"];
+  for (let i = 0; i < 40; i += 1) {
+    const left = words[Math.floor(random() * words.length)];
+    const right = words[Math.floor(random() * words.length)];
+    const ours = `${left}\n\n${right}`;
+    const server = `Dog\n\nAdmin`;
+    const result = rebaseNotes("Dog", ours, server).notes;
+    if (!server.split("\n").includes(left) || !server.split("\n").includes(right)) {
+      assert.ok(result.includes("\n\n"), JSON.stringify({ ours, result }));
+    }
+    assert.equal(result.startsWith("\n"), false);
+    assert.equal(result.endsWith("\n"), false);
+    assert.equal(rebaseNotes("Dog", ours, result).notes, result);
+  }
+});
+
+test("xK6LegacySameMsRev chain root survives collapse and a sync that skips the startup pass", async () => {
+  const stamp = at;
+  const chain = () => {
+    const z = note("z", "S\nA1", "S", { createdAt: stamp, queueSeq: 3 });
+    const m = note("m", "S\nA1\nB1", "S\nA1", { createdAt: stamp, queueSeq: 2 });
+    const a = note("a", "S\nA1\nB1\nC1", "S\nA1\nB1", { createdAt: stamp, queueSeq: 1 });
+    return [a, m, z];
+  };
+  const grouped = collapseNotesGroup(chain());
+  assert.equal(grouped.baseNotes, "S");
+  assert.equal(grouped.notes, "S\nA1\nB1\nC1");
+  assert.equal(grouped.createdAt, stamp);
+  assert.equal(grouped.queueSeq, 3);
+  const servers = ["S", "S\nAdmin", "Roof replaced 2019"];
+  for (const skipCollapse of [false, true]) {
+    for (const server of servers) {
+      let rows = chain();
+      if (!skipCollapse) rows = collapseLegacyNotesQueue(rows);
+      const holder = { notes: server };
+      await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+        await deliverFieldDispo(row, owner, {
+          getToken: async () => "token",
+          commit: async () => { throw Error("notes use the route"); },
+          post: routePost(holder),
+        });
+      }));
+      for (const line of ["A1", "B1", "C1"]) {
+        assert.equal(lineCount(holder.notes, line), 1, `${skipCollapse} ${server} ${line} in ${holder.notes}`);
+      }
+      if (server === "S") assert.equal(holder.notes, "S\nA1\nB1\nC1");
+      if (server === "S\nAdmin") assert.equal(holder.notes, "S\nAdmin\nA1\nB1\nC1");
+      if (server === "Roof replaced 2019") assert.equal(holder.notes, "Roof replaced 2019\nS\nA1\nB1\nC1");
+      assert.equal(rows.length, 0, `${skipCollapse} ${server}`);
+    }
+  }
+});
+
+test("xChMidClear manager and territory rebase a typed line onto a parked clear", async () => {
+  for (const actor of [manager, territory]) {
+    resetQueueSeqForTests();
+    const parked = note("parked-clear", "", "S\nA1", {
+      userId: actor.id,
+      userName: actor.name,
+      clearNotes: true,
+      syncState: "parked",
+      parkedReason: SYNC_REASON.notesRejected,
+      lastError: "Clearing notes isn't available right now. Your notes were kept.",
+      knownSentNotes: ["S\nA1"],
+    });
+    const saved = acceptDisposition([parked], note("c1", "\nC1", "", {
+      userId: actor.id,
+      userName: actor.name,
+      createdAt: "2026-10-26T16:00:05.000Z",
+    }));
+    assert.equal(saved.baseNotes, "S\nA1", actor.id);
+    assert.equal(saved.notes, "S\nA1\nC1", actor.id);
+    assert.equal(saved.notes.startsWith("\n"), false, actor.id);
+    assert.equal(saved.clearNotes, undefined, actor.id);
+    let rows = [saved];
+    const holder = { notes: "S\nA1" };
+    await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+      await deliverFieldDispo(row, actor, {
+        getToken: async () => "token",
+        commit: async () => { throw Error("notes use the route"); },
+        post: routePost(holder),
+      });
+    }));
+    assert.equal(holder.notes, "S\nA1\nC1", actor.id);
+    assert.equal(rows.length, 0, actor.id);
+  }
+});
+
+test("a notes save keeps a phone when startup collapse never ran", async () => {
+  resetQueueSeqForTests();
+  const combined = note("legacy-phone", "S\nA1", "S", {
+    direct: { patch: { notes: "S\nA1", phone, email: "a@example.com" }, serverDispo: true },
+  });
+  delete (combined as { knownSentNotes?: string[] }).knownSentNotes;
+  const saved = acceptDisposition([combined], note("offline-note", "S\nA1\nB1", "S\nA1", {
+    createdAt: "2026-10-26T16:00:04.000Z",
+  }));
+  assert.equal(saved.direct?.patch.phone, phone);
+  assert.equal(saved.direct?.patch.email, "a@example.com");
+  let rows = [saved];
+  const holder = { notes: "S\nA1" };
+  const contacts: Record<string, unknown>[] = [];
+  await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+    await deliverFieldDispo(row, owner, {
+      getToken: async () => "token",
+      commit: async (mutation) => {
+        if (mutation.kind === "contact") {
+          contacts.push({ ...mutation.direct?.patch });
+          return { replayed: false };
+        }
+        throw Error("notes use the route");
+      },
+      post: routePost(holder),
+    });
+  }));
+  assert.equal(holder.notes, "S\nA1\nB1");
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].phone, phone);
+  assert.equal(contacts[0].email, "a@example.com");
+  assert.equal(collapseLegacyNotesQueue(rows), rows);
+});
+
+test("xJOldActionAt refreshes a 31-day actionAt and leaves a parked one alone", async () => {
+  const oldAt = new Date(Date.parse(at) - 31 * 24 * 60 * 60 * 1000).toISOString();
+  const actors = [owner, manager, territory];
+  for (const actor of actors) {
+    for (const serverDispo of [true, false]) {
+      resetQueueSeqForTests();
+      const stale = note("stale", "S\nA1", "S", {
+        userId: actor.id,
+        userName: actor.name,
+        createdAt: oldAt,
+        direct: { patch: { notes: "S\nA1" }, ...(serverDispo ? { serverDispo: true } : {}) },
+      });
+      const saved = acceptDisposition([stale], note("n1", "S\nA1\nN1", "S\nA1", {
+        userId: actor.id,
+        userName: actor.name,
+        createdAt: at,
+        direct: { patch: { notes: "S\nA1\nN1" }, ...(serverDispo ? { serverDispo: true } : {}) },
+      }));
+      assert.equal(saved.createdAt, at, `${actor.id} ${serverDispo}`);
+      assert.notEqual(saved.id, stale.id, `${actor.id} ${serverDispo}`);
+      assert.equal(supersededNotesIds([stale], saved).includes(stale.id), true);
+      let rows = [saved];
+      const holder = { notes: "S\nA1" };
+      const seenAt: string[] = [];
+      await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+        await deliverFieldDispo(row, actor, {
+          getToken: async () => "token",
+          commit: async () => { throw Error("notes use the route"); },
+          post: async (_path, init) => {
+            const body = JSON.parse(String(init?.body)) as { actionAt?: string; notes?: string; baseNotes?: string };
+            seenAt.push(body.actionAt || "");
+            const age = Date.parse(at) - Date.parse(body.actionAt || "");
+            if (age > 30 * 24 * 60 * 60 * 1000) return json(400, { ok: false, field: "actionAt" });
+            return routePost(holder)(_path, init);
+          },
+        });
+      }));
+      assert.equal(seenAt[0], at, `${actor.id} ${serverDispo}`);
+      assert.equal(holder.notes, "S\nA1\nN1", `${actor.id} ${serverDispo}`);
+      assert.equal(rows.length, 0, `${actor.id} ${serverDispo}`);
+    }
+  }
+  resetQueueSeqForTests();
+  const parked = note("parked-old", "S\nA1", "S", {
+    createdAt: oldAt,
+    syncState: "parked",
+    parkedReason: SYNC_REASON.notesRejected,
+    lastError: "Notes were rejected.",
+  });
+  const fresh = acceptDisposition([parked], note("n1-own", "S\nA1\nN1", "S\nA1", { createdAt: at }));
+  assert.equal(fresh.baseNotes, "S\nA1");
+  assert.equal(fresh.createdAt, at);
+  assert.deepEqual(supersededNotesIds([parked], fresh), []);
+  assert.equal(parked.syncState, "parked");
+  assert.equal(parked.createdAt, oldAt);
+});
+
+test("xCoOverLimit and xCoOverLimitDirect keep a 60k note and park the second", async () => {
+  const firstText = "A".repeat(60_000);
+  const secondText = "B".repeat(60_000);
+  assert.ok(firstText.length + secondText.length > NOTES_MAX_CHARS);
+  resetQueueSeqForTests();
+  const first = acceptDisposition([], note("sixty-a", firstText, "S"));
+  const second = acceptDisposition([first], note("sixty-b", secondText, "S", {
+    createdAt: "2026-10-26T16:00:02.000Z",
+  }));
+  assert.equal(second.notes, secondText);
+  assert.deepEqual(supersededNotesIds([first], second), []);
+  let rows = [first, second];
+  const holder = { notes: "S" };
+  await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+    await deliverFieldDispo(row, owner, {
+      getToken: async () => "token",
+      commit: async () => { throw Error("notes use the route"); },
+      post: async (_path, init) => {
+        const body = JSON.parse(String(init?.body)) as { notes?: string };
+        if ((body.notes || "").length > NOTES_MAX_CHARS) return json(413, { ok: false, reasonCode: "payload_too_large" });
+        return routePost(holder)(_path, init);
+      },
+    });
+  }));
+  assert.equal(holder.notes, firstText);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].notes, secondText);
+  assert.equal(rows[0].syncState, "parked");
+  assert.equal(rows[0].parkedReason, SYNC_REASON.notesTooLong);
+  assert.equal(rows[0].lastError, NOTES_TOO_LONG_MESSAGE);
+
+  resetQueueSeqForTests();
+  const directFirst = acceptDisposition([], note("direct-a", firstText, ""));
+  const directSecond = acceptDisposition([directFirst], note("direct-b", secondText, "", {
+    createdAt: "2026-10-26T16:00:03.000Z",
+    direct: { patch: { notes: secondText } },
+  }));
+  assert.deepEqual(supersededNotesIds([directFirst], directSecond), []);
+  let record = "";
+  const io = leadIo(() => record, (notes) => { record = notes; });
+  await commitDirectMutation(directFirst, owner, io);
+  assert.equal(record, firstText);
+  await assert.rejects(
+    () => commitDirectMutation(directSecond, owner, io),
+    (error: Error) => error.message === NOTES_TOO_LONG_MESSAGE,
+  );
+  assert.equal(record, firstText);
 });
 
 function isQueued(row: PendingMutation): boolean {
