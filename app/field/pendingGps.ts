@@ -1,6 +1,7 @@
 import type { Lead } from "@/app/types";
 import type { LocationPosition } from "@/app/utils/geolocation";
 import { distanceBetween } from "geofire-common";
+import { areaDecisionForDraft, areaFixFromPosition, currentAreaActor, evaluateAreaGate, knownPolygonsSync } from "./areaGate";
 import {
   GPS_WINDOW_AFTER_MS,
   GPS_WINDOW_BEFORE_MS,
@@ -22,6 +23,8 @@ export type KnockEvaluation = {
   reason?: GpsUnverifiedReason;
   locationPrecision: LocationPrecision;
   distanceM?: number;
+  /** Meters past the territory edge. Reported only when the reason is out_of_area. */
+  areaDistanceM?: number;
   accuracyM?: number;
   source?: GpsPointSource;
 };
@@ -38,30 +41,56 @@ function pinOf(m: PendingMutation): { lat?: number; lng?: number } {
   return { lat: gps?.lat, lng: gps?.lng };
 }
 
+function areaAtSave(
+  m: PendingMutation,
+  fix: LocationPosition | null,
+  precision: LocationPrecision,
+): { outsideArea: boolean; areaDistanceM?: number } {
+  const signedIn = currentAreaActor();
+  if (!signedIn || signedIn.id !== m.userId) return { outsideArea: false };
+  const cached = knownPolygonsSync(m.userId);
+  const decision = evaluateAreaGate({
+    role: signedIn.role,
+    proximityOptOut: signedIn.proximityOptOut,
+    owned: m.direct?.gps?.areaOwned === true,
+    fix: areaFixFromPosition(fix, precision),
+    polygons: cached?.polygons ?? null,
+    polygonsKnown: !!cached,
+  });
+  if (decision.action === "allow") return { outsideArea: false };
+  return { outsideArea: true, areaDistanceM: decision.distanceM };
+}
+
 export function evaluateKnockFix(
   m: PendingMutation,
   fix: LocationPosition | null,
-  options: { now?: number; precision?: LocationPrecision; stale?: boolean } = {},
+  options: { now?: number; precision?: LocationPrecision; stale?: boolean; outsideArea?: boolean; areaDistanceM?: number } = {},
 ): KnockEvaluation {
   const at = windowAnchor(m);
   const now = options.now ?? Date.now();
   const precision = options.precision ?? currentLocationPrecision();
   const source = m.direct?.gps?.source;
+  const finitePoint = !!fix && Number.isFinite(fix.coords.latitude) && Number.isFinite(fix.coords.longitude);
+  const finiteAccuracy = !!fix && Number.isFinite(fix.coords.accuracy);
+  const malformed = !!fix && (!finitePoint || !finiteAccuracy || fix.coords.accuracy < 0);
   const inWindow = !!fix
+    && finitePoint
     && fix.timestamp >= at - GPS_WINDOW_BEFORE_MS
     && fix.timestamp <= at + GPS_WINDOW_AFTER_MS
     && fix.timestamp <= now;
   const pin = pinOf(m);
-  const distanceM = fix && Number.isFinite(pin.lat) && Number.isFinite(pin.lng)
+  const distanceM = finitePoint && Number.isFinite(pin.lat) && Number.isFinite(pin.lng)
     ? distanceBetween([fix.coords.latitude, fix.coords.longitude], [pin.lat as number, pin.lng as number]) * 1000
     : undefined;
   const outcome = classifyKnock({
-    hasFix: !!fix && [fix.coords.latitude, fix.coords.longitude, fix.coords.accuracy].every(Number.isFinite),
+    hasFix: finitePoint && finiteAccuracy && !malformed,
     inWindow,
     hadStaleFix: options.stale ?? false,
     accuracyM: fix?.coords.accuracy,
     distanceM,
     precision: inWindow ? precision : "unknown",
+    malformed,
+    outsideArea: options.outsideArea,
   });
   const patch: Partial<Lead> = { gpsVerified: outcome.gpsVerified };
   if (!outcome.gpsVerified) patch.gpsUnverifiedReason = outcome.reason;
@@ -84,6 +113,7 @@ export function evaluateKnockFix(
     ...(!outcome.gpsVerified ? { reason: outcome.reason } : {}),
     locationPrecision: precision,
     distanceM,
+    ...(outcome.gpsVerified ? {} : outcome.reason === "out_of_area" ? { areaDistanceM: options.areaDistanceM } : {}),
     accuracyM: fix?.coords.accuracy,
     source,
   };
@@ -117,7 +147,7 @@ async function logUnverified(m: PendingMutation, evaluation: KnockEvaluation) {
     parkedReason: SYNC_REASON.gpsUnverifiedFlagged,
     gpsUnverifiedReason: evaluation.reason,
     locationPrecision: evaluation.locationPrecision,
-    distanceM: evaluation.distanceM,
+    distanceM: evaluation.reason === "out_of_area" && evaluation.areaDistanceM != null ? evaluation.areaDistanceM : evaluation.distanceM,
     gpsAccuracyM: evaluation.accuracyM,
     gpsPointSource: evaluation.source,
     attempts: m.attempts ?? 0,
@@ -136,7 +166,7 @@ export function stageKnockGps(m: PendingMutation, now = Date.now()): PendingMuta
   const at = windowAnchor(m);
   if (now < at + GPS_WINDOW_AFTER_MS && now <= gps.deadline) return { ...m, syncState: "gps" };
   const fix = bestFixInWindow(at, now);
-  const evaluation = evaluateKnockFix(m, fix, { now, stale: hadFixOutsideWindow(at, now) });
+  const evaluation = evaluateKnockFix(m, fix, { now, stale: hadFixOutsideWindow(at, now), ...areaAtSave(m, fix, currentLocationPrecision()) });
   const next = applyResult(m, evaluation);
   if (!evaluation.gpsVerified) void logUnverified(next, evaluation);
   return next;
@@ -181,10 +211,24 @@ export function resolveDraftGps(m: PendingMutation, deps: {
     const anchor = windowAnchor(current);
     const buffered = bestFixInWindow(anchor, clock);
     const fix = interrupted() && !buffered ? null : buffered;
+    const precision = deps.precision ?? currentLocationPrecision();
+    const signedIn = currentAreaActor();
+    const area = fix && signedIn?.id === current.userId
+      ? await areaDecisionForDraft({
+          userId: current.userId,
+          role: signedIn.role,
+          proximityOptOut: signedIn.proximityOptOut,
+          owned: current.direct?.gps?.areaOwned === true,
+          fix: areaFixFromPosition(fix, precision),
+          now: clock,
+        })
+      : { action: "allow" as const };
     const evaluation = evaluateKnockFix(current, fix, {
       now: clock,
-      precision: deps.precision ?? currentLocationPrecision(),
+      precision,
       stale: !fix && !interrupted() && hadFixOutsideWindow(anchor, clock),
+      outsideArea: area.action !== "allow",
+      areaDistanceM: area.action === "allow" ? undefined : area.distanceM,
     });
     if (interrupted() && !fix) {
       evaluation.gpsVerified = false;

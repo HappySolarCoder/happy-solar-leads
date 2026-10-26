@@ -21,6 +21,7 @@ import { deliverFieldDispo, prefersServerDispo, releaseFieldDispoHolds } from '.
 import { readSyncLog, recordSyncEvent, reportParked, type SyncEvent } from './syncDiagnostics';
 import { displayedKnockPoint, type KnockPoint } from './knockPoint';
 import { GPS_WINDOW_AFTER_MS } from './gpsPolicy';
+import { noteAreaActor } from './areaGate';
 import { resolveDraftGps, stageKnockGps } from './pendingGps';
 import {
   putArea,
@@ -72,6 +73,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     active = useRef(uid);
   active.current = uid;
   const latest = useRef({user,liveLeads});latest.current={user,liveLeads};
+  useEffect(() => { noteAreaActor(user); }, [user]);
   const [confirmedKnocks, setConfirmedKnocks] = useState<PendingMutation[]>([]);
   useEffect(() => {
     setConfirmedKnocks(previous => {
@@ -354,7 +356,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       direct: {
         patch: clean,
         ...(create ? { create } : {}),
-        ...(prefersServerDispo(lead, uid) ? { serverDispo: true } : {}),
+        ...(prefersServerDispo(lead, uid, actor.role) ? { serverDispo: true } : {}),
         ...(shown?.source === 'homeowner_corrected' && shown.homeownerId ? { homeownerId: shown.homeownerId } : {}),
         ...(shown ? { gpsPointSource: shown.source } : {}),
         ...(deferGps && entry ? { gps: {
@@ -363,6 +365,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
           tappedAt: tappedAt.getTime(),
           deadline: tappedAt.getTime() + GPS_WINDOW_AFTER_MS,
           required: isProximityRequired(actor),
+          areaOwned: lead.claimedBy === uid || lead.assignedTo === uid,
         } } : {}),
       },
     };

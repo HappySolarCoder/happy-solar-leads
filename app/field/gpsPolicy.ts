@@ -1,15 +1,17 @@
 /**
- * Knock GPS policy for 14.18. A GPS result never blocks, holds, or parks a dispo.
+ * Knock GPS policy for 14.18. Proximity never blocks, holds, or parks a dispo.
  * Verified when distance - min(accuracy, ACCURACY_CAP_M) <= GPS_RADIUS_M and accuracy <= ACCURACY_MAX_M.
  * The radius stays one constant so a later centroid adjustment does not fork the gate.
  */
-export const GPS_RADIUS_M = 75;
-export const ACCURACY_CAP_M = 40;
+export const GPS_RADIUS_M = 35;
+export const ACCURACY_CAP_M = 15;
 export const ACCURACY_MAX_M = 65;
 export const REDUCED_ACCURACY_METERS = 1000;
 export const GPS_WINDOW_BEFORE_MS = 30_000;
 export const GPS_WINDOW_AFTER_MS = 15_000;
 export const GPS_DISTANCE_MAX_M = 100_000;
+/** Direct writes cannot store out_of_area until the Firestore rules accept it. */
+export const AREA_REASON_DIRECT_WRITE_SUPPORTED = false;
 
 /** Unverified knocks sync. This build does not hold them. */
 export const GPS_UNVERIFIED_POLICY = "flag" as const;
@@ -25,6 +27,7 @@ export const GPS_UNVERIFIED_REASONS = [
   "stale",
   "low_accuracy",
   "reduced_accuracy",
+  "out_of_area",
   "too_far",
 ] as const;
 
@@ -41,6 +44,7 @@ export function validGpsMeters(value: unknown): value is number {
 
 /** Shared with the map gate and field-work. Do not copy the thresholds. */
 export function knockVerified(distanceM: number, accuracyM: number): boolean {
+  if (!Number.isFinite(distanceM) || !Number.isFinite(accuracyM) || accuracyM < 0) return false;
   return distanceM - Math.min(accuracyM, ACCURACY_CAP_M) <= GPS_RADIUS_M
     && accuracyM <= ACCURACY_MAX_M;
 }
@@ -67,17 +71,29 @@ export function classifyKnock(input: {
   accuracyM?: number;
   distanceM?: number;
   precision: LocationPrecision;
+  /** Negative, NaN, or a non-finite coordinate. Always no_fix, and this never throws. */
+  malformed?: boolean;
+  /** Set only after a good fix is outside the rep's territory. Loses to no_fix, stale, accuracy, and reduced. */
+  outsideArea?: boolean;
 }): { gpsVerified: true } | { gpsVerified: false; reason: GpsUnverifiedReason } {
-  if (!input.hasFix) {
-    return { gpsVerified: false, reason: input.hadStaleFix ? "stale" : "no_fix" };
+  try {
+    const accuracy = input.accuracyM;
+    const accuracyMalformed = typeof accuracy === "number" && (!Number.isFinite(accuracy) || accuracy < 0);
+    if (input.malformed || accuracyMalformed) return { gpsVerified: false, reason: "no_fix" };
+    if (!input.hasFix) {
+      return { gpsVerified: false, reason: input.hadStaleFix ? "stale" : "no_fix" };
+    }
+    if (!input.inWindow) return { gpsVerified: false, reason: "stale" };
+    if (input.precision === "reduced") return { gpsVerified: false, reason: "reduced_accuracy" };
+    if (typeof accuracy !== "number" || accuracy > ACCURACY_MAX_M) {
+      return { gpsVerified: false, reason: "low_accuracy" };
+    }
+    if (input.outsideArea) return { gpsVerified: false, reason: "out_of_area" };
+    if (typeof input.distanceM !== "number" || !Number.isFinite(input.distanceM) || !knockVerified(input.distanceM, accuracy)) {
+      return { gpsVerified: false, reason: "too_far" };
+    }
+    return { gpsVerified: true };
+  } catch {
+    return { gpsVerified: false, reason: "no_fix" };
   }
-  if (!input.inWindow) return { gpsVerified: false, reason: "stale" };
-  if (input.precision === "reduced") return { gpsVerified: false, reason: "reduced_accuracy" };
-  if (typeof input.accuracyM !== "number" || !Number.isFinite(input.accuracyM) || input.accuracyM < 0 || input.accuracyM > ACCURACY_MAX_M) {
-    return { gpsVerified: false, reason: "low_accuracy" };
-  }
-  if (typeof input.distanceM !== "number" || !Number.isFinite(input.distanceM) || !knockVerified(input.distanceM, input.accuracyM)) {
-    return { gpsVerified: false, reason: "too_far" };
-  }
-  return { gpsVerified: true };
 }

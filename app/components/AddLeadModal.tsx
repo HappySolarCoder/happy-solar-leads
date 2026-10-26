@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, MapPin, Loader, Home, Phone, Mail, DollarSign } from 'lucide-react';
+import { AREA_BLOCK_MESSAGE } from '@/app/field/areaGate';
 import { Lead } from '@/app/types';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import type { Disposition } from '@/app/types/disposition';
@@ -41,6 +42,7 @@ export default function AddLeadModal({
   const [email, setEmail] = useState('');
   const [estimatedBill, setEstimatedBill] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [areaMessage, setAreaMessage] = useState('');
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [selectedDisposition, setSelectedDisposition] = useState('');
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -129,6 +131,11 @@ export default function AddLeadModal({
       setEstimatedBill('');
       setSelectedDisposition(dispositions[0]?.id || selectedDisposition);
     } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message === AREA_BLOCK_MESSAGE) {
+        setAreaMessage(message);
+        return;
+      }
       console.error('Error saving lead:', error);
       alert('Failed to save lead. Please try again.');
     } finally {
@@ -160,7 +167,11 @@ export default function AddLeadModal({
           </div>
 
           {/* Content */}
-          <div className="raydar-add-lead-fields p-5 space-y-4">
+            <div className="raydar-add-lead-fields p-5 space-y-4">
+            {areaMessage && <p className="rf-notice" role="status">
+              <span>{areaMessage}</span>
+              <button type="button" className="rf-plain" onClick={() => setAreaMessage('')}>Dismiss</button>
+            </p>}
             {/* GPS Coordinates */}
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
               <div className="flex items-center gap-2 text-blue-800">

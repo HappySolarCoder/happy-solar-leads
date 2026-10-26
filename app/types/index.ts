@@ -128,7 +128,7 @@ export interface Lead {
   /** True when the knock satisfied the shared radius and accuracy rule. */
   gpsVerified?: boolean;
   /** Why an unverified knock still saved. Absent when gpsVerified is true. */
-  gpsUnverifiedReason?: "no_fix" | "stale" | "low_accuracy" | "reduced_accuracy" | "too_far";
+  gpsUnverifiedReason?: "no_fix" | "stale" | "low_accuracy" | "reduced_accuracy" | "out_of_area" | "too_far";
   /** Meters from the point the map showed, when a fix exists. */
   gpsDistanceM?: number;
   // Easter Eggs

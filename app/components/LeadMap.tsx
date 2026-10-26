@@ -17,6 +17,7 @@ import { buildLeadViewportIndex, queryLeadViewport } from '@/app/utils/mapViewpo
 import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { getLocation } from '@/app/utils/geolocation';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
+import { AREA_BLOCK_MESSAGE, assertDropPinArea } from '@/app/field/areaGate';
 import { droppedPinGps } from '@/app/field/pendingGps';
 import { bestFixInWindow, noteWarmFix } from '@/app/field/warmGps';
 
@@ -1457,21 +1458,21 @@ export default function LeadMap({
       const pinLat = typeof leadData.lat === 'number' ? leadData.lat : dropPinLocation?.lat;
       const pinLng = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
       let gpsFields: Partial<Lead> = {};
+      const id = manualDraftId.current || (manualDraftId.current = crypto.randomUUID());
       try {
         const tappedAt = Date.now();
         const warm = bestFixInWindow(tappedAt, tappedAt);
         const position = warm ?? await getLocation({ enableHighAccuracy: true, timeout: 10000 });
         if (!warm) noteWarmFix(position);
+        if (currentUser) await assertDropPinArea({ user: currentUser, fix: position, leadId: id, tappedAt });
         if (typeof pinLat === 'number' && typeof pinLng === 'number') {
           gpsFields = droppedPinGps(position, pinLat, pinLng);
         }
       } catch (err) {
+        if (err instanceof Error && err.message === AREA_BLOCK_MESSAGE) throw err;
         console.warn('[LeadMap] Manual pin GPS capture failed:', err);
         gpsFields = { gpsVerified: false, gpsUnverifiedReason: 'no_fix' };
       }
-
-      // Generate ID
-      const id = manualDraftId.current || (manualDraftId.current = crypto.randomUUID());
 
       const firebaseUid = auth?.currentUser?.uid;
       if (!firebaseUid) {
@@ -1581,6 +1582,7 @@ export default function LeadMap({
         onLeadAdded(newLead);
       }
     } catch (error: any) {
+      if (error?.message === AREA_BLOCK_MESSAGE) throw error;
       console.error('Error saving dropped lead:', error);
       // Surface the real reason up to UI (permission-denied vs auth-not-ready)
       const msg = error?.message || String(error);

@@ -12,10 +12,6 @@ const LEGACY_REASON: Record<string, ParkedReason> = {
   invalid: SYNC_REASON.invalidPayload,
 };
 
-const STAYS_PARKED = new Set<string>([
-  SYNC_REASON.notesConflict,
-]);
-
 const GPS_HELD = new Set<string>([
   SYNC_REASON.outside50m,
   SYNC_REASON.gpsUnverifiedHeld,
@@ -26,7 +22,7 @@ const GPS_HELD = new Set<string>([
 
 const reopenedSessions = new Set<string>();
 
-/** One pass per cold start. Notes conflicts stay parked. GPS holds are re-queued by migrateDraft. */
+/** One pass per cold start. Parked denials, including a notes conflict, are tried again. */
 export function reopenDeniedParked(
   drafts: PendingMutation[],
   uid: string,
@@ -35,7 +31,6 @@ export function reopenDeniedParked(
   reopenedSessions.add(uid);
   return drafts.map((m) => {
     if (m.syncState !== "parked") return m;
-    if (STAYS_PARKED.has(String(m.parkedReason || ""))) return m;
     return { ...m, syncState: "queued", nextAttemptAt: undefined };
   });
 }

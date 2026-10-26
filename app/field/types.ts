@@ -156,6 +156,8 @@ export type FieldMutation = {
       tappedAt?: number;
       source?: "homeowner_corrected" | "lead_stored";
       homeownerId?: string;
+      /** Device-only. Owned leads flag out_of_area instead of blocking. Never sent to Firestore. */
+      areaOwned?: boolean;
     };
   };
   id: string;

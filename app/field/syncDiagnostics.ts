@@ -60,6 +60,8 @@ let routeMissing = false;
 let stripExtendedGpsKeys = !SYNC_REPORT_EXTENDED_GPS_KEYS;
 
 const EXTENDED_GPS_KEYS = ["gpsUnverifiedReason", "locationPrecision"] as const;
+/** Live sync-report rejects an actionAt older than this. */
+export const SYNC_REPORT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 function mirror(row: SyncEvent) {
   console.info("[raydar-sync]", {
@@ -157,14 +159,15 @@ async function markReported(userId: string, ids: string[]) {
 }
 
 export function syncReportItem(event: SyncEvent, includeExtended = !stripExtendedGpsKeys): SyncReportItem {
-  const flagged = event.state === "flagged" || event.gpsUnverifiedReason != null;
+  const areaRefusal = event.gpsUnverifiedReason === "out_of_area" && event.state !== "flagged";
+  const flagged = !areaRefusal && (event.state === "flagged" || event.gpsUnverifiedReason != null);
   const item: SyncReportItem = {
     draftId: event.draftId,
     leadId: event.leadId,
     intendedStatus: (event.status || event.disposition || "unknown").slice(0, 64),
     actionAt: event.createdAt,
-    reasonCode: flagged ? SYNC_REASON.gpsUnverifiedFlagged : (event.parkedReason || SYNC_REASON.other),
-    outcome: flagged ? "flagged_accepted" : "refused",
+    reasonCode: areaRefusal ? "out_of_area" : flagged ? SYNC_REASON.gpsUnverifiedFlagged : (event.parkedReason || SYNC_REASON.other),
+    outcome: areaRefusal ? "refused" : flagged ? "flagged_accepted" : "refused",
     appBuild: (event.appBuild || appBuildLabel()).slice(0, 32),
   };
   if (event.lastError) item.lastError = event.lastError.slice(0, 500);
@@ -236,12 +239,65 @@ async function defaultPost(items: SyncReportItem[]): Promise<SyncReportPostResul
   }
 }
 
+function reportIndex(result: { status: number; body?: unknown }): number | undefined {
+  if (result.status !== 400 || !result.body || typeof result.body !== "object") return undefined;
+  const index = (result.body as { index?: unknown }).index;
+  return typeof index === "number" && Number.isInteger(index) && index >= 0 ? index : undefined;
+}
+
+/** Newest event per draftId. Rows older than 30 days are returned separately and are not sent. */
+export function selectSyncReports(events: SyncEvent[], now = Date.now()): { send: SyncEvent[]; drop: SyncEvent[] } {
+  const sendByDraft = new Map<string, SyncEvent>();
+  const drop: SyncEvent[] = [];
+  for (const event of events) {
+    const actionAt = Date.parse(event.createdAt);
+    if (Number.isFinite(actionAt) && now - actionAt > SYNC_REPORT_MAX_AGE_MS) {
+      drop.push(event);
+      continue;
+    }
+    const current = sendByDraft.get(event.draftId);
+    if (!current || event.at > current.at || (event.at === current.at && event.id > current.id)) {
+      if (current) drop.push(current);
+      sendByDraft.set(event.draftId, event);
+    } else {
+      drop.push(event);
+    }
+  }
+  const send = [...sendByDraft.values()].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.at - b.at || a.id.localeCompare(b.id),
+  );
+  return { send, drop };
+}
+
+async function forgetReports(userId: string, events: SyncEvent[], reason: string, releaseDraft = false) {
+  if (!events.length) return;
+  if (releaseDraft) for (const event of events) reportedIds.add(event.draftId);
+  await markReported(userId, events.map((event) => event.id));
+  await recordSyncEvent({
+    id: crypto.randomUUID(),
+    userId,
+    at: Date.now(),
+    draftId: events[0].draftId,
+    leadId: events[0].leadId,
+    createdAt: events[0].createdAt,
+    state: "noted",
+    lastError: reason.slice(0, 200),
+    attempts: events.length,
+  });
+}
+
+async function acceptReports(userId: string, events: SyncEvent[]) {
+  for (const event of events) reportedIds.add(event.draftId);
+  await markReported(userId, events.map((event) => event.id));
+}
+
 /** Bounded, idempotent report. A 404 means the route is not deployed: no-op, no retry loop, no UI. */
 export async function reportParked(
   userId: string,
   deps?: {
     probe?: () => Promise<number>;
     post?: (items: SyncReportItem[]) => Promise<SyncReportPostResult>;
+    now?: () => number;
   },
 ): Promise<{ sent: number; status: number }> {
   try {
@@ -253,7 +309,9 @@ export async function reportParked(
         !event.reported &&
         !reportedIds.has(event.draftId),
     );
-    const batch = pending.slice(0, 50);
+    const selected = selectSyncReports(pending, deps?.now?.() ?? Date.now());
+    await forgetReports(userId, selected.drop, "sync-report kept the newest row and dropped an older or expired actionAt locally");
+    const batch = selected.send.slice(0, 50);
     if (!batch.length) return { sent: 0, status: 0 };
     let status = 0;
     try {
@@ -267,21 +325,38 @@ export async function reportParked(
     }
     if (status === 0) return { sent: 0, status: 0 };
     const post = deps?.post ?? defaultPost;
-    let items = batch.map((event) => syncReportItem(event, !stripExtendedGpsKeys));
+    let events = batch;
+    let items = events.map((event) => syncReportItem(event, !stripExtendedGpsKeys));
     let posted = readPostResult(await post(items));
-    if (extendedGpsKeyRejected(posted) && !stripExtendedGpsKeys) {
+    let corrected = false;
+    const correctable = () => !corrected;
+    if (extendedGpsKeyRejected(posted) && !stripExtendedGpsKeys && correctable()) {
+      corrected = true;
       stripExtendedGpsKeys = true;
       items = items.map(withoutExtendedKeys);
       posted = readPostResult(await post(items));
+    } else if (posted.status === 400 && correctable()) {
+      const index = reportIndex(posted);
+      const field = posted.body && typeof posted.body === "object" ? (posted.body as { field?: unknown }).field : undefined;
+      if (typeof index === "number" && index < events.length && field !== "reports") {
+        corrected = true;
+        const dropped = events[index];
+        events = events.filter((_, position) => position !== index);
+        items = items.filter((_, position) => position !== index);
+        await forgetReports(userId, [dropped], `sync-report rejected index ${index}${typeof field === "string" ? ` (${field})` : ""}`, true);
+        posted = events.length ? readPostResult(await post(items)) : { status: 200 };
+      }
     }
     if (posted.status === 404) {
       if (!deps) routeMissing = true;
       return { sent: 0, status: 404 };
     }
     if (posted.status >= 200 && posted.status < 300) {
-      for (const event of batch) reportedIds.add(event.draftId);
-      await markReported(userId, batch.map((event) => event.id));
-      return { sent: batch.length, status: posted.status };
+      await acceptReports(userId, events);
+      return { sent: events.length, status: posted.status };
+    }
+    if (posted.status === 400) {
+      await forgetReports(userId, events, "sync-report rejected this batch once; it will not be retried", true);
     }
     return { sent: 0, status: posted.status };
   } catch {

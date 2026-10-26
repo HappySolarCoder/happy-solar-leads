@@ -2,6 +2,7 @@
 import { apiFetch } from '@/app/utils/apiFetch';
 import { useCallback, useEffect, useState } from 'react';
 import { auth } from '@/app/utils/firebase';
+import { rememberOwnPolygons } from '@/app/field/areaGate';
 import type { Territory } from '@/app/types/territory';
 import type { TeamAreaMember } from '@/app/utils/teamAreas';
 
@@ -24,6 +25,7 @@ async function readAreas(uid: string): Promise<Areas> {
       members: Array.isArray(data.members) ? data.members : [],
     };
     cache.set(uid, { at: Date.now(), value });
+    rememberOwnPolygons(uid, value.territories.filter((territory) => territory.userId === uid).map((territory) => territory.polygon));
     while (cache.size > 2) cache.delete(cache.keys().next().value!);
     return value;
   })().finally(() => pending.delete(uid));

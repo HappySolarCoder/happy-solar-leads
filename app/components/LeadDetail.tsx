@@ -4,6 +4,7 @@ import HouseHistory from '@/app/homeowners/HouseHistory';
 import { HomeownerSection } from '@/app/homeowners/Details';
 import type { Homeowner } from '@/app/homeowners/model';
 import { homeownerKnockGps } from '@/app/homeowners/knockGps';
+import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap } from '@/app/field/areaGate';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
 import { recordSyncEvent } from '@/app/field/syncDiagnostics';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
@@ -142,6 +143,16 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const pausedWithDrafts = !DIRECT_MOBILE_WRITES && hasPendingFieldWork && !field?.flags.capture;
   const capture = !DIRECT_MOBILE_WRITES && !!field?.flags.capture;
   async function saveReportingPatch(patch: Partial<Lead>, deferGps = false) {
+    if (deferGps && currentUser) {
+      const tappedAt = patch.dispositionedAt instanceof Date ? patch.dispositionedAt.getTime() : Date.now();
+      await assertAssignedAreaAtTap({
+        user: currentUser,
+        lead,
+        tappedAt,
+        status: typeof patch.status === 'string' ? patch.status : undefined,
+        disposition: patch.dispositionHistory?.[0]?.disposition,
+      });
+    }
     const point = displayedKnockPoint(lead, homeowner || lead.homeowner);
     if (saveLeadPatch) await saveLeadPatch(patch, deferGps);
     else if (DIRECT_MOBILE_WRITES) {
@@ -164,6 +175,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   }
   function isFieldValidation(error: unknown) {
     const message = error instanceof Error ? error.message : '';
+    if (message === AREA_BLOCK_MESSAGE) return true;
     return /Reload your dispositions|Connect before claiming|Only the rep who claimed|Field capture is paused|Review pending drafts|Sign in to save this visit|Open the mobile Knock screen|Sign in with the rep/i.test(message);
   }
   async function recordField(kind: FieldMutation['kind'], patch: Partial<FieldMutation> = {}) {
@@ -673,7 +685,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             </div>
           </a>
 
-          {fieldMessage && <p className="rf-notice" role="status">{fieldMessage}</p>}
+          {fieldMessage && <p className="rf-notice" role="status">
+            <span>{fieldMessage}</span>
+            {fieldMessage === AREA_BLOCK_MESSAGE && <button type="button" className="rf-plain" onClick={() => setFieldMessage('')}>Dismiss</button>}
+          </p>}
           {fieldMemory && !summaryOnly && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
           {/* Contact Info */}
           {(lead.phone || lead.email) && (

@@ -5,7 +5,7 @@ import type { PendingMutation } from './types';
 import { mapLeadDoc } from '@/app/utils/firestore';
 import { createLeadOnce } from './createLeadOnce';
 import { distanceBetween } from 'geofire-common';
-import { isGpsUnverifiedReason, validGpsMeters } from './gpsPolicy';
+import { AREA_REASON_DIRECT_WRITE_SUPPORTED, isGpsUnverifiedReason, validGpsMeters } from './gpsPolicy';
 
 // Bundled mobile releases never depend on the undeployed field APIs.
 export const DIRECT_MOBILE_WRITES = process.env.NEXT_PUBLIC_NATIVE_BUILD === '1';
@@ -31,7 +31,11 @@ function allowedDirectValue(key: string, value: unknown): boolean {
   return true;
 }
 export function directPatch(patch: Partial<Lead>): Partial<Lead> {
-  return Object.fromEntries(Object.entries(patch).filter(([k, v]) => allowedDirectValue(k, v)));
+  const source = patch as Record<string, unknown>;
+  const mapped = source.gpsUnverifiedReason === "out_of_area" && !AREA_REASON_DIRECT_WRITE_SUPPORTED
+    ? { ...patch, gpsUnverifiedReason: "too_far" as const }
+    : patch;
+  return Object.fromEntries(Object.entries(mapped).filter(([k, v]) => allowedDirectValue(k, v)));
 }
 /** No new server fields/collections. Ownership is never part of an update. */
 export function reportingPatch(m: PendingMutation, user: User): Partial<Lead> {

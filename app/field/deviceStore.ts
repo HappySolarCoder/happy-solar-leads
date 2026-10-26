@@ -14,12 +14,13 @@ export function fieldDatabase() {
 }
 function database() {
   return (connection ??= new Promise((resolve, reject) => {
-    const r = indexedDB.open("raydar-field-v11", 2);
+    const r = indexedDB.open("raydar-field-v11", 3);
     r.onupgradeneeded = () => {
       const db = r.result;
       if (!db.objectStoreNames.contains("drafts")) db.createObjectStore("drafts", { keyPath: "id" });
       if (!db.objectStoreNames.contains("areas")) db.createObjectStore("areas", { keyPath: "userId" });
       if (!db.objectStoreNames.contains("diagnostics")) db.createObjectStore("diagnostics", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("territoryPolygons")) db.createObjectStore("territoryPolygons", { keyPath: "userId" });
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => {
@@ -83,6 +84,26 @@ export async function readArea(uid: string) {
 }
 export const clearArea = (uid: string) =>
   request("areas", "readwrite", (s) => s.delete(uid));
+
+/** The signed-in rep's own territory polygons from /api/team-areas. Not a lead cache. */
+export type TerritoryPolygonCache = {
+  userId: string;
+  at: number;
+  polygons: { lat: number; lng: number }[][];
+};
+
+export const putTerritoryPolygons = (row: TerritoryPolygonCache) =>
+  request("territoryPolygons", "readwrite", (s) => s.put(row));
+
+export async function readTerritoryPolygons(userId: string): Promise<TerritoryPolygonCache | null> {
+  if (!userId || typeof indexedDB === "undefined") return null;
+  try {
+    const row = await request<TerritoryPolygonCache | undefined>("territoryPolygons", "readonly", (s) => s.get(userId));
+    return row && row.userId === userId && Array.isArray(row.polygons) ? row : null;
+  } catch {
+    return null;
+  }
+}
 
 function byAction(a: PendingMutation, b: PendingMutation) {
   return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);

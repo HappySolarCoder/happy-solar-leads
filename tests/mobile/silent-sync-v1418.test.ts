@@ -22,7 +22,7 @@ import {
 import { displayedKnockPoint } from "../../app/field/knockPoint";
 import { droppedPinGps, evaluateKnockFix, resolveDraftGps, stageKnockGps } from "../../app/field/pendingGps";
 import { bestFixInWindow, noteAndroidPermissions, noteWarmFix, resetWarmGpsForTests } from "../../app/field/warmGps";
-import { extendedGpsKeyRejected, recordSyncEvent, reportParked, resetSyncLogForTests, syncReportItem } from "../../app/field/syncDiagnostics";
+import { SYNC_REPORT_MAX_AGE_MS, extendedGpsKeyRejected, readSyncLog, recordSyncEvent, reportParked, resetSyncLogForTests, syncReportItem } from "../../app/field/syncDiagnostics";
 import { SEND_BUILD_HEADERS, apiFetch, nativeApiFetch } from "../../app/utils/apiFetch";
 import {
   DRAFT_ID_PATTERN,
@@ -281,7 +281,7 @@ test("200 removes the draft, including an older tap the server already merged", 
   assert.equal(typeof bodies[0].actionAt, "string");
 });
 
-test("409 rebases notes only when baseNotes still matches, once, with the same draftId", async () => {
+test("409 rebases notes onto currentNotes and parks only on a second 409", async () => {
   const notes = knock({
     id: "note-1",
     kind: "notes",
@@ -289,21 +289,43 @@ test("409 rebases notes only when baseNotes still matches, once, with the same d
     baseNotes: "original",
     direct: { patch: { notes: "edited" }, serverDispo: true },
   });
-  const ids: string[] = [];
+  const bodies: Array<{ draftId: string; photos?: unknown; notes?: string; baseNotes?: string }> = [];
   let posts = 0;
   await postFieldDispo(notes, user, {
     getToken: async () => "token",
     post: async (_path, init) => {
       posts += 1;
-      const body = JSON.parse(String(init.body)) as { draftId: string; photos?: unknown; notes?: string };
-      ids.push(body.draftId);
+      const body = JSON.parse(String(init.body)) as { draftId: string; photos?: unknown; notes?: string; baseNotes?: string };
+      bodies.push(body);
       assert.equal(body.photos, undefined);
-      assert.equal(body.notes, "edited");
-      if (posts === 1) return json(409, { currentNotes: "original" });
+      if (posts === 1) return json(409, { currentNotes: "someone else" });
       return json(200, {});
     },
   });
-  assert.deepEqual(ids, ["note-1", "note-1"]);
+  assert.deepEqual(bodies.map((body) => body.draftId), ["note-1", "note-1"]);
+  assert.equal(bodies[1].baseNotes, "someone else");
+  assert.equal(bodies[1].notes, "edited");
+
+  const appended = knock({
+    id: "note-2",
+    kind: "notes",
+    notes: "original\nmy note",
+    baseNotes: "original",
+    direct: { patch: { notes: "original\nmy note" }, serverDispo: true },
+  });
+  posts = 0;
+  const merged: string[] = [];
+  await postFieldDispo(appended, user, {
+    getToken: async () => "token",
+    post: async (_path, init) => {
+      posts += 1;
+      const body = JSON.parse(String(init.body)) as { notes?: string };
+      merged.push(body.notes || "");
+      if (posts === 1) return json(409, { currentNotes: "original\nother" });
+      return json(200, {});
+    },
+  });
+  assert.equal(merged[1], "original\nother\nmy note");
 
   posts = 0;
   await assert.rejects(
@@ -312,19 +334,6 @@ test("409 rebases notes only when baseNotes still matches, once, with the same d
       post: async () => {
         posts += 1;
         return json(409, { currentNotes: "someone else" });
-      },
-    }),
-    (error: Error & { reasonCode?: string }) => error.reasonCode === "notes_conflict",
-  );
-  assert.equal(posts, 1);
-
-  posts = 0;
-  await assert.rejects(
-    () => postFieldDispo(notes, user, {
-      getToken: async () => "token",
-      post: async () => {
-        posts += 1;
-        return json(409, { currentNotes: "original" });
       },
     }),
     (error: Error & { reasonCode?: string }) => error.reasonCode === "notes_conflict",
@@ -434,7 +443,13 @@ test("photos and handoffs are never posted", async () => {
         status: "not-home",
         photos: [{ id: "p", url: "https://example.invalid/secret.jpg", caption: "", type: "other", uploadedBy: "rep", uploadedAt: new Date(at) }],
         notes: "secret note",
+        knockGpsLat: 43,
+        knockGpsLng: -77,
+        knockGpsAccuracy: 8,
         knockGpsTimestamp: new Date("2026-10-25T15:00:05.000Z"),
+        gpsVerified: false,
+        gpsUnverifiedReason: "too_far",
+        userId: "rep",
       } as Partial<Lead>,
       serverDispo: true,
     },
@@ -442,8 +457,14 @@ test("photos and handoffs are never posted", async () => {
   const encoded = JSON.stringify(body);
   assert.equal(encoded.includes("secret"), false);
   assert.equal(encoded.includes("photos"), false);
+  assert.equal(encoded.includes("knockGps"), false);
+  assert.equal(encoded.includes("gpsVerified"), false);
+  assert.equal(encoded.includes("userId"), false);
+  assert.equal(encoded.includes("dispositionHistory"), false);
+  assert.equal(body.kind, "knock");
   assert.equal(typeof body.actionAt, "string");
-  assert.match(String(body.knockGpsTimestamp || ""), /T/);
+  assert.equal(body.gps?.capturedAt, "2026-10-25T15:00:05.000Z");
+  assert.equal(body.gps?.accuracyM, 8);
   let posted = false;
   await deliverFieldDispo(knock({
     id: "hand-1",
@@ -562,20 +583,34 @@ test("legacy gps blocks are re-queued as flagged dispos and other blocks replay 
   assert.equal(reopened[0].syncState, "queued");
   assert.equal(reopened[0].createdAt, createdAt);
   assert.equal(reopened[1].syncState, "queued");
-  assert.equal(reopened[2].syncState, "parked");
+  assert.equal(reopened[2].syncState, "queued");
+  assert.equal(reopened[2].parkedReason, SYNC_REASON.notesConflict);
 });
 
-test("default GPS policy flags instead of holding, with the shared 75/40/65 rule", () => {
+test("default GPS policy flags instead of holding, with the shared 35/15/65 rule", () => {
   assert.equal(GPS_UNVERIFIED_POLICY, "flag");
-  assert.equal(GPS_RADIUS_M, 75);
-  assert.equal(ACCURACY_CAP_M, 40);
+  assert.equal(GPS_RADIUS_M, 35);
+  assert.equal(ACCURACY_CAP_M, 15);
   assert.equal(ACCURACY_MAX_M, 65);
   assert.equal(REDUCED_ACCURACY_METERS, 1000);
-  assert.equal(knockVerified(115, 40), true);
-  assert.equal(knockVerified(116, 40), false);
+  assert.equal(knockVerified(50, 15), true);
+  assert.equal(knockVerified(51, 15), false);
+  assert.equal(classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 66, distanceM: 0, precision: "precise" }).gpsVerified, false);
   const low = classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 66, distanceM: 0, precision: "precise" });
   assert.equal(low.gpsVerified, false);
   if (!low.gpsVerified) assert.equal(low.reason, "low_accuracy");
+  const missing = classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: true, accuracyM: Number.NaN, distanceM: Number.NaN, precision: "precise", malformed: true });
+  assert.equal(missing.gpsVerified, false);
+  if (!missing.gpsVerified) assert.equal(missing.reason, "no_fix");
+  const negative = classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: -1, distanceM: 0, precision: "precise" });
+  assert.equal(negative.gpsVerified, false);
+  if (!negative.gpsVerified) assert.equal(negative.reason, "no_fix");
+  const order = classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 10, distanceM: 80, precision: "precise", outsideArea: true });
+  assert.equal(order.gpsVerified, false);
+  if (!order.gpsVerified) assert.equal(order.reason, "out_of_area");
+  const accuracyFirst = classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 66, distanceM: 80, precision: "reduced", outsideArea: true });
+  assert.equal(accuracyFirst.gpsVerified, false);
+  if (!accuracyFirst.gpsVerified) assert.equal(accuracyFirst.reason, "reduced_accuracy");
   const draft = knock({
     createdAt: new Date().toISOString(),
     direct: { patch: { status: "not-home" }, gps: { lat: 43, lng: -77, required: true, deadline: Date.now() + 15_000, tappedAt: Date.now() } },
@@ -599,11 +634,14 @@ test("storage is not cleared while any draft exists", () => {
   assert.match(readFileSync(path.join(root, "app/mobile/_components/AccountDeletion.tsx"), "utf8"), /Review unsynced visits/);
 });
 
-test("the route covers historical pins and pins with no territory that this rep does not own", () => {
+test("the route is for historical pins and unowned pins a rep cannot read; admins still write directly", () => {
   assert.equal(prefersServerDispo({ historicalTerritoryPin: true, territoryId: "t" }, "rep"), true);
+  assert.equal(prefersServerDispo({ historicalTerritoryPin: true }, "admin", "admin"), true);
   assert.equal(prefersServerDispo({ territoryId: undefined }, "rep"), true);
+  assert.equal(prefersServerDispo({ territoryId: undefined }, "admin", "admin"), false);
   assert.equal(prefersServerDispo({ claimedBy: "rep" }, "rep"), false);
   assert.equal(prefersServerDispo({ territoryId: "t" }, "rep"), false);
+  assert.equal(prefersServerDispo({ claimedBy: "other" }, "admin", "admin"), false);
 });
 
 test("reason codes are the shared dispo and sync-report list", async () => {
@@ -699,10 +737,12 @@ test("the fix window starts at the tap and keeps the best sample from that windo
   resetWarmGpsForTests();
   const tap = Date.now() - 40_000;
   noteWarmFix({ timestamp: tap - 31_000, coords: { latitude: 43, longitude: -77, accuracy: 1 } });
+  noteWarmFix({ timestamp: tap - 30_000, coords: { latitude: 43, longitude: -77, accuracy: 3 } });
   noteWarmFix({ timestamp: tap + 1_000, coords: { latitude: 43, longitude: -77, accuracy: 20 } });
   noteWarmFix({ timestamp: tap + 2_000, coords: { latitude: 43, longitude: -77, accuracy: 8 } });
   const best = bestFixInWindow(tap, Date.now());
-  assert.equal(best?.coords.accuracy, 8);
+  assert.equal(best?.coords.accuracy, 3);
+  assert.equal(best?.timestamp, tap - 30_000);
   const draft = knock({
     createdAt: new Date(tap).toISOString(),
     direct: {
@@ -713,7 +753,7 @@ test("the fix window starts at the tap and keeps the best sample from that windo
   const staged = stageKnockGps(draft, Date.now());
   assert.equal(staged.syncState, "queued");
   assert.equal(staged.direct?.patch.gpsVerified, true);
-  assert.equal(new Date(staged.direct?.patch.knockGpsTimestamp as Date).getTime(), tap + 2_000);
+  assert.equal(new Date(staged.direct?.patch.knockGpsTimestamp as Date).getTime(), tap - 30_000);
   assert.equal(typeof staged.direct?.patch.knockDistanceFromAddress, "number");
 });
 
@@ -782,8 +822,12 @@ test("a dropped pin stores the fix timestamp and distance and the dispo UI has n
   assert.equal(typeof fields.knockDistanceFromAddress, "number");
   assert.equal(fields.gpsVerified, true);
   const banned = /Within 100 feet|164 feet|could not verify this knock|Enable precise location|GPS capture window expired|unsynced knock|Flagged GPS send/;
-  for (const file of ["app/components/LeadDetail.tsx", "app/components/LeadMap.tsx", "app/field/pendingGps.ts", "app/homeowners/knockGps.ts"]) {
+  for (const file of ["app/components/LeadDetail.tsx", "app/components/LeadMap.tsx", "app/components/AddLeadModal.tsx", "app/field/pendingGps.ts", "app/field/areaGate.ts", "app/homeowners/knockGps.ts"]) {
     assert.doesNotMatch(readFileSync(path.join(root, file), "utf8"), banned, file);
+  }
+  assert.match(readFileSync(path.join(root, "app/field/areaGate.ts"), "utf8"), /You are not in your assigned area\./);
+  for (const file of ["app/components/LeadDetail.tsx", "app/components/LeadMap.tsx", "app/components/AddLeadModal.tsx"]) {
+    assert.match(readFileSync(path.join(root, file), "utf8"), /AREA_BLOCK_MESSAGE/, file);
   }
 });
 
@@ -799,6 +843,9 @@ test("direct patch whitelists gps flags and the route body carries homeownerId o
   assert.equal(written.gpsVerified, false);
   assert.equal(written.gpsUnverifiedReason, "too_far");
   assert.equal(written.gpsDistanceM, 80);
+  const areaReason = directPatch({ status: "not-home", gpsVerified: false, gpsUnverifiedReason: "out_of_area", gpsDistanceM: 40 });
+  assert.equal(areaReason.gpsUnverifiedReason, "too_far");
+  assert.equal(areaReason.gpsVerified, false);
   assert.equal((written as { homeownerId?: string }).homeownerId, undefined);
   assert.equal((written as { gpsPointSource?: string }).gpsPointSource, undefined);
   const corrected = fieldDispoBody(knock({
@@ -810,7 +857,9 @@ test("direct patch whitelists gps flags and the route body carries homeownerId o
     },
   }), user);
   assert.equal(corrected.homeownerId, "home-9");
-  assert.equal(corrected.gpsVerified, false);
+  assert.equal(corrected.kind, "knock");
+  assert.equal("gpsVerified" in corrected, false);
+  assert.equal(corrected.gps, undefined);
   const stored = fieldDispoBody(knock({
     direct: {
       patch: { status: "not-home" },
@@ -845,8 +894,10 @@ test("permission-denied with gps flags falls back to the route, and a 404 retrie
     commit: async () => { throw Object.assign(new Error("denied"), { code: "permission-denied" }); },
     post: async (_path, init) => {
       const body = JSON.parse(String(init.body));
-      assert.equal(body.gpsVerified, false);
-      assert.equal(body.gpsUnverifiedReason, "no_fix");
+      assert.equal(body.kind, "knock");
+      assert.equal(body.gpsVerified, undefined);
+      assert.equal(body.gpsUnverifiedReason, undefined);
+      assert.equal(body.userId, undefined);
       return json(200, { ok: true, reasonCode: "not_a_known_code" });
     },
   });
@@ -957,4 +1008,111 @@ test("native requests carry the build headers and web fetch calls carry neither"
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("a direct deny tries the route, then the plain 14.17 patch saves on any non-2xx", async () => {
+  let posts = 0;
+  let commits = 0;
+  const saved = await deliverFieldDispo(knock({
+    direct: {
+      patch: { status: "not-home", gpsVerified: false, gpsUnverifiedReason: "too_far", gpsDistanceM: 80 },
+    },
+  }), user, {
+    getToken: async () => "token",
+    commit: async (draft) => {
+      commits += 1;
+      if (commits === 1) {
+        assert.equal(draft.direct?.patch.gpsVerified, false);
+        throw Object.assign(Error("denied"), { code: "permission-denied" });
+      }
+      assert.equal(draft.direct?.patch.gpsVerified, undefined);
+      assert.equal(draft.direct?.patch.gpsUnverifiedReason, undefined);
+      assert.equal(draft.direct?.patch.status, "not-home");
+      return { replayed: false };
+    },
+    post: async () => {
+      posts += 1;
+      return json(404, {});
+    },
+  });
+  assert.equal(saved.replayed, false);
+  assert.equal(commits, 2);
+  assert.equal(posts, 1);
+});
+
+test("sync-report keeps the newest draftId, drops a rejected index once, and does not retry a bad batch", async () => {
+  resetSyncLogForTests();
+  const now = Date.parse(at);
+  await recordSyncEvent({
+    id: "old-row", userId: "rep", at: 1, draftId: "draft-1", leadId: "lead-1", createdAt: at,
+    state: "parked", parkedReason: SYNC_REASON.other, attempts: 0,
+  });
+  await recordSyncEvent({
+    id: "new-row", userId: "rep", at: 2, draftId: "draft-1", leadId: "lead-1", createdAt: at,
+    status: "interested", state: "parked", parkedReason: SYNC_REASON.other, attempts: 1,
+  });
+  await recordSyncEvent({
+    id: "other-row", userId: "rep", at: 3, draftId: "draft-2", leadId: "lead-2", createdAt: at,
+    status: "not-home", state: "flagged", gpsUnverifiedReason: "no_fix", attempts: 0,
+  });
+  const posted: string[][] = [];
+  const first = await reportParked("rep", {
+    now: () => now,
+    probe: async () => 204,
+    post: async (items) => {
+      posted.push(items.map((item) => item.draftId));
+      if (posted.length === 1) return { status: 400, body: { error: "Invalid report", field: "draftId", index: 0 } };
+      return 200;
+    },
+  });
+  assert.equal(first.sent, 1);
+  assert.deepEqual(posted, [["draft-1", "draft-2"], ["draft-2"]]);
+  assert.equal((await readSyncLog("rep")).some((event) => event.id === "old-row" && event.reported), true);
+
+  resetSyncLogForTests();
+  await recordSyncEvent({
+    id: "batch", userId: "rep", at: 4, draftId: "draft-9", leadId: "lead-1", createdAt: at,
+    state: "parked", parkedReason: SYNC_REASON.other, attempts: 0,
+  });
+  let calls = 0;
+  const rejected = await reportParked("rep", {
+    now: () => now,
+    probe: async () => 204,
+    post: async () => {
+      calls += 1;
+      return { status: 400, body: { error: "Invalid report", field: "reports" } };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(rejected.sent, 0);
+  assert.equal(rejected.status, 400);
+  const again = await reportParked("rep", {
+    now: () => now,
+    probe: async () => 204,
+    post: async () => {
+      calls += 1;
+      return 200;
+    },
+  });
+  assert.equal(again.sent, 0);
+  assert.equal(calls, 1);
+
+  resetSyncLogForTests();
+  const expiredAt = new Date(now - SYNC_REPORT_MAX_AGE_MS - 60_000).toISOString();
+  await recordSyncEvent({
+    id: "expired", userId: "rep", at: 5, draftId: "draft-old", leadId: "lead-1", createdAt: expiredAt,
+    state: "parked", parkedReason: SYNC_REASON.other, attempts: 0,
+  });
+  let expiredPosts = 0;
+  const expired = await reportParked("rep", {
+    now: () => now,
+    probe: async () => 204,
+    post: async () => {
+      expiredPosts += 1;
+      return 200;
+    },
+  });
+  assert.equal(expired.sent, 0);
+  assert.equal(expiredPosts, 0);
+  assert.equal((await readSyncLog("rep")).some((event) => event.id === "expired" && event.reported), true);
 });
