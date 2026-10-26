@@ -1,10 +1,10 @@
 /**
  * Runs the contact-save matrix inputs against 14.17's directPatch and
- * reportingPatch from 053ae9e. The disposition route did not exist for
- * contact or photo fields. A permission-denied write was blocked on the phone.
+ * reportingPatch vendored from 053ae9e. The disposition route did not exist
+ * for contact or photo fields. A permission-denied write was blocked on the phone.
+ * The fixture is read from disk so this passes in a clean export with no .git folder.
  */
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -25,10 +25,10 @@ let saved: SaveFns | null = null;
 export async function load1417SaveFns(): Promise<SaveFns> {
   if (saved) return saved;
   const dir = mkdtempSync(path.join(tmpdir(), "raydar-1417-"));
-  const source = execFileSync("git", ["show", "053ae9e:app/field/directWrites.ts"], {
-    cwd: path.join(path.dirname(fileURLToPath(import.meta.url)), ".."),
-    encoding: "utf8",
-  });
+  const source = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "../tests/mobile/fixtures/directWrites-1417.ts.txt"),
+    "utf8",
+  );
   const rewritten = source
     .replaceAll("from 'firebase/firestore'", "from './firebase-stub'")
     .replaceAll("from '@/app/utils/firebase'", "from './firebase-stub'")

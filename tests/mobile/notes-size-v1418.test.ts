@@ -220,7 +220,8 @@ test("notes over the char cap or the full route body are blocked at input and no
   assert.match(editor, /notesTooLong/);
   assert.match(modal, /NOTES_TOO_LONG_MESSAGE/);
   assert.match(modal, /notesEditTooLong/);
-  assert.match(modal, /if \(notesTooLong\) return/);
+  assert.match(modal, /if \(notesTooLong && canWrite\)/);
+  assert.doesNotMatch(modal, /if \(notesTooLong\) return/);
   assert.match(modal, /disabled=\{isSaving \|\| notesTooLong\}/);
 });
 

@@ -25,8 +25,8 @@ const reopenedSessions = new Set<string>();
 
 /**
  * One pass per cold start. Parked denials are tried again.
- * notes_too_long, combined_draft, and contact_denied are included. They reopen
- * at most once per app start. That is bounded, and fine.
+ * notes_too_long, notes_rejected, combined_draft, and contact_denied are
+ * included. They reopen at most once per app start. That is bounded, and fine.
  */
 export function reopenDeniedParked(
   drafts: PendingMutation[],

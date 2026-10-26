@@ -474,6 +474,10 @@ test("contact and photo saves keep their fields and never blank notes", async ()
         assert.equal(observed.routes[0].phone, undefined);
       }
     }
+    if (row.case === "parked + empty edit") {
+      assert.equal(observed.routes.length, 0);
+      assert.equal(observed.updates.some((update) => Object.prototype.hasOwnProperty.call(update, "notes")), false);
+    }
     if (row.case === "parked + substring note") {
       const sent = observed.payloads.map((item) => item.notes).find((notes) => typeof notes === "string");
       assert.equal(sent, "prefix UNIQUE suffix");
@@ -483,6 +487,17 @@ test("contact and photo saves keep their fields and never blank notes", async ()
       const sent = observed.payloads.filter((item) => Object.prototype.hasOwnProperty.call(item, "notes"));
       assert.equal(sent.length, 1);
       assert.equal(sent[0].notes, "");
+      if (row.path === "direct") {
+        assert.equal(observed.routes.length, 0);
+        assert.equal(sent[0].clearNotes, undefined);
+        assert.deepEqual(observed.updates.map(plain), [{ notes: "" }]);
+      } else {
+        assert.equal(observed.routes.length, 1);
+        assert.equal(observed.routes[0].notes, "");
+        assert.equal(observed.routes[0].baseNotes, "PARKED TEXT");
+        assert.equal(observed.routes[0].clearNotes, true);
+        assert.equal(observed.updates.length, 0);
+      }
     }
     if (!row.patch?.notes && !row.legacy && row.case !== "parked + deliberate clear" && row.case !== "parked + substring note" && row.case !== "parked + empty edit" && row.case !== "notes only" && row.case !== "notes + phone") {
       assertNotesKept(observed, row.expectNotes ?? leadNotes);
@@ -491,7 +506,7 @@ test("contact and photo saves keep their fields and never blank notes", async ()
     if (notesTooLong) assert.equal(NOTES_TOO_LONG_MESSAGE, "Notes too long");
     for (const body of observed.routes) {
       assert.ok(body.kind === "notes" || body.kind === "knock", row.case);
-      if (row.case !== "parked + deliberate clear" && row.case !== "parked + empty edit")
+      if (row.case !== "parked + deliberate clear")
         assert.notEqual(body.notes, "", `${row.case} ${row.mode} ${row.path}`);
     }
     const baseline = await result1417({
@@ -506,7 +521,7 @@ test("contact and photo saves keep their fields and never blank notes", async ()
   const body = [
     "# Contact save matrix, 14.19",
     "",
-    "Contact and photo edits are direct Firestore writes. `/api/field/dispo` is never called with contact keys. Notes are a separate draft, and only when the text changed. A permission-denied contact write parks as `contact_denied` and reopens once per app start.",
+    "Contact and photo edits are direct Firestore writes. `/api/field/dispo` is never called with contact keys. Notes are a separate draft, and only when the text changed. A permission-denied contact write parks as `contact_denied` and reopens once per app start. Requires #175 deployed (main 15efe05): a deliberate clear sends notes:\"\", baseNotes, and clearNotes:true.",
     "",
     header,
     rule,

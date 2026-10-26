@@ -8,9 +8,11 @@ import { commitDirectMutation, directPatch, type DirectCommitIo } from "../../ap
 import { deliverFieldDispo, fieldDispoBody } from "../../app/field/serverDispo";
 import {
   CONTACT_NOT_SENT_MESSAGE,
+  contactDraftBlocksSendInfo,
   finishSendInfo,
   parkContactDeniedDrafts,
   repMayWriteContactFields,
+  sendInfoMayWriteContact,
   sendInfoPostDecision,
 } from "../../app/field/sendInfoGate";
 import { syncOutbox } from "../../app/field/syncOutbox";
@@ -122,6 +124,9 @@ test("useFieldData save entry points queue contact and notes separately", () => 
   assert.match(modal, /setSendNotice\(result\.notice\)/);
   assert.match(modal, /CONTACT_NOT_SENT_MESSAGE/);
   assert.match(readFileSync(path.join(root, "app/components/LeadDetail.tsx"), "utf8"), /prepareSendInfo\(lead\.id\)/);
+  assert.match(hook, /contactDraftBlocksSendInfo\(drafts, leadId\)/);
+  assert.match(hook, /if \(!DIRECT_MOBILE_WRITES\)/);
+  assert.match(modal, /sendInfoMayWriteContact\(DIRECT_MOBILE_WRITES/);
 });
 
 test("contact-only queues and writes only the changed fields", async () => {
@@ -285,4 +290,43 @@ test("Send Info stays unposted offline when an allowed contact write is queued",
     },
   }), /ambiguous/);
   assert.equal(posts, 1);
+});
+
+test("Send Info does not post when any contact draft is parked or unsent", async () => {
+  const contact = {
+    id: "contact-1",
+    userId: owner.id,
+    userName: owner.name,
+    leadId: "lead-1",
+    createdAt: at,
+    kind: "contact" as const,
+    baseStatus: "claimed",
+    syncState: "parked" as const,
+    parkedReason: "not_found" as const,
+    direct: { patch: { phone: "556" } },
+  };
+  assert.equal(contactDraftBlocksSendInfo([contact], "lead-1"), true);
+  assert.equal(contactDraftBlocksSendInfo([{ ...contact, syncState: "queued", parkedReason: undefined }], "lead-1"), true);
+  assert.equal(contactDraftBlocksSendInfo([{ ...contact, kind: "notes", notes: "kept" }], "lead-1"), false);
+  let posts = 0;
+  const blocked = await finishSendInfo({
+    online: true,
+    canWriteContact: true,
+    contactPending: true,
+    confirm: async () => {},
+    post: async () => { posts += 1; },
+  });
+  assert.equal(posts, 0);
+  assert.equal(blocked.posted, 0);
+  assert.equal(blocked.notice, CONTACT_NOT_SENT_MESSAGE);
+});
+
+test("the contact write gate applies only to native builds", () => {
+  const unowned = lead(false);
+  assert.equal(sendInfoMayWriteContact(false, unowned, setter.id, "manager"), true);
+  assert.equal(sendInfoMayWriteContact(false, unowned, setter.id, "setter"), true);
+  assert.equal(sendInfoMayWriteContact(true, unowned, setter.id, "manager"), false);
+  assert.equal(sendInfoMayWriteContact(true, unowned, setter.id, "setter"), false);
+  assert.equal(sendInfoMayWriteContact(true, unowned, "admin", "admin"), true);
+  assert.equal(sendInfoMayWriteContact(true, null, setter.id, "setter"), true);
 });

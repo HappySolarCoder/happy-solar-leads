@@ -6,7 +6,9 @@ import { mapLeadDoc } from '@/app/utils/firestore';
 import { createLeadOnce } from './createLeadOnce';
 import { distanceBetween } from 'geofire-common';
 import { AREA_REASON_DIRECT_WRITE_SUPPORTED, isGpsUnverifiedReason, validGpsMeters } from './gpsPolicy';
+import { deliberateNotesClear, notesTextOf } from './notesLimits';
 import { notesTransactionPatch } from './notesRebase';
+import { SYNC_REASON } from './syncReasons';
 import { gpsFlagOf, type GpsFlag } from '@/app/utils/gpsRule';
 
 /** The history entry stores the true verdict. Top-level out_of_area may be mapped to too_far. */
@@ -138,6 +140,10 @@ export async function commitDirectMutation(m: PendingMutation, user: User, io?: 
   check();
   if (m.direct?.gps) throw Object.assign(Error('GPS verification is still pending. Your knock is saved on this phone.'), {status:409});
   const ref = docOf(database, 'leads', m.leadId), patch = reportingPatch(m, user);
+  const editedNotes = notesTextOf(m) ?? (typeof patch.notes === 'string' ? patch.notes : undefined);
+  if (m.kind === 'notes' && typeof editedNotes === 'string' && editedNotes !== '' && !editedNotes.trim()) {
+    throw Object.assign(Error('Notes were rejected.'), { status: 400, reasonCode: SYNC_REASON.notesRejected });
+  }
   try {
     const seed = m.direct?.create;
     if (seed) {
@@ -165,6 +171,28 @@ export async function commitDirectMutation(m: PendingMutation, user: User, io?: 
       }
       if (m.kind === 'notes') {
         const edited = typeof patch.notes === 'string' ? patch.notes : (m.notes as string);
+        if (edited === '' && !deliberateNotesClear(m)) {
+          const rest = { ...patch };
+          delete rest.notes;
+          const merged = mergeReportingPatch(current, rest);
+          if (!merged.replayed && Object.keys(merged.patch).length)
+            tx.update(ref, firestoreValue(merged.patch) as Record<string, unknown>);
+          return { replayed: Object.keys(rest).length === 0 || merged.replayed, lead: mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...merged.patch }) }) };
+        }
+        if (deliberateNotesClear(m)) {
+          const currentNotes = typeof current.notes === 'string' ? current.notes : '';
+          const base = m.baseNotes || '';
+          const rest = { ...patch };
+          delete rest.notes;
+          if (currentNotes !== base && currentNotes !== '') {
+            throw Object.assign(Error('Notes changed on another device. Review this draft.'), { status: 409, reasonCode: SYNC_REASON.notesConflict });
+          }
+          const lead = mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...rest, notes: '' }) });
+          if (currentNotes === '' && !Object.keys(rest).length) return { replayed: true, lead };
+          const write = { ...rest, ...(currentNotes === '' ? {} : { notes: '' }) };
+          tx.update(ref, firestoreValue(write) as Record<string, unknown>);
+          return { replayed: false, lead };
+        }
         const applied = notesTransactionPatch(current.notes, m.baseNotes, edited);
         const rest = { ...patch };
         delete rest.notes;

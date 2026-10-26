@@ -1,6 +1,6 @@
 # Contact save matrix, 14.19
 
-Contact and photo edits are direct Firestore writes. `/api/field/dispo` is never called with contact keys. Notes are a separate draft, and only when the text changed. A permission-denied contact write parks as `contact_denied` and reopens once per app start.
+Contact and photo edits are direct Firestore writes. `/api/field/dispo` is never called with contact keys. Notes are a separate draft, and only when the text changed. A permission-denied contact write parks as `contact_denied` and reopens once per app start. Requires #175 deployed (main 15efe05): a deliberate clear sends notes:"", baseNotes, and clearNotes:true.
 
 | case | mode | path | 14.17 result | 14.19 result |
 | --- | --- | --- | --- | --- |

@@ -41,6 +41,7 @@ function absorbNotesTooLong(next: PendingMutation, priors: PendingMutation[]): P
     ...next,
     notes,
     baseNotes,
+    ...(notes === "" ? { clearNotes: true } : {}),
     direct: next.direct ? { ...next.direct, patch: { ...next.direct.patch, notes } } : next.direct,
   };
   delete merged.parkedReason;
@@ -140,7 +141,8 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
         && (row.createdAt < current.createdAt || (row.createdAt === current.createdAt && row.id < current.id))
       );
       const blank = typeof current.notes === "string" && !current.notes.trim();
-      const descendedClear = blank && priors.some((row) => (row.notes || "") !== "" && current.baseNotes === row.notes);
+      const exactClear = current.notes === "";
+      const descendedClear = exactClear && priors.some((row) => (row.notes || "") !== "" && current.baseNotes === row.notes);
       const absorb = current.kind === "notes"
         && !hasContactFields(current)
         && notesWereEdited(current)

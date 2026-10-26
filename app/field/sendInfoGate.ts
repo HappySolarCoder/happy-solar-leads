@@ -20,6 +20,25 @@ export function repMayWriteContactFields(
   return leadOwnedBy(lead, uid);
 }
 
+/**
+ * The contact-write gate is native-only. Web Send Info keeps its previous
+ * behavior and does not consult repMayWriteContactFields.
+ */
+export function sendInfoMayWriteContact(
+  native: boolean,
+  lead: Pick<Lead, "claimedBy" | "assignedTo" | "setterId" | "source"> | null | undefined,
+  uid: string,
+  role?: string,
+): boolean {
+  if (!native || !lead) return true;
+  return repMayWriteContactFields(lead, uid, role);
+}
+
+/** Any contact draft still on the lead, parked or not yet written. */
+export function contactDraftBlocksSendInfo(drafts: PendingMutation[], leadId: string): boolean {
+  return drafts.some((row) => row.leadId === leadId && row.kind === "contact");
+}
+
 export function contactSaveDeniedError(error: unknown): boolean {
   const value = error as { code?: string; message?: string; reasonCode?: string };
   return value?.code === "contact_denied"
@@ -32,8 +51,9 @@ export function sendInfoPostDecision(input: {
   online: boolean;
   canWriteContact: boolean;
   contactDenied: boolean;
+  contactPending?: boolean;
 }): { post: boolean; notice?: string } {
-  if (!input.canWriteContact || input.contactDenied) {
+  if (!input.canWriteContact || input.contactDenied || input.contactPending) {
     return { post: false, notice: CONTACT_NOT_SENT_MESSAGE };
   }
   // Offline, and this role may write contact fields: the draft stays durably
@@ -72,6 +92,8 @@ export function parkContactDeniedDrafts(drafts: PendingMutation[], leadId: strin
 export async function finishSendInfo(input: {
   online: boolean;
   canWriteContact: boolean;
+  /** A parked or still-unsent contact draft for this lead. Send Info does not post. */
+  contactPending?: boolean;
   confirm: () => Promise<void>;
   post: () => Promise<void>;
 }): Promise<{ posted: number; notice: string | null }> {
@@ -79,6 +101,7 @@ export async function finishSendInfo(input: {
     online: input.online,
     canWriteContact: input.canWriteContact,
     contactDenied: false,
+    contactPending: input.contactPending,
   });
   if (blocked.notice) {
     try {

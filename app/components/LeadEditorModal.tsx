@@ -11,7 +11,7 @@ import {
   CONTACT_NOT_SENT_MESSAGE,
   contactSaveDeniedError,
   finishSendInfo,
-  repMayWriteContactFields,
+  sendInfoMayWriteContact,
 } from '@/app/field/sendInfoGate';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
@@ -190,10 +190,10 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
           return;
         }
       }
-      const canWrite = repMayWriteContactFields(lead, user.id, user.role);
+      const canWrite = sendInfoMayWriteContact(DIRECT_MOBILE_WRITES, lead, user.id, user.role);
       if (notesTooLong && canWrite) {
         setSendNotice(NOTES_TOO_LONG_MESSAGE);
-        if (notesTooLong) return;
+        return;
       }
       if (notesBlocked && canWrite) {
         setSendNotice(NOTES_TOO_LONG_MESSAGE);

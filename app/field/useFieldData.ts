@@ -19,7 +19,7 @@ import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
 import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
 import { enqueueDirectSave } from './enqueueDirectSave';
-import { CONTACT_NOT_SENT_MESSAGE, parkContactDeniedDrafts, repMayWriteContactFields } from './sendInfoGate';
+import { CONTACT_NOT_SENT_MESSAGE, contactDraftBlocksSendInfo, parkContactDeniedDrafts, sendInfoMayWriteContact } from './sendInfoGate';
 import { readSyncLog, recordSyncEvent, reportParked, type SyncEvent } from './syncDiagnostics';
 import { displayedKnockPoint, type KnockPoint } from './knockPoint';
 import { GPS_WINDOW_AFTER_MS } from './gpsPolicy';
@@ -414,16 +414,28 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     const actor = latest.current.user;
     const known = latest.current.liveLeads.find((row) => row.id === leadId)
       || current.area?.leads.find((row) => row.id === leadId);
-    const canWrite = !known || !actor || repMayWriteContactFields(known, uid, actor.role);
+    if (!DIRECT_MOBILE_WRITES) {
+      if (!isDeviceOnline()) throw Error('Connect before sending the scheduling request.');
+      await sync();
+      const hold = schedulingHold(await readDrafts(uid), leadId);
+      if (hold) throw Error(hold);
+      return;
+    }
+    const canWrite = !actor || sendInfoMayWriteContact(true, known, uid, actor.role);
     const refused = () => Object.assign(Error(CONTACT_NOT_SENT_MESSAGE), { code: "contact_denied" });
     if (!canWrite && !isDeviceOnline()) {
       await parkDeniedContact(leadId);
       throw refused();
     }
-    // Offline, and this role may write contact fields: the draft stays durably
-    // queued. Send Info does not post. That is unchanged. An ambiguous
-    // notification response is never retried.
-    if (!isDeviceOnline()) throw Error('Connect before sending the scheduling request.');
+    if (!isDeviceOnline()) {
+      const offlineDrafts = await readDrafts(uid);
+      if (offlineDrafts.some((row) => row.leadId === leadId && row.kind === "contact" && row.syncState === "parked"))
+        throw refused();
+      // Offline, and this role may write contact fields: the draft stays durably
+      // queued. Send Info does not post. That is unchanged. An ambiguous
+      // notification response is never retried.
+      throw Error('Connect before sending the scheduling request.');
+    }
     await sync();
     const drafts = await readDrafts(uid);
     if (!canWrite) {
@@ -431,8 +443,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         await parkDeniedContact(leadId);
       throw refused();
     }
-    if (drafts.some((row) => row.leadId === leadId && row.parkedReason === SYNC_REASON.contactDenied))
-      throw refused();
+    if (contactDraftBlocksSendInfo(drafts, leadId)) throw refused();
     const hold = schedulingHold(drafts, leadId);
     if (hold) throw Error(hold);
   }, [uid, sync, current.area, parkDeniedContact]);

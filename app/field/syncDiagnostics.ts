@@ -172,7 +172,9 @@ export function syncReportItem(event: SyncEvent, includeExtended = !stripExtende
         ? SYNC_REASON.gpsUnverifiedFlagged
         : event.parkedReason === SYNC_REASON.contactDenied
           ? SYNC_REASON.permissionDenied
-          : (event.parkedReason || SYNC_REASON.other),
+          : event.parkedReason === SYNC_REASON.notesRejected
+            ? SYNC_REASON.invalidPayload
+            : (event.parkedReason || SYNC_REASON.other),
     outcome: areaRefusal ? "refused" : flagged ? "flagged_accepted" : "refused",
     appBuild: (event.appBuild || appBuildLabel()).slice(0, 32),
   };

@@ -54,6 +54,7 @@ export function asContactDraft(m: PendingMutation): PendingMutation {
   const next: PendingMutation = { ...m, kind: "contact", direct };
   delete next.notes;
   delete next.baseNotes;
+  delete next.clearNotes;
   return next;
 }
 
@@ -92,6 +93,7 @@ export function splitNotesAndContact(
     id: notesId,
     kind: "notes",
     notes,
+    ...(notes === "" || m.clearNotes === true ? { clearNotes: true } : {}),
     direct: { ...m.direct, patch: { notes } },
   };
   delete noteDraft.status;
@@ -129,6 +131,8 @@ export function buildLeadSaveDrafts(input: {
     drafts.push(draft);
   }
   if (parts.notes == null) return { drafts, notesTooLong: false };
+  // Whitespace is not a clear and is not a note. It never becomes a draft.
+  if (parts.notes !== "" && !parts.notes.trim()) return { drafts, notesTooLong: false };
   const notesId = input.ids?.notes || "notes";
   const baseNotes = input.lead.notes || "";
   const priors = input.parkedNotes || [];
@@ -150,6 +154,8 @@ export function buildLeadSaveDrafts(input: {
     parkedNotes: priors,
   });
   if (queued.tooLong) return { drafts, notesTooLong: true };
+  if (queued.notes !== "" && !queued.notes.trim()) return { drafts, notesTooLong: false };
+  const clearing = queued.notes === "";
   const route = input.useRoute?.(queued.notes) === true;
   drafts.push({
     id: notesId,
@@ -161,6 +167,7 @@ export function buildLeadSaveDrafts(input: {
     baseStatus: input.lead.status,
     baseNotes: queued.baseNotes,
     notes: queued.notes,
+    ...(clearing ? { clearNotes: true } : {}),
     direct: {
       patch: { notes: queued.notes },
       ...(route ? { serverDispo: true } : {}),

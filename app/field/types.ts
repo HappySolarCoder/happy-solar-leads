@@ -167,6 +167,12 @@ export type FieldMutation = {
   kind: "knock" | "notes" | "handoff" | "contact";
   baseStatus: string;
   baseNotes?: string;
+  /**
+   * Device queue only. Set for a deliberate notes clear and sent as
+   * clearNotes:true with notes:"" and baseNotes. Never copied onto a
+   * Firestore patch. Never removed once set. Route reference: main 15efe05.
+   */
+  clearNotes?: boolean;
   status?: string;
   disposition?: string;
   notes?: string;

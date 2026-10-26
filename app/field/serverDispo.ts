@@ -6,7 +6,7 @@ import { coerceLegacyContactDraft, hasContactFields, notesWereEdited } from "./c
 import { commitDirectMutation, historyGpsFlag, reportingPatch } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
 import { rebaseNotes } from "./notesRebase";
-import { NON_OWNER_DIRECT_NOTES_MAX_CHARS, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, utf8Bytes } from "./notesLimits";
+import { deliberateNotesClear, NON_OWNER_DIRECT_NOTES_MAX_CHARS, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
 import { FIELD_DISPO_UNAVAILABLE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
@@ -147,6 +147,8 @@ export type FieldDispoBody = {
   userName?: string;
   notes?: string;
   baseNotes?: string | null;
+  /** Present only on a deliberate clear, with notes:"". Route reference: main 15efe05. */
+  clearNotes?: boolean;
   gps?: FieldDispoGps;
   goBack?: { scheduledDate: string; scheduledTime?: string; notes?: string };
   objection?: { type: string; notes?: string } | null;
@@ -220,12 +222,25 @@ export function fieldDispoBody(
       ? m.notes
       : typeof sourcePatch.notes === "string" ? sourcePatch.notes : undefined;
     if (typeof notes !== "string") throw invalid("This save does not include a note.");
+    const baseNotes = typeof m.baseNotes === "string" ? m.baseNotes : null;
+    if (!notes.trim()) {
+      if (notes !== "") throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
+      if (!deliberateNotesClear(m)) throw invalid("This save does not include a note.");
+      return notesRouteBody({
+        leadId,
+        draftId: m.id,
+        actionAt,
+        notes: "",
+        baseNotes,
+        clearNotes: true,
+      });
+    }
     return notesRouteBody({
       leadId,
       draftId: m.id,
       actionAt,
       notes,
-      baseNotes: typeof m.baseNotes === "string" ? m.baseNotes : null,
+      baseNotes,
     });
   }
   if (m.kind !== "knock") throw invalid("Contact edits are not sent to the disposition route.");
@@ -446,6 +461,10 @@ export async function postFieldDispo(
     if (!current) return "";
     return current.getIdToken(forceRefresh);
   });
+  const notesText = m.kind === "notes" ? notesTextOf(m) : undefined;
+  if (typeof notesText === "string" && notesText !== "" && !notesText.trim())
+    throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
+  if (notesText === "" && !deliberateNotesClear(m)) return { replayed: true };
   let draft = m;
   let rebasedDraft: PendingMutation | undefined;
   let body = fieldDispoBody(draft, user);
@@ -473,7 +492,7 @@ export async function postFieldDispo(
       response = await send(token);
       continue;
     }
-    if (response.status === 409 && !notesRetried && draft.kind === "notes") {
+    if (response.status === 409 && !notesRetried && draft.kind === "notes" && body.clearNotes !== true) {
       const data = await readJson(response);
       const currentNotes = typeof data?.currentNotes === "string" ? data.currentNotes : "";
       const rebased = rebaseNotes(draft.baseNotes ?? "", body.notes ?? draft.notes ?? "", currentNotes);
@@ -525,15 +544,26 @@ export async function postFieldDispo(
     fail(Object.assign(Error("Sign in again to sync your work."), { status: 401 }));
   if (response.status === 410)
     fail(routeError("This lead is gone.", 410, SYNC_REASON.notFound));
-  if (response.status === 413)
+  if (response.status === 413) {
+    const data = await readJson(response);
+    const reason = typeof data?.reasonCode === "string" ? data.reasonCode : "";
+    if (reason === SYNC_REASON.payloadTooLarge)
+      fail(routeError("Disposition route rejected this knock.", 413, SYNC_REASON.payloadTooLarge));
     fail(routeError(
       draft.kind === "notes" ? "Notes too long" : "Disposition route rejected this knock.",
       413,
       draft.kind === "notes" ? SYNC_REASON.notesTooLong : SYNC_REASON.payloadTooLarge,
     ));
+  }
   if (response.status === 400) {
     const data = await readJson(response);
     const field = typeof data?.field === "string" ? data.field : "";
+    const reason = typeof data?.reasonCode === "string" ? data.reasonCode : "";
+    if (
+      reason === SYNC_REASON.notesEmpty
+      || reason === SYNC_REASON.notesClearMismatch
+      || field === "clearNotes"
+    ) fail(routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected));
     if (draft.kind === "notes" && (field === "notes" || field === "baseNotes"))
       fail(routeError("Notes too long", 400, SYNC_REASON.notesTooLong));
     fail(routeError("Disposition route rejected this knock.", 400, SYNC_REASON.invalidPayload));
@@ -562,8 +592,10 @@ function permissionDenied(error: Error & { status?: number; code?: string }): bo
   return error.code === "permission-denied";
 }
 
-function notesTooLongFailure(error: unknown): boolean {
-  return (error as { reasonCode?: string }).reasonCode === SYNC_REASON.notesTooLong;
+function terminalNotesFailure(error: unknown, draft?: PendingMutation): boolean {
+  const code = (error as { reasonCode?: string }).reasonCode;
+  if (code === SYNC_REASON.notesTooLong || code === SYNC_REASON.notesRejected) return true;
+  return code === SYNC_REASON.notesConflict && !!draft && deliberateNotesClear(draft);
 }
 
 /** Offline and transport failures must stay queued. They do not adopt the route status. */
@@ -646,13 +678,18 @@ export async function deliverFieldDispo(
 ): Promise<{ replayed: boolean; lead?: Lead }> {
   const commit = deps.commit ?? commitDirectMutation;
   const prepared = coerceLegacyContactDraft(m);
+  const preparedNotes = prepared.kind === "notes" ? notesTextOf(prepared) : undefined;
+  if (typeof preparedNotes === "string" && preparedNotes !== "" && !preparedNotes.trim())
+    throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
+  if (preparedNotes === "" && !deliberateNotesClear(prepared) && !hasContactFields(prepared))
+    return { replayed: true };
   if (prepared.kind === "handoff") return commit(prepared, user);
   if (writesContactDirect(prepared)) return commitContactWrite(prepared, user, commit);
   if (prepared.direct?.serverDispo) {
     try {
       return await postFieldDispo(prepared, user, deps);
     } catch (routeFailure) {
-      if (notesTooLongFailure(routeFailure)) throw routeFailure;
+      if (terminalNotesFailure(routeFailure, prepared)) throw routeFailure;
       return plainPatchAfterRoute(prepared, user, routeFailure, commit);
     }
   }
@@ -663,7 +700,7 @@ export async function deliverFieldDispo(
     try {
       return await postFieldDispo(prepared, user, deps);
     } catch (routeFailure) {
-      if (notesTooLongFailure(routeFailure)) throw routeFailure;
+      if (terminalNotesFailure(routeFailure, prepared)) throw routeFailure;
       return plainPatchAfterRoute(prepared, user, routeFailure, commit);
     }
   }

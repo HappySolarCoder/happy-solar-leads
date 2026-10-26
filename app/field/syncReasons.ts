@@ -1,4 +1,8 @@
-/** Shared with POST /api/field/dispo and POST /api/field/sync-report. */
+/**
+ * Shared with POST /api/field/dispo and POST /api/field/sync-report.
+ * notes_empty and notes_clear_mismatch match main 15efe05 (PR #175).
+ * Requires #175 deployed. notes_rejected is local, like contact_denied.
+ */
 export const SYNC_REASON = {
   gpsUnverifiedHeld: "gps_unverified_held",
   gpsUnverifiedFlagged: "gps_unverified_flagged",
@@ -12,7 +16,18 @@ export const SYNC_REASON = {
   notFound: "not_found",
   staleTap: "stale_tap",
   notesConflict: "notes_conflict",
-  /** Parked. A notes route 413, a notes body over 256 KB, or a notes/baseNotes 400. Not retried in a loop. */
+  /** On the shared list at 15efe05. The client parks the draft as notes_rejected. */
+  notesEmpty: "notes_empty",
+  /** On the shared list at 15efe05. The client parks the draft as notes_rejected. */
+  notesClearMismatch: "notes_clear_mismatch",
+  /**
+   * Parked. A notes_empty or notes_clear_mismatch 400, or a 400 whose field
+   * is clearNotes. The note text stays. There is no retry and the flag is
+   * not stripped. Diagnostics shows this code. The sync-report wire maps it
+   * to invalid_payload, which the live route accepts.
+   */
+  notesRejected: "notes_rejected",
+  /** Parked. A notes route 413 without reasonCode, a notes body over 256 KB, or a notes/baseNotes 400 that is not a clear rejection. Not retried in a loop. */
   notesTooLong: "notes_too_long",
   /** Parked. An old draft carried both a knock and a note, and it could not be split. */
   combinedDraft: "combined_draft",
