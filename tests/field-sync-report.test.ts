@@ -29,6 +29,8 @@ const CANONICAL_REASON_CODES = [
   'not_found',
   'stale_tap',
   'notes_conflict',
+  'notes_empty',
+  'notes_clear_mismatch',
   'invalid_payload',
   'other',
 ] as const;

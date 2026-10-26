@@ -371,3 +371,49 @@ describe('legacy field-work notes size', () => {
     assert.equal(result.lead.status, 'unclaimed');
   });
 });
+
+describe('legacy field-work empty-notes guard', () => {
+  it("rejects notes '' and whitespace-only without clearNotes as 400 notes_empty", async () => {
+    for (const notes of ['', '  \n']) {
+      const db = new FakeDb();
+      seed(db, { lead: { notes: 'keep' } });
+      const result = await post(db, notesBody(notes, 'keep'));
+      assert.equal(result.status, 400, JSON.stringify(result.body));
+      assert.equal(result.body.reason, 'notes_empty');
+      assert.equal(result.lead.notes, 'keep');
+    }
+  });
+
+  it("accepts clearNotes:true with notes '' when baseNotes matches", async () => {
+    const db = new FakeDb();
+    seed(db, { lead: { notes: 'keep' } });
+    const result = await post(db, { ...notesBody('', 'keep'), clearNotes: true });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.lead.notes, '');
+  });
+
+  it('clearNotes with a stale base is a 409 and keeps the notes', async () => {
+    const db = new FakeDb();
+    seed(db, { lead: { notes: 'keep' } });
+    const result = await post(db, { ...notesBody('', 'older'), clearNotes: true });
+    assert.equal(result.status, 409, JSON.stringify(result.body));
+    assert.equal(result.lead.notes, 'keep');
+  });
+
+  it('clearNotes with text is a 400 notes_clear_mismatch', async () => {
+    const db = new FakeDb();
+    seed(db, { lead: { notes: 'keep' } });
+    const result = await post(db, { ...notesBody('new text', 'keep'), clearNotes: true });
+    assert.equal(result.status, 400, JSON.stringify(result.body));
+    assert.equal(result.body.reason, 'notes_clear_mismatch');
+    assert.equal(result.lead.notes, 'keep');
+  });
+
+  it('keeps normal notes saves unchanged', async () => {
+    const db = new FakeDb();
+    seed(db, { lead: { notes: 'keep' } });
+    const result = await post(db, notesBody('keep and more', 'keep'));
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.lead.notes, 'keep and more');
+  });
+});

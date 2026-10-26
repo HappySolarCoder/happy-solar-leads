@@ -5,6 +5,7 @@ import { distanceBetween } from 'geofire-common';
 import {
   ALLOWED_PATCH_KEYS,
   FIELD_DISPO_MAX_BYTES,
+  FIELD_DISPO_NOTES_BODY_MAX,
   HISTORY_CAP,
   TERRITORY_QUERY_LIMIT,
   assertAllowedPatch,
@@ -311,6 +312,8 @@ describe('field dispo', { concurrency: 1 }, () => {
       'not_found',
       'stale_tap',
       'notes_conflict',
+      'notes_empty',
+      'notes_clear_mismatch',
       'invalid_payload',
       'other',
     ]);
@@ -449,7 +452,7 @@ describe('field dispo', { concurrency: 1 }, () => {
     const tooBig = harness();
     const big = await tooBig.run(undefined, undefined, { rawBody: 'x'.repeat(FIELD_DISPO_MAX_BYTES + 1) });
     assert.equal(big.status, 413);
-    assert.deepEqual(big.body, { ok: false, error: 'too_large' });
+    assert.deepEqual(big.body, { ok: false, error: 'too_large', reasonCode: 'payload_too_large' });
     assert.equal(tooBig.db.txCount, 0);
 
     const declared = harness();
@@ -947,13 +950,13 @@ describe('field dispo', { concurrency: 1 }, () => {
 
     const notes = await post('n'.repeat(100_001));
     assert.equal(notes.result.status, 413, JSON.stringify(notes.result.body));
-    assert.deepEqual(notes.result.body, { ok: false, error: 'payload_too_large' });
+    assert.deepEqual(notes.result.body, { ok: false, error: 'payload_too_large', reasonCode: 'payload_too_large' });
     assert.equal(notes.test.db.txCount, 0);
     assert.equal(notes.test.db.docs.get('leads/lead-1')?.notes, 'keep');
 
     const base = await post('ok', 'b'.repeat(100_001));
     assert.equal(base.result.status, 413, JSON.stringify(base.result.body));
-    assert.deepEqual(base.result.body, { ok: false, error: 'payload_too_large' });
+    assert.deepEqual(base.result.body, { ok: false, error: 'payload_too_large', reasonCode: 'payload_too_large' });
     assert.equal(base.test.db.docs.get('leads/lead-1')?.notes, 'keep');
   });
 
@@ -963,7 +966,7 @@ describe('field dispo', { concurrency: 1 }, () => {
     assert.ok(Buffer.byteLength(rawBody, 'utf8') > FIELD_DISPO_MAX_BYTES);
     const result = await test.run(undefined, undefined, { rawBody });
     assert.equal(result.status, 413, JSON.stringify(result.body));
-    assert.deepEqual(result.body, { ok: false, error: 'too_large' });
+    assert.deepEqual(result.body, { ok: false, error: 'too_large', reasonCode: 'payload_too_large' });
     assert.equal(test.db.txCount, 0);
     assert.equal(test.db.docs.get('leads/lead-1')?.status, 'old');
   });
@@ -1503,5 +1506,181 @@ describe('field dispo', { concurrency: 1 }, () => {
       assert.equal(line.includes(String(LEAD_LAT)), false);
       assert.match(line, /^\[field\/dispo\] /);
     }
+  });
+});
+
+describe('field dispo empty-notes guard', { concurrency: 1 }, () => {
+  const notesBody = (overrides: Record<string, unknown> = {}) => ({
+    draftId: 'notes-guard',
+    leadId: 'lead-1',
+    kind: 'notes',
+    actionAt: ACTION,
+    notes: 'new',
+    baseNotes: 'existing',
+    ...overrides,
+  });
+  const ownedLead = () => ({ claimedBy: 'uid-setter', notes: 'existing' });
+
+  it("rejects notes '' without clearNotes as 400 notes_empty and writes nothing", async () => {
+    for (const extra of [{}, { clearNotes: false }, { clearNotes: null }]) {
+      const test = harness({ lead: ownedLead() });
+      const result = await test.run(notesBody({ notes: '', ...extra }));
+      assert.equal(result.status, 400, JSON.stringify(result.body));
+      assert.deepEqual(result.body, { ok: false, error: 'invalid_payload', reasonCode: 'notes_empty', field: 'notes' });
+      assert.equal(test.db.txCount, 0);
+      assert.equal(test.db.docs.get('leads/lead-1')?.notes, 'existing');
+    }
+  });
+
+  it("rejects notes '' even when the lead's notes are already empty", async () => {
+    const test = harness({ lead: { claimedBy: 'uid-setter', notes: '' } });
+    const result = await test.run(notesBody({ notes: '', baseNotes: '' }));
+    assert.equal(result.status, 400);
+    assert.equal(result.body.reasonCode, 'notes_empty');
+    assert.equal(test.db.txCount, 0);
+  });
+
+  it('rejects whitespace-only notes as notes_empty, and the raw-body path matches', async () => {
+    for (const notes of [' ', '\n\t ', '\u00a0\u2003']) {
+      const test = harness({ lead: ownedLead() });
+      const result = await test.run(undefined, undefined, { rawBody: JSON.stringify(notesBody({ notes })) });
+      assert.equal(result.status, 400, JSON.stringify(result.body));
+      assert.equal(result.body.reasonCode, 'notes_empty');
+      assert.equal(test.db.docs.get('leads/lead-1')?.notes, 'existing');
+    }
+  });
+
+  it('accepts clearNotes:true with notes \'\' when baseNotes matches the server copy', async () => {
+    const test = harness({ lead: ownedLead() });
+    const result = await test.run(notesBody({ notes: '', clearNotes: true }));
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.body.result, 'applied');
+    assert.equal(test.db.docs.get('leads/lead-1')?.notes, '');
+    assert.deepEqual(patch(test.db), { notes: '' });
+    const receipt = test.db.docs.get('fieldDispoReceipts/uid-setter_notes-guard');
+    assert.equal(receipt?.kind, 'notes');
+    assert.equal(receipt?.result, 'applied');
+
+    const replay = await test.run(notesBody({ notes: '', clearNotes: true }));
+    assert.equal(replay.status, 200);
+    assert.equal(replay.body.duplicate, true);
+    assert.equal(updates(test.db).length, 1);
+  });
+
+  it('clearNotes on a lead whose notes are already empty is a no-op 200', async () => {
+    const test = harness({ lead: { claimedBy: 'uid-setter', notes: '' } });
+    const result = await test.run(notesBody({ notes: '', baseNotes: 'stale', clearNotes: true }));
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(updates(test.db).length, 0);
+    assert.equal(creates(test.db).length, 1);
+  });
+
+  it('clearNotes with a stale base is a 409 notes_conflict and keeps the notes', async () => {
+    for (const base of [{ baseNotes: 'older copy' }, { baseNotes: '' }, {}]) {
+      const test = harness({ lead: ownedLead() });
+      const body: Record<string, unknown> = notesBody({ notes: '', clearNotes: true });
+      delete body.baseNotes;
+      const result = await test.run({ ...body, ...base });
+      assert.equal(result.status, 409, JSON.stringify(result.body));
+      assert.equal(result.body.reasonCode, 'notes_conflict');
+      assert.equal(result.body.currentNotes, 'existing');
+      assert.equal(updates(test.db).length, 0);
+      assert.equal(creates(test.db).length, 0);
+      assert.equal(test.db.docs.get('leads/lead-1')?.notes, 'existing');
+    }
+  });
+
+  it('clearNotes with text, or whitespace, is a 400 notes_clear_mismatch', async () => {
+    for (const notes of ['keep this', ' ']) {
+      const test = harness({ lead: ownedLead() });
+      const result = await test.run(notesBody({ notes, clearNotes: true }));
+      assert.equal(result.status, 400, JSON.stringify(result.body));
+      assert.deepEqual(result.body, {
+        ok: false,
+        error: 'invalid_payload',
+        reasonCode: 'notes_clear_mismatch',
+        field: 'notes',
+      });
+      assert.equal(test.db.txCount, 0);
+      assert.equal(test.db.docs.get('leads/lead-1')?.notes, 'existing');
+    }
+  });
+
+  it('rejects a non-boolean clearNotes, and clearNotes on a knock', async () => {
+    for (const clearNotes of ['true', 1, {}]) {
+      const test = harness({ lead: ownedLead() });
+      const result = await test.run(notesBody({ notes: '', clearNotes }));
+      assert.equal(result.status, 400);
+      assert.equal(result.body.reasonCode, 'invalid_payload');
+      assert.equal(result.body.field, 'clearNotes');
+    }
+    const knock = harness({ lead: { claimedBy: 'uid-setter', status: 'old' } });
+    const knockResult = await knock.run(knockBody({ clearNotes: true }));
+    assert.equal(knockResult.status, 400);
+    assert.equal(knockResult.body.field, 'clearNotes');
+    assert.equal(knock.db.txCount, 0);
+  });
+
+  it('keeps normal notes saves unchanged, with and without clearNotes:false', async () => {
+    for (const extra of [{}, { clearNotes: false }]) {
+      const test = harness({ lead: ownedLead() });
+      const result = await test.run(notesBody({ notes: 'existing\nmore', ...extra }));
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      assert.equal(result.body.result, 'applied');
+      assert.equal(test.db.docs.get('leads/lead-1')?.notes, 'existing\nmore');
+      assert.deepEqual(patch(test.db), { notes: 'existing\nmore' });
+    }
+    const padded = harness({ lead: ownedLead() });
+    const paddedResult = await padded.run(notesBody({ notes: '  text  ' }));
+    assert.equal(paddedResult.status, 200);
+    assert.equal(padded.db.docs.get('leads/lead-1')?.notes, '  text  ');
+  });
+
+  it('adds reasonCode payload_too_large on the Content-Length path, for notes and knocks', async () => {
+    const before = logs.length;
+    for (const body of [undefined, notesBody(), knockBody()]) {
+      const test = harness({ lead: ownedLead() });
+      const result = await test.run(body, undefined, { bodyBytes: FIELD_DISPO_NOTES_BODY_MAX + 1 });
+      assert.equal(result.status, 413, JSON.stringify(result.body));
+      assert.equal(result.body.reasonCode, 'payload_too_large');
+      assert.equal(result.body.ok, false);
+      assert.equal(test.db.txCount, 0);
+      assert.equal(test.db.docs.get('leads/lead-1')?.notes, 'existing');
+    }
+    const tokens = logs.slice(before).filter((line) => line.startsWith('[field/dispo] 413'));
+    assert.ok(tokens.length >= 3);
+  });
+
+  it('adds reasonCode payload_too_large on the body path: >256 KB notes, >100k chars, >32 KB knock', async () => {
+    const huge = harness({ lead: ownedLead() });
+    const hugeRaw = JSON.stringify(notesBody({ notes: '\u2019'.repeat(90_000) }));
+    assert.ok(Buffer.byteLength(hugeRaw, 'utf8') > FIELD_DISPO_NOTES_BODY_MAX);
+    const hugeResult = await huge.run(undefined, undefined, { rawBody: hugeRaw });
+    assert.equal(hugeResult.status, 413);
+    assert.deepEqual(hugeResult.body, { ok: false, error: 'payload_too_large', reasonCode: 'payload_too_large' });
+
+    const chars = harness({ lead: ownedLead() });
+    const charsResult = await chars.run(undefined, undefined, {
+      rawBody: JSON.stringify(notesBody({ notes: 'n'.repeat(100_001) })),
+    });
+    assert.equal(charsResult.status, 413);
+    assert.equal(charsResult.body.reasonCode, 'payload_too_large');
+
+    const knock = harness({ lead: { claimedBy: 'uid-setter', status: 'old' } });
+    const before = logs.length;
+    const knockResult = await knock.run(undefined, undefined, {
+      rawBody: JSON.stringify({ ...knockBody(), pad: 'x'.repeat(40 * 1024) }),
+    });
+    assert.equal(knockResult.status, 413);
+    assert.deepEqual(knockResult.body, { ok: false, error: 'too_large', reasonCode: 'payload_too_large' });
+    assert.deepEqual(logs.slice(before), ['[field/dispo] 413 too_large']);
+  });
+
+  it('logs the new 400s by reasonCode without the note text', async () => {
+    const test = harness({ lead: ownedLead() });
+    const before = logs.length;
+    await test.run(notesBody({ notes: '   ' }));
+    await test.run(notesBody({ draftId: 'notes-guard-2', notes: 'SECRET-TEXT', clearNotes: true }));
+    assert.deepEqual(logs.slice(before), ['[field/dispo] 400 notes_empty', '[field/dispo] 400 notes_clear_mismatch']);
   });
 });
