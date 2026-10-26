@@ -54,8 +54,8 @@ export function classifySyncFailure(
   if (status === 401 || status === 408 || status === 429 || status >= 500)
     return { kind: "transient" };
   const reason = knownReason(code) || knownReason(String((error as { reasonCode?: string }).reasonCode || ""));
-  if (reason === SYNC_REASON.notesConflict || status === 409 || /Notes changed on another device/i.test(message))
-    return { kind: "denial", parkedReason: SYNC_REASON.notesConflict };
+  if (reason === SYNC_REASON.notesConflict || /Notes changed on another device/i.test(message))
+    return { kind: "transient" };
   if (reason) return { kind: "denial", parkedReason: reason };
   if (/Legacy handoff|Invalid knock time|Use the claim\/unclaim|Draft id is not/i.test(message))
     return { kind: "denial", parkedReason: SYNC_REASON.invalidPayload };
@@ -68,7 +68,7 @@ export function classifySyncFailure(
   if (/different account|owned by another/i.test(message))
     return { kind: "denial", parkedReason: SYNC_REASON.ownedByOther };
   if (status === 403) return { kind: "denial", parkedReason: SYNC_REASON.other };
-  if (status === 400 || status === 413)
+  if (status === 400 || status === 409 || status === 413)
     return { kind: "denial", parkedReason: SYNC_REASON.invalidPayload };
   if (code === "failed-precondition" || code === "aborted")
     return { kind: "conflict" };

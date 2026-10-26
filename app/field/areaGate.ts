@@ -1,6 +1,7 @@
 import type { TerritoryPoint } from "@/app/types/territory";
 import { insideTerritory } from "@/app/utils/territoryManager";
 import type { LocationPosition } from "@/app/utils/geolocation";
+import { leadOwnedBy } from "./serverDispo";
 import { ACCURACY_MAX_M, AREA_REASON_DIRECT_WRITE_SUPPORTED, type LocationPrecision } from "./gpsPolicy";
 export { AREA_REASON_DIRECT_WRITE_SUPPORTED };
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
@@ -36,6 +37,8 @@ type PolygonCache = {
   userId: string;
   at: number;
   polygons: TerritoryPoint[][];
+  /** A partial team-areas payload is not a known polygon set. */
+  truncated?: boolean;
 };
 
 type AreaActor = {
@@ -63,36 +66,69 @@ export function resetAreaCacheForTests() {
 }
 
 export function usablePolygonCache(row: PolygonCache | null | undefined, now = Date.now()): TerritoryPoint[][] | null {
-  if (!row || !Array.isArray(row.polygons)) return null;
+  if (!row || row.truncated || !Array.isArray(row.polygons)) return null;
   if (!Number.isFinite(row.at) || now - row.at > AREA_CACHE_MAX_AGE_MS || now < row.at) return null;
   return row.polygons;
 }
 
-/** Remember the rep's own polygons from the team-areas response. Empty is a known answer. */
-export function rememberOwnPolygons(userId: string, polygons: TerritoryPoint[][], at = Date.now()) {
-  if (!userId) return;
-  const row: PolygonCache = {
-    userId,
-    at,
-    polygons: polygons.filter((polygon) => Array.isArray(polygon) && polygon.length >= 3),
-  };
-  memory.set(userId, row);
+function storePolygons(row: PolygonCache) {
+  memory.set(row.userId, row);
   void import("./deviceStore")
     .then((store) => store.putTerritoryPolygons(row))
     .catch(() => { /* an offline cache miss never blocks a knock */ });
 }
 
+/** Remember the rep's own polygons from the team-areas response. Empty is a known answer. */
+export function rememberOwnPolygons(userId: string, polygons: TerritoryPoint[][], at = Date.now()) {
+  if (!userId) return;
+  storePolygons({
+    userId,
+    at,
+    polygons: polygons.filter((polygon) => Array.isArray(polygon) && polygon.length >= 3),
+  });
+}
+
+/** A truncated team-areas response replaces any complete cache. Areas stay unknown. */
+export function rememberTruncatedPolygons(userId: string, at = Date.now()) {
+  if (!userId) return;
+  storePolygons({ userId, at, polygons: [], truncated: true });
+}
+
+export function cacheOwnPolygonsFromTeamAreas(
+  userId: string,
+  data: { truncated?: unknown; territories?: Array<{ userId?: string; archived?: boolean; polygon?: TerritoryPoint[] }> },
+  at = Date.now(),
+) {
+  if (data.truncated === true) {
+    rememberTruncatedPolygons(userId, at);
+    return;
+  }
+  rememberOwnPolygons(
+    userId,
+    (data.territories || [])
+      .filter((territory) => !territory.archived && territory.userId === userId && Array.isArray(territory.polygon))
+      .map((territory) => territory.polygon as TerritoryPoint[]),
+    at,
+  );
+}
+
 export function knownPolygonsSync(userId: string, now = Date.now()): PolygonCache | null {
   const row = memory.get(userId);
-  return row && usablePolygonCache(row, now) ? row : null;
+  if (!row || row.truncated) return null;
+  return usablePolygonCache(row, now) ? row : null;
 }
 
 export async function knownPolygons(userId: string, now = Date.now()): Promise<PolygonCache | null> {
+  if (memory.get(userId)?.truncated) return null;
   const cached = knownPolygonsSync(userId, now);
   if (cached) return cached;
   try {
     const store = await import("./deviceStore");
     const row = await store.readTerritoryPolygons(userId);
+    if (row?.truncated) {
+      memory.set(userId, { userId: row.userId, at: row.at, polygons: [], truncated: true });
+      return null;
+    }
     const polygons = usablePolygonCache(row, now);
     if (!row || !polygons) return null;
     const fresh = { ...row, polygons };
@@ -281,7 +317,7 @@ async function refuseIfOutside(input: {
 /** Tap-time gate for a sheet knock. No fix saves. A later fix only flags. */
 export async function assertAssignedAreaAtTap(input: {
   user: { id: string; role?: string; features?: { proximityEnforcement?: boolean } };
-  lead: { id: string; claimedBy?: string; assignedTo?: string };
+  lead: { id: string; claimedBy?: string; assignedTo?: string; setterId?: string };
   tappedAt: number;
   status?: string;
   disposition?: string;
@@ -293,7 +329,7 @@ export async function assertAssignedAreaAtTap(input: {
     createdAt: new Date(input.tappedAt).toISOString(),
     status: input.status,
     disposition: input.disposition,
-    owned: input.lead.claimedBy === input.user.id || input.lead.assignedTo === input.user.id,
+    owned: leadOwnedBy(input.lead, input.user.id),
     fix: areaFixFromPosition(position, currentLocationPrecision()),
   });
 }

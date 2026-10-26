@@ -10,10 +10,14 @@ import {
   AREA_GATE_NO_TERRITORY,
   AREA_GATE_OWNED_LEADS,
   AREA_REASON_DIRECT_WRITE_SUPPORTED,
+  areaDecisionForDraft,
+  assertAssignedAreaAtTap,
   assertDropPinArea,
+  cacheOwnPolygonsFromTeamAreas,
   distanceToPolygonMeters,
   evaluateAreaGate,
   knownPolygons,
+  knownPolygonsSync,
   nearestTerritoryMeters,
   noteAreaActor,
   rememberOwnPolygons,
@@ -21,6 +25,7 @@ import {
   usablePolygonCache,
   type AreaFix,
 } from "../../app/field/areaGate";
+import { leadOwnedBy, prefersServerDispo } from "../../app/field/serverDispo";
 import { directPatch } from "../../app/field/directWrites";
 import { classifyKnock } from "../../app/field/gpsPolicy";
 import { resolveDraftGps } from "../../app/field/pendingGps";
@@ -129,6 +134,61 @@ test("the area gate blocks only a good fix outside every assigned polygon", () =
   assert.equal(evaluateAreaGate({ ...setter, fix: { lat: Number.NaN, lng: -77, accuracyM: 5, reduced: false } }).action, "allow");
   assert.equal(evaluateAreaGate({ ...setter, proximityOptOut: true, fix: outside }).action, "allow");
   assert.equal(directPatch({ gpsVerified: false, gpsUnverifiedReason: "out_of_area" }).gpsUnverifiedReason, "too_far");
+});
+
+test("setterId ownership is shared by the route and the area gate", async () => {
+  assert.equal(leadOwnedBy({ setterId: "rep" }, "rep"), true);
+  assert.equal(leadOwnedBy({ claimedBy: "other", assignedTo: "other", setterId: "rep" }, "rep"), true);
+  assert.equal(leadOwnedBy({ setterId: "other" }, "rep"), false);
+  assert.equal(leadOwnedBy({ setterId: "rep" }, ""), false);
+  assert.equal(prefersServerDispo({ setterId: "rep", territoryId: "t" }, "rep"), false);
+  const outside = northOf(home, 80);
+  const flagged = evaluateAreaGate({ ...setter, owned: leadOwnedBy({ setterId: "rep" }, "rep"), fix: outside });
+  assert.equal(flagged.action, "flag");
+  if (flagged.action === "flag") assert.equal(flagged.reason, "out_of_area");
+
+  resetWarmGpsForTests();
+  resetAreaCacheForTests();
+  rememberOwnPolygons("rep", [home]);
+  const tappedAt = Date.now();
+  noteWarmFix({ timestamp: tappedAt, coords: { latitude: outside.lat, longitude: outside.lng, accuracy: 10 } });
+  await assertAssignedAreaAtTap({
+    user: { id: "rep", role: "setter" },
+    lead: { id: "owned-through-setter", setterId: "rep" },
+    tappedAt,
+    status: "not-home",
+    disposition: "Not Home",
+  });
+  await assert.rejects(
+    () => assertAssignedAreaAtTap({
+      user: { id: "rep", role: "setter" },
+      lead: { id: "unowned", setterId: "someone-else" },
+      tappedAt,
+      status: "not-home",
+      disposition: "Not Home",
+    }),
+    (error: Error) => error.message === AREA_BLOCK_MESSAGE,
+  );
+});
+
+test("a truncated territory response is unknown and does not block", async () => {
+  resetAreaCacheForTests();
+  rememberOwnPolygons("rep", [home]);
+  assert.equal((await knownPolygons("rep"))?.polygons.length, 1);
+  cacheOwnPolygonsFromTeamAreas("rep", {
+    truncated: true,
+    territories: [{ userId: "rep", polygon: home }],
+  });
+  assert.equal(knownPolygonsSync("rep"), null);
+  assert.equal(await knownPolygons("rep"), null);
+  assert.equal(usablePolygonCache({ userId: "rep", at: Date.now(), polygons: [home], truncated: true }), null);
+  const decision = await areaDecisionForDraft({
+    userId: "rep",
+    role: "setter",
+    owned: false,
+    fix: northOf(home, 80),
+  });
+  assert.equal(decision.action, "allow");
 });
 
 test("a fresh polygon cache can block and a stale cache cannot", async () => {

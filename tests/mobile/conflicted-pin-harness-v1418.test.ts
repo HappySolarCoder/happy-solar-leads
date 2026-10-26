@@ -127,3 +127,34 @@ test("route-first pins follow the route only after the plain patch is also denie
   assert.equal(accepted.replayed, false);
   assert.equal(commits, 0);
 });
+
+test("a temporary plain-patch failure stays queued instead of parking on the route", async () => {
+  let commits = 0;
+  let rows = [knock({
+    id: "plain-offline",
+    direct: { patch: { status: "not-home", gpsVerified: true, gpsDistanceM: 12 } },
+  })];
+  await syncOutbox({
+    now: () => Date.parse(at),
+    random: () => 0,
+    read: async () => rows,
+    send: async (row) => deliverFieldDispo(row, user, {
+      getToken: async () => "token",
+      commit: async () => {
+        commits += 1;
+        if (commits === 1) throw denied();
+        throw Object.assign(Error("client is offline"), { code: "unavailable", status: 503 });
+      },
+      post: async () => json(400, {}),
+    }),
+    remove: async () => { throw Error("must not remove"); },
+    update: async (row) => { rows = [row]; },
+    report: async () => {},
+    active: () => true,
+  });
+  assert.equal(commits, 2);
+  assert.equal(rows[0].syncState, "retry");
+  assert.equal(rows[0].parkedReason, undefined);
+  assert.equal(rows[0].status, "not-home");
+  assert.equal(rows[0].createdAt, at);
+});

@@ -18,6 +18,11 @@ type DispoLead = Pick<Lead, "historicalTerritoryPin" | "claimedBy" | "assignedTo
   territoryId?: string;
 };
 
+/** One ownership check for routing and the area gate. setterId counts. */
+export function leadOwnedBy(lead: Pick<DispoLead, "claimedBy" | "assignedTo" | "setterId">, uid: string): boolean {
+  return !!uid && (lead.claimedBy === uid || lead.assignedTo === uid || lead.setterId === uid);
+}
+
 /**
  * Historical pins cannot be written from the client. Everything an admin could
  * write in 14.17 stays a direct write, including an unowned pin with no territory.
@@ -27,23 +32,26 @@ type DispoLead = Pick<Lead, "historicalTerritoryPin" | "claimedBy" | "assignedTo
 export function prefersServerDispo(lead: DispoLead, uid: string, role?: string): boolean {
   if (lead.historicalTerritoryPin) return true;
   if (role === "admin") return false;
-  const owned =
-    lead.claimedBy === uid || lead.assignedTo === uid || lead.setterId === uid;
-  if (owned) return false;
+  if (leadOwnedBy(lead, uid)) return false;
   return !lead.territoryId;
 }
 
-/** Keep the rep's edit and base the next attempt on the notes the server has now. */
+/**
+ * A notes conflict never overwrites. An edit that extends its base contributes
+ * only the added tail. An empty base, or an edit that cannot be lined up,
+ * is appended on its own line when the server does not already contain it.
+ */
 export function rebaseNotes(baseNotes: string, edited: string, currentNotes: string): { notes: string; baseNotes: string } {
   const base = baseNotes || "";
   const current = currentNotes || "";
   const edit = edited || "";
-  if (base && edit.startsWith(base)) {
+  if (edit.startsWith(base)) {
     const addition = edit.slice(base.length);
-    const notes = !addition || current.endsWith(addition) ? current : current + addition;
-    return { notes, baseNotes: current };
+    if (!addition || current.endsWith(addition)) return { notes: current, baseNotes: current };
+    if (base) return { notes: current + addition, baseNotes: current };
   }
-  return { notes: edit, baseNotes: current };
+  if (!edit || current.includes(edit)) return { notes: current, baseNotes: current };
+  return { notes: current ? `${current}\n${edit}` : edit, baseNotes: current };
 }
 
 export function releaseFieldDispoHolds(drafts: PendingMutation[]): PendingMutation[] {
@@ -342,10 +350,25 @@ function permissionDenied(error: Error & { status?: number; code?: string }): bo
   return error.code === "permission-denied";
 }
 
+/** Offline and transport failures must stay queued. They do not adopt the route status. */
+function temporaryPlainFailure(error: Error & { status?: number; code?: string }): boolean {
+  const status = error.status || 0;
+  const code = String(error.code || "").toLowerCase();
+  const message = error.message || "";
+  if (status === 401 || status === 408 || status === 429 || status >= 500) return true;
+  if (code === "unavailable" || code === "deadline-exceeded" || code === "network-request-failed" || code === "offline")
+    return true;
+  return /offline|network|failed to fetch/i.test(message);
+}
+
+function historicalPlainFailure(error: Error): boolean {
+  return /historical/i.test(error.message || "");
+}
+
 /**
  * Any non-2xx from the route retries the plain 14.17 patch first.
- * A draft parks or stays queued only when that patch is denied too, and then
- * the route's own status is what the outbox sees. A 404 is never replaced.
+ * A temporary plain failure is rethrown so the draft stays queued.
+ * Only a permission denial or a historical pin adopts the route status.
  */
 async function plainPatchAfterRoute(
   m: PendingMutation,
@@ -355,8 +378,11 @@ async function plainPatchAfterRoute(
 ): Promise<{ replayed: boolean; lead?: Lead }> {
   try {
     return await commit(withoutGpsFlagKeys(m), user);
-  } catch {
-    throw routeFailure;
+  } catch (error) {
+    const failure = error as Error & { status?: number; code?: string };
+    if (!temporaryPlainFailure(failure) && (permissionDenied(failure) || historicalPlainFailure(failure)))
+      throw routeFailure;
+    throw failure;
   }
 }
 

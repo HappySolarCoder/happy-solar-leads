@@ -17,7 +17,7 @@ import { DIRECT_MOBILE_WRITES, directPatch } from './directWrites';
 import { acceptDisposition } from './draftQueue';
 import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
-import { deliverFieldDispo, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
+import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
 import { readSyncLog, recordSyncEvent, reportParked, type SyncEvent } from './syncDiagnostics';
 import { displayedKnockPoint, type KnockPoint } from './knockPoint';
 import { GPS_WINDOW_AFTER_MS } from './gpsPolicy';
@@ -365,7 +365,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
           tappedAt: tappedAt.getTime(),
           deadline: tappedAt.getTime() + GPS_WINDOW_AFTER_MS,
           required: isProximityRequired(actor),
-          areaOwned: lead.claimedBy === uid || lead.assignedTo === uid,
+          areaOwned: leadOwnedBy(lead, uid),
         } } : {}),
       },
     };

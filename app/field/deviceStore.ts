@@ -90,6 +90,7 @@ export type TerritoryPolygonCache = {
   userId: string;
   at: number;
   polygons: { lat: number; lng: number }[][];
+  truncated?: boolean;
 };
 
 export const putTerritoryPolygons = (row: TerritoryPolygonCache) =>

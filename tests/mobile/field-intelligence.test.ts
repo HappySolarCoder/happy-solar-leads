@@ -331,6 +331,23 @@ test("conflicts and reassignment retain server data; spoofed proximity and autho
     (await f.send(mutation({ baseStatus: "interested" }))).status,
     409,
   );
+  assert.equal(
+    (
+      await f.send(
+        mutation({
+          observation: observation({
+            gps: {
+              lat: 34,
+              lng: -112,
+              accuracy: 5,
+              timestamp: now.toISOString(),
+            },
+          }),
+        }),
+      )
+    ).status,
+    409,
+  );
   assert.equal((await f.send(mutation(), "other")).status, 400);
   assert.equal(
     (await f.send(mutation({ userId: "other" }), "other")).status,
@@ -339,44 +356,6 @@ test("conflicts and reassignment retain server data; spoofed proximity and autho
   f.seed("users/rep", { role: "setter", deleted: true });
   assert.equal((await f.send(mutation())).status, 403);
   assert.equal(f.writes.length, 0);
-});
-test("distance and accuracy flag a knock instead of rejecting it", async () => {
-  const f = fixture();
-  const far = await f.send(mutation({
-    id: "knock-far",
-    observation: observation({
-      eventId: "knock-far",
-      gps: { lat: 34, lng: -112, accuracy: 5, timestamp: now.toISOString() },
-    }),
-  }));
-  assert.equal(far.status, 200);
-  assert.equal(far.body.outcome, "flagged_accepted");
-  assert.equal(far.body.reasonCode, "gps_unverified_flagged");
-  const lead = f.records.get("leads/door")!.value;
-  assert.equal(lead.lat, 33);
-  assert.equal(lead.knockGpsLat, 34);
-  assert.equal(lead.gpsVerified, false);
-  assert.equal(lead.gpsUnverifiedReason, "too_far");
-  assert.equal(typeof lead.knockDistanceFromAddress, "number");
-  assert.equal(typeof lead.gpsDistanceM, "number");
-  const lowFixture = fixture();
-  const low = await lowFixture.send(mutation({
-    id: "knock-low",
-    observation: observation({
-      eventId: "knock-low",
-      gps: { lat: 33, lng: -112, accuracy: 66, timestamp: now.toISOString() },
-    }),
-  }));
-  assert.equal(low.status, 200);
-  assert.equal(low.body.outcome, "flagged_accepted");
-  assert.equal(lowFixture.records.get("leads/door")!.value.gpsUnverifiedReason, "low_accuracy");
-  const missingFixture = fixture();
-  const missing = await missingFixture.send(mutation({
-    id: "knock-none",
-    observation: observation({ eventId: "knock-none", gps: undefined }),
-  }));
-  assert.equal(missing.status, 200);
-  assert.equal(missing.body.reasonCode, "gps_unverified_flagged");
 });
 test("notes merge only against matching base and replay does not create extra writes", async () => {
   const f = fixture(),

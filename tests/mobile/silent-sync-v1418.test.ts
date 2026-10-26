@@ -32,6 +32,7 @@ import {
   fieldDispoBody,
   postFieldDispo,
   prefersServerDispo,
+  rebaseNotes,
   releaseFieldDispoHolds,
 } from "../../app/field/serverDispo";
 import { SYNC_REASON } from "../../app/field/syncReasons";
@@ -281,7 +282,19 @@ test("200 removes the draft, including an older tap the server already merged", 
   assert.equal(typeof bodies[0].actionAt, "string");
 });
 
-test("409 rebases notes onto currentNotes and parks only on a second 409", async () => {
+test("409 rebases notes onto currentNotes and retries instead of parking", async () => {
+  assert.deepEqual(rebaseNotes("", "Call after 5", "Dog in yard"), {
+    notes: "Dog in yard\nCall after 5",
+    baseNotes: "Dog in yard",
+  });
+  const unmerged = rebaseNotes("base the rep never saw", "Call after 5", "Dog in yard");
+  assert.equal(unmerged.notes, "Dog in yard\nCall after 5");
+  assert.equal(unmerged.baseNotes, "Dog in yard");
+  const once = rebaseNotes("", "Call after 5", "Dog in yard").notes;
+  assert.equal(rebaseNotes("", "Call after 5", once).notes, once);
+  assert.equal(rebaseNotes("Dog in yard", once, "Dog in yard").notes, once);
+  assert.equal(rebaseNotes("base the rep never saw", "Call after 5", unmerged.notes).notes, unmerged.notes);
+
   const notes = knock({
     id: "note-1",
     kind: "notes",
@@ -304,7 +317,7 @@ test("409 rebases notes onto currentNotes and parks only on a second 409", async
   });
   assert.deepEqual(bodies.map((body) => body.draftId), ["note-1", "note-1"]);
   assert.equal(bodies[1].baseNotes, "someone else");
-  assert.equal(bodies[1].notes, "edited");
+  assert.equal(bodies[1].notes, "someone else\nedited");
 
   const appended = knock({
     id: "note-2",
@@ -328,17 +341,32 @@ test("409 rebases notes onto currentNotes and parks only on a second 409", async
   assert.equal(merged[1], "original\nother\nmy note");
 
   posts = 0;
-  await assert.rejects(
-    () => postFieldDispo(notes, user, {
+  let rows = [notes];
+  await syncOutbox({
+    now: () => Date.parse(at),
+    random: () => 0,
+    read: async () => rows,
+    send: async (row) => postFieldDispo(row, user, {
       getToken: async () => "token",
       post: async () => {
         posts += 1;
         return json(409, { currentNotes: "someone else" });
       },
     }),
-    (error: Error & { reasonCode?: string }) => error.reasonCode === "notes_conflict",
-  );
+    remove: async () => {
+      throw Error("must not remove");
+    },
+    update: async (row) => {
+      rows = [row];
+    },
+    report: async () => {},
+    active: () => true,
+  });
   assert.equal(posts, 2);
+  assert.equal(rows[0].syncState, "retry");
+  assert.equal(rows[0].parkedReason, undefined);
+  assert.equal(rows[0].notes, "edited");
+  assert.equal(rows[0].blocked, undefined);
 });
 
 test("410, 400, and 413 park and a 403 without a known reason uses other", async () => {
