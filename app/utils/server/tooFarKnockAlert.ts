@@ -362,7 +362,6 @@ export async function handleTooFarKnockAlert(
   }
 
   const params = request.nextUrl.searchParams;
-  const dryRun = params.get('dryRun') === '1';
   const now = deps.now();
   const dateParam = params.get('date');
   let day = nyDayWindow(now);
@@ -371,10 +370,13 @@ export async function handleTooFarKnockAlert(
     if (!parsed) return { status: 400, body: { error: 'invalid_date', expected: 'YYYY-MM-DD, not after today (America/New_York)' } };
     day = parsed;
   }
+  // A dated request is always a preview. It never sends and never writes the marker.
+  const dryRun = params.get('dryRun') === '1' || dateParam != null;
   const missingSend = SEND_ENV_KEYS.filter((key) => !deps.env[key]?.trim());
   if (!dryRun && missingSend.length) return { status: 503, body: { missing: missingSend } };
-  // Scheduled runs (no date, not a dry run) fire at 03:30 and 04:30 UTC; only NY hour 23 proceeds.
-  if (!dryRun && dateParam == null && nyHour(now) !== RUN_NY_HOUR) {
+  // Scheduled runs fire at 03:30 and 04:30 UTC; only NY hour 23 proceeds.
+  // Dated requests are dry runs, so they are not hour-gated.
+  if (!dryRun && nyHour(now) !== RUN_NY_HOUR) {
     return { status: 200, body: { ok: true, skipped: true, reason: 'not_ny_hour_23', nyHour: nyHour(now) } };
   }
 

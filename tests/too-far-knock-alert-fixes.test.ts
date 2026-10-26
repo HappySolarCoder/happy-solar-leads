@@ -239,21 +239,47 @@ describe('#173 fix 7: ?date=YYYY-MM-DD', () => {
       assert.equal(parseDateParam(bad, EDT_2330), null, JSON.stringify(bad));
     }
   });
-  it('handler: auth first, then 400 with no reads; valid date queries that window and backfills once', async () => {
+  it('handler: auth first, then 400 with no reads; valid date queries that window', async () => {
     const t = rig({ now: new Date('2026-10-26T15:00:00Z'), leads: [{ id: 'a', data: { dispositionHistory: [entry(Date.parse('2026-10-24T18:00:00Z'), 'u', flag('too_far'))] } }] });
     assert.equal((await t.run({ date: '2026-10-24' }, null)).status, 401);
     assert.equal((await t.run({ date: '2026-10-24' }, 'Bearer nope')).status, 401);
-    const bad = await t.run({ date: '2026-02-30', dryRun: '1' });
+    const bad = await t.run({ date: '2026-02-30' });
     assert.equal(bad.status, 400); assert.equal(bad.body.error, 'invalid_date');
     assert.equal(t.log.pages, 0);
+    assert.equal(t.sent.length, 0);
+    assert.equal(t.log.claims, 0);
     const dry = await t.run({ date: '2026-10-24', dryRun: '1' });
+    assert.equal(dry.status, 200);
+    assert.equal(dry.body.dryRun, true);
     assert.equal(dry.body.date, '2026-10-24');
     assert.deepEqual(t.windows[0], [Date.parse('2026-10-24T04:00:00Z'), Date.parse('2026-10-25T04:00:00Z')]);
     assert.equal(t.sent.length, 0);
+    assert.equal(t.log.claims, 0);
+  });
+  it('?date=YYYY-MM-DD without dryRun=1 never sends and never writes the marker', async () => {
+    const t = rig({
+      now: new Date('2026-10-26T15:00:00Z'),
+      env: { CRON_SECRET: SECRET },
+      leads: [{ id: 'a', data: { dispositionHistory: [entry(Date.parse('2026-10-24T18:00:00Z'), 'u', flag('too_far'))] } }],
+    });
     const live = await t.run({ date: '2026-10-24' });
-    assert.equal(live.body.sent, true); assert.equal(t.sent[0].subject, alertSubject('October 24, 2026'));
-    assert.equal((await t.run({ date: '2026-10-24' })).body.alreadySent, true);
-    assert.equal(t.sent.length, 1);
+    assert.equal(live.status, 200);
+    assert.equal(live.body.dryRun, true);
+    assert.equal(live.body.sent, undefined);
+    assert.equal(live.body.alreadySent, undefined);
+    assert.equal(live.body.date, '2026-10-24');
+    assert.equal((live.body.email as { subject: string }).subject, alertSubject('October 24, 2026'));
+    assert.equal((live.body.rows as unknown[]).length, 1);
+    assert.equal(t.sent.length, 0);
+    assert.equal(t.log.claims, 0);
+    assert.equal(t.markers.size, 0);
+    const again = await t.run({ date: '2026-10-24' });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.dryRun, true);
+    assert.equal(again.body.alreadySent, undefined);
+    assert.equal(t.sent.length, 0);
+    assert.equal(t.log.claims, 0);
+    assert.equal(t.markers.size, 0);
   });
 });
 
