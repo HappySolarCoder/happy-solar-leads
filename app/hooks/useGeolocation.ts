@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { getLocation, watchLocation, type LocationPosition, type LocationError } from '@/app/utils/geolocation';
+import { noteWarmFix } from '@/app/field/warmGps';
 
 export interface GpsPosition { lat: number; lng: number; accuracy: number; timestamp: number }
 export type GeolocationError = LocationError;
@@ -35,6 +36,7 @@ export function useGeolocation(options?: PositionOptions & { watch?: boolean }) 
         if (!isCurrent()) return;
         clearTimeout(firstFixTimer);
         if (first) { first = false; setActivation(value => value + 1); }
+        noteWarmFix(pos);
         setPosition(previous => previous && previous.lat === pos.coords.latitude && previous.lng === pos.coords.longitude && previous.accuracy === pos.coords.accuracy ? previous : { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp });
         setError(null);
         setIsLoading(false);

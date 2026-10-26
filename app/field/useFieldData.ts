@@ -13,7 +13,17 @@ import {
 } from "./types";
 import { cleanConfig } from "./config";
 import { pilotFlags } from "./analysis";
-import { DIRECT_MOBILE_WRITES, commitDirectMutation, directPatch, reportingPatch } from './directWrites';
+import { DIRECT_MOBILE_WRITES, directPatch, rejectCombinedKnockAndNotes } from './directWrites';
+import { acceptDisposition } from './draftQueue';
+import { migrateDraft, reopenDeniedParked } from './draftMigration';
+import { schedulingHold } from './draftState';
+import { deliverFieldDispo, leadOwnedBy, notesDraftUsesRoute, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
+import { NOTES_TOO_LONG_MESSAGE, notesQueuedBody } from './notesLimits';
+import { readSyncLog, recordSyncEvent, reportParked, type SyncEvent } from './syncDiagnostics';
+import { displayedKnockPoint, type KnockPoint } from './knockPoint';
+import { GPS_WINDOW_AFTER_MS } from './gpsPolicy';
+import { noteAreaActor } from './areaGate';
+import { resolveDraftGps, stageKnockGps } from './pendingGps';
 import {
   putArea,
   readArea,
@@ -54,9 +64,9 @@ export async function fieldRequest(path: string, body?: unknown) {
     });
   return data;
 }
-import { resolveDraftGps } from './pendingGps';
 import { isProximityRequired } from '@/app/utils/proximityEnforcement';
 import { syncOutbox } from "./syncOutbox";
+import { SYNC_REASON } from "./syncReasons";
 import { unreflectedKnocks } from "./confirmedKnocks";
 const locks = new Map<string, Promise<void>>();
 export function useFieldData(user: User | null, liveLeads: Lead[]) {
@@ -64,6 +74,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     active = useRef(uid);
   active.current = uid;
   const latest = useRef({user,liveLeads});latest.current={user,liveLeads};
+  useEffect(() => { noteAreaActor(user); }, [user]);
   const [confirmedKnocks, setConfirmedKnocks] = useState<PendingMutation[]>([]);
   useEffect(() => {
     setConfirmedKnocks(previous => {
@@ -87,7 +98,8 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     ready: false,
   });
   const [offline, setOffline] = useState(false),
-    [syncing, setSyncing] = useState(false);
+    [syncing, setSyncing] = useState(false),
+    [diagnostics, setDiagnostics] = useState<SyncEvent[]>([]);
   const current =
     state.uid === uid
       ? state
@@ -121,6 +133,15 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
   const reloadDrafts = useCallback(async () => {
     if (uid) update({ drafts: await readDrafts(uid) });
   }, [uid, update]);
+  const reloadDiagnostics = useCallback(async () => {
+    if (uid && active.current === uid) setDiagnostics(await readSyncLog(uid));
+  }, [uid]);
+  useEffect(() => {
+    if (!uid || typeof window === "undefined") return;
+    const refresh = () => { void reloadDiagnostics(); };
+    window.addEventListener("raydar-sync-log", refresh);
+    return () => window.removeEventListener("raydar-sync-log", refresh);
+  }, [uid, reloadDiagnostics]);
   const loadConfig = useCallback(async () => {
     if (DIRECT_MOBILE_WRITES) {
       update({ config: DEFAULT_FIELD_CONFIG, ready: true });
@@ -152,18 +173,18 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       const queued = await readDrafts(uid);
       if (!queued.length) return;
       // GPS resolves independently of network availability and never blocks another door.
-      for (const m of queued) if (m.direct?.gps && !m.blocked) void resolveDraftGps(m, {
+      for (const m of queued) if (m.syncState === 'gps' && m.direct?.gps) void resolveDraftGps(m, {
         read: () => readDrafts(uid), put: updatePendingGpsDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid,
-      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => update({error: (e as Error).message}));
+      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => console.warn('[raydar-sync]', (e as Error).message));
       setSyncing(true);
-      const result = await syncOutbox({
+      await syncOutbox({
         read: () => readDrafts(uid),
         send: async m => {
           const actor = latest.current.user;
           if (!actor || actor.id !== uid) throw Error('Sign in again to sync your work.');
           const result = DIRECT_MOBILE_WRITES
-            ? await commitDirectMutation(m, actor)
+            ? await deliverFieldDispo(m, actor, { getToken: async () => (await auth?.currentUser?.getIdToken()) || '' })
             : await fieldRequest('/api/field-work', m);
           if (DIRECT_MOBILE_WRITES && result.lead && active.current === uid) acknowledgeMobileLead(actor, result.lead);
           if (DIRECT_MOBILE_WRITES && m.kind === 'knock' && active.current === uid) {
@@ -181,20 +202,26 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
           return result;
         },
         remove: removeDraft,
-        block: putDraft,
+        update: putDraft,
+        insert: putDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid && isDeviceOnline(),
       });
-      update({ error: result.error || '' });
+      void reportParked(uid);
       await reloadDrafts();
+      await reloadDiagnostics();
     } catch (e) {
-      update({ error: (e as Error).message });
+      console.warn('[raydar-sync]', (e as Error).message);
+      void recordSyncEvent({
+        id: crypto.randomUUID(), userId: uid, at: Date.now(), draftId: '', leadId: '',
+        createdAt: new Date().toISOString(), state: 'retry', lastError: (e as Error).message, attempts: 0,
+      });
     } finally {
       if (active.current === uid) setSyncing(false);
     }
     })();
     locks.set(uid, task);
     try { await task; } finally { if (locks.get(uid) === task) locks.delete(uid); }
-  }, [uid, update, reloadDrafts]);
+  }, [uid, reloadDrafts, reloadDiagnostics]);
   useEffect(() => {
     if (!uid) return;
     let alive = true;
@@ -205,17 +232,15 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         // their original time and rep; Firestore rules still authorize every write.
         const actor = latest.current.user;
         if (DIRECT_MOBILE_WRITES && actor?.id === uid && auth?.currentUser?.uid === uid) {
-          for (const m of drafts) if (!m.direct && m.kind !== 'handoff') {
-            try {
-              await putDraft({ ...m, userName: m.userName || actor.name,
-                direct: { patch: reportingPatch(m, actor), legacy: true }, blocked: false, error: undefined });
-            } catch (e) { await putDraft({ ...m, blocked: true, error: (e as Error).message }); }
-          }
+          const migrated = drafts.map((m) => migrateDraft(m, actor));
+          const opened = releaseFieldDispoHolds(reopenDeniedParked(migrated, uid));
+          for (let i = 0; i < opened.length; i++) if (opened[i] !== drafts[i]) await putDraft(opened[i]);
           drafts = await readDrafts(uid);
-          for (const m of drafts) if (m.direct?.gps && !m.blocked) void resolveDraftGps(m, {
+          for (const m of drafts) if (m.syncState === 'gps' && m.direct?.gps) void resolveDraftGps(m, {
             read: () => readDrafts(uid), put: updatePendingGpsDraft,
             active: () => active.current === uid && auth?.currentUser?.uid === uid,
-          }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => update({error:(e as Error).message}));
+          }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => console.warn('[raydar-sync]', (e as Error).message));
+          void reloadDiagnostics();
         }
         if (alive) {
           update({
@@ -262,23 +287,39 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
   }, [uid, update, loadConfig, sync]);
   const enqueue = useCallback(
     async (m: FieldMutation) => {
-      if (!uid || m.userId !== uid || auth?.currentUser?.uid !== uid)
-        throw Error("Your account changed. Sign in again.");
+      if (!uid || m.userId !== uid || auth?.currentUser?.uid !== uid) {
+        const message = "Your account changed. Sign in again.";
+        console.warn("[raydar-sync]", message);
+        void recordSyncEvent({
+          id: crypto.randomUUID(), userId: m.userId, at: Date.now(), draftId: m.id, leadId: m.leadId,
+          createdAt: m.createdAt, state: "retry", lastError: message, attempts: 0,
+          parkedReason: SYNC_REASON.permissionDenied,
+        });
+        throw Error(message);
+      }
       const drafts = await readDrafts(uid);
-      if (drafts.length >= 500)
-        throw Error(
-          "You have 500 pending changes. Sync or review them before adding more.",
-        );
-      if (drafts.some((x) => x.leadId === m.leadId && x.blocked))
-        throw Error(
-          "This pin has a sync conflict. Open Field tools → Sync to review it first.",
-        );
-      await putDraft(m);
+      let stored;
+      try { stored = acceptDisposition(drafts, m); }
+      catch (e) {
+        console.warn("[raydar-sync]", (e as Error).message);
+        void recordSyncEvent({
+          id: crypto.randomUUID(), userId: uid, at: Date.now(), draftId: m.id, leadId: m.leadId,
+          createdAt: m.createdAt, status: m.status, disposition: m.disposition, state: "retry",
+          lastError: (e as Error).message, attempts: 0,
+        });
+        throw e;
+      }
+      await putDraft(stored);
       await reloadDrafts();
-      if (m.direct?.gps) void resolveDraftGps(m, {
+      if (stored.syncState === "parked") void recordSyncEvent({
+        id: crypto.randomUUID(), userId: uid, at: Date.now(), draftId: stored.id, leadId: stored.leadId,
+        createdAt: stored.createdAt, status: stored.status, disposition: stored.disposition,
+        state: "parked", parkedReason: stored.parkedReason, lastError: stored.lastError, attempts: stored.attempts ?? 0,
+      });
+      if (stored.syncState === "gps" && stored.direct?.gps) void resolveDraftGps(stored, {
         read: () => readDrafts(uid), put: updatePendingGpsDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid,
-      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => update({error: (e as Error).message}));
+      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => console.warn("[raydar-sync]", (e as Error).message));
       void sync();
     },
     [uid, reloadDrafts, sync, update],
@@ -292,11 +333,33 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     },
     [uid, reloadDrafts],
   );
-  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead, deferGps = false) => {
+  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead, deferGps = false, point?: KnockPoint | null) => {
     const actor = latest.current.user;
     if (!DIRECT_MOBILE_WRITES || !actor || actor.id !== uid || auth?.currentUser?.uid !== uid)
       throw Error('Sign in with the rep who is recording this action.');
+    const recordedAt = new Date();
+    rejectCombinedKnockAndNotes(patch);
     const clean = directPatch(patch), entry = clean.dispositionHistory?.[0];
+    let noteText = !entry && typeof clean.notes === "string" ? clean.notes : "";
+    let baseNotes = lead.notes || "";
+    const draftId = crypto.randomUUID();
+    const tappedAt = entry?.timestamp ? new Date(entry.timestamp) : recordedAt;
+    if (!entry && typeof clean.notes === "string") {
+      const priors = (await readDrafts(uid)).filter((row) =>
+        row.leadId === lead.id && row.kind === "notes" && row.parkedReason === SYNC_REASON.notesTooLong);
+      const queued = notesQueuedBody({
+        leadId: lead.id,
+        notes: noteText,
+        baseNotes,
+        draftId,
+        actionAt: tappedAt.toISOString(),
+        parkedNotes: priors,
+      });
+      if (queued.tooLong) throw Error(NOTES_TOO_LONG_MESSAGE);
+      noteText = queued.notes;
+      baseNotes = queued.baseNotes;
+      clean.notes = noteText;
+    }
     if (entry) clean.dispositionHistory = [entry];
     if (entry && (entry.userId !== uid || entry.userName !== actor.name))
       throw Error('The knock identity does not match the signed-in rep.');
@@ -305,28 +368,41 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         leads: [lead, ...(current.area?.leads || latest.current.liveLeads).filter(l => l.id !== lead.id).slice(0, 24)] };
       await putArea(area); update({ area });
     }
-    await enqueue({ id: crypto.randomUUID(), userId: uid, userName: actor.name,
-      leadId: lead.id, createdAt: (entry ? new Date(entry.timestamp) : new Date()).toISOString(),
-      kind: entry ? 'knock' : 'notes', baseStatus: lead.status, baseNotes: lead.notes || '',
-      ...(entry ? { status: clean.status, disposition: entry.disposition } : {}),
-      direct: { patch: clean, ...(create ? { create } : {}), ...(deferGps && entry ? {gps: {
-        ...(Number.isFinite(lead.lat) ? {lat:lead.lat} : {}), ...(Number.isFinite(lead.lng) ? {lng:lead.lng} : {}),
-        deadline: Date.now() + 15000, required: isProximityRequired(actor),
-      }} : {}) } });
+    // History timestamp is the tap, captured before any GPS await. Save time is not the window.
+    const shown = point === undefined ? displayedKnockPoint(lead, lead.homeowner) : point;
+    let staged: import('./types').PendingMutation = {
+      id: draftId, userId: uid, userName: actor.name,
+      leadId: lead.id, createdAt: tappedAt.toISOString(),
+      kind: entry ? 'knock' : 'notes', baseStatus: lead.status, baseNotes,
+      ...(entry ? { status: clean.status, disposition: entry.disposition } : { notes: noteText }),
+      direct: {
+        patch: clean,
+        ...(create ? { create } : {}),
+        ...((entry ? prefersServerDispo(lead, uid, actor.role) : notesDraftUsesRoute(lead, uid, actor.role, noteText)) ? { serverDispo: true } : {}),
+        ...(shown?.source === 'homeowner_corrected' && shown.homeownerId ? { homeownerId: shown.homeownerId } : {}),
+        ...(shown ? { gpsPointSource: shown.source } : {}),
+        ...(deferGps && entry ? { gps: {
+          ...(shown ? { lat: shown.lat, lng: shown.lng, source: shown.source } : {}),
+          ...(shown?.homeownerId ? { homeownerId: shown.homeownerId } : {}),
+          tappedAt: tappedAt.getTime(),
+          deadline: tappedAt.getTime() + GPS_WINDOW_AFTER_MS,
+          required: isProximityRequired(actor),
+          areaOwned: leadOwnedBy(lead, uid),
+        } } : {}),
+      },
+    };
+    if (deferGps && entry) staged = stageKnockGps(staged, Date.now());
+    await enqueue(staged);
   }, [uid, enqueue, current.area, update]);
   const ensureLeadSynced = useCallback(async (leadId: string) => {
     if (!isDeviceOnline()) throw Error('Connect before sending the scheduling request.');
     await sync();
-    if ((await readDrafts(uid)).some(m => m.leadId === leadId))
-      throw Error('This lead is still unsynced. Wait for sync or review its error before sending.');
+    const hold = schedulingHold(await readDrafts(uid), leadId);
+    if (hold) throw Error(hold);
   }, [uid, sync]);
   const retrySync = useCallback(async () => {
-    if (auth?.currentUser?.uid !== uid) return;
-    for (const m of await readDrafts(uid)) if (m.direct && m.blocked && !m.direct.gps)
-      await putDraft({ ...m, blocked: false, error: undefined });
-    await reloadDrafts();
     await sync();
-  }, [uid, sync, reloadDrafts]);
+  }, [sync]);
   const prepare = useCallback(
     async (leads: Lead[]) => {
       if (!user || !current.ready || !isDeviceOnline())
@@ -364,6 +440,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     leads,
     offline,
     syncing,
+    diagnostics,
     enqueue,
     enqueueDirect,
     ensureLeadSynced,

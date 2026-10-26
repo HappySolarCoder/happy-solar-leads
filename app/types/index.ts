@@ -125,6 +125,12 @@ export interface Lead {
   knockGpsAccuracy?: number;     // GPS accuracy in meters
   knockGpsTimestamp?: Date;      // Timestamp of GPS capture
   knockDistanceFromAddress?: number; // Distance from address in meters
+  /** True when the knock satisfied the shared radius and accuracy rule. */
+  gpsVerified?: boolean;
+  /** Why an unverified knock still saved. Absent when gpsVerified is true. */
+  gpsUnverifiedReason?: "no_fix" | "stale" | "low_accuracy" | "reduced_accuracy" | "out_of_area" | "too_far" | "other";
+  /** Meters from the point the map showed, when a fix exists. */
+  gpsDistanceM?: number;
   // Easter Eggs
   hasEasterEgg?: boolean;        // HIDDEN - only for hidden pin eggs
   easterEggId?: string;          // Which egg is hidden here
@@ -202,6 +208,12 @@ export interface LeadDispositionHistoryEntry {
   timestamp: Date;          // When the disposition was set
   userId: string;           // User who set the disposition
   userName: string;         // User's name at time (preserved even if user deleted)
+  /** Bounded copy of the GPS flag. Hidden from the rep. Same shape as PR #170 gpsFlagOf. */
+  gpsFlag?: {
+    gpsVerified: boolean;
+    gpsUnverifiedReason?: "no_fix" | "stale" | "low_accuracy" | "reduced_accuracy" | "out_of_area" | "too_far" | "other";
+    gpsDistanceM?: number;
+  };
   field?: import("@/app/field/types").FieldObservation;
 }
 

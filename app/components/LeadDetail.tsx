@@ -4,7 +4,14 @@ import HouseHistory from '@/app/homeowners/HouseHistory';
 import { HomeownerSection } from '@/app/homeowners/Details';
 import type { Homeowner } from '@/app/homeowners/model';
 import { homeownerKnockGps } from '@/app/homeowners/knockGps';
+import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap, knownPolygonsSync } from '@/app/field/areaGate';
+import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
+import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
+import { NOTES_TOO_LONG_MESSAGE, notesQueuedBody, saveNotesFromEditor } from '@/app/field/notesLimits';
+import { recordSyncEvent } from '@/app/field/syncDiagnostics';
+import { displayedKnockPoint } from '@/app/field/knockPoint';
+import { beginWarmGps, bestFixInWindow } from '@/app/field/warmGps';
 import { knockPatch } from '@/app/field/knockPatch';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
@@ -18,6 +25,7 @@ import { localParts } from '@/app/field/analysis';
 
 import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { getLocation } from '@/app/utils/geolocation';
+import { distanceBetween } from 'geofire-common';
 
 import { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
@@ -138,16 +146,60 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const pausedWithDrafts = !DIRECT_MOBILE_WRITES && hasPendingFieldWork && !field?.flags.capture;
   const capture = !DIRECT_MOBILE_WRITES && !!field?.flags.capture;
   async function saveReportingPatch(patch: Partial<Lead>, deferGps = false) {
-    if (saveLeadPatch) await saveLeadPatch(patch, deferGps);
-    else if (DIRECT_MOBILE_WRITES) {
-      if (!field) throw Error('Open the mobile Knock screen to save this action safely.');
-      await field.enqueueDirect(lead, patch, undefined, deferGps);
+    const point = displayedKnockPoint(lead, homeowner || lead.homeowner);
+    const write = async () => {
+      if (saveLeadPatch) await saveLeadPatch(patch, deferGps);
+      else if (DIRECT_MOBILE_WRITES) {
+        if (!field) throw Error('Open the mobile Knock screen to save this action safely.');
+        await field.enqueueDirect(lead, patch, undefined, deferGps, point);
+      }
+      else { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, patch); }
+      if (DIRECT_MOBILE_WRITES) setFieldMessage('');
+    };
+    if (deferGps && currentUser) {
+      const tappedAt = patch.dispositionedAt instanceof Date ? patch.dispositionedAt.getTime() : Date.now();
+      const actorId = currentUser.id;
+      await saveWithProximityWarning({
+        guardId: `${lead.id}:${actorId}`,
+        checkArea: () => assertAssignedAreaAtTap({
+          user: currentUser,
+          lead,
+          tappedAt,
+          status: typeof patch.status === 'string' ? patch.status : undefined,
+          disposition: patch.dispositionHistory?.[0]?.disposition,
+        }),
+        verdict: proximityVerdictAtTap({
+          fix: bestFixInWindow(tappedAt, tappedAt),
+          tappedAt,
+          pin: point,
+          role: currentUser.role,
+          optOut: currentUser.features?.proximityEnforcement === false,
+          polygons: knownPolygonsSync(currentUser.id)?.polygons,
+        }),
+        ask: proximity.ask,
+        save: write,
+      });
+      return;
     }
-    else { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, patch); }
-    if (DIRECT_MOBILE_WRITES) setFieldMessage('');
+    await write();
   }
   const [visit, setVisit] = useState<VisitDraft>({});
   const [fieldMessage, setFieldMessage] = useState('');
+  const proximity = useProximityPrompt();
+  function reportSilent(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[raydar-sync]', message);
+    if (!currentUser) return;
+    void recordSyncEvent({
+      id: crypto.randomUUID(), userId: currentUser.id, at: Date.now(), draftId: 'ui', leadId: lead.id,
+      createdAt: new Date().toISOString(), state: 'retry', lastError: message, attempts: 0,
+    });
+  }
+  function isFieldValidation(error: unknown) {
+    const message = error instanceof Error ? error.message : '';
+    if (message === AREA_BLOCK_MESSAGE) return true;
+    return /Reload your dispositions|Connect before claiming|Only the rep who claimed|Field capture is paused|Review pending drafts|Sign in to save this visit|Open the mobile Knock screen|Sign in with the rep/i.test(message);
+  }
   async function recordField(kind: FieldMutation['kind'], patch: Partial<FieldMutation> = {}) {
     if (!field || !currentUser) throw Error('Sign in to save this visit.');
     const at = new Date(), id = crypto.randomUUID(), zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -167,10 +219,23 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           lat: gps.knockGpsLat, lng: gps.knockGpsLng, accuracy: gps.knockGpsAccuracy!, timestamp: gps.knockGpsTimestamp!.toISOString(),
         };
       } else try {
-        const position = await getLocation({ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
-        observation.gps = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, timestamp: new Date().toISOString() };
+        const position = await getLocation({ enableHighAccuracy: true, timeout: 10000 });
+        const point = displayedKnockPoint(lead, homeowner || lead.homeowner);
+        const distance = point
+          ? distanceBetween(
+            [position.coords.latitude, position.coords.longitude],
+            [point.lat, point.lng],
+          ) * 1000
+          : undefined;
+        observation.gps = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: new Date(position.timestamp).toISOString(),
+          ...(distance !== undefined ? { distance } : {}),
+        };
       } catch {
-        if (isProximityRequired(currentUser)) throw Error('Your location could not be verified. Enable precise location and retry.');
+        /* A missing fix is recorded with the knock. It does not stop the save. */
       }
     }
     await prepareLead?.();
@@ -235,6 +300,11 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   }, [currentUser?.id, currentUser?.role]);
 
   // Lock background scroll while lead detail is open so the app header/page does not fight the panel
+  useEffect(() => {
+    if (!DIRECT_MOBILE_WRITES) return;
+    return beginWarmGps();
+  }, []);
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
 
@@ -363,42 +433,57 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
       }
 
       onUpdate();
-    } catch (error: any) {
-      console.error('Disposition save failed:', error);
-      const msg = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error));
-      alert(`Disposition failed to save.\n\n${msg}`);
+    } catch (error: unknown) {
+      if (isProximityWarningCancelled(error)) return;
+      if (DIRECT_MOBILE_WRITES && !isFieldValidation(error)) reportSilent(error);
+      else setFieldMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setIsUpdating(false);
     }
   };
 
   // Handle saving notes
+  const notesRoute = notesQueuedBody({
+    leadId: lead.id,
+    notes,
+    baseNotes: lead.notes || '',
+    parkedNotes: field?.drafts,
+  });
+  const notesTooLong = notesRoute.tooLong;
+
   const handleSaveNotes = async () => {
     if (summaryOnly) return;
     if (!currentUser) return;
+    if (notesTooLong) return;
     if (pausedWithDrafts) { setFieldMessage('Review pending drafts in Field tools before changing these notes.'); return; }
     
     setNotesSaving(true);
-    if (capture) {
-      try { await recordField('notes', { notes }); }
-      catch (e) { setFieldMessage((e as Error).message); }
-      finally { setNotesSaving(false); }
-      return;
-    }
     try {
-      const { saveLeadAsync } = await import('@/app/utils/storage');
-      const updatedLead: Lead = {
-        ...lead,
-        notes,
-      };
-      if (DIRECT_MOBILE_WRITES) await saveReportingPatch({ notes });
-      else if (saveLeadPatch) await saveLeadPatch({ notes });
-      else await saveLeadAsync(updatedLead);
-      if (!DIRECT_MOBILE_WRITES) setFieldMessage('Notes saved.');
-      if (onUpdate) onUpdate();
+      await saveNotesFromEditor(notes, async () => {
+        if (capture) {
+          await recordField('notes', { notes });
+          return;
+        }
+        const { saveLeadAsync } = await import('@/app/utils/storage');
+        const updatedLead: Lead = {
+          ...lead,
+          notes,
+        };
+        if (DIRECT_MOBILE_WRITES) await saveReportingPatch({ notes });
+        else if (saveLeadPatch) await saveLeadPatch({ notes });
+        else await saveLeadAsync(updatedLead);
+        if (!DIRECT_MOBILE_WRITES) setFieldMessage('Notes saved.');
+        if (onUpdate) onUpdate();
+      }, {
+        leadId: lead.id,
+        baseNotes: lead.notes || '',
+        parkedNotes: field?.drafts,
+      });
     } catch (error) {
-      console.error('Error saving notes:', error);
-      setFieldMessage((error as Error).message || 'Notes could not be saved. Please retry.');
+      if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) return;
+      if (capture) setFieldMessage((error as Error).message);
+      else if (DIRECT_MOBILE_WRITES) reportSilent(error);
+      else setFieldMessage((error as Error).message || 'Notes could not be saved. Please retry.');
     } finally {
       setNotesSaving(false);
     }
@@ -444,7 +529,11 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
         objectionType, objectionNotes, objectionRecordedAt: at, objectionRecordedBy: currentUser.id, ...gps,
       }), disposition.countsAsDoorKnock);
       setShowObjectionTracker(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
-    } catch (e) { setFieldMessage((e as Error).message); throw e; }
+    } catch (e) {
+      if (isProximityWarningCancelled(e)) return;
+      if (DIRECT_MOBILE_WRITES && !isFieldValidation(e)) { reportSilent(e); return; }
+      setFieldMessage((e as Error).message); throw e;
+    }
     finally { setIsUpdating(false); }
   };
 
@@ -463,7 +552,11 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
         goBackScheduledBy: currentUser.id, ...gps,
       }), disposition.countsAsDoorKnock);
       setShowGoBackSchedule(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
-    } catch (e) { setFieldMessage((e as Error).message); throw e; }
+    } catch (e) {
+      if (isProximityWarningCancelled(e)) return;
+      if (DIRECT_MOBILE_WRITES && !isFieldValidation(e)) { reportSilent(e); return; }
+      setFieldMessage((e as Error).message); throw e;
+    }
     finally { setIsUpdating(false); }
   };
 
@@ -572,6 +665,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
 
   return (
     <>
+      {proximity.dialog}
       <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
         {/* Header */}
         <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">
@@ -632,7 +726,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             </div>
           </a>
 
-          {fieldMessage && <p className="rf-sync-status" role="status">{fieldMessage}</p>}
+          {fieldMessage && <p className="rf-notice" role="status">
+            <span>{fieldMessage}</span>
+            {fieldMessage === AREA_BLOCK_MESSAGE && <button type="button" className="rf-plain" onClick={() => setFieldMessage('')}>Dismiss</button>}
+          </p>}
           {fieldMemory && !summaryOnly && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
           {/* Contact Info */}
           {(lead.phone || lead.email) && (
@@ -878,9 +975,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
               className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
               rows={3}
             />
+            {notesTooLong ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_TOO_LONG_MESSAGE}</p> : null}
             <button
               onClick={handleSaveNotes}
-              disabled={notesSaving || summaryOnly}
+              disabled={notesSaving || summaryOnly || notesTooLong}
               className="mt-2 px-4 py-2 bg-[#FF5F5A] text-white rounded-lg text-sm font-semibold hover:bg-[#F27141] disabled:opacity-50"
             >
               {notesSaving ? 'Saving...' : 'Save Notes'}
@@ -968,6 +1066,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           pendingFieldWork={!DIRECT_MOBILE_WRITES && hasPendingFieldWork}
           fieldContext={capture ? [visit.openerId ? `Opener: ${field.config.openers.find(o => o.id === visit.openerId)?.label || visit.openerId}` : "", visit.previewShown ? "Company-approved savings illustration shown; not a quote." : "", visit.proofShown ? "Approved local proof shown." : ""].filter(Boolean).join("\n") : undefined}
           onInfoSent={!DIRECT_MOBILE_WRITES && field?.flags.show ? async () => { try { await recordField("handoff", { handoff: "sent" }); } catch (e) { setFieldMessage(`Info sent; tracking needs attention: ${(e as Error).message}`); } } : undefined}
+          pendingDrafts={field?.drafts}
           lead={lead}
           onClose={() => setShowLeadEditor(false)}
           onSave={() => {

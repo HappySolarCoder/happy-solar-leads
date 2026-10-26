@@ -3,6 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
+import { NOTES_TOO_LONG_MESSAGE, notesQueuedBody, type NotesLengthDraft } from '@/app/field/notesLimits';
+import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
+import { changedContactPatch } from './contactPatch';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 import { auth } from '@/app/utils/firebase';
@@ -27,11 +30,12 @@ interface LeadEditorModalProps {
   fieldContext?: string;
   onInfoSent?: () => Promise<void>;
   lead: Lead;
+  pendingDrafts?: NotesLengthDraft[];
   onClose: () => void;
   onSave: () => void;
 }
 
-export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, signedInRep, fieldContext, onInfoSent, mobileMode = false, pendingFieldWork = false, saveLeadPatch }: LeadEditorModalProps) {
+export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, signedInRep, fieldContext, onInfoSent, mobileMode = false, pendingFieldWork = false, saveLeadPatch, pendingDrafts }: LeadEditorModalProps) {
   const [formData, setFormData] = useState({
     name: lead.name,
     address: lead.address,
@@ -94,7 +98,15 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
     return () => window.clearInterval(id);
   }, [cooldownUntil]);
 
+  const notesTooLong = notesQueuedBody({
+    leadId: lead.id,
+    notes: formData.notes,
+    baseNotes: lead.notes || '',
+    parkedNotes: pendingDrafts,
+  }).tooLong;
+
   const handleSave = async () => {
+    if (notesTooLong) return;
     if (mobileMode && pendingFieldWork) { alert('Sync or review this pin’s pending changes in Field tools before editing contact details. You can still send the scheduling information.'); return; }
     setIsSaving(true);
 
@@ -113,7 +125,12 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
       };
 
       if (saveLeadPatch) {
-        await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+        if (DIRECT_MOBILE_WRITES) {
+          const patch = changedContactPatch(lead, formData);
+          if (patch) await saveLeadPatch(patch);
+        } else {
+          await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+        }
       } else if (mobileMode) {
         const { updateLeadAsync } = await import('@/app/utils/storage');
         await updateLeadAsync(lead.id, { name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
@@ -121,6 +138,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
       invalidateLeadsCache(); // Ensure fresh data after update
       onSave();
     } catch (error) {
+      if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) return;
       alert(`Changes could not be saved. ${(error as Error).message}`);
     } finally {
       setIsSaving(false);
@@ -157,12 +175,14 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
         return;
       }
 
+      if (notesTooLong) return;
       // Persist the lead before the notification so the request has a real visit.
       try {
         if (saveLeadPatch) await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
         await beforeSend?.();
       } catch (error) {
-        alert(`Changes could not be saved. ${(error as Error).message}`);
+        if ((error as Error).message !== NOTES_TOO_LONG_MESSAGE)
+          alert(`Changes could not be saved. ${(error as Error).message}`);
         return;
       }
 
@@ -356,6 +376,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
                 rows={3}
                 placeholder="Any additional notes..."
               />
+              {notesTooLong ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_TOO_LONG_MESSAGE}</p> : null}
             </div>
 
             {/* Solar Info (Read-only) */}
@@ -376,7 +397,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
             {/* Save Button */}
             <button
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || notesTooLong}
               className="w-full px-4 py-3 bg-[#4299E1] hover:bg-[#3182CE] text-white rounded-lg font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <Save className="w-5 h-5" />

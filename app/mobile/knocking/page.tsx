@@ -98,7 +98,6 @@ export default function KnockingPage() {
   useEffect(() => () => { searchSequence.current++; if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); }, []);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [showSearchSheet, setShowSearchSheet] = useState(false);
-  const [writeError, setWriteError] = useState<string | null>(null);
   const [showGoalsModal, setShowGoalsModal] = useState(false);
   const [showHeat, setShowHeat] = useState(false);
   const [areaMode, setAreaMode] = useState<'off'|'mine'|'team'>('mine');
@@ -198,7 +197,6 @@ export default function KnockingPage() {
   useEffect(() => { setUsers(overlayMembers.map(m => ({...m,role:'setter',email:'',createdAt:new Date(0)} as User))); }, [overlayMembers]);
 
   const refreshLeads = useCallback(async (updatedLead?: Lead) => {
-    setWriteError(null);
     // Keep the acknowledged manual record visible after explicit unclaim removes
     // it from the claimed-leads subscription. This does not fetch extra leads.
     if (updatedLead) setSavedHomeVisits(previous => [...previous.filter(l => l.id !== updatedLead.id), updatedLead].slice(-100));
@@ -624,12 +622,6 @@ export default function KnockingPage() {
         {areasError && showTeamAreas && <MobileNotice>{areasError}<button className="ml-2 underline" onClick={retryAreas}>Retry areas</button></MobileNotice>}
         {areaNotice && <MobileNotice>{areaNotice}</MobileNotice>}
         {live?.error && <MobileNotice>{live.error}<button className="ml-2 underline font-semibold" onClick={() => void refresh()}>Retry data</button></MobileNotice>}
-        {writeError && (
-          <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            Save failed: {writeError}
-          </div>
-        )}
-
         {/* Search Sheet */}
         {showSearchSheet && (
           <div className="fixed inset-0 z-50">
