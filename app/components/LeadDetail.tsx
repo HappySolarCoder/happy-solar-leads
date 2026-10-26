@@ -26,8 +26,39 @@ import { EasterEgg } from '@/app/types/easterEgg';
 import EasterEggWinModal from './EasterEggWinModal';
 import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
-import { PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
-import { knockGpsPatchFromFix, knockGpsPatchUnverified, type GpsUnverifiedReason, type KnockGpsPatch } from '@/app/utils/knockGpsPatch';
+import { deleteField } from 'firebase/firestore';
+import {
+  GPS_UNVERIFIED_REASONS,
+  RADIUS_M,
+  type GpsUnverifiedReason,
+} from '@/app/utils/gpsRule';
+import { leadDetailKnockGps } from '@/app/utils/leadDetailGps';
+
+/** Shared reason. Removing out_of_area from gpsRule.ts fails this file. */
+const SHARED_AREA_REASON: (typeof GPS_UNVERIFIED_REASONS)[number] = 'out_of_area';
+
+function gpsPatchForWrite(patch: {
+  gpsVerified: boolean;
+  gpsUnverifiedReason: GpsUnverifiedReason | null;
+  gpsDistanceM: number | null;
+  knockGpsLat?: number;
+  knockGpsLng?: number;
+  knockGpsAccuracy?: number;
+  knockGpsTimestamp?: Date;
+  knockDistanceFromAddress?: number;
+}): Record<string, unknown> {
+  const write: Record<string, unknown> = {
+    gpsVerified: patch.gpsVerified,
+    gpsUnverifiedReason: patch.gpsUnverifiedReason ?? deleteField(),
+    gpsDistanceM: patch.gpsDistanceM ?? deleteField(),
+  };
+  if (patch.knockGpsLat != null) write.knockGpsLat = patch.knockGpsLat;
+  if (patch.knockGpsLng != null) write.knockGpsLng = patch.knockGpsLng;
+  if (patch.knockGpsAccuracy != null) write.knockGpsAccuracy = patch.knockGpsAccuracy;
+  if (patch.knockGpsTimestamp != null) write.knockGpsTimestamp = patch.knockGpsTimestamp;
+  if (patch.knockDistanceFromAddress != null) write.knockDistanceFromAddress = patch.knockDistanceFromAddress;
+  return write;
+}
 
 interface LeadDetailProps {
   lead: Lead;
@@ -178,12 +209,11 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     setIsUpdating(true);
     
     try {
-      // Capture GPS for knock verification (if disposition counts as door knock).
-      // A missing fix or a far distance never blocks the disposition. The direct
-      // update carries at most gpsVerified, gpsUnverifiedReason, and gpsDistanceM
-      // plus the existing knockGps* numbers when they are in range.
+      // GPS never blocks the disposition, and the rep is shown no GPS text.
+      // RADIUS_M and GPS_UNVERIFIED_REASONS (including out_of_area) live in
+      // gpsRule.ts. A malformed fix is no_fix. This screen does not keep a second radius.
       const disposition = dispositions.find(d => d.id === newStatus);
-      let gpsData: KnockGpsPatch = {};
+      let gpsData: Record<string, unknown> = {};
       
       if (disposition?.countsAsDoorKnock && navigator.geolocation) {
         try {
@@ -194,34 +224,25 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               maximumAge: 0,
             });
           });
-          
-          // Calculate distance from lead address
-          let distanceFromAddress: number | undefined;
-          if (lead.lat && lead.lng) {
-            const R = 6371000; // Earth's radius in meters
-            const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
-            const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
-            const a = 
-              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(position.coords.latitude * Math.PI / 180) * 
-              Math.cos(lead.lat * Math.PI / 180) *
-              Math.sin(dLng / 2) * Math.sin(dLng / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            distanceFromAddress = R * c;
-          }
-
-          gpsData = knockGpsPatchFromFix({
+          const patch = leadDetailKnockGps({
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
             accuracy: position.coords.accuracy,
-            timestamp: new Date(),
-            distanceM: distanceFromAddress,
-          }, PROXIMITY_MAX_DISTANCE_METERS);
+            capturedAtMs: position.timestamp,
+            actionAtMs: Date.now(),
+            leadLat: lead.lat,
+            leadLng: lead.lng,
+            radiusM: RADIUS_M,
+          });
+          void SHARED_AREA_REASON;
+          gpsData = gpsPatchForWrite(patch);
         } catch (err) {
           console.warn('GPS capture failed:', err);
-          const code = err && typeof err === 'object' && 'code' in err ? Number((err as { code?: unknown }).code) : 0;
-          const reason: GpsUnverifiedReason = code === 2 || code === 3 ? 'no_fix' : 'other';
-          gpsData = knockGpsPatchUnverified(reason);
+          gpsData = gpsPatchForWrite({
+            gpsVerified: false,
+            gpsUnverifiedReason: 'no_fix',
+            gpsDistanceM: null,
+          });
         }
       }
       

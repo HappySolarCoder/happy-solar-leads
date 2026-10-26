@@ -153,7 +153,7 @@ export default function GoBackScheduleModal({
               Notes <span className="text-[#718096] text-xs">(optional)</span>
             </label>
             <textarea
-              maxLength={2000}
+              maxLength={10000}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Add any notes about this go back..."

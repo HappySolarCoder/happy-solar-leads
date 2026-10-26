@@ -282,11 +282,17 @@ describe('shared GPS verification rule', () => {
     assert.ok(outsideBy(beyond, dense) > AREA_EDGE_FLOOR_M);
   });
 
-  it('leaves LeadDetail and the map pin gate for the rules PR', () => {
+  it('LeadDetail uses the shared rule, stamps the fix, and shows no GPS text', () => {
     const detail = readFileSync(new URL('../app/components/LeadDetail.tsx', import.meta.url), 'utf8');
-    assert.equal(detail.includes('gpsRule'), false);
-    assert.equal(detail.includes('leadDetailKnockGps'), false);
-    assert.equal(detail.includes('not close enough'), true);
+    assert.equal(detail.includes("from '@/app/utils/gpsRule'"), true);
+    assert.equal(detail.includes('RADIUS_M'), true);
+    assert.equal(detail.includes('GPS_UNVERIFIED_REASONS'), true);
+    assert.equal(detail.includes("'out_of_area'"), true);
+    assert.equal(detail.includes('capturedAtMs: position.timestamp'), true);
+    assert.equal(detail.includes('knockGpsTimestamp: new Date()'), false);
+    assert.equal(detail.includes("gpsUnverifiedReason: 'no_fix'"), true);
+    assert.equal(detail.includes('not close enough'), false);
+    assert.equal(/alert\([^)]*GPS/i.test(detail), false);
 
     const map = readFileSync(new URL('../app/components/LeadMap.tsx', import.meta.url), 'utf8');
     assert.equal(map.includes('PROXIMITY_MAX_DISTANCE_METERS'), true);

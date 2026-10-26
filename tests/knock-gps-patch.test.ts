@@ -1,60 +1,60 @@
-import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import {
-  knockGpsPatchFromFix,
-  knockGpsPatchUnverified,
-} from '../app/utils/knockGpsPatch';
+import assert from 'node:assert/strict';
+import { RADIUS_M } from '../app/utils/gpsRule';
+import { leadDetailKnockGps } from '../app/utils/leadDetailGps';
 
-const at = new Date('2026-10-25T16:30:00Z');
-const fix = {
-  latitude: 42.9,
-  longitude: -78.8,
-  accuracy: 12,
-  timestamp: at,
-};
+const LEAD_LAT = 42.9;
+const LEAD_LNG = -78.8;
+const CAPTURED = 1_700_000_000_000;
 
-describe('knock GPS disposition patch', () => {
-  it('records a close fix as verified and does not add a reason', () => {
-    assert.deepEqual(knockGpsPatchFromFix({ ...fix, distanceM: 12 }, 50), {
-      knockGpsLat: 42.9,
-      knockGpsLng: -78.8,
-      knockGpsAccuracy: 12,
-      knockGpsTimestamp: at,
-      knockDistanceFromAddress: 12,
-      gpsDistanceM: 12,
-      gpsVerified: true,
-    });
+function atMetersNorth(meters: number) {
+  return LEAD_LAT + meters / 111_320;
+}
+
+function patch(meters: number, accuracy: number, extra: { latitude?: number; accuracy?: number; lead?: boolean } = {}) {
+  return leadDetailKnockGps({
+    latitude: extra.latitude ?? atMetersNorth(meters),
+    longitude: LEAD_LNG,
+    accuracy: extra.accuracy ?? accuracy,
+    capturedAtMs: CAPTURED,
+    actionAtMs: CAPTURED,
+    leadLat: extra.lead === false ? undefined : LEAD_LAT,
+    leadLng: extra.lead === false ? undefined : LEAD_LNG,
+    radiusM: RADIUS_M,
+  });
+}
+
+describe('lead detail knock GPS patch', () => {
+  it('uses RADIUS_M, keeps a passing fix, and stamps the fix time', () => {
+    assert.equal(RADIUS_M, 35);
+    const result = patch(12, 12);
+    assert.equal(result.gpsVerified, true);
+    assert.equal(result.gpsUnverifiedReason, null);
+    assert.ok(result.gpsDistanceM != null && result.gpsDistanceM < 20);
+    assert.equal(result.knockGpsTimestamp?.getTime(), CAPTURED);
   });
 
-  it('keeps a far fix in the patch with too_far instead of dropping the disposition', () => {
-    const patch = knockGpsPatchFromFix({ ...fix, distanceM: 5000 }, 50);
-    assert.equal(patch.gpsVerified, false);
-    assert.equal(patch.gpsUnverifiedReason, 'too_far');
-    assert.equal(patch.gpsDistanceM, 5000);
-    assert.equal(patch.knockDistanceFromAddress, 5000);
+  it('flags a far fix as too_far and a malformed fix as no_fix', () => {
+    const far = patch(80, 12);
+    assert.equal(far.gpsVerified, false);
+    assert.equal(far.gpsUnverifiedReason, 'too_far');
+    assert.ok(far.knockGpsLat != null);
+
+    const beyond = patch(250_000, 12);
+    assert.equal(beyond.gpsVerified, false);
+    assert.equal(beyond.gpsUnverifiedReason, 'too_far');
+    assert.equal(beyond.gpsDistanceM, null);
+
+    const malformed = patch(0, 12, { latitude: 120, accuracy: -1 });
+    assert.equal(malformed.gpsVerified, false);
+    assert.equal(malformed.gpsUnverifiedReason, 'no_fix');
+    assert.equal(malformed.knockGpsLat, undefined);
   });
 
-  it('omits gpsDistanceM above 100000 and still marks the knock too far', () => {
-    const patch = knockGpsPatchFromFix({ ...fix, distanceM: 250000 }, 50);
-    assert.equal(patch.gpsVerified, false);
-    assert.equal(patch.gpsUnverifiedReason, 'too_far');
-    assert.equal(patch.gpsDistanceM, undefined);
-    assert.equal(patch.knockDistanceFromAddress, 250000);
-  });
-
-  it('records a missing distance without knock numbers that would fail the rules', () => {
-    const patch = knockGpsPatchFromFix({ ...fix, latitude: 120, accuracy: -1 }, 50);
-    assert.equal(patch.gpsVerified, false);
-    assert.equal(patch.gpsUnverifiedReason, 'other');
-    assert.equal(patch.knockGpsLat, undefined);
-    assert.equal(patch.knockGpsAccuracy, undefined);
-    assert.equal(patch.knockGpsLng, -78.8);
-  });
-
-  it('sends only the two optional flags when there is no fix', () => {
-    assert.deepEqual(knockGpsPatchUnverified('no_fix'), {
-      gpsVerified: false,
-      gpsUnverifiedReason: 'no_fix',
-    });
+  it('keeps other for a usable fix with no lead coordinates', () => {
+    const result = patch(0, 8, { lead: false });
+    assert.equal(result.gpsVerified, false);
+    assert.equal(result.gpsUnverifiedReason, 'other');
+    assert.equal(result.knockGpsLat, LEAD_LAT);
   });
 });

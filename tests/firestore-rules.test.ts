@@ -23,6 +23,7 @@ type RuleCase = {
 };
 
 const DEPLOYED = readFileSync(new URL('./fixtures/deployed.rules', import.meta.url), 'utf8');
+const LIVE = readFileSync(new URL('./fixtures/live-8533ae5.rules', import.meta.url), 'utf8');
 const TIGHT = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
 
 const ACTIVE = {
@@ -202,6 +203,37 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
     await bareLead('gpsBadReason');
     await bareLead('gpsBadType');
     await bareLead('gpsFourth');
+    await bareLead('gpsOutOfArea');
+    await bareLead('ownerGpsBad', { status: 'claimed', claimedBy: 'realSetter' });
+    await bareLead('ownerGpsOk', { status: 'claimed', claimedBy: 'realSetter' });
+    await bareLead('ownerGpsClear', {
+      status: 'claimed', claimedBy: 'realSetter',
+      gpsVerified: false, gpsUnverifiedReason: 'stale', gpsDistanceM: 40,
+    });
+    await bareLead('managerGpsClear', {
+      territoryId: 'realTerritory',
+      gpsVerified: false, gpsUnverifiedReason: 'too_far', gpsDistanceM: 80,
+    });
+    await bareLead('notesLongGoBack', { territoryId: 'realTerritory' });
+    await bareLead('notesLongObjection', { territoryId: 'realTerritory' });
+    await bareLead('notesCapGoBack', { territoryId: 'realTerritory' });
+    const budgetPins: Record<string, Record<string, unknown>> = {
+      claimed: { status: 'claimed', claimedBy: 'closer', territoryId: 'realTerritory' },
+      assigned: { status: 'assigned', assignedTo: 'closer', territoryId: 'realTerritory' },
+      manual: {
+        status: 'claimed', claimedBy: 'closer', setterId: 'closer',
+        source: 'manually-added', territoryId: 'realTerritory',
+      },
+    };
+    for (const pin of Object.keys(budgetPins)) {
+      for (const actor of ['territory-owner', 'manager']) {
+        for (const kind of ['objection', 'go-back']) {
+          for (const gps of ['deferred', 'flags']) {
+            await bareLead(`budget-${pin}-${actor}-${kind}-${gps}`, budgetPins[pin]);
+          }
+        }
+      }
+    }
     await bareLead('gpsBadLat');
     await bareLead('gpsHugeDistance');
     await bareLead('photoFirstManager');
@@ -329,6 +361,36 @@ function cases(): RuleCase[] {
     status: 'not-interested', dispositionedAt: at, dispositionHistory: hist(uid), objectionType: 'too-expensive',
     objectionNotes: '', objectionRecordedAt: at, objectionRecordedBy: uid,
   });
+  const deferredGps = {
+    knockGpsLat: 42.9,
+    knockGpsLng: -78.8,
+    knockGpsAccuracy: 12,
+    knockGpsTimestamp: at,
+    knockDistanceFromAddress: 40,
+  };
+  const flagGps = { gpsVerified: false, gpsUnverifiedReason: 'too_far', gpsDistanceM: 40 };
+  const budgetRows: RuleCase[] = [];
+  for (const pin of ['claimed', 'assigned', 'manual']) {
+    for (const [actor, uid, slug] of [
+      ['territory owner', 'realSetter', 'territory-owner'],
+      ['manager', 'manager', 'manager'],
+    ] as const) {
+      for (const kind of ['objection', 'go-back'] as const) {
+        for (const [gpsName, slugGps, extra] of [
+          ['deferred knock GPS', 'deferred', deferredGps],
+          ['deferred knock GPS and gps flags', 'flags', { ...deferredGps, ...flagGps }],
+        ] as const) {
+          const payload = kind === 'objection' ? { ...objection(uid), ...extra } : goBack(uid, extra);
+          budgetRows.push({
+            id: `budget ${actor} ${kind} on ${pin} pin with ${gpsName}`,
+            uid,
+            run: (db) => lead(`budget-${pin}-${slug}-${kind}-${slugGps}`)(db).update(payload),
+            expectTight: 'allow',
+          });
+        }
+      }
+    }
+  }
   const homeowners = (limit?: number) => (db: Firestore) => {
     let query = db.collection('homeowners').orderBy('geohash').startAt('a').endAt('z');
     if (limit != null) query = query.limit(limit);
@@ -409,7 +471,10 @@ function cases(): RuleCase[] {
     { id: 'setter territory knock adds assignedTo', uid: 'realSetter', run: (db) => lead('territoryAddAssigned')(db).update({ status: 'not-home', dispositionedAt: new Date(), assignedTo: 'realSetter' }), expectTight: 'deny' },
     { id: 'setter Go Back on prior territory pin', uid: 'realSetter', run: (db) => lead('dispoPriorPin1')(db).update(goBack('realSetter')), expectTight: 'allow' },
     { id: 'manager objection on prior lead', uid: 'manager', run: (db) => lead('dispoPriorStranger')(db).update(objection('manager')), expectTight: 'allow' },
-    { id: 'setter Go Back oversize goBackNotes', uid: 'realSetter', run: (db) => lead('dispoPriorPin2')(db).update(goBack('realSetter', { goBackNotes: 'y'.repeat(2001) })), expectTight: 'deny' },
+    { id: 'setter Go Back oversize goBackNotes', uid: 'realSetter', run: (db) => lead('dispoPriorPin2')(db).update(goBack('realSetter', { goBackNotes: 'y'.repeat(10001) })), expectTight: 'deny' },
+    { id: 'setter Go Back note of 2001 on a fresh pin', uid: 'realSetter', run: (db) => lead('notesLongGoBack')(db).update(goBack('realSetter', { goBackNotes: 'y'.repeat(2001) })), expectTight: 'allow' },
+    { id: 'setter objection note of 10000 on a fresh pin', uid: 'realSetter', run: (db) => lead('notesLongObjection')(db).update({ ...objection('realSetter'), objectionNotes: 'n'.repeat(10000) }), expectTight: 'allow' },
+    { id: 'setter Go Back note of 10001 on a fresh pin', uid: 'realSetter', run: (db) => lead('notesCapGoBack')(db).update(goBack('realSetter', { goBackNotes: 'y'.repeat(10001) })), expectTight: 'deny' },
     { id: 'setter Go Back spoofed goBackScheduledBy', uid: 'realSetter', run: (db) => lead('dispoFreshPin1')(db).update(goBack('realSetter', { goBackScheduledBy: 'manager' })), expectTight: 'deny' },
     { id: 'setter notes-only on territory pin without notes', uid: 'realSetter', run: (db) => lead('dispoFreshPin2')(db).update({ notes: 'dog in yard' }), expectTight: 'allow' },
     { id: 'setter oversize notes on territory pin', uid: 'realSetter', run: (db) => lead('dispoFreshPin3')(db).update({ notes: 'n'.repeat(10001) }), expectTight: 'deny' },
@@ -468,6 +533,22 @@ function cases(): RuleCase[] {
     { id: 'manager dispo with a fourth GPS key', uid: 'manager', run: (db) => lead('gpsFourth')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: false, gpsUnverifiedReason: 'other', gpsDistanceM: 12, gpsAccuracy: 3 }), expectTight: 'deny' },
     { id: 'manager knock latitude out of range', uid: 'manager', run: (db) => lead('gpsBadLat')(db).update({ status: 'not-home', dispositionedAt: at, knockGpsLat: 91 }), expectTight: 'deny' },
     { id: 'manager knock distance above 1e6', uid: 'manager', run: (db) => lead('gpsHugeDistance')(db).update({ status: 'not-home', dispositionedAt: at, knockDistanceFromAddress: 1000001 }), expectTight: 'deny' },
+    { id: 'manager out_of_area on a non-owned lead', uid: 'manager', run: (db) => lead('gpsOutOfArea')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: false, gpsUnverifiedReason: 'out_of_area', gpsDistanceM: 120 }), expectTight: 'allow' },
+    { id: 'owner bad gpsUnverifiedReason', uid: 'realSetter', run: (db) => lead('ownerGpsBad')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: false, gpsUnverifiedReason: 'indoors' }), expectTight: 'deny' },
+    { id: 'owner valid gps flags', uid: 'realSetter', run: (db) => lead('ownerGpsOk')(db).update({ status: 'not-home', dispositionedAt: at, gpsVerified: false, gpsUnverifiedReason: 'low_accuracy', gpsDistanceM: 0 }), expectTight: 'allow' },
+    { id: 'owner clears stale gps flags on a re-knock', uid: 'realSetter', run: (db) => lead('ownerGpsClear')(db).update({
+      status: 'not-home', dispositionedAt: at,
+      gpsVerified: firebase.firestore.FieldValue.delete(),
+      gpsUnverifiedReason: firebase.firestore.FieldValue.delete(),
+      gpsDistanceM: firebase.firestore.FieldValue.delete(),
+    }), expectTight: 'allow' },
+    { id: 'manager clears stale gps flags on a re-knock', uid: 'manager', run: (db) => lead('managerGpsClear')(db).update({
+      status: 'not-home', dispositionedAt: at,
+      gpsVerified: firebase.firestore.FieldValue.delete(),
+      gpsUnverifiedReason: firebase.firestore.FieldValue.delete(),
+      gpsDistanceM: firebase.firestore.FieldValue.delete(),
+    }), expectTight: 'allow' },
+    ...budgetRows,
     { id: 'setter knock outside territory', uid: 'realSetter', run: (db) => lead('claimedByOther')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'deny' },
     { id: 'setter manual create', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter').set({ source: 'manually-added', setterId: 'realSetter', status: 'new' }), expectTight: 'allow' },
     { id: 'setter manual create with testData', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter-testdata').set({
@@ -587,6 +668,19 @@ function cases(): RuleCase[] {
   ];
 }
 
+async function outcomeOf(run: Promise<unknown>): Promise<Outcome> {
+  try {
+    await run;
+    return 'allow';
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code || '')
+      : '';
+    if (!code.includes('permission-denied')) throw error;
+    return 'deny';
+  }
+}
+
 async function open(projectId: string, rules: string): Promise<RulesTestEnvironment> {
   return initializeTestEnvironment({
     projectId,
@@ -683,6 +777,39 @@ describe('firestore rules', { concurrency: 1 }, () => {
       ]);
     } finally {
       await deployed.cleanup();
+      await tight.cleanup();
+    }
+  });
+
+  it('compares every case against the live rules at 8533ae5', async () => {
+    const live = await open('demo-rules-live-8533ae5', LIVE);
+    const tight = await open('demo-rules-tight-vs-live', TIGHT);
+    const liveClients = new Map<string, Firestore>();
+    const tightClients = new Map<string, Firestore>();
+    try {
+      await seed(live);
+      await seed(tight);
+      const allowToDeny: string[] = [];
+      const denyToAllow: string[] = [];
+      const budgetMisses: string[] = [];
+      for (const ruleCase of cases()) {
+        const provider = ruleCase.provider ?? 'password';
+        const before = await outcomeOf(ruleCase.run(client(live, ruleCase.uid, provider, liveClients)));
+        const after = await outcomeOf(ruleCase.run(client(tight, ruleCase.uid, provider, tightClients)));
+        if (before === 'allow' && after === 'deny') allowToDeny.push(ruleCase.id);
+        if (before === 'deny' && after === 'allow') denyToAllow.push(ruleCase.id);
+        if (ruleCase.id.startsWith('budget ') && (before !== 'allow' || after !== 'allow')) {
+          budgetMisses.push(`${ruleCase.id}: live ${before}, tight ${after}`);
+        }
+      }
+      console.log(`live cases: ${cases().length}`);
+      console.log(`live allow-to-deny: ${allowToDeny.length}`);
+      for (const id of allowToDeny) console.log(`allow-to-deny: ${id}`);
+      console.log(`live deny-to-allow: ${denyToAllow.length}`);
+      for (const id of denyToAllow) console.log(`deny-to-allow: ${id}`);
+      assert.deepEqual(budgetMisses, []);
+    } finally {
+      await live.cleanup();
       await tight.cleanup();
     }
   });
