@@ -118,16 +118,18 @@ test("a same-line addition stays on that line only when the server's last line i
   const different = fakeLeadTransaction("lead-1", "Call after 5\nDog in yard", { claimedBy: owner.id });
   const saved = await commitNotes(owner, different, "Call after 5 today", "Call after 5");
   assert.equal(saved.replayed, false);
-  assert.equal(different.notes(), "Call after 5\nDog in yard\nCall after 5 today");
+  // NOTES-MERGE-SPEC (14.19): the server kept "Call after 5" and ours edited it, so ours wins that line.
+  assert.equal(different.notes(), "Dog in yard\nCall after 5 today");
   const replay = await commitNotes(owner, different, "Call after 5 today", "Call after 5");
   assert.equal(replay.replayed, true);
-  assert.equal(different.notes(), "Call after 5\nDog in yard\nCall after 5 today");
+  assert.equal(different.notes(), "Dog in yard\nCall after 5 today");
   assert.equal(different.updates.length, 1);
 
   const same = fakeLeadTransaction("lead-1", "Gate code 1234\nCall after 5", { claimedBy: owner.id });
   const glued = await commitNotes(owner, same, "Call after 5 in yard", "Call after 5");
   assert.equal(glued.replayed, false);
-  assert.equal(same.notes(), "Gate code 1234\nCall after 5\nCall after 5 in yard");
+  // NOTES-MERGE-SPEC (14.19): ours edited the base line the server kept, so the edit replaces it.
+  assert.equal(same.notes(), "Gate code 1234\nCall after 5 in yard");
 });
 
 test("owned, manager, and territory paths apply a deletion when the server text is unchanged", async () => {

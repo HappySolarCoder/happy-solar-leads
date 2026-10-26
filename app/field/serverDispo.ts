@@ -6,9 +6,9 @@ import { coerceLegacyContactDraft, hasContactFields, notesWereEdited } from "./c
 import { ACTION_AT_STALE_MS, freshDraftId } from "./draftQueue";
 import { commitDirectMutation, historyGpsFlag, reportingPatch, type DirectCommitIo } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
-import { notesAfterConflict, notesAgainstBase } from "./notesRebase";
+import { clearAfterConflict, NOTES_CLEAR_KEPT_NOTICE, notesAfterConflict, notesAgainstBase, sameNotes } from "./notesRebase";
 import { deliberateNotesClear, NOTES_CLEAR_UNAVAILABLE_MESSAGE, NOTES_MAX_CHARS, NOTES_OTHER_REP_MESSAGE, NOTES_ROUTE_BODY_MAX_BYTES, NOTES_TOO_LONG_MESSAGE, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
-import { recordSyncEvent, reportParked } from "./syncDiagnostics";
+import { recordSyncEvent, reportInBackground, reportParked } from "./syncDiagnostics";
 import { ACTION_AT_FUTURE_MS, ACTION_AT_SERVER_LAG_MS, FIELD_DISPO_UNAVAILABLE, NOTES_ACTION_AT_RETRY_MESSAGE, PHONE_CLOCK_NOTICE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
 
@@ -18,6 +18,20 @@ export const DRAFT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 export const FIELD_DISPO_PATH = "/api/field/dispo";
 /** Slow retry while the route is not deployed. App start tries again immediately. */
+/** NOTES-MERGE-SPEC V4 answers: notes sends per draft per flush (the first send plus two 409 re-merges). */
+export const NOTES_MAX_SENDS = 3;
+/** Typed (non-clear) notes: the first send plus one re-merge per flush, as in 14.18. */
+export const NOTES_TYPED_MAX_SENDS = 2;
+/** NOTES-MERGE-SPEC V4 answers: a notes draft (clear or typed) still answered 409 after NOTES_MAX_SENDS stays pending with this text. */
+export const NOTES_CLEAR_PENDING_MESSAGE = "Pending. Notes changed on another device.";
+
+/** NOTES-MERGE-SPEC v4 answers, GATED blankSentUnflagged = 0: notes that are blank under JS trim go out only with clearNotes === true. */
+export function blankNotesUnflagged(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const b = body as { notes?: unknown; clearNotes?: unknown };
+  return typeof b.notes === "string" && b.notes.trim() === "" && b.clearNotes !== true;
+}
+
 export const SERVER_DISPO_SLOW_RETRY_MS = 15 * 60 * 1000;
 
 const GPS_FLAG_FIELDS = ["gpsVerified", "gpsUnverifiedReason", "gpsDistanceM"] as const;
@@ -460,7 +474,7 @@ export async function postFieldDispo(
   m: PendingMutation,
   user: User,
   deps: FieldDispoDeps = {},
-): Promise<{ replayed: boolean; lead?: Lead; appliedNotes?: string }> {
+): Promise<{ replayed: boolean; lead?: Lead; appliedNotes?: string; notice?: string }> {
   const post = deps.post ?? apiFetch;
   const getToken = deps.getToken ?? (async (forceRefresh = false) => {
     const current = auth?.currentUser;
@@ -471,7 +485,7 @@ export async function postFieldDispo(
   if (typeof notesText === "string" && !notesText.trim() && !deliberateNotesClear(m))
     throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
   const localNow = () => deps.now?.() ?? Date.now();
-  let draft = composeLeadingFragment(m);
+  let draft = trimmedNotesDraft(m);
   const stamped = stampNotesActionAt(draft, localNow());
   draft = stamped.draft;
   let rebasedDraft: PendingMutation | undefined;
@@ -481,10 +495,16 @@ export async function postFieldDispo(
   let token = await getToken(false);
   if (!token) throw Error("Sign in again to sync your work.");
   let refreshed = false;
-  let notesRetried = false;
+  // NOTES-MERGE-SPEC V4 answers: at most 3 notes sends per draft per flush; each 409 re-merges against the fresh current.
+  let notesSends = 1;
+  // The draft as queued. Every 409 re-merges this intent (v5 ruling 3); a pending draft is stored as this intent.
+  let intent: PendingMutation | undefined;
   let actionAtRetried = false;
-  const send = (bearer: string) =>
-    post(FIELD_DISPO_PATH, {
+  let clearNotice: string | undefined;
+  const send = (bearer: string) => {
+    // Last check before the wire: 49f4762 would really clear on blank notes without the flag.
+    if (blankNotesUnflagged(body)) throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
+    return post(FIELD_DISPO_PATH, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${bearer}`,
@@ -492,6 +512,55 @@ export async function postFieldDispo(
       },
       body: JSON.stringify(body),
     });
+  };
+  // The rep's original intent: the queued draft, or the intent a pending draft carries (v5 ruling 3).
+  if (draft.kind === "notes" && m.notesIntent) {
+    const { notes, baseNotes, clearNotes } = m.notesIntent;
+    intent = {
+      ...draft,
+      notes,
+      baseNotes,
+      ...(draft.direct ? { direct: { ...draft.direct, patch: { ...draft.direct.patch, notes } } } : {}),
+    };
+    if (clearNotes) intent.clearNotes = true;
+    else delete intent.clearNotes;
+  }
+  // Re-merge the original intent against a fresh current. landed: the server already holds the result, nothing to write.
+  const remergeIntent = (currentNotes: string): { landed: true } | { landed: false; merged: string } => {
+    intent ??= draft;
+    if (deliberateNotesClear(intent)) {
+      // V4: a clear is ours = ''. diff3(base, current, '') deletes the base lines, keeps the lines the server added.
+      const merged = clearAfterConflict(withDeviceKnown(intent), currentNotes);
+      // C6-1: the merge is trimmed before deciding; a blank merge onto a blank current already landed. Nothing is sent.
+      if (!merged.trim() && !currentNotes.trim()) return { landed: true };
+      clearNotice = merged ? NOTES_CLEAR_KEPT_NOTICE : undefined;
+      return { landed: false, merged };
+    }
+    // The server already holds this text (edge blank lines aside): it landed. No second write.
+    if (typeof intent.notes === "string" && sameNotes(currentNotes, intent.notes)) {
+      rememberLandedNotes(intent, currentNotes, localNow());
+      return { landed: true };
+    }
+    const merged = notesAfterConflict(withDeviceKnown(intent), currentNotes).notes;
+    // Rules 2 and 3 (or rule 5 falling back to current): the merge is the server text. Nothing to write.
+    // C6-1: this also covers a whitespace-only merge onto a blank current (both trim to '').
+    if (sameNotes(merged, currentNotes)) return { landed: true };
+    return { landed: false, merged };
+  };
+  // The draft that carries a merge: v5 ruling 1, a merge whose result is '' goes out as a flagged clear
+  // (clearNotes:true, notes:'', baseNotes=current).
+  const mergedDraft = (merged: string, currentNotes: string): PendingMutation => {
+    const text = merged.trim() ? merged : "";
+    const next: PendingMutation = {
+      ...draft,
+      notes: text,
+      baseNotes: currentNotes,
+      ...(draft.direct ? { direct: { ...draft.direct, patch: { ...draft.direct.patch, notes: text } } } : {}),
+    };
+    if (!text) next.clearNotes = true;
+    else delete next.clearNotes;
+    return next;
+  };
   let response = await send(token);
   for (;;) {
     rememberServerNow(localNow(), response.headers.get("date"));
@@ -502,43 +571,25 @@ export async function postFieldDispo(
       response = await send(token);
       continue;
     }
-    if (response.status === 409 && !notesRetried && draft.kind === "notes" && deliberateNotesClear(draft)) {
+    // A clear gets up to NOTES_MAX_SENDS per flush (V4 answers); typed notes keep 14.18's single re-merge (2 sends, within the cap).
+    if (response.status === 409 && draft.kind === "notes"
+      && notesSends < (deliberateNotesClear(intent ?? draft) ? NOTES_MAX_SENDS : NOTES_TYPED_MAX_SENDS)) {
+      // NOTES-MERGE-SPEC v5 rulings 3 and 6: every 409 re-merges the ORIGINAL intent against the fresh current,
+      // diff3(original base, fresh current, the rep's text), never the previous merge. The first send is send 1 of 3.
       const data = await readJson(response);
       const currentNotes = typeof data?.currentNotes === "string" ? data.currentNotes : "";
-      if (currentNotes === "") return { replayed: true, appliedNotes: "" };
-      if ((draft.knownSentNotes || []).includes(currentNotes)) {
-        notesRetried = true;
-        draft = {
-          ...draft,
-          notes: "",
-          baseNotes: currentNotes,
-          clearNotes: true,
-          ...(draft.direct ? { direct: { ...draft.direct, patch: { ...draft.direct.patch, notes: "" } } } : {}),
-        };
-        rebasedDraft = draft;
-        body = fieldDispoBody(draft, user);
-        response = await send(token);
-        continue;
-      }
-    }
-    if (response.status === 409 && !notesRetried && draft.kind === "notes" && body.clearNotes !== true) {
-      const data = await readJson(response);
-      const currentNotes = typeof data?.currentNotes === "string" ? data.currentNotes : "";
-      const rebased = notesAfterConflict(draft, currentNotes);
-      notesRetried = true;
-      draft = {
-        ...draft,
-        notes: rebased.notes,
-        baseNotes: rebased.baseNotes,
-        ...(draft.direct ? { direct: { ...draft.direct, patch: { ...draft.direct.patch, notes: rebased.notes } } } : {}),
-      };
-      rebasedDraft = draft;
+      const next = remergeIntent(currentNotes);
+      if (next.landed) return { replayed: true, appliedNotes: currentNotes };
+      const merged = next.merged;
+      notesSends += 1;
+      draft = mergedDraft(merged, currentNotes);
       body = fieldDispoBody(draft, user);
       if (notesCharsTooLong(draft) || notesRouteBodyTooLarge(body)) {
+        // Over the limit: the merged text is what is too long. A clear intent stays the clear.
         const overChars = notesCharsTooLong(draft);
         throw Object.assign(
           routeError(NOTES_TOO_LONG_MESSAGE, 413, SYNC_REASON.notesTooLong),
-          overChars ? {} : { rebasedDraft: draft },
+          overChars || deliberateNotesClear(intent ?? draft) ? {} : { rebasedDraft: draft },
         );
       }
       response = await send(token);
@@ -550,7 +601,7 @@ export async function postFieldDispo(
       if (field === "actionAt") {
         actionAtRetried = true;
         const serverNow = rememberServerNow(localNow(), response.headers.get("date"));
-        draft = restampNotes(draft, serverNow - ACTION_AT_SERVER_LAG_MS, "clock");
+        draft = restampNotes(draft, serverNow - ACTION_AT_SERVER_LAG_MS);
         body = fieldDispoBody(draft, user);
         response = await send(token);
         continue;
@@ -561,7 +612,9 @@ export async function postFieldDispo(
   if (response.status === 200 || response.status === 201) {
     const data = await readJson(response);
     const appliedNotes = draft.kind === "notes" && typeof draft.notes === "string" ? draft.notes : undefined;
-    if (data?.duplicate === true) return { replayed: true, appliedNotes };
+    const notice = clearNotice ? { notice: clearNotice } : {};
+    if (typeof appliedNotes === "string") rememberLandedNotes(draft, appliedNotes, localNow());
+    if (data?.duplicate === true) return { replayed: true, appliedNotes, ...notice };
     if (data?.gps?.outcome === "flagged_accepted") {
       try {
         await recordSyncEvent({
@@ -577,10 +630,10 @@ export async function postFieldDispo(
           parkedReason: SYNC_REASON.gpsUnverifiedFlagged,
           attempts: m.attempts ?? 0,
         });
-        await reportParked(m.userId);
       } catch { /* a sync-report failure never stops a saved dispo */ }
+      reportInBackground(() => reportParked(m.userId));
     }
-    return { replayed: false, lead: data?.lead, appliedNotes };
+    return { replayed: false, lead: data?.lead, appliedNotes, ...notice };
   }
   const fail = (error: Error): never => {
     if (rebasedDraft) (error as Error & { rebasedDraft?: PendingMutation }).rebasedDraft = rebasedDraft;
@@ -630,6 +683,30 @@ export async function postFieldDispo(
     fail(routeError("The disposition route denied this knock.", 403, reason));
   }
   if (response.status === 409) {
+    // NOTES-MERGE-SPEC V4 answers: still 409 after 3 sends. The draft stays pending and the next flush retries it.
+    if (intent && !deliberateNotesClear(intent)) {
+      // Typed notes stay pending as the draft the rep queued (14.18): the next flush sends it and re-merges this intent.
+      rebasedDraft = undefined;
+      fail(Object.assign(routeError(NOTES_CLEAR_PENDING_MESSAGE, 409, SYNC_REASON.notesConflict), { notesPending: true }));
+    }
+    if (intent) {
+      // A clear stays pending as the clear merged against this last current (the body the next flush sends first,
+      // V4), carrying the clear intent so every later 409 re-merges it (v5 ruling 3), never this merge.
+      const data = await readJson(response);
+      const currentNotes = typeof data?.currentNotes === "string" ? data.currentNotes : "";
+      const next = remergeIntent(currentNotes);
+      if (next.landed) return { replayed: true, appliedNotes: currentNotes };
+      const own = intent;
+      rebasedDraft = {
+        ...mergedDraft(next.merged, currentNotes),
+        notesIntent: {
+          notes: typeof own.notes === "string" ? own.notes : "",
+          baseNotes: own.baseNotes ?? "",
+          ...(deliberateNotesClear(own) ? { clearNotes: true as const } : {}),
+        },
+      };
+      fail(Object.assign(routeError(NOTES_CLEAR_PENDING_MESSAGE, 409, SYNC_REASON.notesConflict), { notesPending: true }));
+    }
     if (deliberateNotesClear(draft))
       fail(routeError("Notes were rejected.", 409, SYNC_REASON.notesRejected));
     fail(routeError("Notes changed on another device. Review this draft.", 409, SYNC_REASON.notesConflict));
@@ -663,11 +740,77 @@ function rememberServerNow(fallback: number, header?: string | null): number {
   return lastServerNowMs ?? fallback;
 }
 
-function restampNotes(draft: PendingMutation, atMs: number, suffix: string): PendingMutation {
+/** knownSentNotes holds at most this many earlier texts (types.ts). */
+const KNOWN_SENT_LIMIT = 10;
+
+/**
+ * Notes texts this device landed on each lead (this app session). A later draft for
+ * the same lead is a new draft with its own knownSentNotes, so a 409 whose current is
+ * one of these texts is still "a text this device already sent" (spec Decisions v4
+ * answers, rule 1). Memory only; capped per lead and in lead count.
+ */
+const landedNotesByLead = new Map<string, LandedNotes[]>();
+const LANDED_LEADS_LIMIT = 200;
+
+type LandedNotes = { text: string; at: number };
+type Ordered = { userId?: string; leadId?: string; createdAt?: string };
+
+function landedKey(m: Ordered): string {
+  return `${m.userId ?? ""}\u0000${m.leadId ?? ""}`;
+}
+
+/** `at` is when the route stored the text (device clock). */
+export function rememberLandedNotes(m: Ordered, text: string, at: number = Date.now()): void {
+  const key = landedKey(m);
+  const list = (landedNotesByLead.get(key) || []).filter((t) => t.text !== text);
+  list.push({ text, at });
+  landedNotesByLead.delete(key);
+  landedNotesByLead.set(key, list.slice(-KNOWN_SENT_LIMIT));
+  while (landedNotesByLead.size > LANDED_LEADS_LIMIT) {
+    const oldest = landedNotesByLead.keys().next().value;
+    if (oldest === undefined) break;
+    landedNotesByLead.delete(oldest);
+  }
+}
+
+/** Test hook: forget every landed text. */
+export function resetLandedNotes(): void {
+  landedNotesByLead.clear();
+}
+
+/** The text landed before this draft was saved, so the rep saved it after seeing that text go out. */
+function landedBefore(landed: LandedNotes, draft: Ordered): boolean {
+  const saved = Date.parse(draft.createdAt || "");
+  return Number.isFinite(saved) && landed.at < saved;
+}
+
+/**
+ * The draft's own knownSentNotes plus the texts this device landed on the lead from
+ * before this draft was saved. A text that landed later is never counted: an older
+ * queued clear must not wipe a newer edit that went out first, and two queued siblings
+ * do not override each other.
+ */
+function withDeviceKnown<T extends Ordered & { knownSentNotes?: string[] }>(draft: T): T {
+  const landed = (landedNotesByLead.get(landedKey(draft)) || []).filter((t) => landedBefore(t, draft));
+  if (!landed.length) return draft;
+  const known = [...(draft.knownSentNotes || [])];
+  for (const { text } of landed) if (!known.includes(text)) known.push(text);
+  return { ...draft, knownSentNotes: known };
+}
+
+/**
+ * A re-stamp of the same text keeps the draftId, so the route's receipt
+ * fieldDispoReceipts/{uid}_{draftId} dedupes a send whose reply was lost.
+ * The text also goes in knownSentNotes, so a 409 against it is a no-op.
+ */
+function restampNotes(draft: PendingMutation, atMs: number): PendingMutation {
+  const text = notesTextOf(draft) ?? "";
+  const known = [...(draft.knownSentNotes || [])];
+  if (!known.includes(text)) known.push(text);
   return {
     ...draft,
-    id: freshDraftId(draft.id, suffix, new Set([draft.id])),
     createdAt: new Date(atMs).toISOString(),
+    knownSentNotes: known.slice(-KNOWN_SENT_LIMIT),
   };
 }
 
@@ -677,7 +820,7 @@ function restampNotes(draft: PendingMutation, atMs: number, suffix: string): Pen
  * to server time minus 30 seconds before the first send. With no Date header
  * yet, the original actionAt is sent and a 400 field=actionAt restamps once.
  * An actionAt more than 25 days back is re-stamped to local now before sending.
- * Both mint a new draft id. Knocks are unchanged.
+ * Both keep the draft id. Knocks are unchanged.
  */
 function stampNotesActionAt(
   draft: PendingMutation,
@@ -687,23 +830,24 @@ function stampNotesActionAt(
   const at = Date.parse(draft.createdAt || "");
   if (!Number.isFinite(at)) return { draft, stale: false };
   if (lastServerNowMs != null && at > lastServerNowMs + ACTION_AT_FUTURE_MS) {
-    return { draft: restampNotes(draft, lastServerNowMs - ACTION_AT_SERVER_LAG_MS, "clock"), stale: false };
+    return { draft: restampNotes(draft, lastServerNowMs - ACTION_AT_SERVER_LAG_MS), stale: false };
   }
   if (nowMs - at > ACTION_AT_STALE_MS) {
-    return { draft: restampNotes(draft, nowMs, "stale"), stale: true };
+    return { draft: restampNotes(draft, nowMs), stale: true };
   }
   return { draft, stale: false };
 }
 
 function terminalNotesFailure(error: unknown, draft?: PendingMutation): boolean {
   if (draft?.kind !== "notes") return false;
+  if ((error as { notesPending?: boolean }).notesPending) return true; // V4 pending: rethrow, never a plain patch
   const code = (error as { reasonCode?: string }).reasonCode;
   if (code === SYNC_REASON.notesTooLong || code === SYNC_REASON.notesRejected) return true;
   return code === SYNC_REASON.notesConflict && deliberateNotesClear(draft);
 }
 
-/** An empty-editor "\nC1" is sent as the clear's base plus that line, not as a replacement. */
-function composeLeadingFragment(draft: PendingMutation): PendingMutation {
+/** NOTES-MERGE-SPEC E1/G1: a notes draft sends its text with edge blank lines trimmed ("\nC1" is sent as "C1"). */
+function trimmedNotesDraft(draft: PendingMutation): PendingMutation {
   if (draft.kind !== "notes" || deliberateNotesClear(draft)) return draft;
   const notes = typeof draft.notes === "string" ? draft.notes : "";
   const composed = notesAgainstBase(draft.baseNotes || "", notes);
@@ -797,7 +941,7 @@ export async function deliverFieldDispo(
   m: PendingMutation,
   user: User,
   deps: FieldDispoDeps = {},
-): Promise<{ replayed: boolean; lead?: Lead }> {
+): Promise<{ replayed: boolean; lead?: Lead; notice?: string }> {
   const commit = deps.commit ?? ((mutation: PendingMutation, actor: User) => commitDirectMutation(
     mutation,
     actor,

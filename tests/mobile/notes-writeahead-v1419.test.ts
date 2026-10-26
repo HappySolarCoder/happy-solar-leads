@@ -78,16 +78,18 @@ test("a same-line addition is not glued onto a different server line", () => {
   assert.notEqual(glued.notes, "Gate code 1234\nCall after 5 in yard");
   assert.equal(glued.notes, "Gate code 1234\nCall after\n5 in yard");
   assert.equal(rebaseNotes("5", "5 in yard", glued.notes).notes, glued.notes);
+  // NOTES-MERGE-SPEC (14.19): a base line the server kept and ours edited takes ours's edit.
   const kept = rebaseNotes("Call after 5", "Call after 5 in yard", "Gate code 1234\nCall after 5");
-  assert.equal(kept.notes, "Gate code 1234\nCall after 5\nCall after 5 in yard");
+  assert.equal(kept.notes, "Gate code 1234\nCall after 5 in yard");
   assert.equal(lineCount(kept.notes, "Call after 5 in yard"), 1);
-  assert.equal(lineCount(kept.notes, "Call after 5"), 1);
+  assert.equal(lineCount(kept.notes, "Call after 5"), 0);
   const keptFull = rebaseNotes(
     "Gate code 1234\nDog",
     "Gate code 1234\nDog in yard\nCall after 5",
     "Gate code 1234\nDog\nAdmin line",
   );
-  assert.equal(keptFull.notes, "Gate code 1234\nDog\nAdmin line\nDog in yard\nCall after 5");
+  // NOTES-MERGE-SPEC (14.19): an insert next to a server-edited region is an overlap, current first; ours's edit of "Dog" wins.
+  assert.equal(keptFull.notes, "Gate code 1234\nAdmin line\nDog in yard\nCall after 5");
   assert.equal(lineCount(keptFull.notes, "Dog in yard"), 1);
   assert.equal(lineCount(keptFull.notes, "Call after 5"), 1);
 });
@@ -175,6 +177,8 @@ test("a lost reply after a committed 200 on the route does not rewrite notes", a
       const typed = shape === "plain" ? "S\nA1" : "Dog in yard";
       const start = shape === "plain" ? "S" : "Gate code 1234";
       const expect = shape === "plain" ? "S\nA1" : "Gate code 1234";
+      // NOTES-MERGE-SPEC (14.19): in the contested shape the merge equals current, so the 409 counts as landed and nothing is written.
+      const landed = shape === "plain" ? 1 : 0;
       let record = start;
       const receipts = new Set<string>();
       let posts = 0;
@@ -210,7 +214,7 @@ test("a lost reply after a committed 200 on the route does not rewrite notes", a
       };
       await syncOutbox(outbox(() => rows, (next) => { rows = next; }, send, Date.parse(at)));
       assert.equal(record, expect, label);
-      assert.equal(receipts.size, 1, label);
+      assert.equal(receipts.size, landed, label);
       const posted = posts;
       drop = false;
       await syncOutbox(outbox(() => rows, (next) => { rows = next; }, send, Date.parse(at) + 20 * 60 * 1000));
@@ -324,7 +328,9 @@ test("xNpBehindOlder, xNpAheadOfNewer, and xNpBetween keep the phone and do not 
           ...(role.route ? { serverDispo: true } : {}),
         },
       }));
-      let record: Record<string, unknown> = { notes: "S" };
+      // With no older row queued (xNpAheadOfNewer) the legacy row's base "S\nL1" means the older save already landed, so
+      // the server holds "S\nL1". Starting at "S" would be a server delete of L1, which NOTES-MERGE-SPEC (14.19) honours.
+      let record: Record<string, unknown> = { notes: layout === "xNpAheadOfNewer" ? "S\nL1" : "S" };
       const receipts = new Set<string>();
       const io = {
         db: {},
@@ -524,9 +530,11 @@ test("a rejected clear then an edit does not append the note twice", async () =>
       now: () => Date.parse(at),
       random: () => 0,
     });
-    assert.equal(holder.notes, "S\nA\nB", actor.id);
+    // Decisions v3 V4: the stale clear's 409 runs diff3("S\nA", "S\nA\nB", '') = "B",
+    // sent once as plain notes with base=current. Nothing is appended twice.
+    assert.equal(holder.notes, "B", actor.id);
     assert.notEqual(holder.notes, "S\nA\nS\nA\nB");
-    assert.equal(rows.some((row) => row.id === "ms-clear" && row.parkedReason === SYNC_REASON.notesRejected), true);
+    assert.equal(rows.some((row) => row.id === "ms-clear"), false);
     assert.equal(rows.some((row) => row.id === "ms-edit"), false);
   }
 });
@@ -607,8 +615,10 @@ test("an actionAt older than 25 days is re-stamped once and a second rejection s
   await run(now);
   assert.equal(posts, 2);
   assert.deepEqual(seenAt, [restamped, retried]);
-  assert.equal(seenIds[0], "old-action-stale");
-  assert.equal(seenIds[1], "old-action-stale-clock");
+  // NOTES-MERGE-SPEC (14.19): a re-stamp of the same text keeps the draftId.
+  assert.equal(seenIds[0], "old-action");
+  assert.equal(seenIds[1], "old-action");
+  assert.deepEqual(rows[0].knownSentNotes, ["S\nL1"]);
   assert.equal(rows[0].syncState, "parked");
   assert.equal(rows[0].parkedReason, SYNC_REASON.notesRejected);
   assert.equal(rows[0].createdAt, createdAt);
@@ -872,7 +882,8 @@ test("a future notes actionAt is resent once from server time and then parked", 
     });
   }, now));
   assert.deepEqual(seenAt, [createdAt, retried]);
-  assert.deepEqual(seenIds, ["future", "future-clock"]);
+  // NOTES-MERGE-SPEC (14.19): a re-stamp of the same text keeps the draftId.
+  assert.deepEqual(seenIds, ["future", "future"]);
   assert.equal(rows[0].syncState, "parked");
   assert.equal(rows[0].parkedReason, SYNC_REASON.notesRejected);
   assert.equal(rows[0].createdAt, createdAt);
@@ -927,7 +938,8 @@ test("a notes actionAt is clamped from the route Date header before the next sen
     });
   }, phoneNow));
   assert.deepEqual(seenAt, [createdAt, clamped]);
-  assert.deepEqual(seenIds, ["clock-fresh", "clock-fresh-clock"]);
+  // NOTES-MERGE-SPEC (14.19): a re-stamp of the same text keeps the draftId.
+  assert.deepEqual(seenIds, ["clock-fresh", "clock-fresh"]);
   assert.equal(rows.length, 0);
 
   const ahead = new Date(serverNow + 26 * 24 * 60 * 60 * 1000).toISOString();
@@ -942,7 +954,7 @@ test("a notes actionAt is clamped from the route Date header before the next sen
       post: async (path, init) => {
         const body = JSON.parse(String(init?.body)) as { actionAt?: string; draftId?: string };
         agedAt.push(body.actionAt || "");
-        assert.equal(body.draftId, "clock-age-clock");
+        assert.equal(body.draftId, "clock-age");
         return routePost(holder)(path, init);
       },
     });
@@ -985,7 +997,8 @@ test("a lone notes draft older than 25 days is re-stamped before it is sent", as
     }, now));
     assert.equal(seen.length, 1, String(days));
     assert.equal(seen[0].actionAt, new Date(now).toISOString(), String(days));
-    assert.equal(seen[0].draftId, `old-${days}-stale`, String(days));
+    // NOTES-MERGE-SPEC (14.19): a re-stamp of the same text keeps the draftId.
+    assert.equal(seen[0].draftId, `old-${days}`, String(days));
     assert.equal(holder.notes, "S\nL1", String(days));
     assert.equal(rows.length, 0, String(days));
   }
@@ -1168,7 +1181,8 @@ test("rebase does not re-append a line the server already has", () => {
     const resultCounts = lineCounts(applied.notes);
     for (const line of new Set([...currentCounts.keys(), ...ourCounts.keys(), ...resultCounts.keys()])) {
       if (line === "") continue;
-      const cap = Math.max(currentCounts.get(line) || 0, ourCounts.get(line) || 0);
+      // NOTES-MERGE-SPEC (14.19): lines ours inserted are always kept, even when the server inserted the same text elsewhere.
+      const cap = (currentCounts.get(line) || 0) + (ourCounts.get(line) || 0);
       assert.ok(
         (resultCounts.get(line) || 0) <= cap,
         `${JSON.stringify(line)} in ${JSON.stringify({ base, ours, current, result: applied.notes })}`,
@@ -1181,9 +1195,8 @@ test("xChMidClear trims leading and trailing blank lines without emptying a merg
   assert.equal(rebaseNotes("S\nA", "\nB", "\n").notes, "B");
   assert.equal(rebaseNotes("S", "\nB", "").notes, "B");
   assert.equal(rebaseNotes("A", "A\n\nB", "A").notes, "A\n\nB");
-  const onlyBlank = rebaseNotes("A", "\n\n", "\n\n");
-  assert.notEqual(onlyBlank.notes, "");
-  assert.match(onlyBlank.notes, /^\n/);
+  // NOTES-MERGE-SPEC Decision 4: rule 3 compares and returns trimmed text.
+  assert.equal(rebaseNotes("A", "\n\n", "\n\n").notes, "");
 });
 
 test("xK1LostLanded does not append a legacy note the server already has", async () => {
@@ -1667,8 +1680,10 @@ test("rebase appends only lines ours added beyond the base", () => {
   for (const [base, ours, server, expected] of cases) {
     assert.equal(rebaseNotes(base, ours, server).notes, expected, base);
     assert.equal(notesAfterConflict({ notes: ours, baseNotes: base }, server).notes, expected, base);
-    const again = rebaseNotes(base, ours, expected);
-    assert.equal(again.notes, expected, `replay ${base}`);
+    // NOTES-MERGE-SPEC (14.19): replay is the stored draft (rule 3) or a receipt, not a re-merge of the original draft;
+    // ("Dog", "Dog\nDog") onto "Gate code 1234\nDog" is clarification (d) and keeps the inserted copy.
+    assert.equal(rebaseNotes(server, expected, expected).notes, expected, `replay ${base}`);
+    assert.equal(notesAfterConflict({ notes: expected, baseNotes: server }, expected).notes, expected, `replay ${base}`);
   }
   const random = mulberry32(27);
   const alphabet = ["Dog", "Dog in yard", "Gate code 1234", "Call after 5", "Admin", ""];
@@ -1687,10 +1702,8 @@ test("rebase appends only lines ours added beyond the base", () => {
     const ours = pick();
     const current = pick();
     const applied = rebaseNotes(base, ours, current);
-    const replay = rebaseNotes(base, ours, applied.notes).notes;
-    // A result that lands on the base is an exact win the next time: the edit is sent as typed.
-    const replayExpected = applied.notes === base ? trimEdgeBlankLines(ours) : applied.notes;
-    assert.equal(replay, replayExpected);
+    // NOTES-MERGE-SPEC (14.19): the stored replay (base = the current we merged onto, notes = the merge) is a no-op.
+    assert.equal(rebaseNotes(applied.baseNotes, applied.notes, applied.notes).notes, applied.notes);
     assert.equal(rebaseNotes(base, ours, current).notes, applied.notes);
     const baseCounts = counts(base);
     const ourCounts = counts(ours);
@@ -1704,16 +1717,17 @@ test("rebase appends only lines ours added beyond the base", () => {
       const added = Math.max(0, ourCount - baseCount);
       const resultCount = resultCounts.get(line) || 0;
       assert.ok(resultCount >= added, JSON.stringify({ base, ours, current, result: applied.notes, line }));
-      assert.ok(resultCount <= currentCount + added, JSON.stringify({ base, ours, current, result: applied.notes, line }));
-      assert.ok(resultCount <= Math.max(currentCount, ourCount), JSON.stringify({ base, ours, current, result: applied.notes, line }));
+      assert.ok(resultCount <= currentCount + ourCount, JSON.stringify({ base, ours, current, result: applied.notes, line }));
     }
   }
 });
 
 test("typed blank lines are not dropped because the server has a different blank", () => {
+  // NOTES-MERGE-SPEC (14.19): ours edited "Dog" (the server kept it), so the edit wins; edge blanks are trimmed and ours's
+  // interior blank is kept.
   const merged = rebaseNotes("Dog", "Dog in yard\n\nA1", "Dog\n\nAdmin");
-  assert.equal(merged.notes, "Dog\n\nAdmin\nDog in yard\n\nA1");
-  assert.equal(rebaseNotes("Dog", "Dog in yard\n\nA1", merged.notes).notes, merged.notes);
+  assert.equal(merged.notes, "Admin\nDog in yard\n\nA1");
+  assert.equal(rebaseNotes(merged.baseNotes, merged.notes, merged.notes).notes, merged.notes);
   const random = mulberry32(11);
   const words = ["Dog", "A1", "Admin"];
   for (let i = 0; i < 40; i += 1) {
@@ -1722,12 +1736,14 @@ test("typed blank lines are not dropped because the server has a different blank
     const ours = `${left}\n\n${right}`;
     const server = `Dog\n\nAdmin`;
     const result = rebaseNotes("Dog", ours, server).notes;
-    if (!server.split("\n").includes(left) || !server.split("\n").includes(right)) {
+    // NOTES-MERGE-SPEC (14.19): when one of ours's lines is already a server insert it is written once, and the blank can end
+    // up on the edge, where it is trimmed ("A1\n\nAdmin" -> "Admin\nA1"). Only an all-new pair keeps its interior blank.
+    if (!server.split("\n").includes(left) && !server.split("\n").includes(right)) {
       assert.ok(result.includes("\n\n"), JSON.stringify({ ours, result }));
     }
     assert.equal(result.startsWith("\n"), false);
     assert.equal(result.endsWith("\n"), false);
-    assert.equal(rebaseNotes("Dog", ours, result).notes, result);
+    assert.equal(rebaseNotes(server, result, result).notes, result);
   }
 });
 
@@ -1764,6 +1780,47 @@ test("xK6LegacySameMsRev chain root survives collapse and a sync that skips the 
       if (server === "S\nAdmin") assert.equal(holder.notes, "S\nAdmin\nA1\nB1\nC1");
       if (server === "Roof replaced 2019") assert.equal(holder.notes, "Roof replaced 2019\nA1\nB1\nC1");
       assert.equal(rows.length, 0, `${skipCollapse} ${server}`);
+    }
+  }
+});
+
+test("xR1 / E1: after a landed clear, typed \"\\nC1\" is sent as \"C1\" on both routes and direct (G1 edgeBlankSent = 0)", async () => {
+  for (const actor of [owner, manager, territory]) {
+    for (const serverDispo of [true, false]) {
+      resetQueueSeqForTests();
+      const typed = note("c1-after-clear", "\nC1", "", {
+        userId: actor.id,
+        userName: actor.name,
+        createdAt: "2026-10-26T16:00:05.000Z",
+        direct: { patch: { notes: "\nC1" }, ...(serverDispo ? { serverDispo: true } : {}) },
+      });
+      const saved = acceptDisposition([], typed);
+      const holder = { notes: "" };
+      const bodies: { notes?: string }[] = [];
+      let rows = [saved];
+      await syncOutbox(outbox(() => rows, (next) => { rows = next; }, async (row) => {
+        await deliverFieldDispo(row, actor, {
+          getToken: async () => "token",
+          commit: async () => { throw Error("notes use the route"); },
+          post: async (path, init) => {
+            bodies.push(JSON.parse(String(init?.body)) as { notes?: string });
+            return routePost(holder)(path, init);
+          },
+        });
+      }));
+      assert.equal(bodies.length, 1, `${actor.id} ${serverDispo}`);
+      assert.equal(bodies[0].notes, "C1", `${actor.id} ${serverDispo} route body`);
+      assert.equal(holder.notes, "C1", `${actor.id} ${serverDispo}`);
+      assert.equal(rows.length, 0, `${actor.id} ${serverDispo}`);
+
+      const directHolder = { notes: "" };
+      await commitDirectMutation(typed, actor, leadIo(
+        () => directHolder.notes,
+        (notes) => { directHolder.notes = notes; },
+        undefined,
+        actor.id,
+      ));
+      assert.equal(directHolder.notes, "C1", `${actor.id} ${serverDispo} direct`);
     }
   }
 });
@@ -1809,6 +1866,8 @@ test("xChMidClear sends S+A1+C1 for owner, manager, and territory on both routes
       assert.equal(holder.notes, "S\nA1\nC1", `${actor.id} ${serverDispo}`);
       assert.equal(rows.length, 0, `${actor.id} ${serverDispo}`);
 
+      // NOTES-MERGE-SPEC E1/G1: the raw "\nC1" draft (no parked clear folded in)
+      // sends the editor text trimmed, "C1", not the base plus that line.
       const directHolder = { notes: "S\nA1" };
       await commitDirectMutation(typed, actor, leadIo(
         () => directHolder.notes,
@@ -1816,7 +1875,7 @@ test("xChMidClear sends S+A1+C1 for owner, manager, and territory on both routes
         undefined,
         actor.id,
       ));
-      assert.equal(directHolder.notes, "S\nA1\nC1", `${actor.id} ${serverDispo} direct`);
+      assert.equal(directHolder.notes, "C1", `${actor.id} ${serverDispo} direct`);
 
       const conflict = { notes: "S\nA1\nAdmin" };
       const conflictBodies: { notes?: string }[] = [];
@@ -1831,8 +1890,8 @@ test("xChMidClear sends S+A1+C1 for owner, manager, and territory on both routes
           return json(200, { ok: true });
         },
       });
-      assert.equal(conflictBodies[0].notes, "S\nA1\nC1", `${actor.id} ${serverDispo} first body`);
-      assert.equal(conflict.notes, "S\nA1\nAdmin\nC1", `${actor.id} ${serverDispo} 409`);
+      assert.equal(conflictBodies[0].notes, "C1", `${actor.id} ${serverDispo} first body`);
+      assert.equal(conflict.notes, "Admin\nC1", `${actor.id} ${serverDispo} 409`);
     }
   }
 });

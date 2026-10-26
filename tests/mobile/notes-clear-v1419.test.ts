@@ -259,7 +259,8 @@ test("notes_empty, notes_clear_mismatch, and a clearNotes 400 park as notes_reje
   parked.syncState = "parked";
   parked.parkedReason = SYNC_REASON.notesRejected;
   const reopened = reopenDeniedParked([parked], setter.id);
-  assert.equal(reopened[0].syncState, "queued");
+  // Decisions v3 V3: a parked clear stays parked across a cold start.
+  assert.equal(reopened[0].syncState, "parked");
   assert.equal(reopened[0].clearNotes, true);
   assert.equal(reopened[0].notes, "");
   const again = reopenDeniedParked([{ ...reopened[0], syncState: "parked" }], setter.id);
@@ -278,7 +279,9 @@ test("notes_empty, notes_clear_mismatch, and a clearNotes 400 park as notes_reje
   assert.equal(reported.reasonCode, SYNC_REASON.invalidPayload);
 });
 
-test("a 409 on a manager clear parks as notes_rejected and keeps clearNotes", async () => {
+test("a 409 on a manager clear sends the diff3 result as plain notes, re-merges at most 3 sends per flush, then stays pending", async () => {
+  // Decisions v3 V4: the clear is ours=''; diff3(seen, "someone else", '') keeps
+  // the other device's line, which goes out once as plain notes with base=current.
   const manager = { id: "rep-manager", name: "Manager", role: "manager" } as User;
   let posts = 0;
   const bodies: { notes?: string; clearNotes?: boolean; baseNotes?: string }[] = [];
@@ -305,19 +308,25 @@ test("a 409 on a manager clear parks as notes_rejected and keeps clearNotes", as
     random: () => 0,
   });
   await run();
-  assert.equal(posts, 1);
-  assert.equal(bodies.length, 1);
+  // Decisions v4 answers: each 409 re-merges against the fresh current, at most 3 sends per draft per flush.
+  assert.equal(posts, 3);
   assert.equal(bodies[0].notes, "");
   assert.equal(bodies[0].baseNotes, seen);
   assert.equal(bodies[0].clearNotes, true);
-  assert.equal(rows[0].syncState, "parked");
-  assert.equal(rows[0].parkedReason, SYNC_REASON.notesRejected);
-  assert.equal(rows[0].notes, "");
-  assert.equal(rows[0].clearNotes, true);
-  assert.equal(rows[0].baseNotes, seen);
-  assert.equal(parkedNotesNotice(rows, "lead-1"), "These notes weren't saved. The server rejected this clear.");
-  await run();
-  assert.equal(posts, 1);
+  for (const b of bodies.slice(1)) {
+    assert.equal(b.notes, "someone else");
+    assert.equal(b.baseNotes, "someone else");
+    assert.equal(b.clearNotes, undefined);
+  }
+  // After the third 409 the draft stays pending (retried on the next flush), never parked. It is stored as the clear
+  // merged against the last current (the body the next flush sends first) and carries the clear intent, so every later
+  // 409 runs clearConflict(original base, fresh current) again (v5 ruling 3, intent form).
+  assert.equal(rows[0].syncState, "retry");
+  assert.match(String(rows[0].lastError ?? rows[0].error ?? ""), /Pending\. Notes changed on another device\./);
+  assert.equal(rows[0].clearNotes, undefined);
+  assert.equal(rows[0].notes, "someone else");
+  assert.equal(rows[0].baseNotes, "someone else");
+  assert.deepEqual(rows[0].notesIntent, { notes: "", baseNotes: seen, clearNotes: true });
   assert.equal(classifySyncFailure(Object.assign(Error("Notes changed on another device. Review this draft."), {
     status: 409,
     reasonCode: SYNC_REASON.notesConflict,
@@ -735,8 +744,10 @@ test("rebaseNotes and absorbNotesText keep every line except a deliberate delete
     const editCounts = counts(edit);
     const resultCounts = counts(result);
     const lines = new Set([...serverCounts.keys(), ...editCounts.keys(), ...resultCounts.keys()]);
+    // NOTES-MERGE-SPEC (14.19): a line both sides inserted in different places is kept twice ("A" + "A\nB" vs "B\nA" gives
+    // "B\nA\nB"), so the cap is current plus ours, not the larger of the two.
     for (const line of lines) {
-      const cap = Math.max(serverCounts.get(line) || 0, editCounts.get(line) || 0);
+      const cap = (serverCounts.get(line) || 0) + (editCounts.get(line) || 0);
       assert.ok((resultCounts.get(line) || 0) <= cap, `${line} duplicated in ${JSON.stringify(result)} ${label}`);
     }
     if (result !== "" && result.trim() !== "") {
@@ -750,9 +761,8 @@ test("rebaseNotes and absorbNotesText keep every line except a deliberate delete
         const applied = rebaseNotes(base, edit, current);
         const label = JSON.stringify({ base, edit, current });
         assertKept(base, edit, current, applied.notes, label);
-        if (current !== base && applied.notes !== base) {
-          assert.equal(rebaseNotes(base, edit, applied.notes).notes, applied.notes, `replay ${label}`);
-        }
+        // NOTES-MERGE-SPEC (14.19): a plain diff3 is not idempotent against its own result; a replay is a stored replay
+        // (rule 3, below) or a receipt, never a re-merge of the original draft.
         assert.equal(rebaseNotes(applied.baseNotes, applied.notes, applied.notes).notes, applied.notes, `stored replay ${label}`);
       }
     }

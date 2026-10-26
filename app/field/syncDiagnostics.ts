@@ -57,6 +57,30 @@ export type SyncReportItem = {
 const memory = new Map<string, SyncEvent[]>();
 const reportedIds = new Set<string>();
 let routeMissing = false;
+/**
+ * NOTES-MERGE-SPEC V2: sync-report is best-effort. The first failure of a kind
+ * (route missing, network, auth, server, other) is the last request this
+ * session: no retry loop, and the queue never waits on it.
+ */
+const failedKinds = new Set<string>();
+function failureKind(status: number): string | null {
+  if (status >= 200 && status < 300) return null;
+  if (status === 404) return "missing";
+  if (status === 0) return "network";
+  if (status === 401 || status === 403) return "auth";
+  if (status >= 500) return "server";
+  if (status === 400) return null; // a rejected batch is forgotten once; never retried
+  return "other";
+}
+function noteFailure(status: number, latch: boolean): void {
+  if (!latch) return; // injected transports keep their own state unless they opt in
+  const kind = failureKind(status);
+  if (kind) failedKinds.add(kind);
+}
+/** Diagnostics for tests: failure kinds seen this session. */
+export function syncReportFailedKinds(): string[] {
+  return [...failedKinds];
+}
 let stripExtendedGpsKeys = !SYNC_REPORT_EXTENDED_GPS_KEYS;
 
 const EXTENDED_GPS_KEYS = ["gpsUnverifiedReason", "locationPrecision"] as const;
@@ -299,6 +323,14 @@ async function acceptReports(userId: string, events: SyncEvent[]) {
   await markReported(userId, events.map((event) => event.id));
 }
 
+/**
+ * NOTES-MERGE-SPEC V2: start a sync-report without waiting for it. A 404 or any
+ * other failure never blocks, delays or re-orders the queue.
+ */
+export function reportInBackground(run: () => Promise<unknown>): void {
+  void Promise.resolve().then(run).catch(() => { /* best-effort diagnostics */ });
+}
+
 /** Bounded, idempotent report. A 404 means the route is not deployed: no-op, no retry loop, no UI. */
 export async function reportParked(
   userId: string,
@@ -306,10 +338,14 @@ export async function reportParked(
     probe?: () => Promise<number>;
     post?: (items: SyncReportItem[]) => Promise<SyncReportPostResult>;
     now?: () => number;
+    /** Apply the session failure latch to injected transports too (tests). */
+    session?: boolean;
   },
 ): Promise<{ sent: number; status: number }> {
+  const latch = !deps || deps.session === true;
   try {
     if (!deps && routeMissing) return { sent: 0, status: 404 };
+    if (latch && failedKinds.size) return { sent: 0, status: 0 };
     const pending = (await readSyncLog(userId)).filter(
       (event) =>
         (event.state === "parked" || event.state === "flagged") &&
@@ -325,13 +361,15 @@ export async function reportParked(
     try {
       status = await (deps?.probe ?? defaultProbe)();
     } catch {
+      noteFailure(0, latch);
       return { sent: 0, status: 0 };
     }
     if (status === 404) {
       if (!deps) routeMissing = true;
+      noteFailure(404, latch);
       return { sent: 0, status: 404 };
     }
-    if (status === 0) return { sent: 0, status: 0 };
+    if (status === 0) { noteFailure(0, latch); return { sent: 0, status: 0 }; }
     const post = deps?.post ?? defaultPost;
     let events = batch;
     let items = events.map((event) => syncReportItem(event, !stripExtendedGpsKeys));
@@ -357,6 +395,7 @@ export async function reportParked(
     }
     if (posted.status === 404) {
       if (!deps) routeMissing = true;
+      noteFailure(404, latch);
       return { sent: 0, status: 404 };
     }
     if (posted.status >= 200 && posted.status < 300) {
@@ -366,8 +405,10 @@ export async function reportParked(
     if (posted.status === 400) {
       await forgetReports(userId, events, "sync-report rejected this batch once; it will not be retried", true);
     }
+    noteFailure(posted.status, latch);
     return { sent: 0, status: posted.status };
   } catch {
+    noteFailure(0, latch);
     return { sent: 0, status: 0 };
   }
 }
@@ -376,5 +417,6 @@ export function resetSyncLogForTests() {
   memory.clear();
   reportedIds.clear();
   routeMissing = false;
+  failedKinds.clear();
   stripExtendedGpsKeys = !SYNC_REPORT_EXTENDED_GPS_KEYS;
 }

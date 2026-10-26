@@ -2,7 +2,7 @@ import type { Lead } from "@/app/types";
 import { splitNotesAndContact } from "./contactSave";
 import { effectiveSyncState } from "./draftState";
 import { compareNotesSend, notesLineageNewer } from "./notesCoalesce";
-import { appendTypedOnto, notesAgainstBase, notesMergeExceedsLimit } from "./notesRebase";
+import { appendTypedOnto, notesAgainstBase, notesMergeExceedsLimit, trimEdgeBlankLines } from "./notesRebase";
 import { splitCombinedDraft } from "./serverDispo";
 import type { FieldMutation, PendingMutation } from "./types";
 
@@ -154,6 +154,11 @@ function notesFoldTarget(row: PendingMutation): boolean {
   return isUnsentNotesDraft(row) || isParkedRejectedClear(row);
 }
 
+/** A clear still waiting to be sent: no text, clearNotes set, not refused by the route. */
+function isUnsentClear(row: PendingMutation): boolean {
+  return row.kind === "notes" && row.clearNotes === true && notesText(row) === "" && !isRejectedClear(row);
+}
+
 function contactPatchOf(row: PendingMutation): Partial<Lead> {
   const patch = { ...(row.direct?.patch || {}) };
   delete patch.notes;
@@ -276,6 +281,8 @@ export function collapseNotesGroup(rows: readonly PendingMutation[]): PendingMut
   delete collapsed.parkedReason;
   delete collapsed.appliedNotes;
   delete collapsed.appliedAgainst;
+  // A new intent: the pending one it replaces is not re-merged again (v5 ruling 3).
+  delete collapsed.notesIntent;
   delete collapsed.blocked;
   delete collapsed.error;
   delete collapsed.status;
@@ -305,10 +312,17 @@ export function foldNotesSave(existing: readonly PendingMutation[], next: Pendin
   const prior = priors.length === 1 ? priors[0] : collapseNotesGroup(priors);
   const typed = notesText(next);
   const replacingClear = priors.every(isRejectedClear);
+  // NOTES-MERGE-SPEC E: a clear that was never sent folds with the typing
+  // after it into one save of the editor's text, as typed (edge blank lines
+  // trimmed, so a bare leading newline is never sent). A parked clear keeps
+  // the server notes, so later typing appends to them.
+  const afterUnsentClear = !replacingClear && isUnsentClear(prior);
   const composed = replacingClear && !(next.clearNotes === true && typed === "")
     ? appendTypedOnto(prior.baseNotes || "", typed)
     : typed;
-  const notes = notesAgainstBase(prior.baseNotes || "", composed);
+  const notes = afterUnsentClear
+    ? trimEdgeBlankLines(composed)
+    : notesAgainstBase(prior.baseNotes || "", composed);
   const parts = [notesText(prior), ...priors.map((row) => notesText(row)), typed];
   if (notesMergeExceedsLimit(parts, notes)) {
     keptSiblingNotes.add(next);
@@ -343,6 +357,7 @@ export function foldNotesSave(existing: readonly PendingMutation[], next: Pendin
   delete folded.parkedReason;
   delete folded.appliedNotes;
   delete folded.appliedAgainst;
+  delete folded.notesIntent;
   delete folded.blocked;
   delete folded.error;
   if (clearing) folded.clearNotes = true;

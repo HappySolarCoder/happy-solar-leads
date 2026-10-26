@@ -2,6 +2,7 @@ import type { User } from "@/app/types";
 import { coerceLegacyContactDraft } from "./contactSave";
 import { reportingPatch } from "./directWrites";
 import { NOTES_ACTION_AT_RETRY_MESSAGE, PHONE_CLOCK_NOTICE, SYNC_REASON } from "./syncReasons";
+import { parkedClear } from "./draftState";
 import type { ParkedReason, PendingMutation } from "./types";
 
 const LEGACY_REASON: Record<string, ParkedReason> = {
@@ -33,7 +34,8 @@ function parkedForActionAt(row: PendingMutation): boolean {
  * One pass per cold start. Parked denials are tried again.
  * notes_too_long, notes_rejected, combined_draft, and contact_denied are
  * included, except a notes draft parked for actionAt. That one stays parked
- * so the stale request is not sent on every launch. This pass does not set
+ * so the stale request is not sent on every launch, and a refused clear
+ * (NOTES-MERGE-SPEC V3: a parked clear stays parked). This pass does not set
  * clearNotes. A reopened blank is not a clear.
  */
 export function reopenDeniedParked(
@@ -43,7 +45,7 @@ export function reopenDeniedParked(
   if (reopenedSessions.has(uid)) return drafts;
   reopenedSessions.add(uid);
   return drafts.map((m) => {
-    if (m.syncState !== "parked" || parkedForActionAt(m)) return m;
+    if (m.syncState !== "parked" || parkedForActionAt(m) || parkedClear(m)) return m;
     return { ...m, syncState: "queued", nextAttemptAt: undefined };
   });
 }

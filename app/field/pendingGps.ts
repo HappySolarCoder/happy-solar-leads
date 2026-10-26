@@ -9,7 +9,7 @@ import {
 } from "./gpsPolicy";
 import type { GpsPointSource } from "./knockPoint";
 import { SYNC_REASON } from "./syncReasons";
-import { recordSyncEvent, reportParked } from "./syncDiagnostics";
+import { recordSyncEvent, reportInBackground, reportParked } from "./syncDiagnostics";
 import { bestFixInWindow, currentLocationPrecision, hadFixOutsideWindow, noteWarmFix } from "./warmGps";
 import type { PendingMutation } from "./types";
 
@@ -159,7 +159,7 @@ async function logUnverified(m: PendingMutation, evaluation: KnockEvaluation) {
     gpsPointSource: evaluation.source,
     attempts: m.attempts ?? 0,
   });
-  try { await reportParked(m.userId); } catch { /* a sync-report failure never affects the dispo */ }
+  reportInBackground(() => reportParked(m.userId));
 }
 
 function pageHidden(): boolean {

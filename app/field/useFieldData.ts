@@ -70,6 +70,9 @@ import { syncOutbox } from "./syncOutbox";
 import { SYNC_REASON } from "./syncReasons";
 import { unreflectedKnocks } from "./confirmedKnocks";
 const locks = new Map<string, Promise<void>>();
+// NOTES-MERGE-SPEC V4 / v5 ruling 6: notes drafts that went pending in the current sync burst. A fresh sync()
+// (no flush running) starts a new burst; a sync() that waited on a running flush reruns inside the same burst.
+const heldNotesPending = new Map<string, Set<string>>();
 export function useFieldData(user: User | null, liveLeads: Lead[]) {
   const uid = user?.id || "",
     active = useRef(uid);
@@ -156,7 +159,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       update({ config: DEFAULT_FIELD_CONFIG, error: (e as Error).message });
     }
   }, [uid, update]);
-  const sync = useCallback(async () => {
+  const runSync = useCallback(async (followUp: boolean): Promise<void> => {
     if (
       !uid ||
       !isDeviceOnline() ||
@@ -167,8 +170,11 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     if (ongoing) {
       await ongoing;
       if (locks.get(uid) === ongoing) locks.delete(uid);
-      return sync();
+      return runSync(true);
     }
+    if (!followUp) heldNotesPending.delete(uid);
+    const held = heldNotesPending.get(uid) ?? new Set<string>();
+    heldNotesPending.set(uid, held);
     const task = (async () => {
     try {
       const queued = await readDrafts(uid);
@@ -177,7 +183,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       for (const m of queued) if (m.syncState === 'gps' && m.direct?.gps) void resolveDraftGps(m, {
         read: () => readDrafts(uid), put: updatePendingGpsDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid,
-      }).then(async () => { await reloadDrafts(); void sync(); }).catch(e => console.warn('[raydar-sync]', (e as Error).message));
+      }).then(async () => { await reloadDrafts(); void runSync(false); }).catch(e => console.warn('[raydar-sync]', (e as Error).message));
       setSyncing(true);
       await syncOutbox({
         read: () => readDrafts(uid),
@@ -191,6 +197,9 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
             })
             : await fieldRequest('/api/field-work', m);
           if (DIRECT_MOBILE_WRITES && result.lead && active.current === uid) acknowledgeMobileLead(actor, result.lead);
+          // NOTES-MERGE-SPEC V4: a clear that kept other people's new notes says so.
+          const notice = (result as { notice?: string }).notice;
+          if (notice && active.current === uid) update({ error: notice });
           if (DIRECT_MOBILE_WRITES && m.kind === 'knock' && active.current === uid) {
             setConfirmedKnocks(previous => [...unreflectedKnocks(previous, latest.current.liveLeads, uid).filter(item => item.leadId !== m.leadId), m]);
           }
@@ -209,6 +218,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         update: putDraft,
         insert: putDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid && isDeviceOnline(),
+        heldNotesPending: held,
       });
       void reportParked(uid);
       await reloadDrafts();
@@ -226,6 +236,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     locks.set(uid, task);
     try { await task; } finally { if (locks.get(uid) === task) locks.delete(uid); }
   }, [uid, reloadDrafts, reloadDiagnostics]);
+  const sync = useCallback(() => runSync(false), [runSync]);
   useEffect(() => {
     if (!uid) return;
     let alive = true;

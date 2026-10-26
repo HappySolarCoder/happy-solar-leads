@@ -111,6 +111,17 @@ function byAction(a: PendingMutation, b: PendingMutation) {
   return compareQueuedDrafts(a, b);
 }
 
+/**
+ * A clear the route refused (400 clearNotes). The server kept its notes, so
+ * the editor shows those, and typing after it appends to them.
+ */
+function refusedClear(m: PendingMutation): boolean {
+  return m.kind === "notes"
+    && m.clearNotes === true
+    && !(m.notes ?? m.direct?.patch?.notes)
+    && m.parkedReason === "notes_rejected";
+}
+
 /** Provisional overlay only; no source objects or live history are changed.
  * Queued, retrying, GPS, and parked drafts all show the rep's newest local dispo. */
 export function overlayDrafts(
@@ -121,7 +132,7 @@ export function overlayDrafts(
     const map = new Map(leads.map(l => [l.id, l]));
     for (const m of drafts.filter(m => m.direct).sort(byAction)) {
       const lead = map.get(m.leadId) || m.direct?.create;
-      if (!lead || !m.direct) continue;
+      if (!lead || !m.direct || refusedClear(m)) continue;
       try {
         const patch = reportingPatch(m, { id: m.userId, name: m.userName || 'Pending sync' } as User);
         map.set(lead.id, { ...lead, ...mergeReportingPatch(lead, patch).patch });
@@ -140,7 +151,7 @@ export function overlayDrafts(
     if (!ms) return l;
     let next = { ...l };
     for (const m of ms) {
-      if (m.kind === "notes") next = { ...next, notes: m.notes };
+      if (m.kind === "notes" && !refusedClear(m)) next = { ...next, notes: m.notes };
       if (
         m.kind === "knock" &&
         m.status &&

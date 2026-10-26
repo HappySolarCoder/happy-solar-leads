@@ -194,6 +194,8 @@ test("permission-denied uses /api/field/dispo and a later 403 parks the body rea
   assert.equal(rows[0].syncState, "parked");
   assert.equal(rows[0].parkedReason, "historical_pin");
   assert.equal(rows[0].error, undefined);
+  // V2: sync-report runs in the background; let it finish before reading what it posted.
+  for (let i = 0; i < 20 && !posted.length; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(posted[0]?.reasonCode, "historical_pin");
   for (let i = 0; i < 3; i += 1) {
     await syncOutbox({

@@ -1,7 +1,20 @@
 import { FIELD_DISPO_UNAVAILABLE, SYNC_REASON } from "./syncReasons";
 import type { ParkedReason, PendingMutation, SyncState } from "./types";
 
+/**
+ * NOTES-MERGE-SPEC V3: a clear the route refused (parked notes_rejected) stays
+ * parked. It is never sent again on a later sync or cold start, even if an
+ * older build re-queued it; only a new save by the rep replaces it.
+ */
+export function parkedClear(m: PendingMutation): boolean {
+  return m.kind === "notes"
+    && m.clearNotes === true
+    && (typeof m.notes === "string" ? m.notes : typeof m.direct?.patch?.notes === "string" ? m.direct.patch.notes : "") === ""
+    && m.parkedReason === SYNC_REASON.notesRejected;
+}
+
 export function effectiveSyncState(m: PendingMutation): SyncState {
+  if (parkedClear(m)) return "parked";
   if (m.syncState) return m.syncState;
   if (m.direct?.gps) return "gps";
   if (m.blocked) return "parked";

@@ -193,6 +193,14 @@ export type FieldMutation = {
    * Never copied onto the lead.
    */
   knownSentNotes?: string[];
+  /**
+   * Device queue only. Set on a notes draft left pending after repeated 409s
+   * (NOTES-MERGE-SPEC v5 ruling 3): the rep's original text and base. The
+   * stored notes/baseNotes are that intent merged against the last current;
+   * every later 409 re-merges this intent, never the stored merge. Never
+   * sent. Never copied onto the lead.
+   */
+  notesIntent?: { notes: string; baseNotes: string; clearNotes?: true };
   status?: string;
   disposition?: string;
   notes?: string;

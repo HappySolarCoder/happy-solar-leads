@@ -4,7 +4,7 @@ import { collapseLegacyNotesQueue, compareQueuedDrafts } from "./draftQueue";
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
 import { absorbNotesText } from "./notesLimits";
 import { SERVER_DISPO_SLOW_RETRY_MS, splitCombinedDraft } from "./serverDispo";
-import { recordSyncEvent, reportParked } from "./syncDiagnostics";
+import { recordSyncEvent, reportInBackground, reportParked } from "./syncDiagnostics";
 import { SYNC_REASON } from "./syncReasons";
 import type { PendingMutation } from "./types";
 
@@ -19,6 +19,12 @@ export type SyncOutboxDeps = {
   block?: (m: PendingMutation) => Promise<unknown>;
   report?: (userId: string) => Promise<unknown>;
   active: () => boolean;
+  /**
+   * NOTES-MERGE-SPEC V4 / v5 ruling 6: ids of notes drafts that went pending (409 after the send cap) in this
+   * sync burst. They are not sent again until the next fresh flush; a sync() that only waited on a running flush
+   * passes the same set, so its rerun cannot add sends to that flush. Ids that go pending are added here.
+   */
+  heldNotesPending?: Set<string>;
   now?: () => number;
   random?: () => number;
 };
@@ -58,12 +64,23 @@ function absorbNotesTooLong(next: PendingMutation, priors: PendingMutation[]): P
 
 function withRebasedNotes(m: PendingMutation, rebased?: PendingMutation): PendingMutation {
   if (!rebased) return m;
-  return {
+  const next: PendingMutation = {
     ...m,
     notes: rebased.notes,
     baseNotes: rebased.baseNotes,
     direct: rebased.direct ?? m.direct,
   };
+  // NOTES-MERGE-SPEC V4: a clear that a 409 turned into plain notes stays plain notes.
+  if (rebased.clearNotes) next.clearNotes = true;
+  else delete next.clearNotes;
+  if (rebased.notesIntent) next.notesIntent = rebased.notesIntent;
+  return next;
+}
+
+/** A transient failure after a V4 clear conversion keeps the converted draft, so the clear is not re-sent. */
+function keepClearConversion(m: PendingMutation, rebased?: PendingMutation): PendingMutation {
+  if (!rebased || !m.clearNotes || rebased.clearNotes) return m;
+  return withRebasedNotes(m, rebased);
 }
 
 function eventFor(m: PendingMutation, state: PendingMutation["syncState"] | "accepted") {
@@ -159,6 +176,10 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       const state = effectiveSyncState(m);
       if (m.direct?.gps || state === "gps" || state === "parked") continue;
       if (notesTooLongRow(m) && (m.nextAttemptAt ?? 0) > now()) continue;
+      if (deps.heldNotesPending?.has(m.id)) {
+        deferred.add(m.leadId);
+        continue;
+      }
       if (holding(m)) {
         deferred.add(m.leadId);
         continue;
@@ -205,7 +226,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           if (write) await write(parkedDraft);
           parked += 1;
           await recordSyncEvent(eventFor(parkedDraft, "parked"));
-          try { await (deps.report ?? reportParked)(current.userId); } catch { /* sync-report never stops a dispo */ }
+          reportInBackground(() => (deps.report ?? reportParked)(current.userId));
           continue;
         }
         await deps.insert(split.knock);
@@ -229,8 +250,12 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           syncState: mode,
           attempts,
           lastError: error.message,
+          // NOTES-MERGE-SPEC V4 answers: a pending clear is retried on the next flush, not after a backoff.
+          // One send round per flush (seen), so there is no tight loop.
           nextAttemptAt:
-            mode === "retry"
+            mode === "retry" && (error as { notesPending?: boolean }).notesPending
+              ? undefined
+              : mode === "retry"
               ? now() +
                 (Number.isFinite(retryAfterMs)
                   ? Math.min(15 * 60_000, Math.max(0, retryAfterMs as number))
@@ -247,7 +272,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           deferred.add(current.leadId);
         } else {
           parked += 1;
-          try { await (deps.report ?? reportParked)(current.userId); } catch { /* sync-report never stops a dispo */ }
+          reportInBackground(() => (deps.report ?? reportParked)(current.userId));
         }
       };
       const dropAbsorbed = async () => {
@@ -266,6 +291,13 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
         const error = caught as Error & { status?: number; code?: string; rebasedDraft?: PendingMutation; retryAfterMs?: number };
         if (error.status === 429) {
           await fail(current, error, "retry");
+          continue;
+        }
+        if ((error as { notesPending?: boolean }).notesPending) {
+          // NOTES-MERGE-SPEC V4 / v5 rulings 3 and 6: still 409 after the send cap. Pending as the intent merged
+          // against the last current (carrying the intent); no further send in this flush, the next flush sends it.
+          deps.heldNotesPending?.add(current.id);
+          await fail(withRebasedNotes(current, error.rebasedDraft), error, "retry");
           continue;
         }
         const outcome = classifySyncFailure(error);
@@ -310,7 +342,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           );
           continue;
         }
-        await fail(current, error, "retry");
+        await fail(keepClearConversion(current, error.rebasedDraft), error, "retry");
       }
     }
     if (!progressed) break;

@@ -7,7 +7,7 @@ import { createLeadOnce } from './createLeadOnce';
 import { distanceBetween } from 'geofire-common';
 import { AREA_REASON_DIRECT_WRITE_SUPPORTED, isGpsUnverifiedReason, validGpsMeters } from './gpsPolicy';
 import { deliberateNotesClear, NOTES_MAX_CHARS, NOTES_TOO_LONG_MESSAGE, notesTextOf } from './notesLimits';
-import { planNotesWrite } from './notesRebase';
+import { clearAfterConflict, NOTES_CLEAR_KEPT_NOTICE, planNotesWrite, sameNotes } from './notesRebase';
 import { SYNC_REASON } from './syncReasons';
 import { gpsFlagOf, type GpsFlag } from '@/app/utils/gpsRule';
 
@@ -191,8 +191,15 @@ export async function commitDirectMutation(m: PendingMutation, user: User, io?: 
           const base = m.baseNotes || '';
           const rest = { ...patch };
           delete rest.notes;
-          if (currentNotes !== base && currentNotes !== '') {
-            throw Object.assign(Error('Notes were rejected.'), { status: 409, reasonCode: SYNC_REASON.notesRejected });
+          if (currentNotes !== base && currentNotes.trim() !== '') {
+            // NOTES-MERGE-SPEC V4: the notes moved under this clear. Keep the lines the server added.
+            const kept = clearAfterConflict(m, currentNotes);
+            if (kept) {
+              const lead = mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...rest, notes: kept }) });
+              const write = { ...rest, ...(sameNotes(kept, currentNotes) ? {} : { notes: kept }) };
+              if (Object.keys(write).length) tx.update(ref, firestoreValue(write) as Record<string, unknown>);
+              return { replayed: !Object.keys(write).length, lead, notice: NOTES_CLEAR_KEPT_NOTICE };
+            }
           }
           const lead = mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...rest, notes: '' }) });
           if (currentNotes === '' && !Object.keys(rest).length) return { replayed: true, lead };
