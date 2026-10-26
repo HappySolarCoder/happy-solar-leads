@@ -185,7 +185,10 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
           const actor = latest.current.user;
           if (!actor || actor.id !== uid) throw Error('Sign in again to sync your work.');
           const result = DIRECT_MOBILE_WRITES
-            ? await deliverFieldDispo(m, actor, { getToken: async () => (await auth?.currentUser?.getIdToken()) || '' })
+            ? await deliverFieldDispo(m, actor, {
+              getToken: async () => (await auth?.currentUser?.getIdToken()) || '',
+              persistDraft: putDraft,
+            })
             : await fieldRequest('/api/field-work', m);
           if (DIRECT_MOBILE_WRITES && result.lead && active.current === uid) acknowledgeMobileLead(actor, result.lead);
           if (DIRECT_MOBILE_WRITES && m.kind === 'knock' && active.current === uid) {

@@ -3,7 +3,7 @@ import { apiFetch } from "@/app/utils/apiFetch";
 import { auth } from "@/app/utils/firebase";
 import { isScheduledGoBackStatus } from "@/app/types/disposition";
 import { coerceLegacyContactDraft, hasContactFields, notesWereEdited } from "./contactSave";
-import { commitDirectMutation, historyGpsFlag, reportingPatch } from "./directWrites";
+import { commitDirectMutation, historyGpsFlag, reportingPatch, type DirectCommitIo } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
 import { rebaseNotes } from "./notesRebase";
 import { deliberateNotesClear, NON_OWNER_DIRECT_NOTES_MAX_CHARS, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
@@ -403,6 +403,8 @@ export type FieldDispoDeps = {
     m: PendingMutation,
     user: User,
   ) => Promise<{ replayed: boolean; lead?: Lead }>;
+  /** Owned notes write-ahead. The route dedupes by draftId and does not use this. */
+  persistDraft?: (draft: PendingMutation) => Promise<unknown>;
 };
 
 async function readJson(response: Response): Promise<{
@@ -545,13 +547,14 @@ export async function postFieldDispo(
   if (response.status === 413) {
     const data = await readJson(response);
     const reason = typeof data?.reasonCode === "string" ? data.reasonCode : "";
-    if (reason === SYNC_REASON.payloadTooLarge)
-      fail(routeError("Disposition route rejected this knock.", 413, SYNC_REASON.payloadTooLarge));
-    fail(routeError(
-      draft.kind === "notes" ? "Notes too long" : "Disposition route rejected this knock.",
-      413,
-      draft.kind === "notes" ? SYNC_REASON.notesTooLong : SYNC_REASON.payloadTooLarge,
-    ));
+    if (draft.kind === "notes") {
+      fail(routeError(
+        "Notes too long",
+        413,
+        reason === SYNC_REASON.payloadTooLarge ? SYNC_REASON.payloadTooLarge : SYNC_REASON.notesTooLong,
+      ));
+    }
+    fail(routeError("Disposition route rejected this knock.", 413, SYNC_REASON.payloadTooLarge));
   }
   if (response.status === 400) {
     const data = await readJson(response);
@@ -677,7 +680,11 @@ export async function deliverFieldDispo(
   user: User,
   deps: FieldDispoDeps = {},
 ): Promise<{ replayed: boolean; lead?: Lead }> {
-  const commit = deps.commit ?? commitDirectMutation;
+  const commit = deps.commit ?? ((mutation: PendingMutation, actor: User) => commitDirectMutation(
+    mutation,
+    actor,
+    deps.persistDraft ? { persistDraft: deps.persistDraft } as DirectCommitIo : undefined,
+  ));
   const prepared = coerceLegacyContactDraft(m);
   const preparedNotes = prepared.kind === "notes" ? notesTextOf(prepared) : undefined;
   if (typeof preparedNotes === "string" && !preparedNotes.trim() && !deliberateNotesClear(prepared))

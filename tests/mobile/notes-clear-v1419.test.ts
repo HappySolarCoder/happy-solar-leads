@@ -9,7 +9,7 @@ import { commitDirectMutation, type DirectCommitIo } from "../../app/field/direc
 import { migrateDraft, resetParkedReopenForTests, reopenDeniedParked } from "../../app/field/draftMigration";
 import { classifySyncFailure } from "../../app/field/draftState";
 import { NOTES_BLANK_MESSAGE, NOTES_UNSAVED_MESSAGE, absorbNotesText, parkedNotesBanner, parkedNotesNotice, whitespaceNotesChange } from "../../app/field/notesLimits";
-import { coalesceNotesDrafts, orderQueuedNotes } from "../../app/field/notesCoalesce";
+import { orderQueuedNotes } from "../../app/field/notesCoalesce";
 import { rebaseNotes } from "../../app/field/notesRebase";
 import { deliverFieldDispo, fieldDispoBody, postFieldDispo } from "../../app/field/serverDispo";
 import { syncReportItem } from "../../app/field/syncDiagnostics";
@@ -356,6 +356,7 @@ test("a 413 with reasonCode payload_too_large is classified from the body", asyn
   assert.equal(rows[0].syncState, "queued");
   assert.equal(rows[0].parkedReason, SYNC_REASON.payloadTooLarge);
   assert.equal(rows[0].routeHold, "field-dispo");
+  assert.equal(rows[0].lastError, "Notes too long");
   assert.equal(rows[0].notes, "still here");
   assert.match(readFileSync(path.join(root, "app/field/notesLimits.ts"), "utf8"), /15efe05/);
   assert.match(readFileSync(path.join(root, "docs/mobile-next/RELEASE-V14.19.md"), "utf8"), /Requires #175 deployed/);
@@ -751,7 +752,7 @@ test("rebaseNotes and absorbNotesText keep every line except a deliberate delete
   }
 });
 
-test("queued notes drafts coalesce once and a knock stays a knock", async () => {
+test("queued notes drafts send one at a time and a knock stays a knock", async () => {
   const stamp = "2026-10-26T13:00:00.000Z";
   const note = (
     id: string,
@@ -783,17 +784,7 @@ test("queued notes drafts coalesce once and a knock stays a knock", async () => 
     note("n1", "S\nL1\nL2\nN1", "S\nL1\nL2", { queueSeq: 1 }),
     note("n2", "S\nL1\nL2\nN1\nN2", "S\nL1\nL2\nN1", { queueSeq: 2 }),
   ];
-  assert.equal(coalesceNotesDrafts(chain).draft.notes, "S\nL1\nL2\nN1\nN2");
-  assert.equal(coalesceNotesDrafts(chain).draft.baseNotes, "S");
-  const garbage = [
-    note("a-wide", "S\nL1\nL2", ""),
-    note("m-mid", "L1\nL2\nN1", ""),
-    note("n-s", "S", "", { queueSeq: 1 }),
-    note("n-d", "S\nL1\nL2\nN2", "S", { queueSeq: 2 }),
-  ];
-  const merged = coalesceNotesDrafts(garbage).draft;
-  assert.equal(merged.notes, "S\nL1\nL2\nN1\nN2");
-  assert.notEqual(merged.notes, "S\nL1\nL2\nL1\nL2\nN1\nS\nL1\nL2\nN2");
+  assert.deepEqual(orderQueuedNotes(chain).map((row) => row.id), ["z-l1", "a-l2", "n1", "n2"]);
   const history = [{ disposition: "Not Home", timestamp: new Date(stamp), userId: owner.id, userName: owner.name }];
   const knock: PendingMutation = {
     id: "k-knock",
@@ -809,9 +800,10 @@ test("queued notes drafts coalesce once and a knock stays a knock", async () => 
     attempts: 0,
     direct: { patch: { status: "not-home", dispositionHistory: history } },
   };
-  let rows = [...garbage, knock];
+  let rows = [...chain, knock];
   let record: Record<string, unknown> = { notes: "S" };
   const sent: PendingMutation[] = [];
+  const knocks: PendingMutation[] = [];
   let failSend = true;
   const io = {
     db: {},
@@ -833,11 +825,12 @@ test("queued notes drafts coalesce once and a knock stays a knock", async () => 
     send: async (row) => {
       if (failSend && row.kind === "notes") throw Error("offline");
       sent.push(row);
+      if (row.kind === "knock") knocks.push(row);
       return deliverFieldDispo(row, owner, {
         getToken: async () => "token",
         commit: async (mutation, user) => commitDirectMutation(mutation, user, io),
         post: async () => {
-          throw Error("coalesced notes must not use the route");
+          throw Error("owned notes must not use the route");
         },
       });
     },
@@ -855,8 +848,9 @@ test("queued notes drafts coalesce once and a knock stays a knock", async () => 
   await run();
   assert.equal(record.notes, "S");
   assert.equal(rows.filter((row) => row.kind === "notes").length, 4);
-  assert.equal(rows.some((row) => row.kind === "knock"), true);
-  assert.equal(rows.find((row) => row.kind === "knock")?.direct?.patch.dispositionHistory, history);
+  const knockLeft = rows.find((row) => row.kind === "knock");
+  if (knockLeft) assert.equal(knockLeft.direct?.patch.dispositionHistory, history);
+  else assert.equal(knocks.length, 1);
   failSend = false;
   clock += 20 * 60 * 1000;
   sent.length = 0;
@@ -867,11 +861,10 @@ test("queued notes drafts coalesce once and a knock stays a knock", async () => 
   }
   assert.equal(rows.length, 0);
   const notesSent = sent.filter((row) => row.kind === "notes");
-  const knocksSent = sent.filter((row) => row.kind === "knock");
-  assert.equal(notesSent.length, 1);
-  assert.equal(notesSent[0].notes, "S\nL1\nL2\nN1\nN2");
-  assert.equal(knocksSent.length, 1);
-  assert.equal(knocksSent[0].id, "k-knock");
-  assert.deepEqual(knocksSent[0].direct?.patch.dispositionHistory, history);
-  assert.equal(Object.prototype.hasOwnProperty.call(knocksSent[0].direct?.patch || {}, "notes"), false);
+  assert.equal(notesSent.length, 4);
+  assert.deepEqual(notesSent.map((row) => row.id), ["z-l1", "a-l2", "n1", "n2"]);
+  assert.equal(knocks.length, 1);
+  assert.equal(knocks[0].id, "k-knock");
+  assert.deepEqual(knocks[0].direct?.patch.dispositionHistory, history);
+  assert.equal(Object.prototype.hasOwnProperty.call(knocks[0].direct?.patch || {}, "notes"), false);
 });

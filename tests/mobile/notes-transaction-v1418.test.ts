@@ -114,16 +114,20 @@ test("two phones keep both notes on an owned lead and an admin lead", async () =
   }
 });
 
-test("a contested edit that extends the last line stays on that line", async () => {
-  const store = fakeLeadTransaction("lead-1", "Call after 5\nDog in yard", { claimedBy: owner.id });
-  const saved = await commitNotes(owner, store, "Call after 5 today", "Call after 5");
+test("a same-line addition stays on that line only when the server's last line is the base line", async () => {
+  const different = fakeLeadTransaction("lead-1", "Call after 5\nDog in yard", { claimedBy: owner.id });
+  const saved = await commitNotes(owner, different, "Call after 5 today", "Call after 5");
   assert.equal(saved.replayed, false);
-  assert.equal(store.notes(), "Call after 5\nDog in yard today");
-  assert.equal(String(store.notes()).endsWith("yard today"), true);
-  const replay = await commitNotes(owner, store, "Call after 5 today", "Call after 5");
+  assert.equal(different.notes(), "Call after 5\nDog in yard\nCall after 5 today");
+  const replay = await commitNotes(owner, different, "Call after 5 today", "Call after 5");
   assert.equal(replay.replayed, true);
-  assert.equal(store.notes(), "Call after 5\nDog in yard today");
-  assert.equal(store.updates.length, 1);
+  assert.equal(different.notes(), "Call after 5\nDog in yard\nCall after 5 today");
+  assert.equal(different.updates.length, 1);
+
+  const same = fakeLeadTransaction("lead-1", "Gate code 1234\nCall after 5", { claimedBy: owner.id });
+  const glued = await commitNotes(owner, same, "Call after 5 in yard", "Call after 5");
+  assert.equal(glued.replayed, false);
+  assert.equal(same.notes(), "Gate code 1234\nCall after 5 in yard");
 });
 
 test("owned, manager, and territory paths apply a deletion when the server text is unchanged", async () => {

@@ -1,3 +1,5 @@
+import { effectiveSyncState } from "./draftState";
+import { compareNotesSend } from "./notesCoalesce";
 import type { FieldMutation, PendingMutation } from "./types";
 
 /**
@@ -40,6 +42,36 @@ export function nextQueueSeq(existing: readonly { queueSeq?: number }[], userId 
   return seq;
 }
 
+function notesText(row: Pick<PendingMutation, "notes" | "direct">): string {
+  if (typeof row.notes === "string") return row.notes;
+  const patchNotes = row.direct?.patch?.notes;
+  return typeof patchNotes === "string" ? patchNotes : "";
+}
+
+/**
+ * Point a new notes draft at the unsent notes draft that will send immediately
+ * before it. After that draft applies, the server equals this base, so this
+ * draft hits current===base and wins exactly.
+ */
+export function chainNotesBase(existing: readonly PendingMutation[], next: PendingMutation): PendingMutation {
+  if (next.kind !== "notes") return next;
+  const prior = existing
+    .filter((row) =>
+      row.kind === "notes"
+      && row.leadId === next.leadId
+      && row.userId === next.userId
+      && row.id !== next.id
+      && !row.direct?.gps
+      && effectiveSyncState(row) !== "parked"
+      && effectiveSyncState(row) !== "gps"
+      && compareNotesSend(row, next) < 0
+    )
+    .sort(compareNotesSend)
+    .at(-1);
+  if (!prior) return next;
+  return { ...next, baseNotes: notesText(prior) };
+}
+
 /** A new dispo always joins the queue. Older drafts for the same lead stay. */
 export function acceptDisposition(
   existing: PendingMutation[],
@@ -54,10 +86,13 @@ export function acceptDisposition(
     );
   }
   const pending = next as PendingMutation;
-  return {
+  const alreadyQueued = typeof pending.queueSeq === "number" && Number.isFinite(pending.queueSeq);
+  const queued: PendingMutation = {
     ...pending,
-    queueSeq: typeof pending.queueSeq === "number" ? pending.queueSeq : nextQueueSeq(existing, pending.userId),
+    queueSeq: alreadyQueued ? pending.queueSeq : nextQueueSeq(existing, pending.userId),
     syncState: pending.syncState ?? (pending.direct?.gps ? "gps" : "queued"),
     attempts: pending.attempts ?? 0,
   };
+  if (alreadyQueued) return queued;
+  return chainNotesBase(existing, queued);
 }

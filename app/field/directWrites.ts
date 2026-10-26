@@ -7,7 +7,7 @@ import { createLeadOnce } from './createLeadOnce';
 import { distanceBetween } from 'geofire-common';
 import { AREA_REASON_DIRECT_WRITE_SUPPORTED, isGpsUnverifiedReason, validGpsMeters } from './gpsPolicy';
 import { deliberateNotesClear, notesTextOf } from './notesLimits';
-import { notesTransactionPatch } from './notesRebase';
+import { planNotesWrite } from './notesRebase';
 import { SYNC_REASON } from './syncReasons';
 import { gpsFlagOf, type GpsFlag } from '@/app/utils/gpsRule';
 
@@ -127,7 +127,19 @@ export type DirectCommitIo = {
   auth: NonNullable<typeof auth>;
   doc: typeof doc;
   runTransaction: typeof runTransaction;
+  /** IndexedDB write-ahead for an owned notes commit. Runs before the lead update. */
+  persistDraft?: (draft: PendingMutation) => Promise<unknown>;
 };
+
+async function rememberNotesPlan(draft: PendingMutation, io?: DirectCommitIo): Promise<void> {
+  if (io?.persistDraft) {
+    await io.persistDraft(draft);
+    return;
+  }
+  if (typeof indexedDB === "undefined") return;
+  const { putDraft } = await import("./deviceStore");
+  await putDraft(draft);
+}
 
 export async function commitDirectMutation(m: PendingMutation, user: User, io?: DirectCommitIo) {
   const database = io?.db ?? db;
@@ -188,11 +200,25 @@ export async function commitDirectMutation(m: PendingMutation, user: User, io?: 
           tx.update(ref, firestoreValue(write) as Record<string, unknown>);
           return { replayed: false, lead };
         }
-        const applied = notesTransactionPatch(current.notes, m.baseNotes, edited);
+        const applied = planNotesWrite({
+          currentNotes: current.notes,
+          baseNotes: m.baseNotes,
+          edited,
+          appliedNotes: m.appliedNotes,
+          appliedAgainst: m.appliedAgainst,
+        });
         const rest = { ...patch };
         delete rest.notes;
         const lead = mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...rest, notes: applied.notes }) });
-        if (applied.replayed && !Object.keys(rest).length) return { replayed: true, lead };
+        if ((applied.alreadyApplied || applied.replayed) && !Object.keys(rest).length) return { replayed: true, lead };
+        const recorded: PendingMutation = {
+          ...m,
+          appliedNotes: applied.appliedNotes,
+          appliedAgainst: applied.appliedAgainst,
+        };
+        m.appliedNotes = applied.appliedNotes;
+        m.appliedAgainst = applied.appliedAgainst;
+        await rememberNotesPlan(recorded, io);
         const write = { ...rest, ...(applied.replayed ? {} : { notes: applied.notes }) };
         tx.update(ref, firestoreValue(write) as Record<string, unknown>);
         return { replayed: false, lead };

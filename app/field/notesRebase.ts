@@ -3,13 +3,19 @@
  * Server text still equals baseNotes: the edit wins exactly, including a
  * deletion or a full rewrite.
  * The edit starts with that base and the server moved: append only the
- * addition. An addition that continues the last line is appended directly.
- * An addition that starts a new line keeps its newline. Skip the append only
- * when the server text already ends with that exact addition on a line
- * boundary. A same-line extension is skipped only when the server text
- * already ends with the exact addition.
+ * addition. A same-line addition is written onto the server's last line only
+ * when that line is still the base's last line. If the server's last line is
+ * a different line, the edited line is kept on its own line instead of being
+ * glued on. An addition that starts a new line keeps its newline. Skip the
+ * append only when the server text already ends with that exact addition on a
+ * line boundary.
  * Anything else keeps both texts. An empty edit does not wipe a server change.
  */
+export function lastLine(text: string): string {
+  const index = text.lastIndexOf("\n");
+  return index === -1 ? text : text.slice(index + 1);
+}
+
 export function endsWithAdditionOnLine(current: string, addition: string): boolean {
   if (!addition || !current.endsWith(addition)) return false;
   if (addition.startsWith("\n")) return true;
@@ -42,8 +48,13 @@ export function rebaseNotes(baseNotes: string, edited: string, currentNotes: str
       if (endsWithAdditionOnLine(current, separated)) return { notes: current, baseNotes: current };
       return { notes: `${current}${separated}`, baseNotes: current };
     }
-    if (current.endsWith(addition)) return { notes: current, baseNotes: current };
-    return { notes: `${current}${addition}`, baseNotes: current };
+    if (lastLine(current) === lastLine(base)) {
+      if (current.endsWith(addition)) return { notes: current, baseNotes: current };
+      return { notes: `${current}${addition}`, baseNotes: current };
+    }
+    const editedLine = lastLine(edit);
+    if (endsWithAdditionOnLine(current, editedLine)) return { notes: current, baseNotes: current };
+    return { notes: current ? `${current}\n${editedLine}` : edit, baseNotes: current };
   }
   if (!edit) return { notes: current, baseNotes: current };
   if (endsWithAdditionOnLine(current, edit)) return { notes: current, baseNotes: current };
@@ -65,4 +76,54 @@ export function notesTransactionPatch(
   if (current === base) return { notes: edited, replayed: edited === current };
   const applied = rebaseNotes(base, edited, current);
   return { notes: applied.notes, replayed: applied.notes === current };
+}
+
+/**
+ * The notes text a direct write is about to store, and the server text it was
+ * computed against. A later replay of the same draft uses this record instead
+ * of running the current===base shortcut on the original edit.
+ * Server notes that still equal appliedNotes are already stored.
+ * Server notes that moved are rebased from this record's lineage.
+ */
+export function planNotesWrite(input: {
+  currentNotes?: string;
+  baseNotes?: string;
+  edited: string;
+  appliedNotes?: string;
+  appliedAgainst?: string;
+}): {
+  notes: string;
+  appliedNotes: string;
+  appliedAgainst: string;
+  alreadyApplied: boolean;
+  replayed: boolean;
+} {
+  const current = input.currentNotes || "";
+  if (typeof input.appliedNotes === "string") {
+    if (current === input.appliedNotes) {
+      return {
+        notes: current,
+        appliedNotes: input.appliedNotes,
+        appliedAgainst: input.appliedAgainst || "",
+        alreadyApplied: true,
+        replayed: true,
+      };
+    }
+    const next = rebaseNotes(input.appliedAgainst || "", input.appliedNotes, current);
+    return {
+      notes: next.notes,
+      appliedNotes: next.notes,
+      appliedAgainst: current,
+      alreadyApplied: false,
+      replayed: next.notes === current,
+    };
+  }
+  const first = notesTransactionPatch(current, input.baseNotes, input.edited);
+  return {
+    notes: first.notes,
+    appliedNotes: first.notes,
+    appliedAgainst: current,
+    alreadyApplied: false,
+    replayed: first.replayed,
+  };
 }
