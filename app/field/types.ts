@@ -142,7 +142,8 @@ export type FieldMutation = {
   leadId: string;
   createdAt: string;
   kind: "knock" | "notes" | "handoff";
-  baseStatus: string;
+  /** Missing on older queued knocks. Those save; newest status wins. */
+  baseStatus?: string;
   baseNotes?: string;
   status?: string;
   disposition?: string;

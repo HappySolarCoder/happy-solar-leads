@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, type QuerySnapshot } from "firebase-admin/firestore";
 import type { adminAuth, adminDb } from "../firebase-admin";
 import { DEFAULT_DISPOSITIONS } from "@/app/types/disposition";
 import { cleanConfig } from "@/app/field/config";
@@ -55,6 +55,21 @@ export function fieldAuth(deps: { adminAuth: typeof adminAuth }) {
 const cleanText = (x: unknown, max: number) =>
   typeof x === "string" ? x.slice(0, max) : "";
 const TERRITORY_PAGE = 200;
+/** Existing cap for knock and handoff. Notes use NOTES_BODY_MAX. */
+const OTHER_BODY_MAX = 30_000;
+const NOTES_BODY_MAX = 256 * 1024;
+const NOTES_TEXT_MAX = 100_000;
+
+function ownsLead(lead: Record<string, unknown>, uid: string): boolean {
+  if (lead.claimedBy === uid) return true;
+  if (lead.assignedTo === uid) return true;
+  return lead.setterId === uid && lead.source === "manually-added";
+}
+
+/** Same id predicate as the dispo route's direct territories/{id} read. */
+function validTerritoryId(id: string): boolean {
+  return id.length > 0 && id.length <= 1500 && !id.includes("/") && id !== "." && id !== "..";
+}
 
 function polygonOf(value: unknown): Array<{ lat: number; lng: number }> | null {
   if (!Array.isArray(value) || value.length < 3) return null;
@@ -111,13 +126,23 @@ export function createFieldHandlers(deps: {
     try {
       const uid = await actor(req),
         raw = await req.text();
-      if (raw.length > 30000) fieldFail("This field update is too large.", 413);
+      if (raw.length > NOTES_BODY_MAX) fieldFail("This field update is too large.", 413);
       let m: FieldMutation;
       try {
         m = JSON.parse(raw);
       } catch {
+        if (raw.length > OTHER_BODY_MAX) fieldFail("This field update is too large.", 413);
         return fieldFail("Invalid field update.");
       }
+      if ((!m || m.kind !== "notes") && raw.length > OTHER_BODY_MAX)
+        fieldFail("This field update is too large.", 413);
+      if (
+        m &&
+        m.kind === "notes" &&
+        ((typeof m.notes === "string" && m.notes.length > NOTES_TEXT_MAX) ||
+          (typeof m.baseNotes === "string" && m.baseNotes.length > NOTES_TEXT_MAX))
+      )
+        return fieldJson({ reason: "payload_too_large" }, 413);
       if (
         !m ||
         !fieldId(m.id) ||
@@ -148,17 +173,26 @@ export function createFieldHandlers(deps: {
         if (!activeFieldUser(u)) fieldFail("This account is not active.", 403);
         if (!l || l.historicalTerritoryPin)
           fieldFail("This door is no longer available.", 404);
-        const owner = l.claimedBy || l.assignedTo || l.setterId;
-        let allowed = u!.role === "admin" || owner === uid;
-        if (!allowed && u!.role === "manager" && fieldId(owner)) {
-          const ownerSnap = await tx.get(db.collection("users").doc(owner));
-          allowed = !!u!.team && ownerSnap.data()?.team === u!.team;
+        const role = String(u!.role || "");
+        let allowed = role === "admin" || role === "manager" || ownsLead(l, uid);
+        if (!allowed && typeof l.territoryId === "string" && validTerritoryId(l.territoryId)) {
+          const territorySnap = await tx.get(db.collection("territories").doc(l.territoryId));
+          const territory = territorySnap.data() || {};
+          allowed = territorySnap.exists === true && territory.userId === uid;
         }
         if (!allowed)
           fieldFail(
             "This door is no longer assigned to you or your team. The draft is retained for review.",
             403,
           );
+        let areaPage: QuerySnapshot | null = null;
+        const loadAreaPage = async () => {
+          if (areaPage) return areaPage;
+          areaPage = await tx.get(
+            db.collection("territories").where("userId", "==", uid).limit(TERRITORY_PAGE),
+          );
+          return areaPage;
+        };
         const cfg = cleanConfig(configSnap.data()),
           pilot = pilotFlags(cfg, uid);
         if (!pilot.flags.capture)
@@ -190,11 +224,7 @@ export function createFieldHandlers(deps: {
           ],
         };
         if (m.kind === "notes") {
-          if (
-            typeof m.notes !== "string" ||
-            m.notes.length > 10000 ||
-            typeof m.baseNotes !== "string"
-          )
+          if (typeof m.notes !== "string" || typeof m.baseNotes !== "string")
             fieldFail("Notes must be under 10,000 characters.");
           if ((l.notes || "") !== m.baseNotes)
             fieldFail(
@@ -241,7 +271,7 @@ export function createFieldHandlers(deps: {
             ["claimed", "unclaimed"].includes(m.status)
           )
             fieldFail("Use the existing assignment tool to change ownership.");
-          if (l.status !== m.baseStatus)
+          if (m.baseStatus != null && l.status !== m.baseStatus)
             fieldFail(
               "This pin changed while you were offline. Review the current outcome before saving.",
               409,
@@ -293,13 +323,10 @@ export function createFieldHandlers(deps: {
             f.previewShown = true;
           if (pilot.flags.proof && rawObservation.proofShown === true)
             f.proofShown = true;
-          const role = String(u!.role || "");
           const fix = knockFix(rawObservation.gps);
           let polygons: AreaPolygons | undefined;
           if (fix !== "absent" && fix !== "malformed" && !isAreaExemptRole(role)) {
-            const territorySnap = await tx.get(
-              db.collection("territories").where("userId", "==", uid).limit(TERRITORY_PAGE),
-            );
+            const territorySnap = await loadAreaPage();
             if (territorySnap.size >= TERRITORY_PAGE) {
               console.log("[field-work] territories_truncated 1");
               polygons = "unknown";

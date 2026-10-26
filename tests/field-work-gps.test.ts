@@ -39,6 +39,8 @@ function square(lat: number, lng: number, delta = 0.05) {
 
 class FakeDb {
   readonly docs = new Map<string, Record<string, unknown>>();
+  readonly gets: string[] = [];
+  readonly queries: string[] = [];
 
   seed(path: string, data: Record<string, unknown>): void {
     this.docs.set(path, { ...data });
@@ -57,7 +59,11 @@ class FakeDb {
   }) => Promise<T>): Promise<T> {
     return fn({
       get: async (target) => {
-        if (target.kind === 'query') return this.querySnap(target);
+        if (target.kind === 'query') {
+          this.queries.push(`${target.collectionName}:${target.field}:${target.limitCount}`);
+          return this.querySnap(target);
+        }
+        this.gets.push(target.path || '');
         return this.docSnap(target.path || '');
       },
       update: (ref, patch) => {
@@ -240,5 +246,128 @@ describe('legacy field-work GPS', () => {
     assert.match(String(result.body.error), /changed while you were offline/);
     assert.equal(Object.hasOwn(result.lead, 'gpsVerified'), false);
     assert.equal(typeof FieldValue.delete, 'function');
+  });
+
+  it('saves a knock that has no baseStatus', async () => {
+    const db = new FakeDb();
+    seed(db, { lead: { status: 'not-interested' } });
+    const drafted = knock({ lat: LEAD_LAT, lng: LEAD_LNG, accuracy: 8, timestamp: NOW.toISOString() });
+    const { baseStatus, ...body } = drafted;
+    assert.equal(baseStatus, 'unclaimed');
+    assert.equal(Object.hasOwn(body, 'baseStatus'), false);
+    const result = await post(db, body);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.lead.status, 'not-home');
+    assert.equal(result.lead.gpsVerified, true);
+  });
+
+  it('does not treat setterId alone as ownership', async () => {
+    const db = new FakeDb();
+    seed(db, {
+      lead: { assignedTo: 'other', claimedBy: 'other', setterId: 'rep', source: 'canvass' },
+    });
+    const result = await post(db, knock(null));
+    assert.equal(result.status, 403, JSON.stringify(result.body));
+    assert.equal(result.lead.status, 'unclaimed');
+    assert.equal(db.queries.length, 0);
+    assert.equal(db.gets.some((path) => path.startsWith('territories/')), false);
+  });
+
+  it('allows a manually-added lead the rep created', async () => {
+    const db = new FakeDb();
+    seed(db, {
+      lead: { assignedTo: 'other', claimedBy: 'other', setterId: 'rep', source: 'manually-added' },
+    });
+    const result = await post(db, knock(null));
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.lead.status, 'not-home');
+    assert.equal(db.queries.length, 0);
+  });
+
+  it('reads lead.territoryId directly and queries the territory list once for the area flag', async () => {
+    const db = new FakeDb();
+    seed(db, {
+      lead: {
+        assignedTo: 'other',
+        claimedBy: 'other',
+        setterId: 'rep',
+        source: 'canvass',
+        territoryId: 'mine',
+      },
+      territories: [{ id: 'mine', data: { userId: 'rep', polygon: square(1, 1, 0.01) } }],
+    });
+    const result = await post(db, knock({ lat: LEAD_LAT, lng: LEAD_LNG, accuracy: 8, timestamp: NOW.toISOString() }));
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.lead.status, 'not-home');
+    assert.equal(result.lead.gpsUnverifiedReason, 'out_of_area');
+    assert.deepEqual(db.gets.filter((path) => path.startsWith('territories/')), ['territories/mine']);
+    assert.equal(db.queries.length, 1);
+
+    const inside = new FakeDb();
+    seed(inside, {
+      lead: { assignedTo: 'other', claimedBy: 'other', setterId: 'someone', source: 'canvass' },
+      territories: [{ id: 'mine', data: { userId: 'rep', polygon: square(LEAD_LAT, LEAD_LNG) } }],
+    });
+    const denied = await post(inside, knock({ lat: LEAD_LAT, lng: LEAD_LNG, accuracy: 8, timestamp: NOW.toISOString() }));
+    assert.equal(denied.status, 403, JSON.stringify(denied.body));
+    assert.equal(inside.queries.length, 0);
+    assert.equal(denied.lead.status, 'unclaimed');
+  });
+});
+
+function notesBody(notes: string, baseNotes = '') {
+  return {
+    id: `notes-${notes.length}-${baseNotes.length}`,
+    userId: 'rep',
+    leadId: 'door',
+    createdAt: NOW.toISOString(),
+    kind: 'notes',
+    notes,
+    baseNotes,
+  };
+}
+
+describe('legacy field-work notes size', () => {
+  it('saves notes of 20 KB and 90 KB', async () => {
+    for (const size of [20 * 1024, 90 * 1024]) {
+      const db = new FakeDb();
+      seed(db);
+      const notes = 'n'.repeat(size);
+      const result = await post(db, notesBody(notes));
+      assert.equal(result.status, 200, `${size} ${JSON.stringify(result.body)}`);
+      assert.equal(result.lead.notes, notes);
+    }
+  });
+
+  it('rejects notes or baseNotes longer than 100000 characters', async () => {
+    const db = new FakeDb();
+    seed(db, { lead: { notes: 'keep' } });
+    const notes = await post(db, notesBody('n'.repeat(100001)));
+    assert.equal(notes.status, 413, JSON.stringify(notes.body));
+    assert.equal(notes.body.reason, 'payload_too_large');
+    assert.equal(notes.lead.notes, 'keep');
+
+    const base = await post(db, notesBody('ok', 'b'.repeat(100001)));
+    assert.equal(base.status, 413, JSON.stringify(base.body));
+    assert.equal(base.body.reason, 'payload_too_large');
+    assert.equal(base.lead.notes, 'keep');
+  });
+
+  it('still rejects a non-notes body over 32 KB', async () => {
+    const db = new FakeDb();
+    seed(db);
+    const body = {
+      ...knock({ lat: LEAD_LAT, lng: LEAD_LNG, accuracy: 8, timestamp: NOW.toISOString() }),
+      observation: {
+        eventId: 'knock-1',
+        timeZone: 'America/Phoenix',
+        pad: 'x'.repeat(40 * 1024),
+      },
+    };
+    const result = await post(db, body);
+    assert.equal(result.status, 413, JSON.stringify(result.body));
+    assert.match(String(result.body.error), /too large/);
+    assert.equal(result.body.reason, undefined);
+    assert.equal(result.lead.status, 'unclaimed');
   });
 });
