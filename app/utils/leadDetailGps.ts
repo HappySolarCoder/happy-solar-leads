@@ -10,8 +10,8 @@ import {
 /**
  * Direct knock patch for LeadDetail. The radius is RADIUS_M and the reason
  * list is GPS_UNVERIFIED_REASONS, including out_of_area. decideKnockGps marks
- * a malformed fix no_fix. A usable fix with no lead coordinates stays other.
- * null means delete that gps* flag on a re-knock.
+ * a malformed fix no_fix. Clients send other only for a usable fix whose lead
+ * has no coordinates. null means delete that gps* flag on a re-knock.
  */
 export function leadDetailKnockGps(input: {
   latitude: number;

@@ -277,6 +277,17 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
     await bareLead('contactHugeBill');
     await bareLead('contactStringBill');
     await bareLead('contactDeletePhone', { phone: '7165550100' });
+    const clearable = { phone: '7165550100', email: 'home@example.com', estimatedBill: 150, notes: 'gate code 4' };
+    await bareLead('clearMgrEmail', clearable);
+    await bareLead('clearMgrBill', clearable);
+    await bareLead('clearMgrNotes', clearable);
+    await bareLead('clearSetPhone', { ...clearable, territoryId: 'realTerritory', claimedBy: 'manager' });
+    await bareLead('clearSetEmail', { ...clearable, territoryId: 'realTerritory', claimedBy: 'manager' });
+    await bareLead('clearSetBill', { ...clearable, territoryId: 'realTerritory', claimedBy: 'manager' });
+    await bareLead('clearSetNotes', { ...clearable, territoryId: 'realTerritory', claimedBy: 'manager' });
+    await bareLead('clearOutside', { ...clearable, claimedBy: 'manager' });
+    await bareLead('clearDemoOutside', { ...clearable, claimedBy: 'manager' });
+    await bareLead('clearDemoTerritory', { ...clearable, territoryId: 'demo-real-territory', claimedBy: 'manager' });
     await bareLead('contactEmailAndSetter');
     await bareLead('staffAssignLead', { name: 'Homeowner' });
     await db.collection('leads').doc('demoTestClaimLead').set({
@@ -517,7 +528,20 @@ function cases(): RuleCase[] {
     { id: 'manager negative estimatedBill on non-owned lead', uid: 'manager', run: (db) => lead('contactNegativeBill')(db).update({ estimatedBill: -1 }), expectTight: 'deny' },
     { id: 'manager huge estimatedBill on non-owned lead', uid: 'manager', run: (db) => lead('contactHugeBill')(db).update({ estimatedBill: 100001 }), expectTight: 'deny' },
     { id: 'manager string estimatedBill on non-owned lead', uid: 'manager', run: (db) => lead('contactStringBill')(db).update({ estimatedBill: '150' }), expectTight: 'deny' },
-    { id: 'manager deletes phone on non-owned lead', uid: 'manager', run: (db) => lead('contactDeletePhone')(db).update({ phone: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
+    { id: 'manager deletes phone on non-owned lead', uid: 'manager', run: (db) => lead('contactDeletePhone')(db).update({ phone: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
+    { id: 'manager deletes email on non-owned lead', uid: 'manager', run: (db) => lead('clearMgrEmail')(db).update({ email: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
+    { id: 'manager deletes estimatedBill on non-owned lead', uid: 'manager', run: (db) => lead('clearMgrBill')(db).update({ estimatedBill: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
+    { id: 'manager deletes notes on non-owned lead', uid: 'manager', run: (db) => lead('clearMgrNotes')(db).update({ notes: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
+    { id: 'setter deletes phone on territory pin', uid: 'realSetter', run: (db) => lead('clearSetPhone')(db).update({ phone: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
+    { id: 'setter deletes email on territory pin', uid: 'realSetter', run: (db) => lead('clearSetEmail')(db).update({ email: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
+    { id: 'setter deletes estimatedBill on territory pin', uid: 'realSetter', run: (db) => lead('clearSetBill')(db).update({ estimatedBill: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
+    { id: 'setter deletes notes on territory pin', uid: 'realSetter', run: (db) => lead('clearSetNotes')(db).update({ notes: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
+    { id: 'setter deletes phone outside territory', uid: 'realSetter', run: (db) => lead('clearOutside')(db).update({ phone: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
+    { id: 'setter deletes email outside territory', uid: 'realSetter', run: (db) => lead('clearOutside')(db).update({ email: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
+    { id: 'setter deletes estimatedBill outside territory', uid: 'realSetter', run: (db) => lead('clearOutside')(db).update({ estimatedBill: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
+    { id: 'setter deletes notes outside territory', uid: 'realSetter', run: (db) => lead('clearOutside')(db).update({ notes: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
+    { id: 'demo deletes phone outside territory', uid: 'demo', run: (db) => lead('clearDemoOutside')(db).update({ phone: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
+    { id: 'demo deletes phone on own territory pin', uid: 'demo', run: (db) => lead('clearDemoTerritory')(db).update({ phone: firebase.firestore.FieldValue.delete() }), expectTight: 'allow' },
     { id: 'manager adds email and setterId on non-owned lead', uid: 'manager', run: (db) => lead('contactEmailAndSetter')(db).update({ email: 'home@example.com', setterId: 'manager' }), expectTight: 'deny' },
     { id: 'manager staff assign setDoc on non-owned lead', uid: 'manager', run: (db) => lead('staffAssignLead')(db).set({ status: 'assigned', name: 'Homeowner', assignedTo: 'realSetter', assignedAt: new Date() }), expectTight: 'deny' },
     { id: 'setter knock deletes another claimedBy', uid: 'realSetter', run: (db) => lead('dispoClaimedPin')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },

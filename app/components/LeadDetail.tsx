@@ -211,7 +211,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     try {
       // GPS never blocks the disposition, and the rep is shown no GPS text.
       // RADIUS_M and GPS_UNVERIFIED_REASONS (including out_of_area) live in
-      // gpsRule.ts. A malformed fix is no_fix. This screen does not keep a second radius.
+      // gpsRule.ts. A malformed fix is no_fix. Clients send other only for a
+      // usable fix whose lead has no coordinates. This screen does not keep a second radius.
       const disposition = dispositions.find(d => d.id === newStatus);
       let gpsData: Record<string, unknown> = {};
       
@@ -330,8 +331,13 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
       const { updateLeadAsync } = await import('@/app/utils/storage');
       await updateLeadAsync(lead.id, { notes });
       if (onUpdate) onUpdate();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error saving notes:', error);
+      const code = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+      const message = error instanceof Error ? error.message : 'Notes were not updated.';
+      alert(`Notes failed to save.\n\n${code ? `${code}: ${message}` : message}`);
     } finally {
       setNotesSaving(false);
     }

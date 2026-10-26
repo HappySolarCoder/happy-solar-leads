@@ -120,7 +120,9 @@ export interface Lead {
   knockGpsAccuracy?: number;     // GPS accuracy in meters
   knockGpsTimestamp?: Date;      // Timestamp of GPS capture
   knockDistanceFromAddress?: number; // Distance from address in meters
-  /** Written by the dispo route and direct knocks. Reps do not see this. */
+  /** Written by the dispo route and direct knocks. Reps do not see this.
+   *  Clients send other only for a usable fix whose lead has no coordinates.
+   */
   gpsVerified?: boolean;
   gpsUnverifiedReason?: GpsUnverifiedReason;
   gpsDistanceM?: number;

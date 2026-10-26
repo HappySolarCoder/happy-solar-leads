@@ -989,6 +989,7 @@ function applyKnock(
     patch.disposition = draft.disposition;
     patch.dispositionedAt = input.deps.Timestamp.fromMillis(draft.actionAtMs);
     patch.gpsVerified = decision.gpsVerified;
+    // Clients send other only for a usable fix whose lead has no coordinates.
     patch.gpsUnverifiedReason = decision.gpsUnverifiedReason ?? clear();
     patch.gpsDistanceM = decision.gpsDistanceM ?? clear();
     if (decision.keepFix && draft.gps !== 'absent' && draft.gps !== 'malformed') {

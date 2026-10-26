@@ -98,7 +98,7 @@ app/
 
 ## GPS Proximity Enforcement
 
-Door-knock dispositions always save. GPS is optional: a missing fix or a distance past 50 meters is recorded (`gpsVerified`, `gpsUnverifiedReason`, `gpsDistanceM`) and does not block the disposition. Manual map pins still require the setter/manager to be within **~50 meters** of the address. Admins and closers are not gated on pin creation.
+Door-knock dispositions always save. GPS is optional: a missing fix or a distance past 50 meters is recorded (`gpsVerified`, `gpsUnverifiedReason`, `gpsDistanceM`) and does not block the disposition. Clients send `gpsUnverifiedReason` `other` only for a usable fix whose lead has no coordinates. A malformed fix is `no_fix`. Manual map pins still require the setter/manager to be within **~50 meters** of the address. Admins and closers are not gated on pin creation.
 
 A per-user override lives on the Firestore user doc:
 

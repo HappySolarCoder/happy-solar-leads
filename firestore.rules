@@ -123,9 +123,9 @@ service cloud.firestore {
       ]) && dispoExtrasValid();
     }
 
-    // notes: on a non-owned lead, notes may only be ADDED when the doc has no notes
-    // key, as a string of at most 10000 characters. It can never overwrite or delete
-    // existing notes. Owners use ownerLeadUpdate.
+    // notes: on a non-owned lead, this check allows notes only when the doc has
+    // no notes key, as a string of at most 10000 characters. Overwrite fails here.
+    // Deleting notes is contactClearsValid, not this function. Owners use ownerLeadUpdate.
     function dispoNotesValid() {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['notes'])
         || (request.resource.data.get('notes', null) is string
@@ -136,7 +136,8 @@ service cloud.firestore {
     // Contact fields the scheduling-manager editor saves. Add-only when the key is
     // absent (filling a missing field). Resubmitted equal values are not in
     // affectedKeys(), so 14.17 can send all nine fields and only the real change
-    // is checked. Overwrite and delete stay denied.
+    // is checked. Overwrite stays denied. Deletes of phone, email, estimatedBill,
+    // and notes are contactClearsValid.
     // Bounds: name <= 200, address <= 300, city <= 100, state <= 32, zip <= 16,
     // phone <= 40, email <= 254, estimatedBill number 0 through 100000.
     function contactFillsValid() {
@@ -304,11 +305,12 @@ service cloud.firestore {
     // lat -90..90, lng -180..180, accuracy and knockDistanceFromAddress 0..1e6.
     // gpsDistanceM, when present, is a number from 0 through 100000.
     // get(field, validDefault) treats a deleted flag as valid, so a re-knock
-    // can clear it. A present value still has to match. Null is allowed too.
-    // A deleted flag is missing, so get() returns the valid default and the
-    // clear is allowed. An owner can also write null, via ownerGpsOk.
+    // can clear it with deleteField(). A present value still has to match.
+    // Explicit null fails these checks for territory and staff writers.
+    // An owner can also write null, via ownerGpsOk.
     function gpsFlagsOk(k, d) {
       return (!k.hasAny(['gpsVerified']) || d.get('gpsVerified', true) is bool)
+        // Clients send other only for a usable fix whose lead has no coordinates.
         && (!k.hasAny(['gpsUnverifiedReason']) || d.get('gpsUnverifiedReason', 'no_fix') in [
           'no_fix', 'stale', 'low_accuracy', 'reduced_accuracy', 'too_far', 'out_of_area', 'other'
         ])
@@ -345,7 +347,6 @@ service cloud.firestore {
       let k = request.resource.data.diff(resource.data).affectedKeys();
       return (!k.hasAny(['notes'])
           || (d.get('notes', null) is string && d.notes.size() <= 10000 && !('notes' in resource.data)))
-        && (!k.hasAny(['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill']) || contactFillsValid())
         && dispoGpsValid(k, d)
         && (!k.hasAny(['objectionType', 'objectionNotes', 'objectionRecordedAt', 'objectionRecordedBy'])
           || (
@@ -497,12 +498,32 @@ service cloud.firestore {
     // Editor fills are their own allow, after dispositions. A knock that already
     // matched does not evaluate these checks. The 1000-expression limit is one
     // shared budget for every allow update in the request.
+    // Clears match live changedKeys(): a removal is not a changed key, so a
+    // manager (not a TEST account) or the territory owner, including the demo
+    // on a pin in their territory, can deleteField phone, email, estimatedBill,
+    // or notes on a lead they do not own. Any other key, including photos and
+    // name, still fails. Explicit null is not a removal.
+    function contactClearsValid(k, d) {
+      return k.hasAny(['phone', 'email', 'estimatedBill', 'notes'])
+        && k.hasOnly(['phone', 'email', 'estimatedBill', 'notes'])
+        && (!k.hasAny(['phone']) || !('phone' in d))
+        && (!k.hasAny(['email']) || !('email' in d))
+        && (!k.hasAny(['estimatedBill']) || !('estimatedBill' in d))
+        && (!k.hasAny(['notes']) || !('notes' in d));
+    }
+
     function contactFillUpdate() {
       let k = request.resource.data.diff(resource.data).affectedKeys();
-      return k.hasAny(['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill', 'notes'])
-        && k.hasOnly(['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill', 'notes'])
-        && contactFillsValid()
-        && dispoNotesValid()
+      let d = request.resource.data;
+      return (
+          (
+            k.hasAny(['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill', 'notes'])
+            && k.hasOnly(['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill', 'notes'])
+            && contactFillsValid()
+            && dispoNotesValid()
+          )
+          || contactClearsValid(k, d)
+        )
         && addsNoOwnership(['claimedBy', 'assignedTo', 'territoryId'])
         && photoAudience()
         && approvedActive();
@@ -679,7 +700,8 @@ service cloud.firestore {
       //   Real reps clear an egg they can see
       //   Approved owners (including the demo) = normal updates without ownership edits
       //   Staff or the territory owner = disposition/door-knock only
-      //   Contact fills = the editor's contact keys only, after a disposition misses
+      //   Contact fills, and deletes of phone, email, estimatedBill, or notes,
+      //   are the editor's keys only, after a disposition misses
       //   Real reps = first claim
       //   TEST accounts = claim or unclaim only their assigned testData lead
       //   in a TEST territory they own

@@ -74,6 +74,12 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
       await updateLeadAsync(lead.id, patch as Partial<Lead>);
       invalidateLeadsCache();
       onSave();
+    } catch (error: unknown) {
+      const code = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+      const message = error instanceof Error ? error.message : 'The lead was not updated.';
+      alert(`Could not save these changes.\n\n${code ? `${code}: ${message}` : message}`);
     } finally {
       setIsSaving(false);
     }

@@ -351,6 +351,7 @@ export function createFieldHandlers(deps: {
           const clear = () => FieldValue.delete();
           Object.assign(patch, {
             gpsVerified: decision.gpsVerified,
+            // Clients send other only for a usable fix whose lead has no coordinates.
             gpsUnverifiedReason: decision.gpsUnverifiedReason ?? clear(),
             gpsDistanceM: decision.gpsDistanceM ?? clear(),
           });
