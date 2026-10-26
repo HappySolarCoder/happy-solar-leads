@@ -66,8 +66,9 @@ export function classifySyncFailure(
     || code === "offline"
     || /offline|network|failed to fetch/i.test(message)
   ) return { kind: "transient" };
+  // Park. A 15-minute retry cannot shrink the body, and it must not hold the lead.
   if (reason === SYNC_REASON.notesTooLong)
-    return { kind: "slow", parkedReason: SYNC_REASON.notesTooLong };
+    return { kind: "denial", parkedReason: SYNC_REASON.notesTooLong };
   if (status === 413 || reason === SYNC_REASON.payloadTooLarge)
     return { kind: "slow", parkedReason: SYNC_REASON.payloadTooLarge };
   if (reason) return { kind: "denial", parkedReason: reason };

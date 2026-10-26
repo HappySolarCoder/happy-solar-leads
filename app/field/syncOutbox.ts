@@ -1,4 +1,5 @@
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
+import { absorbNotesText } from "./notesLimits";
 import { SERVER_DISPO_SLOW_RETRY_MS, splitCombinedDraft } from "./serverDispo";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
 import { SYNC_REASON } from "./syncReasons";
@@ -18,6 +19,47 @@ export type SyncOutboxDeps = {
   now?: () => number;
   random?: () => number;
 };
+
+function notesTooLongRow(m: PendingMutation): boolean {
+  return m.kind === "notes" && m.parkedReason === SYNC_REASON.notesTooLong;
+}
+
+/** A later notes draft replaces or rebases onto a notes_too_long row. One note is sent. */
+function absorbNotesTooLong(next: PendingMutation, priors: PendingMutation[]): PendingMutation {
+  let notes = next.notes || "";
+  let baseNotes = next.baseNotes || "";
+  for (const prior of priors) {
+    const absorbed = absorbNotesText(
+      { notes: prior.notes || "", baseNotes: prior.baseNotes || "" },
+      { notes, baseNotes },
+    );
+    notes = absorbed.notes;
+    baseNotes = absorbed.baseNotes;
+  }
+  const merged: PendingMutation = {
+    ...next,
+    notes,
+    baseNotes,
+    direct: next.direct ? { ...next.direct, patch: { ...next.direct.patch, notes } } : next.direct,
+  };
+  delete merged.parkedReason;
+  delete merged.nextAttemptAt;
+  delete merged.routeHold;
+  delete merged.lastError;
+  delete merged.blocked;
+  delete merged.error;
+  return merged;
+}
+
+function withRebasedNotes(m: PendingMutation, rebased?: PendingMutation): PendingMutation {
+  if (!rebased) return m;
+  return {
+    ...m,
+    notes: rebased.notes,
+    baseNotes: rebased.baseNotes,
+    direct: rebased.direct ?? m.direct,
+  };
+}
 
 function eventFor(m: PendingMutation, state: PendingMutation["syncState"] | "accepted") {
   return {
@@ -55,7 +97,11 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     const fresh = all.filter((m) => !seen.has(m.id));
     if (!fresh.length) break;
+    // notes_too_long is parked, or still waiting from today's slow retry. Either way
+    // it does not hold the lead: a knock is a different kind and syncs. A later notes
+    // draft absorbs it. Every other hold still defers that lead.
     const holding = (m: PendingMutation) => {
+      if (notesTooLongRow(m)) return false;
       const state = effectiveSyncState(m);
       const due = (m.nextAttemptAt ?? 0) > now();
       return due && (state === "retry" || (state === "queued" && m.routeHold === "field-dispo"));
@@ -68,12 +114,30 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       seen.add(m.id);
       const state = effectiveSyncState(m);
       if (m.direct?.gps || state === "gps" || state === "parked") continue;
+      if (notesTooLongRow(m) && (m.nextAttemptAt ?? 0) > now()) continue;
       if (holding(m)) {
         deferred.add(m.leadId);
         continue;
       }
       if (deferred.has(m.leadId)) continue;
       progressed = true;
+      let current = m;
+      if (m.kind === "notes") {
+        const priors = all.filter((row) =>
+          notesTooLongRow(row)
+          && row.leadId === m.leadId
+          && row.id !== m.id
+          && (row.createdAt < m.createdAt || (row.createdAt === m.createdAt && row.id < m.id))
+        );
+        if (priors.length) {
+          current = absorbNotesTooLong(m, priors);
+          if (write) await write(current);
+          for (const prior of priors) {
+            seen.add(prior.id);
+            await deps.remove(prior.id);
+          }
+        }
+      }
       const split = splitCombinedDraft(m, new Set(all.map((row) => row.id)));
       if (split) {
         if (split === "unsafe" || !deps.insert) {
@@ -132,19 +196,20 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
         }
       };
       try {
-        await deps.send(m);
-        await deps.remove(m.id);
+        await deps.send(current);
+        await deps.remove(current.id);
         accepted += 1;
-        await recordSyncEvent(eventFor(m, "accepted"));
+        await recordSyncEvent(eventFor(current, "accepted"));
       } catch (caught) {
-        const error = caught as Error & { status?: number; code?: string };
+        const error = caught as Error & { status?: number; code?: string; rebasedDraft?: PendingMutation };
         const outcome = classifySyncFailure(error);
+        const kept = outcome.kind === "denial" ? withRebasedNotes(current, error.rebasedDraft) : current;
         if (outcome.kind === "gps-pending") continue;
         if (outcome.kind === "slow") {
           const next: PendingMutation = {
-            ...m,
+            ...current,
             syncState: "queued",
-            attempts: (m.attempts ?? 0) + 1,
+            attempts: (current.attempts ?? 0) + 1,
             nextAttemptAt: now() + SERVER_DISPO_SLOW_RETRY_MS,
             routeHold: "field-dispo",
             lastError: error.message,
@@ -155,30 +220,30 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           else delete next.parkedReason;
           if (write) await write(next);
           retried += 1;
-          deferred.add(m.leadId);
+          deferred.add(current.leadId);
           await recordSyncEvent(eventFor(next, "queued"));
           continue;
         }
         if (outcome.kind === "conflict") {
           try {
-            await deps.send(m);
-            await deps.remove(m.id);
+            await deps.send(current);
+            await deps.remove(current.id);
             accepted += 1;
-            await recordSyncEvent(eventFor(m, "accepted"));
+            await recordSyncEvent(eventFor(current, "accepted"));
           } catch (again) {
-            await fail(m, again as Error, "retry");
+            await fail(current, again as Error, "retry");
           }
           continue;
         }
         if (outcome.kind === "denial") {
           await fail(
-            { ...m, parkedReason: outcome.parkedReason },
+            { ...kept, parkedReason: outcome.parkedReason },
             error,
             "parked",
           );
           continue;
         }
-        await fail(m, error, "retry");
+        await fail(current, error, "retry");
       }
     }
     if (!progressed) break;

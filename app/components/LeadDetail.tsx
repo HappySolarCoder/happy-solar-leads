@@ -8,7 +8,7 @@ import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap, knownPolygonsSync } from '
 import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
 import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
-import { NOTES_MAX_CHARS, NOTES_TOO_LONG_MESSAGE, saveNotesFromEditor } from '@/app/field/notesLimits';
+import { NOTES_TOO_LONG_MESSAGE, notesQueuedBody, saveNotesFromEditor } from '@/app/field/notesLimits';
 import { recordSyncEvent } from '@/app/field/syncDiagnostics';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
 import { beginWarmGps, bestFixInWindow } from '@/app/field/warmGps';
@@ -443,10 +443,18 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   };
 
   // Handle saving notes
+  const notesRoute = notesQueuedBody({
+    leadId: lead.id,
+    notes,
+    baseNotes: lead.notes || '',
+    parkedNotes: field?.drafts,
+  });
+  const notesTooLong = notesRoute.tooLong;
+
   const handleSaveNotes = async () => {
     if (summaryOnly) return;
     if (!currentUser) return;
-    if (notes.length > NOTES_MAX_CHARS) return;
+    if (notesTooLong) return;
     if (pausedWithDrafts) { setFieldMessage('Review pending drafts in Field tools before changing these notes.'); return; }
     
     setNotesSaving(true);
@@ -466,6 +474,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
         else await saveLeadAsync(updatedLead);
         if (!DIRECT_MOBILE_WRITES) setFieldMessage('Notes saved.');
         if (onUpdate) onUpdate();
+      }, {
+        leadId: lead.id,
+        baseNotes: lead.notes || '',
+        parkedNotes: field?.drafts,
       });
     } catch (error) {
       if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) return;
@@ -963,10 +975,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
               className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
               rows={3}
             />
-            {notes.length > NOTES_MAX_CHARS ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_TOO_LONG_MESSAGE}</p> : null}
+            {notesTooLong ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_TOO_LONG_MESSAGE}</p> : null}
             <button
               onClick={handleSaveNotes}
-              disabled={notesSaving || summaryOnly || notes.length > NOTES_MAX_CHARS}
+              disabled={notesSaving || summaryOnly || notesTooLong}
               className="mt-2 px-4 py-2 bg-[#FF5F5A] text-white rounded-lg text-sm font-semibold hover:bg-[#F27141] disabled:opacity-50"
             >
               {notesSaving ? 'Saving...' : 'Save Notes'}
@@ -1054,6 +1066,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           pendingFieldWork={!DIRECT_MOBILE_WRITES && hasPendingFieldWork}
           fieldContext={capture ? [visit.openerId ? `Opener: ${field.config.openers.find(o => o.id === visit.openerId)?.label || visit.openerId}` : "", visit.previewShown ? "Company-approved savings illustration shown; not a quote." : "", visit.proofShown ? "Approved local proof shown." : ""].filter(Boolean).join("\n") : undefined}
           onInfoSent={!DIRECT_MOBILE_WRITES && field?.flags.show ? async () => { try { await recordField("handoff", { handoff: "sent" }); } catch (e) { setFieldMessage(`Info sent; tracking needs attention: ${(e as Error).message}`); } } : undefined}
+          pendingDrafts={field?.drafts}
           lead={lead}
           onClose={() => setShowLeadEditor(false)}
           onSave={() => {

@@ -12,7 +12,7 @@ export const SYNC_REASON = {
   notFound: "not_found",
   staleTap: "stale_tap",
   notesConflict: "notes_conflict",
-  /** Queued slow retry. A notes route 413, a notes body over 256 KB, or a notes/baseNotes 400. */
+  /** Parked. A notes route 413, a notes body over 256 KB, or a notes/baseNotes 400. Not retried in a loop. */
   notesTooLong: "notes_too_long",
   /** Parked. An old draft carried both a knock and a note, and it could not be split. */
   combinedDraft: "combined_draft",

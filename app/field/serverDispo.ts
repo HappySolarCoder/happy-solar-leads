@@ -5,7 +5,7 @@ import { isScheduledGoBackStatus } from "@/app/types/disposition";
 import { commitDirectMutation, historyGpsFlag, reportingPatch } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
 import { rebaseNotes } from "./notesRebase";
-import { NON_OWNER_DIRECT_NOTES_MAX_CHARS, NOTES_ROUTE_BODY_MAX_BYTES, utf8Bytes } from "./notesLimits";
+import { NON_OWNER_DIRECT_NOTES_MAX_CHARS, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, utf8Bytes } from "./notesLimits";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
 import { FIELD_DISPO_UNAVAILABLE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
@@ -216,14 +216,13 @@ export function fieldDispoBody(
   if (!leadId || leadId.includes("/") || leadId.length > 1500) throw invalid("Lead id is not valid for the disposition route.");
   if (m.kind === "notes") {
     const notes = m.notes ?? (typeof sourcePatch.notes === "string" ? sourcePatch.notes : "");
-    return {
+    return notesRouteBody({
       leadId,
       draftId: m.id,
-      kind: "notes",
       actionAt,
       notes,
       baseNotes: typeof m.baseNotes === "string" ? m.baseNotes : null,
-    };
+    });
   }
   const source = sourcePatch as Record<string, unknown>;
   const status = (typeof source.status === "string" && source.status) || m.status || "";
@@ -482,6 +481,9 @@ export async function postFieldDispo(
       };
       rebasedDraft = draft;
       body = fieldDispoBody(draft, user);
+      if (notesRouteBodyTooLarge(body)) {
+        throw Object.assign(routeError("Notes too long", 413, SYNC_REASON.notesTooLong), { rebasedDraft: draft });
+      }
       response = await send(token);
       continue;
     }

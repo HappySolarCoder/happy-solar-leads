@@ -22,7 +22,11 @@ const GPS_HELD = new Set<string>([
 
 const reopenedSessions = new Set<string>();
 
-/** One pass per cold start. Parked denials, including a notes conflict, are tried again. */
+/**
+ * One pass per cold start. Parked denials are tried again.
+ * notes_too_long and combined_draft are included. They reopen at most once
+ * per app start. That is bounded, and fine.
+ */
 export function reopenDeniedParked(
   drafts: PendingMutation[],
   uid: string,
