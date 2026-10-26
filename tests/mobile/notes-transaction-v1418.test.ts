@@ -60,6 +60,7 @@ function notesDraft(actor: User, leadId: string, notes: string, baseNotes: strin
     baseStatus: "claimed",
     notes,
     baseNotes,
+    ...(notes === "" ? { clearNotes: true as const } : {}),
     direct: { patch: { notes } },
   };
 }

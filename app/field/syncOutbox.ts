@@ -41,9 +41,10 @@ function absorbNotesTooLong(next: PendingMutation, priors: PendingMutation[]): P
     ...next,
     notes,
     baseNotes,
-    ...(notes === "" ? { clearNotes: true } : {}),
     direct: next.direct ? { ...next.direct, patch: { ...next.direct.patch, notes } } : next.direct,
   };
+  if (notes === "" && next.clearNotes === true) merged.clearNotes = true;
+  else delete merged.clearNotes;
   delete merged.parkedReason;
   delete merged.nextAttemptAt;
   delete merged.routeHold;

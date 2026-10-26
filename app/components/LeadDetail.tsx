@@ -8,7 +8,7 @@ import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap, knownPolygonsSync } from '
 import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
 import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
-import { NOTES_TOO_LONG_MESSAGE, notesEditTooLong, notesQueuedBody, saveNotesFromEditor } from '@/app/field/notesLimits';
+import { NOTES_BLANK_MESSAGE, NOTES_TOO_LONG_MESSAGE, notesEditTooLong, notesQueuedBody, parkedNotesNotice, saveNotesFromEditor, whitespaceNotesChange } from '@/app/field/notesLimits';
 import { recordSyncEvent } from '@/app/field/syncDiagnostics';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
 import { beginWarmGps, bestFixInWindow } from '@/app/field/warmGps';
@@ -457,10 +457,16 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     parkedNotes: field?.drafts,
   });
 
+  const parkedNotesMessage = parkedNotesNotice(field?.drafts, lead.id);
+
   const handleSaveNotes = async () => {
     if (summaryOnly) return;
     if (!currentUser) return;
     if (notesTooLong) return;
+    if (whitespaceNotesChange(lead.notes || '', notes)) {
+      setFieldMessage(NOTES_BLANK_MESSAGE);
+      return;
+    }
     if (notes === (lead.notes || '') && notesRoute.tooLong) return;
     if (pausedWithDrafts) { setFieldMessage('Review pending drafts in Field tools before changing these notes.'); return; }
     
@@ -984,6 +990,8 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
               rows={3}
             />
             {notesTooLong ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_TOO_LONG_MESSAGE}</p> : null}
+            {fieldMessage === NOTES_BLANK_MESSAGE ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_BLANK_MESSAGE}</p> : null}
+            {parkedNotesMessage ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{parkedNotesMessage}</p> : null}
             <button
               onClick={handleSaveNotes}
               disabled={notesSaving || summaryOnly || notesTooLong}

@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildLeadSaveDrafts } from "../../app/field/contactSave";
+import { buildLeadSaveDrafts, coerceLegacyContactDraft } from "../../app/field/contactSave";
 import { commitDirectMutation, type DirectCommitIo } from "../../app/field/directWrites";
-import { resetParkedReopenForTests, reopenDeniedParked } from "../../app/field/draftMigration";
+import { migrateDraft, resetParkedReopenForTests, reopenDeniedParked } from "../../app/field/draftMigration";
 import { classifySyncFailure } from "../../app/field/draftState";
+import { NOTES_BLANK_MESSAGE, NOTES_UNSAVED_MESSAGE, parkedNotesBanner, parkedNotesNotice, whitespaceNotesChange } from "../../app/field/notesLimits";
+import { rebaseNotes } from "../../app/field/notesRebase";
 import { deliverFieldDispo, fieldDispoBody, postFieldDispo } from "../../app/field/serverDispo";
 import { syncReportItem } from "../../app/field/syncDiagnostics";
 import { SYNC_REASON } from "../../app/field/syncReasons";
@@ -350,4 +352,171 @@ test("a 413 with reasonCode payload_too_large is classified from the body", asyn
   assert.equal(rows[0].notes, "still here");
   assert.match(readFileSync(path.join(root, "app/field/notesLimits.ts"), "utf8"), /15efe05/);
   assert.match(readFileSync(path.join(root, "docs/mobile-next/RELEASE-V14.19.md"), "utf8"), /Requires #175 deployed/);
+});
+
+const gate = "Gate code…";
+
+function blankDraft(actor: User, notes = "", route = false): PendingMutation {
+  return {
+    id: "legacy-blank",
+    userId: actor.id,
+    userName: actor.name,
+    leadId: "lead-1",
+    createdAt: at,
+    kind: "notes",
+    baseStatus: "claimed",
+    baseNotes: gate,
+    notes,
+    syncState: "queued",
+    attempts: 0,
+    direct: { patch: { notes }, ...(route ? { serverDispo: true } : {}) },
+  };
+}
+
+test("legacy blank notes and reopened notes_too_long blanks park as notes_rejected", async () => {
+  const roles = [
+    { name: "owner", user: owner, route: false },
+    { name: "setter", user: { ...setter, id: "rep-setter" } as User, route: true },
+    { name: "manager", user: { id: "rep-manager", name: "Manager", role: "manager" } as User, route: true },
+  ];
+  for (const role of roles) {
+    for (const shape of ["legacy", "leftover"] as const) {
+      resetParkedReopenForTests();
+      const updates: Record<string, unknown>[] = [];
+      let record: Record<string, unknown> = { notes: gate };
+      const io = {
+        db: {},
+        auth: { currentUser: { uid: role.user.id } },
+        doc: () => ({ path: "leads/lead-1" }),
+        runTransaction: async (_database: unknown, fn: (tx: {
+          get: () => Promise<{ exists: () => boolean; data: () => Record<string, unknown> }>;
+          update: (_ref: unknown, data: Record<string, unknown>) => void;
+        }) => Promise<unknown>) => fn({
+          get: async () => ({ exists: () => true, data: () => ({ ...record }) }),
+          update: (_ref, data) => {
+            updates.push(data);
+            record = { ...record, ...data };
+          },
+        }),
+      } as unknown as DirectCommitIo;
+      const notes = shape === "legacy" && role.name === "manager" ? "   " : "";
+      let rows = [blankDraft(role.user, notes, role.route)];
+      if (shape === "leftover") {
+        rows = [{
+          ...rows[0],
+          notes: "",
+          syncState: "parked",
+          parkedReason: SYNC_REASON.notesTooLong,
+          direct: { patch: { notes: "" }, ...(role.route ? { serverDispo: true } : {}) },
+        }];
+        rows = reopenDeniedParked(rows, role.user.id);
+        assert.equal(rows[0].syncState, "queued", `${role.name} ${shape}`);
+        assert.notEqual(rows[0].clearNotes, true, `${role.name} ${shape} reopen`);
+      }
+      const migrated = migrateDraft(rows[0], role.user);
+      assert.notEqual(migrated.clearNotes, true, `${role.name} ${shape} migrate`);
+      assert.notEqual(coerceLegacyContactDraft(rows[0]).clearNotes, true, `${role.name} ${shape} coerce`);
+      assert.equal(coerceLegacyContactDraft(rows[0]).kind, "notes");
+      let posts = 0;
+      const run = () => syncOutbox({
+        read: async () => rows,
+        send: async (row) => deliverFieldDispo(row, role.user, {
+          getToken: async () => "token",
+          commit: async (mutation, user) => commitDirectMutation(mutation, user, io),
+          post: async () => {
+            posts += 1;
+            return json(200, { ok: true });
+          },
+        }),
+        remove: async () => {
+          throw Error("must not drop");
+        },
+        update: async (row) => {
+          rows = [row];
+        },
+        report: async () => {},
+        active: () => true,
+        now: () => Date.parse(at),
+        random: () => 0,
+      });
+      await run();
+      assert.equal(posts, 0, `${role.name} ${shape} posts`);
+      assert.equal(updates.length, 0, `${role.name} ${shape} writes`);
+      assert.equal(record.notes, gate, `${role.name} ${shape} notes`);
+      assert.equal(rows[0].syncState, "parked", `${role.name} ${shape}`);
+      assert.equal(rows[0].parkedReason, SYNC_REASON.notesRejected, `${role.name} ${shape}`);
+      assert.notEqual(rows[0].clearNotes, true, `${role.name} ${shape} flag`);
+      await run();
+      assert.equal(posts, 0, `${role.name} ${shape} second sync`);
+      assert.equal(updates.length, 0, `${role.name} ${shape} second writes`);
+    }
+  }
+  const carrier = coerceLegacyContactDraft({
+    ...blankDraft(owner),
+    direct: { patch: { phone: "556" } },
+  });
+  assert.equal(carrier.kind, "contact");
+  assert.equal(carrier.clearNotes, undefined);
+  assert.equal(carrier.notes, undefined);
+});
+
+test("rebaseNotes does not duplicate server text the local note already contains", () => {
+  assert.deepEqual(rebaseNotes("", "Gate code…\nCall after 5", "Gate code…"), {
+    notes: "Gate code…\nCall after 5",
+    baseNotes: "Gate code…",
+  });
+  const once = rebaseNotes("", "Gate code…\nCall after 5", "Gate code…").notes;
+  assert.equal(rebaseNotes("", "Gate code…\nCall after 5", once).notes, once);
+  assert.equal(
+    rebaseNotes("Gate code…", "Gate code…\nCall after 5", "Gate code…\nCall after 5").notes,
+    "Gate code…\nCall after 5",
+  );
+  assert.equal(rebaseNotes("", "Call after 5", "Dog in yard").notes, "Dog in yard\nCall after 5");
+});
+
+test("parked note reasons are visible and a whitespace save is not treated as saved", () => {
+  assert.equal(whitespaceNotesChange("Gate code…", "   "), true);
+  assert.equal(whitespaceNotesChange("Gate code…", ""), false);
+  assert.equal(whitespaceNotesChange("Gate code…", "Gate code…"), false);
+  const rejected = parkedNotesNotice([{
+    leadId: "lead-1",
+    kind: "notes",
+    notes: "",
+    syncState: "parked",
+    parkedReason: SYNC_REASON.notesRejected,
+  }], "lead-1");
+  assert.equal(rejected, NOTES_UNSAVED_MESSAGE);
+  assert.equal(parkedNotesNotice([{
+    leadId: "lead-1",
+    kind: "notes",
+    syncState: "parked",
+    parkedReason: SYNC_REASON.notesTooLong,
+  }], "lead-1"), "Notes too long");
+  assert.equal(parkedNotesBanner([{
+    leadId: "lead-2",
+    kind: "notes",
+    syncState: "parked",
+    parkedReason: SYNC_REASON.notesConflict,
+  }]), "Notes changed on another device.");
+  assert.equal(parkedNotesNotice([{
+    leadId: "lead-1",
+    kind: "notes",
+    syncState: "queued",
+    parkedReason: SYNC_REASON.notesRejected,
+  }], "lead-1"), null);
+  const detail = readFileSync(path.join(root, "app/components/LeadDetail.tsx"), "utf8");
+  const modal = readFileSync(path.join(root, "app/components/LeadEditorModal.tsx"), "utf8");
+  const workspace = readFileSync(path.join(root, "app/field/FieldWorkspace.tsx"), "utf8");
+  const tools = readFileSync(path.join(root, "app/mobile/field-tools/page.tsx"), "utf8");
+  assert.match(detail, /NOTES_BLANK_MESSAGE/);
+  assert.match(detail, /parkedNotesNotice/);
+  assert.match(detail, /whitespaceNotesChange/);
+  assert.match(modal, /NOTES_BLANK_MESSAGE/);
+  assert.match(modal, /setNotesNotice\(NOTES_BLANK_MESSAGE\)/);
+  assert.match(modal, /parkedNotesNotice/);
+  assert.doesNotMatch(modal, /if \(notesTooLong\) return/);
+  assert.match(workspace, /parkedNotesBanner/);
+  assert.match(workspace, /rf-notice/);
+  assert.match(tools, /drafts=\{field\.drafts\}/);
+  assert.equal(NOTES_BLANK_MESSAGE, "Notes weren't saved because they're blank.");
 });

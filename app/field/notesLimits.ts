@@ -3,8 +3,10 @@
  * Size limits follow PR #170 at 2063c6c8e46cb13721dd4aa7f0dfe65f456d8afb.
  * The notes contract follows main 15efe05 (PR #175). Requires #175 deployed.
  * A missing notes key means no notes change. clearNotes:true is sent only with
- * notes:"" and baseNotes, and only for a deliberate clear. The flag is never
- * stripped and a clear is never resent without it.
+ * notes:"" and baseNotes, and only when the draft already carries the flag.
+ * The flag is set when this build queues an explicit clear. It is never
+ * inferred from notes:"" plus a base, never stripped, and a clear is never
+ * resent without it.
  * kind:notes accepts notes and baseNotes up to NOTES_MAX_CHARS and a JSON body
  * up to NOTES_ROUTE_BODY_MAX_BYTES. A 413 body carries reasonCode
  * payload_too_large. The byte check is the body that is sent. Knock bodies
@@ -13,12 +15,15 @@
  * so a longer note on a lead this rep does not own uses the route.
  */
 import { rebaseNotes } from "./notesRebase";
+import { SYNC_REASON } from "./syncReasons";
 
 export const NOTES_MAX_CHARS = 100_000;
 export const NOTES_ROUTE_BODY_MAX_BYTES = 262_144;
 export const KNOCK_ROUTE_BODY_MAX_BYTES = 32_768;
 export const NON_OWNER_DIRECT_NOTES_MAX_CHARS = 10_000;
 export const NOTES_TOO_LONG_MESSAGE = "Notes too long";
+export const NOTES_BLANK_MESSAGE = "Notes weren't saved because they're blank.";
+export const NOTES_UNSAVED_MESSAGE = "These notes weren't saved.";
 
 /** Same length as crypto.randomUUID() and Date.toISOString(), both ASCII. */
 export const NOTES_DRAFT_ID_PLACEHOLDER = "00000000-0000-4000-8000-000000000000";
@@ -65,9 +70,9 @@ export function notesTextOf(m: {
 }
 
 /**
- * The rep emptied the notes they last saw. Whitespace is not a clear.
- * clearNotes on the draft is kept once set. A non-empty baseNotes is the
- * text they saw when the flag has not been stored yet.
+ * A clear is a draft that already carries clearNotes:true with notes:"".
+ * This build sets that flag only when the rep clears notes. It is never
+ * inferred from an empty note plus a base. Legacy and reopened blanks are not clears.
  */
 export function deliberateNotesClear(m: {
   notes?: string;
@@ -75,9 +80,7 @@ export function deliberateNotesClear(m: {
   clearNotes?: boolean;
   direct?: { patch?: { notes?: unknown } };
 }): boolean {
-  if (notesTextOf(m) !== "") return false;
-  if (m.clearNotes === true) return true;
-  return typeof m.baseNotes === "string" && m.baseNotes !== "";
+  return m.clearNotes === true && notesTextOf(m) === "";
 }
 
 export function notesRouteBodyBytes(input: {
@@ -88,9 +91,13 @@ export function notesRouteBodyBytes(input: {
   baseNotes: string | null;
   clearNotes?: boolean;
 }): number {
-  const clearNotes = input.clearNotes === true
-    || (input.notes === "" && (input.baseNotes ?? "") !== "");
+  const clearNotes = input.clearNotes === true && input.notes === "";
   return utf8Bytes(JSON.stringify(notesRouteBody({ ...input, clearNotes })));
+}
+
+/** Whitespace is not a clear and is not a saved note. Exact "" is a clear. */
+export function whitespaceNotesChange(current: string, next: string): boolean {
+  return next !== (current || "") && next !== "" && !String(next).trim();
 }
 
 export type NotesDraftText = { notes: string; baseNotes: string };
@@ -122,8 +129,37 @@ export type NotesLengthDraft = {
   notes?: string;
   baseNotes?: string;
   parkedReason?: string;
+  syncState?: string;
   createdAt?: string;
 };
+
+function parkedNoteCopy(reason: string | undefined): string {
+  if (reason === SYNC_REASON.notesTooLong) return NOTES_TOO_LONG_MESSAGE;
+  if (reason === SYNC_REASON.notesConflict) return "Notes changed on another device.";
+  if (reason === SYNC_REASON.combinedDraft) return "Save the knock and the note separately.";
+  return NOTES_UNSAVED_MESSAGE;
+}
+
+function parkedNoteMessages(drafts: NotesLengthDraft[] | undefined, leadId?: string): string | null {
+  const rows = (drafts || []).filter((item) =>
+    item.kind === "notes"
+    && item.syncState === "parked"
+    && !!item.parkedReason
+    && (leadId == null || item.leadId === leadId)
+  );
+  if (!rows.length) return null;
+  return [...new Set(rows.map((row) => parkedNoteCopy(row.parkedReason)))].join(" ");
+}
+
+/** Visible copy for a parked notes draft on this lead. Diagnostics is not the only place. */
+export function parkedNotesNotice(drafts: NotesLengthDraft[] | undefined, leadId: string): string | null {
+  return parkedNoteMessages(drafts, leadId);
+}
+
+/** One field-tools banner for every parked notes draft. */
+export function parkedNotesBanner(drafts: NotesLengthDraft[] | undefined): string | null {
+  return parkedNoteMessages(drafts);
+}
 
 /** The notes body enqueue would send, after absorbing a notes_too_long row on this lead. */
 export function notesQueuedBody(input: {
@@ -154,6 +190,7 @@ export function notesQueuedBody(input: {
     actionAt: input.actionAt ?? NOTES_ACTION_AT_PLACEHOLDER,
     notes,
     baseNotes,
+    clearNotes: notes === "" && input.notes === "",
   });
   const tooLong = notes.length > NOTES_MAX_CHARS
     || baseNotes.length > NOTES_MAX_CHARS

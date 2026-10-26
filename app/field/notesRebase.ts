@@ -11,9 +11,16 @@ export function rebaseNotes(baseNotes: string, edited: string, currentNotes: str
   const current = currentNotes || "";
   const edit = edited || "";
   if (current === base) return { notes: edit, baseNotes: current };
+  // The local note already begins with the server text. Keep the new tail once.
+  // An empty server note matches every string, so that case stays on the append path.
+  if (current && edit.startsWith(current)) {
+    const tail = edit.slice(current.length);
+    if (!tail || current.endsWith(tail) || current.includes(tail)) return { notes: current, baseNotes: current };
+    return { notes: `${current}${tail}`, baseNotes: current };
+  }
   if (edit.startsWith(base)) {
     const addition = edit.slice(base.length);
-    if (!addition || current.endsWith(addition)) return { notes: current, baseNotes: current };
+    if (!addition || current.endsWith(addition) || current.includes(addition)) return { notes: current, baseNotes: current };
     if (base) {
       const separated = addition.startsWith("\n") ? addition : `\n${addition}`;
       return { notes: `${current}${separated}`, baseNotes: current };

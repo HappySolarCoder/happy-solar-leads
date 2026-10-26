@@ -29,6 +29,7 @@ import {
 } from "./analysis";
 import { getAppointmentOutcome } from "@/app/utils/appointmentOutcome";
 import { DIRECT_MOBILE_WRITES } from './directWrites';
+import { parkedNotesBanner, type NotesLengthDraft } from './notesLimits';
 import PersonPicker from "@/app/mobile/_components/PersonPicker";
 import { MobileHeader, MobileNav } from "@/app/mobile/_components/MobileShell";
 const rate = (n: number, d: number) =>
@@ -43,6 +44,7 @@ type Props = {
   now: Date;
   offline: boolean;
   diagnostics: SyncEvent[];
+  drafts?: NotesLengthDraft[];
   error: string;
   prepared?: number;
   demo?: boolean;
@@ -190,6 +192,7 @@ export default function FieldWorkspace(p: Props) {
             "Not recorded",
         )
       : [];
+  const notesParked = parkedNotesBanner(p.drafts);
   return (
     <div className="rm-shell rf-workspace">
       <MobileHeader name={p.user.name} />
@@ -228,6 +231,11 @@ export default function FieldWorkspace(p: Props) {
         {p.offline && (
           <div className="rf-notice">
             Offline · prepared doors only. Satellite tiles need a connection.
+          </div>
+        )}
+        {notesParked && (
+          <div className="rf-notice" role="status">
+            {notesParked}
           </div>
         )}
         {(p.error || message) && (

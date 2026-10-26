@@ -224,8 +224,7 @@ export function fieldDispoBody(
     if (typeof notes !== "string") throw invalid("This save does not include a note.");
     const baseNotes = typeof m.baseNotes === "string" ? m.baseNotes : null;
     if (!notes.trim()) {
-      if (notes !== "") throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
-      if (!deliberateNotesClear(m)) throw invalid("This save does not include a note.");
+      if (!deliberateNotesClear(m)) throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
       return notesRouteBody({
         leadId,
         draftId: m.id,
@@ -462,9 +461,8 @@ export async function postFieldDispo(
     return current.getIdToken(forceRefresh);
   });
   const notesText = m.kind === "notes" ? notesTextOf(m) : undefined;
-  if (typeof notesText === "string" && notesText !== "" && !notesText.trim())
+  if (typeof notesText === "string" && !notesText.trim() && !deliberateNotesClear(m))
     throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
-  if (notesText === "" && !deliberateNotesClear(m)) return { replayed: true };
   let draft = m;
   let rebasedDraft: PendingMutation | undefined;
   let body = fieldDispoBody(draft, user);
@@ -679,10 +677,8 @@ export async function deliverFieldDispo(
   const commit = deps.commit ?? commitDirectMutation;
   const prepared = coerceLegacyContactDraft(m);
   const preparedNotes = prepared.kind === "notes" ? notesTextOf(prepared) : undefined;
-  if (typeof preparedNotes === "string" && preparedNotes !== "" && !preparedNotes.trim())
+  if (typeof preparedNotes === "string" && !preparedNotes.trim() && !deliberateNotesClear(prepared))
     throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
-  if (preparedNotes === "" && !deliberateNotesClear(prepared) && !hasContactFields(prepared))
-    return { replayed: true };
   if (prepared.kind === "handoff") return commit(prepared, user);
   if (writesContactDirect(prepared)) return commitContactWrite(prepared, user, commit);
   if (prepared.direct?.serverDispo) {

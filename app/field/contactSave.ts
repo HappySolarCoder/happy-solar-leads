@@ -61,6 +61,7 @@ export function asContactDraft(m: PendingMutation): PendingMutation {
 /**
  * Replay a 14.18 queue row `{kind:'notes', notes:'', patch:{non-notes}}` as the
  * contact patch only. A real notes edit, including a deliberate clear, stays notes.
+ * This does not set clearNotes. An unflagged blank note is not a clear.
  */
 export function coerceLegacyContactDraft(m: PendingMutation): PendingMutation {
   if (m.kind !== "notes") return m;
@@ -93,9 +94,10 @@ export function splitNotesAndContact(
     id: notesId,
     kind: "notes",
     notes,
-    ...(notes === "" || m.clearNotes === true ? { clearNotes: true } : {}),
     direct: { ...m.direct, patch: { notes } },
   };
+  if (notes === "" && m.clearNotes === true) noteDraft.clearNotes = true;
+  else delete noteDraft.clearNotes;
   delete noteDraft.status;
   delete noteDraft.disposition;
   return { contact, notes: noteDraft };

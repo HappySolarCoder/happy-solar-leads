@@ -168,9 +168,10 @@ export type FieldMutation = {
   baseStatus: string;
   baseNotes?: string;
   /**
-   * Device queue only. Set for a deliberate notes clear and sent as
-   * clearNotes:true with notes:"" and baseNotes. Never copied onto a
-   * Firestore patch. Never removed once set. Route reference: main 15efe05.
+   * Device queue only. Set when this build queues an explicit notes clear,
+   * and sent as clearNotes:true with notes:"" and baseNotes. Never inferred
+   * from notes:"" plus a base. Never copied onto a Firestore patch. Never
+   * removed once set. Route reference: main 15efe05.
    */
   clearNotes?: boolean;
   status?: string;

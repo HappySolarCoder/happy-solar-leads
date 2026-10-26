@@ -380,6 +380,7 @@ test("contact and photo saves keep their fields and never blank notes", async ()
         baseStatus: "claimed",
         baseNotes: "PARKED TEXT",
         notes: "",
+        clearNotes: true,
         syncState: "queued",
         direct: { patch: { notes: "" }, ...(row.path !== "direct" ? { serverDispo: true } : {}) },
       }];
@@ -416,7 +417,7 @@ test("contact and photo saves keep their fields and never blank notes", async ()
     if (deniesContact) assertDeniedContact(observed, row, leadNotes);
     if (row.expectRemaining === "empty" && !deniesContact && !(row.case === "notes + phone" && nonOwner))
       assert.equal(observed.remaining.length, 0, row.case);
-    if (row.expectRemaining === "parked-note" && !deniesContact) {
+    if (row.expectRemaining === "parked-note" && !deniesContact && row.case !== "parked + empty edit") {
       assert.equal(observed.remaining.length, 1, row.case);
       assert.equal(observed.remaining[0].notes, row.parkedText, row.case);
       assert.equal(observed.remaining[0].parkedReason, "notes_too_long");
@@ -477,6 +478,13 @@ test("contact and photo saves keep their fields and never blank notes", async ()
     if (row.case === "parked + empty edit") {
       assert.equal(observed.routes.length, 0);
       assert.equal(observed.updates.some((update) => Object.prototype.hasOwnProperty.call(update, "notes")), false);
+      assert.equal(observed.remaining.length, 2, row.case);
+      const keptNote = observed.remaining.find((item) => item.parkedReason === "notes_too_long");
+      const rejected = observed.remaining.find((item) => item.parkedReason === "notes_rejected");
+      assert.equal(keptNote?.notes, row.parkedText, row.case);
+      assert.equal(rejected?.notes, "");
+      assert.notEqual(rejected?.clearNotes, true);
+      assert.equal(observed.notes, leadNotes);
     }
     if (row.case === "parked + substring note") {
       const sent = observed.payloads.map((item) => item.notes).find((notes) => typeof notes === "string");

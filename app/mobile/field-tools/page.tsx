@@ -23,6 +23,7 @@ export default function FieldToolsPage() {
         now={now}
         offline={field.offline}
         diagnostics={field.diagnostics}
+        drafts={field.drafts}
         error={field.error}
         prepared={field.area?.at}
         onSelect={setSelected}
