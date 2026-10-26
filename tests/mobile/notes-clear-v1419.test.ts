@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLeadSaveDrafts, coerceLegacyContactDraft } from "../../app/field/contactSave";
+import { acceptDisposition, compareQueuedDrafts } from "../../app/field/draftQueue";
 import { commitDirectMutation, type DirectCommitIo } from "../../app/field/directWrites";
 import { migrateDraft, resetParkedReopenForTests, reopenDeniedParked } from "../../app/field/draftMigration";
 import { classifySyncFailure } from "../../app/field/draftState";
@@ -460,17 +461,31 @@ test("legacy blank notes and reopened notes_too_long blanks park as notes_reject
   assert.equal(carrier.notes, undefined);
 });
 
-test("rebaseNotes does not duplicate server text the local note already contains", () => {
+test("rebaseNotes keeps typed text and does not duplicate a clear-then-type", () => {
+  const server = "Gate code 1234\nDog in yard";
+  const dog = rebaseNotes("Older text", "Older text\nDog", server);
+  assert.equal(dog.notes, `${server}\nDog`);
+  assert.equal(rebaseNotes(dog.baseNotes, dog.notes, dog.notes).notes, dog.notes);
+  const call = rebaseNotes("Older text", "Older text\nCall", "Call after 5");
+  assert.equal(call.notes, "Call after 5\nCall");
+  assert.equal(rebaseNotes(call.baseNotes, call.notes, call.notes).notes, call.notes);
+  const middle = rebaseNotes("", "Dog", "prefix Dog suffix");
+  assert.equal(middle.notes, "prefix Dog suffix\nDog");
+  const line = "Gate code 1234";
+  const base = `${line}\nCall after 5`;
+  const once = rebaseNotes(base, "Call after 5", line);
+  assert.equal(once.notes, `${line}\nCall after 5`);
+  const twice = rebaseNotes(base, "Call after 5", once.notes);
+  assert.equal(twice.notes, once.notes);
+  assert.equal(rebaseNotes(once.baseNotes, once.notes, once.notes).notes, once.notes);
+  assert.equal(once.notes.includes(line), true);
+  assert.equal(once.notes.includes("Call after 5"), true);
   assert.deepEqual(rebaseNotes("", "Gate code…\nCall after 5", "Gate code…"), {
     notes: "Gate code…\nCall after 5",
     baseNotes: "Gate code…",
   });
-  const once = rebaseNotes("", "Gate code…\nCall after 5", "Gate code…").notes;
-  assert.equal(rebaseNotes("", "Gate code…\nCall after 5", once).notes, once);
-  assert.equal(
-    rebaseNotes("Gate code…", "Gate code…\nCall after 5", "Gate code…\nCall after 5").notes,
-    "Gate code…\nCall after 5",
-  );
+  const typed = rebaseNotes("", "Gate code…\nCall after 5", "Gate code…").notes;
+  assert.equal(rebaseNotes("", "Gate code…\nCall after 5", typed).notes, typed);
   assert.equal(rebaseNotes("", "Call after 5", "Dog in yard").notes, "Dog in yard\nCall after 5");
 });
 
@@ -485,19 +500,39 @@ test("parked note reasons are visible and a whitespace save is not treated as sa
     syncState: "parked",
     parkedReason: SYNC_REASON.notesRejected,
   }], "lead-1");
-  assert.equal(rejected, NOTES_UNSAVED_MESSAGE);
+  assert.equal(rejected, "These notes weren't saved. Blank notes aren't sent.");
+  assert.equal(parkedNotesNotice([{
+    leadId: "lead-1",
+    kind: "notes",
+    notes: "",
+    clearNotes: true,
+    syncState: "parked",
+    parkedReason: SYNC_REASON.notesRejected,
+  }], "lead-1"), "These notes weren't saved. The server rejected this clear.");
   assert.equal(parkedNotesNotice([{
     leadId: "lead-1",
     kind: "notes",
     syncState: "parked",
     parkedReason: SYNC_REASON.notesTooLong,
-  }], "lead-1"), "Notes too long");
+  }], "lead-1"), "These notes weren't saved. Too long.");
   assert.equal(parkedNotesBanner([{
     leadId: "lead-2",
     kind: "notes",
     syncState: "parked",
     parkedReason: SYNC_REASON.notesConflict,
   }]), "Notes changed on another device.");
+  assert.equal(parkedNotesNotice([{
+    leadId: "lead-1",
+    kind: "notes",
+    syncState: "retry",
+    lastError: "Notes changed on another device. Review this draft.",
+  }], "lead-1"), "Pending. Notes changed on another device.");
+  assert.equal(parkedNotesBanner([{
+    leadId: "lead-9",
+    kind: "notes",
+    syncState: "retry",
+    lastError: "Notes changed on another device. Review this draft.",
+  }]), "Pending. Notes changed on another device.");
   assert.equal(parkedNotesNotice([{
     leadId: "lead-1",
     kind: "notes",
@@ -508,6 +543,7 @@ test("parked note reasons are visible and a whitespace save is not treated as sa
   const modal = readFileSync(path.join(root, "app/components/LeadEditorModal.tsx"), "utf8");
   const workspace = readFileSync(path.join(root, "app/field/FieldWorkspace.tsx"), "utf8");
   const tools = readFileSync(path.join(root, "app/mobile/field-tools/page.tsx"), "utf8");
+  assert.match(detail, /fieldMessage !== NOTES_BLANK_MESSAGE/);
   assert.match(detail, /NOTES_BLANK_MESSAGE/);
   assert.match(detail, /parkedNotesNotice/);
   assert.match(detail, /whitespaceNotesChange/);
@@ -519,4 +555,103 @@ test("parked note reasons are visible and a whitespace save is not treated as sa
   assert.match(workspace, /rf-notice/);
   assert.match(tools, /drafts=\{field\.drafts\}/);
   assert.equal(NOTES_BLANK_MESSAGE, "Notes weren't saved because they're blank.");
+  assert.equal(NOTES_UNSAVED_MESSAGE, "These notes weren't saved.");
+});
+
+test("same-millisecond clear and type leave the queue in the order the rep acted", async () => {
+  const atSame = "2026-10-26T12:00:00.000Z";
+  assert.ok(compareQueuedDrafts(
+    { createdAt: "2026-10-26T12:00:00.001Z", id: "a" },
+    { createdAt: "2026-10-26T12:00:00.000Z", id: "z" },
+  ) > 0);
+  assert.ok(compareQueuedDrafts({ createdAt: atSame, id: "a" }, { createdAt: atSame, id: "z" }) < 0);
+  assert.ok(compareQueuedDrafts(
+    { createdAt: atSame, id: "a", queueSeq: 2 },
+    { createdAt: atSame, id: "z", queueSeq: 1 },
+  ) > 0);
+  const cases: {
+    name: string;
+    start: string;
+    first: { id: string; notes: string; baseNotes: string; clearNotes?: boolean };
+    second: { id: string; notes: string; baseNotes: string; clearNotes?: boolean };
+    expect: string;
+  }[] = [
+    {
+      name: "clear-then-type",
+      start: "Gate code",
+      first: { id: "z-clear", notes: "", baseNotes: "Gate code", clearNotes: true },
+      second: { id: "a-type", notes: "Call after 5", baseNotes: "" },
+      expect: "Call after 5",
+    },
+    {
+      name: "type-then-clear",
+      start: "Gate code",
+      first: { id: "z-type", notes: "Dog", baseNotes: "Gate code" },
+      second: { id: "a-clear", notes: "", baseNotes: "Dog", clearNotes: true },
+      expect: "",
+    },
+  ];
+  for (const item of cases) {
+    const draft = (part: (typeof cases)[number]["first"]): PendingMutation => ({
+      id: part.id,
+      userId: owner.id,
+      userName: owner.name,
+      leadId: "lead-1",
+      createdAt: atSame,
+      kind: "notes",
+      baseStatus: "claimed",
+      baseNotes: part.baseNotes,
+      notes: part.notes,
+      ...(part.clearNotes ? { clearNotes: true } : {}),
+      direct: { patch: { notes: part.notes } },
+    });
+    const first = acceptDisposition([], draft(item.first));
+    const second = acceptDisposition([first], draft(item.second));
+    assert.equal(first.queueSeq, 1, item.name);
+    assert.equal(second.queueSeq, 2, item.name);
+    assert.equal(acceptDisposition([first, second], first).queueSeq, 1, `${item.name} replay`);
+    assert.ok(second.id < first.id, item.name);
+    let rows = [second, first];
+    let record: Record<string, unknown> = { notes: item.start };
+    const io = {
+      db: {},
+      auth: { currentUser: { uid: owner.id } },
+      doc: () => ({ path: "leads/lead-1" }),
+      runTransaction: async (_database: unknown, fn: (tx: {
+        get: () => Promise<{ exists: () => boolean; data: () => Record<string, unknown> }>;
+        update: (_ref: unknown, data: Record<string, unknown>) => void;
+      }) => Promise<unknown>) => fn({
+        get: async () => ({ exists: () => true, data: () => ({ ...record }) }),
+        update: (_ref, data) => {
+          record = { ...record, ...data };
+        },
+      }),
+    } as unknown as DirectCommitIo;
+    await syncOutbox({
+      read: async () => rows,
+      send: async (row) => deliverFieldDispo(row, owner, {
+        getToken: async () => "token",
+        commit: async (mutation, user) => commitDirectMutation(mutation, user, io),
+        post: async () => {
+          throw Error("same-millisecond notes must not use the route");
+        },
+      }),
+      remove: async (id) => {
+        rows = rows.filter((row) => row.id !== id);
+      },
+      update: async (row) => {
+        rows = rows.map((current) => (current.id === row.id ? row : current));
+      },
+      report: async () => {},
+      active: () => true,
+      now: () => Date.parse(atSame),
+      random: () => 0,
+    });
+    assert.equal(record.notes ?? "", item.expect, item.name);
+    assert.equal(rows.length, 0, item.name);
+    assert.equal(rows.some((row) => row.syncState === "retry"), false, item.name);
+  }
+  const hook = readFileSync(path.join(root, "app/field/useFieldData.ts"), "utf8");
+  assert.match(hook, /readDrafts\(uid\)/);
+  assert.match(hook, /acceptDisposition\(drafts, m\)/);
 });

@@ -164,6 +164,12 @@ export type FieldMutation = {
   userId: string;
   leadId: string;
   createdAt: string;
+  /**
+   * Device queue only. Monotonic per account, assigned when the draft is queued.
+   * Same-millisecond saves sort by this, not by the random id. Absent on drafts
+   * queued before this build; those still sort by createdAt. Never sent.
+   */
+  queueSeq?: number;
   kind: "knock" | "notes" | "handoff" | "contact";
   baseStatus: string;
   baseNotes?: string;

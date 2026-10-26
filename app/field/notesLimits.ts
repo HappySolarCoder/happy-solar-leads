@@ -14,6 +14,7 @@
  * #171 rules still cap a non-owner direct notes write at NON_OWNER_DIRECT_NOTES_MAX_CHARS,
  * so a longer note on a lead this rep does not own uses the route.
  */
+import { compareQueuedDrafts } from "./draftQueue";
 import { rebaseNotes } from "./notesRebase";
 import { SYNC_REASON } from "./syncReasons";
 
@@ -119,6 +120,8 @@ export function absorbNotesText(parked: NotesDraftText, next: NotesDraftText): N
     return { notes: parkedText, baseNotes: parked.baseNotes || "" };
   }
   if (descended) return { notes: nextText, baseNotes: parked.baseNotes || "" };
+  // A short note that is already inside the parked text does not replace it and is not appended.
+  if (parkedText.includes(nextText)) return { notes: parkedText, baseNotes: parked.baseNotes || "" };
   return rebaseNotes(parked.baseNotes || "", nextText, parkedText);
 }
 
@@ -130,25 +133,38 @@ export type NotesLengthDraft = {
   baseNotes?: string;
   parkedReason?: string;
   syncState?: string;
+  lastError?: string;
+  clearNotes?: boolean;
+  queueSeq?: number;
   createdAt?: string;
 };
 
-function parkedNoteCopy(reason: string | undefined): string {
-  if (reason === SYNC_REASON.notesTooLong) return NOTES_TOO_LONG_MESSAGE;
-  if (reason === SYNC_REASON.notesConflict) return "Notes changed on another device.";
-  if (reason === SYNC_REASON.combinedDraft) return "Save the knock and the note separately.";
+function notesWaiting(row: NotesLengthDraft): boolean {
+  return row.syncState === "retry" && /notes changed on another device/i.test(row.lastError || "");
+}
+
+function parkedNoteCopy(row: NotesLengthDraft): string {
+  if (notesWaiting(row)) return "Pending. Notes changed on another device.";
+  if (row.parkedReason === SYNC_REASON.notesTooLong) return "These notes weren't saved. Too long.";
+  if (row.parkedReason === SYNC_REASON.notesConflict) return "Notes changed on another device.";
+  if (row.parkedReason === SYNC_REASON.combinedDraft) return "Save the knock and the note separately.";
+  if (row.parkedReason === SYNC_REASON.notesRejected) {
+    const notes = typeof row.notes === "string" ? row.notes : "";
+    if (row.clearNotes === true) return "These notes weren't saved. The server rejected this clear.";
+    if (!notes.trim()) return "These notes weren't saved. Blank notes aren't sent.";
+    return "These notes weren't saved. The server rejected this clear.";
+  }
   return NOTES_UNSAVED_MESSAGE;
 }
 
 function parkedNoteMessages(drafts: NotesLengthDraft[] | undefined, leadId?: string): string | null {
   const rows = (drafts || []).filter((item) =>
     item.kind === "notes"
-    && item.syncState === "parked"
-    && !!item.parkedReason
     && (leadId == null || item.leadId === leadId)
+    && ((item.syncState === "parked" && !!item.parkedReason) || notesWaiting(item))
   );
   if (!rows.length) return null;
-  return [...new Set(rows.map((row) => parkedNoteCopy(row.parkedReason)))].join(" ");
+  return [...new Set(rows.map((row) => parkedNoteCopy(row)))].join(" ");
 }
 
 /** Visible copy for a parked notes draft on this lead. Diagnostics is not the only place. */
@@ -173,7 +189,7 @@ export function notesQueuedBody(input: {
   const priors = (input.parkedNotes || [])
     .filter((row) => row.leadId === input.leadId && row.kind === "notes" && row.parkedReason === "notes_too_long")
     .slice()
-    .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || "") || (a.id || "").localeCompare(b.id || ""));
+    .sort(compareQueuedDrafts);
   let notes = input.notes;
   let baseNotes = input.baseNotes || "";
   for (const prior of priors) {

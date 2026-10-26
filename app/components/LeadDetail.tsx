@@ -740,7 +740,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             </div>
           </a>
 
-          {fieldMessage && <p className="rf-notice" role="status">
+          {fieldMessage && fieldMessage !== NOTES_BLANK_MESSAGE && <p className="rf-notice" role="status">
             <span>{fieldMessage}</span>
             {fieldMessage === AREA_BLOCK_MESSAGE && <button type="button" className="rf-plain" onClick={() => setFieldMessage('')}>Dismiss</button>}
           </p>}

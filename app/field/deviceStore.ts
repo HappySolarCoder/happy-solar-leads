@@ -1,6 +1,7 @@
 import type { Lead, User } from "@/app/types";
 import type { FieldConfig, PendingMutation } from "./types";
 import { mergeReportingPatch, reportingPatch } from './directWrites';
+import { compareQueuedDrafts } from './draftQueue';
 export type PreparedArea = {
   userId: string;
   at: number;
@@ -54,7 +55,7 @@ async function request<T>(
 export const readDrafts = async (uid: string) =>
   (await request<PendingMutation[]>("drafts", "readonly", (s) => s.getAll()))
     .filter((x) => x.userId === uid)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    .sort(compareQueuedDrafts);
 export const putDraft = (m: PendingMutation) =>
   request("drafts", "readwrite", (s) => s.put(m));
 /** GPS completion is a compare/update in one transaction: a discarded draft
@@ -107,7 +108,7 @@ export async function readTerritoryPolygons(userId: string): Promise<TerritoryPo
 }
 
 function byAction(a: PendingMutation, b: PendingMutation) {
-  return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+  return compareQueuedDrafts(a, b);
 }
 
 /** Provisional overlay only; no source objects or live history are changed.

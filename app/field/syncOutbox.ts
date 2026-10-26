@@ -1,4 +1,5 @@
 import { coerceLegacyContactDraft, hasContactFields, notesWereEdited, splitNotesAndContact } from "./contactSave";
+import { compareQueuedDrafts } from "./draftQueue";
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
 import { absorbNotesText } from "./notesLimits";
 import { SERVER_DISPO_SLOW_RETRY_MS, splitCombinedDraft } from "./serverDispo";
@@ -97,7 +98,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
   while (deps.active()) {
     const all = (await deps.read())
       .slice()
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+      .sort(compareQueuedDrafts);
     const fresh = all.filter((m) => !seen.has(m.id));
     if (!fresh.length) break;
     // notes_too_long is parked, or still waiting from today's slow retry. Either way
@@ -139,7 +140,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
         notesTooLongRow(row)
         && row.leadId === current.leadId
         && row.id !== current.id
-        && (row.createdAt < current.createdAt || (row.createdAt === current.createdAt && row.id < current.id))
+        && compareQueuedDrafts(row, current) < 0
       );
       const blank = typeof current.notes === "string" && !current.notes.trim();
       const exactClear = current.notes === "";
