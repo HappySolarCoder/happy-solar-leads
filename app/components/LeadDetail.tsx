@@ -312,12 +312,10 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     
     setNotesSaving(true);
     try {
-      const { saveLeadAsync } = await import('@/app/utils/storage');
-      const updatedLead: Lead = {
-        ...lead,
-        notes,
-      };
-      await saveLeadAsync(updatedLead);
+      // Partial update: only the changed key. A full-doc setDoc adds/removes
+      // unrelated keys and is denied by the dispo-only rules on non-owned leads.
+      const { updateLeadAsync } = await import('@/app/utils/storage');
+      await updateLeadAsync(lead.id, { notes });
       if (onUpdate) onUpdate();
     } catch (error) {
       console.error('Error saving notes:', error);
@@ -342,12 +340,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     const updatedPhotos = [...(lead.photos || []), newPhoto];
     setPhotos(updatedPhotos);
     
-    const { saveLeadAsync } = await import('@/app/utils/storage');
-    const updatedLead: Lead = {
-      ...lead,
-      photos: updatedPhotos,
-    };
-    await saveLeadAsync(updatedLead);
+    const { updateLeadAsync } = await import('@/app/utils/storage');
+    await updateLeadAsync(lead.id, { photos: updatedPhotos });
     if (onUpdate) onUpdate();
   };
 
@@ -357,8 +351,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     setIsUpdating(true);
     
     try {
-      // Update lead with objection data using async Firestore
-      const { saveLeadAsync } = await import('@/app/utils/storage');
+      // Partial update with only the disposition/objection keys (no full-doc setDoc).
+      const { updateLeadAsync } = await import('@/app/utils/storage');
       
       // Add to disposition history
       const historyEntry: LeadDispositionHistoryEntry = {
@@ -368,21 +362,17 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         userName: currentUser.name,
       };
       
-      const updatedLead: Lead = {
-        ...lead,
+      const at = historyEntry.timestamp;
+      // Never include ownership fields (claimedBy/assignedTo/territoryId) here.
+      await updateLeadAsync(lead.id, {
         status: 'not-interested',
         objectionType,
-        objectionNotes,
-        objectionRecordedAt: new Date(),
+        objectionNotes: objectionNotes || '',
+        objectionRecordedAt: at,
         objectionRecordedBy: currentUser.id,
-        // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
-        claimedBy: lead.claimedBy,
-        assignedTo: lead.assignedTo,
-        dispositionedAt: new Date(),
+        dispositionedAt: at,
         dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-      };
-      
-      await saveLeadAsync(updatedLead);
+      });
       
       setShowObjectionTracker(false);
       onUpdate();
@@ -397,8 +387,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     setIsUpdating(true);
     
     try {
-      // Update lead with go back schedule data using async Firestore
-      const { saveLeadAsync } = await import('@/app/utils/storage');
+      // Partial update with only the disposition/Go Back keys (no full-doc setDoc).
+      const { updateLeadAsync } = await import('@/app/utils/storage');
       
       const scheduledDisposition = dispositions.find((d) => d.id === pendingGoBackStatus);
       const statusId = pendingGoBackStatus || 'go-back';
@@ -412,22 +402,18 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         userName: currentUser.name,
       };
       
-      const updatedLead: Lead = {
-        ...lead,
+      // Never include ownership fields (claimedBy/assignedTo/territoryId) here.
+      // updateDoc rejects undefined, so optional fields default to ''.
+      await updateLeadAsync(lead.id, {
         status: statusId,
         disposition: statusName,
-        dispositionedAt: new Date(),
-        // IMPORTANT: do not mutate ownership fields during rep dispositions (rules block changing assignedTo/claimedBy)
-        claimedBy: lead.claimedBy,
-        assignedTo: lead.assignedTo,
+        dispositionedAt: historyEntry.timestamp,
         goBackScheduledDate: scheduleData.date,
-        goBackScheduledTime: scheduleData.time,
-        goBackNotes: scheduleData.notes,
+        goBackScheduledTime: scheduleData.time || '',
+        goBackNotes: scheduleData.notes || '',
         goBackScheduledBy: currentUser.id,
         dispositionHistory: [historyEntry, ...(lead.dispositionHistory || [])],
-      };
-      
-      await saveLeadAsync(updatedLead);
+      });
       
       setShowGoBackSchedule(false);
       onUpdate();

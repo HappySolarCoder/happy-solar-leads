@@ -93,8 +93,12 @@ service cloud.firestore {
 
     // Disposition/door-knock-only updates.
     // Prevents ownership/assignment edits while allowing status saves across existing pins.
+    // affectedKeys() = added + removed + changed. changedKeys() alone let a
+    // knock ADD or DELETE any other field (for example delete claimedBy, or add
+    // setterId/source). Go Back and objection keys are allowed here and are
+    // type/size checked by dispoExtrasValid().
     function dispositionUpdateOnly() {
-      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
         'status',
         'disposition',
         'dispositionedAt',
@@ -103,8 +107,59 @@ service cloud.firestore {
         'knockGpsLng',
         'knockGpsAccuracy',
         'knockGpsTimestamp',
-        'knockDistanceFromAddress'
-      ]);
+        'knockDistanceFromAddress',
+        'objectionType',
+        'objectionNotes',
+        'objectionRecordedAt',
+        'objectionRecordedBy',
+        'goBackScheduledDate',
+        'goBackScheduledTime',
+        'goBackNotes',
+        'goBackScheduledBy',
+        'notes'
+      ]) && dispoExtrasValid();
+    }
+
+    // notes: 14.17 sends a notes-only patch ({ notes: string }). On a non-owned
+    // lead it may only ADD notes when the doc has no notes key (exactly today's
+    // added-key behaviour, now bounded); it can never overwrite or delete existing
+    // notes. Owners use ownerLeadUpdate; anything else goes to the server route.
+    // photos are NOT allowed here (adding photos on a non-owned lead is denied).
+    function dispoNotesValid() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['notes'])
+        || (request.resource.data.get('notes', null) is string
+            && request.resource.data.notes.size() <= 10000
+            && !('notes' in resource.data));
+    }
+
+    // Only keys this write touches are checked, so legacy values elsewhere
+    // never block a knock. null/removed clears a field (follow-up clear writes
+    // goBackScheduledDate null and goBackScheduledTime '').
+    function dispoExtrasValid() {
+      let d = request.resource.data;
+      let k = request.resource.data.diff(resource.data).affectedKeys();
+      return dispoNotesValid() && (!k.hasAny(['objectionType', 'objectionNotes', 'objectionRecordedAt', 'objectionRecordedBy',
+                        'goBackScheduledDate', 'goBackScheduledTime', 'goBackNotes', 'goBackScheduledBy'])
+        || (
+          (!k.hasAny(['objectionType']) || d.get('objectionType', null) == null
+            || d.objectionType in ['too-expensive', 'bad-credit', 'roof-issues', 'moving-soon', 'not-owner',
+                                   'already-has-solar', 'too-complicated', 'need-to-think',
+                                   'not-interested-in-solar', 'other'])
+          && (!k.hasAny(['objectionNotes']) || d.get('objectionNotes', null) == null
+            || (d.objectionNotes is string && d.objectionNotes.size() <= 2000))
+          && (!k.hasAny(['objectionRecordedAt']) || d.get('objectionRecordedAt', null) == null
+            || d.objectionRecordedAt is timestamp)
+          && (!k.hasAny(['objectionRecordedBy']) || d.get('objectionRecordedBy', null) == null
+            || d.objectionRecordedBy == request.auth.uid)
+          && (!k.hasAny(['goBackScheduledDate']) || d.get('goBackScheduledDate', null) == null
+            || d.goBackScheduledDate is timestamp)
+          && (!k.hasAny(['goBackScheduledTime']) || d.get('goBackScheduledTime', null) == null
+            || (d.goBackScheduledTime is string && d.goBackScheduledTime.size() <= 16))
+          && (!k.hasAny(['goBackNotes']) || d.get('goBackNotes', null) == null
+            || (d.goBackNotes is string && d.goBackNotes.size() <= 2000))
+          && (!k.hasAny(['goBackScheduledBy']) || d.get('goBackScheduledBy', null) == null
+            || d.goBackScheduledBy == request.auth.uid)
+        ));
     }
 
     // changedKeys() ignores keys the write ADDS. Block adding ownership fields,

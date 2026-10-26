@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import firebase from 'firebase/compat/app';
+import 'firebase/compat/firestore';
 import {
   assertFails,
   initializeTestEnvironment,
@@ -126,6 +128,23 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
       territoryId: 'realTerritory',
     });
     await db.collection('leads').doc('unclaimedLead').set({ status: 'new' });
+    // Dispo-only branch fixtures (one lead per case: the matrix does not reseed).
+    const priorDispo = {
+      status: 'go-back', goBackScheduledDate: new Date('2026-10-20T00:00:00Z'), goBackScheduledTime: '10:00', goBackNotes: 'old',
+      goBackScheduledBy: 'manager', objectionType: 'need-to-think', objectionNotes: 'old',
+      objectionRecordedAt: new Date('2026-10-19T00:00:00Z'), objectionRecordedBy: 'manager',
+    };
+    for (const id of ['dispoPriorPin1', 'dispoPriorPin2']) {
+      await db.collection('leads').doc(id).set({ ...priorDispo, territoryId: 'realTerritory' });
+    }
+    await db.collection('leads').doc('dispoPriorStranger').set({ ...priorDispo });
+    for (const id of ['dispoFreshPin1', 'dispoFreshPin2', 'dispoFreshPin3', 'dispoFreshPin4']) {
+      await db.collection('leads').doc(id).set({ status: 'new', territoryId: 'realTerritory' });
+    }
+    await db.collection('leads').doc('dispoNotedPin').set({ status: 'new', territoryId: 'realTerritory', notes: 'gate code 4' });
+    await db.collection('leads').doc('dispoClaimedPin').set({ status: 'claimed', territoryId: 'realTerritory', claimedBy: 'manager' });
+    await db.collection('leads').doc('dispoFullDoc').set({ status: 'new', name: 'Homeowner' });
+    await db.collection('leads').doc('dispoFreshStranger').set({ status: 'new' });
     await db.collection('leads').doc('demoTestClaimLead').set({
       status: 'new',
       testData: true,
@@ -197,6 +216,17 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
 
 function cases(): RuleCase[] {
   const lead = (id: string) => (db: Firestore) => db.collection('leads').doc(id);
+  const at = new Date('2026-10-25T16:30:00Z');
+  const hist = (uid: string) => [{ disposition: 'Go Back', timestamp: at, userId: uid, userName: uid }];
+  const goBack = (uid: string, extra: Record<string, unknown> = {}) => ({
+    status: 'go-back', disposition: 'Go Back', dispositionedAt: at, dispositionHistory: hist(uid),
+    goBackScheduledDate: new Date('2026-10-28T00:00:00Z'), goBackScheduledTime: '14:30', goBackNotes: 'Come back after 5',
+    goBackScheduledBy: uid, ...extra,
+  });
+  const objection = (uid: string) => ({
+    status: 'not-interested', dispositionedAt: at, dispositionHistory: hist(uid), objectionType: 'too-expensive',
+    objectionNotes: '', objectionRecordedAt: at, objectionRecordedBy: uid,
+  });
   const homeowners = (limit?: number) => (db: Firestore) => {
     let query = db.collection('homeowners').orderBy('geohash').startAt('a').endAt('z');
     if (limit != null) query = query.limit(limit);
@@ -275,6 +305,17 @@ function cases(): RuleCase[] {
     { id: 'setter knock in territory', uid: 'realSetter', run: (db) => lead('unassignedInRealTerritory')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'allow' },
     { id: 'setter territory knock adds claimedBy', uid: 'realSetter', run: (db) => lead('territoryAddClaimed')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: 'manager' }), expectTight: 'deny' },
     { id: 'setter territory knock adds assignedTo', uid: 'realSetter', run: (db) => lead('territoryAddAssigned')(db).update({ status: 'not-home', dispositionedAt: new Date(), assignedTo: 'realSetter' }), expectTight: 'deny' },
+    { id: 'setter Go Back on prior territory pin', uid: 'realSetter', run: (db) => lead('dispoPriorPin1')(db).update(goBack('realSetter')), expectTight: 'allow' },
+    { id: 'manager objection on prior lead', uid: 'manager', run: (db) => lead('dispoPriorStranger')(db).update(objection('manager')), expectTight: 'allow' },
+    { id: 'setter Go Back oversize goBackNotes', uid: 'realSetter', run: (db) => lead('dispoPriorPin2')(db).update(goBack('realSetter', { goBackNotes: 'y'.repeat(2001) })), expectTight: 'deny' },
+    { id: 'setter Go Back spoofed goBackScheduledBy', uid: 'realSetter', run: (db) => lead('dispoFreshPin1')(db).update(goBack('realSetter', { goBackScheduledBy: 'manager' })), expectTight: 'deny' },
+    { id: 'setter notes-only on territory pin without notes', uid: 'realSetter', run: (db) => lead('dispoFreshPin2')(db).update({ notes: 'dog in yard' }), expectTight: 'allow' },
+    { id: 'setter oversize notes on territory pin', uid: 'realSetter', run: (db) => lead('dispoFreshPin3')(db).update({ notes: 'n'.repeat(10001) }), expectTight: 'deny' },
+    { id: 'setter overwrites existing notes on territory pin', uid: 'realSetter', run: (db) => lead('dispoNotedPin')(db).update({ notes: 'replaced' }), expectTight: 'deny' },
+    { id: 'setter adds photos on territory pin', uid: 'realSetter', run: (db) => lead('dispoFreshPin4')(db).update({ photos: [{ id: 'p1', url: 'https://example.com/r.jpg', type: 'roof', uploadedBy: 'realSetter', uploadedAt: new Date() }] }), expectTight: 'deny' },
+    { id: 'setter knock deletes another claimedBy', uid: 'realSetter', run: (db) => lead('dispoClaimedPin')(db).update({ status: 'not-home', dispositionedAt: new Date(), claimedBy: firebase.firestore.FieldValue.delete() }), expectTight: 'deny' },
+    { id: 'manager full-doc Go Back setDoc on non-owned lead', uid: 'manager', run: (db) => lead('dispoFullDoc')(db).set({ name: 'Homeowner', createdAt: new Date(), claimedAt: null, assignedAt: null, solarTestedAt: null, ...goBack('manager') }), expectTight: 'deny' },
+    { id: 'manager partial Go Back on non-owned lead', uid: 'manager', run: (db) => lead('dispoFreshStranger')(db).update(goBack('manager', { goBackScheduledTime: '', goBackNotes: '' })), expectTight: 'allow' },
     { id: 'setter knock outside territory', uid: 'realSetter', run: (db) => lead('claimedByOther')(db).update({ status: 'not-home', dispositionedAt: new Date() }), expectTight: 'deny' },
     { id: 'setter manual create', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter').set({ source: 'manually-added', setterId: 'realSetter', status: 'new' }), expectTight: 'allow' },
     { id: 'setter manual create with testData', uid: 'realSetter', run: (db) => db.collection('leads').doc('manual-setter-testdata').set({
@@ -416,6 +457,10 @@ describe('firestore rules', { concurrency: 1 }, () => {
       const allowedExceptions: string[] = [];
       // Deployed rules have no TEST claim/unclaim. This is the only intended loosening.
       const intendedException = 'demo claims and unclaims own TEST lead';
+      // Re-dispositioning a pin that already carries Go Back/objection values was denied
+      // (changedKeys() on non-allowlisted keys). Bounded affectedKeys() allowlist fixes it.
+      const intendedDispoFix = new Set(['setter Go Back on prior territory pin', 'manager objection on prior lead']);
+      const dispoFixes: string[] = [];
       for (const ruleCase of cases()) {
         const provider = ruleCase.provider ?? 'password';
         const deployedResult = client(deployed, ruleCase.uid, provider, deployedClients);
@@ -441,6 +486,8 @@ describe('firestore rules', { concurrency: 1 }, () => {
           const line = `${ruleCase.id}: deployed denied, tightened allowed`;
           if (ruleCase.id === intendedException && ruleCase.uid === 'demo') {
             allowedExceptions.push(line);
+          } else if (intendedDispoFix.has(ruleCase.id)) {
+            dispoFixes.push(line);
           } else {
             loosened.push(line);
           }
@@ -459,7 +506,9 @@ describe('firestore rules', { concurrency: 1 }, () => {
         console.log(`allowed exception: ${line} (TEST account claim/unclaim of an assigned testData lead in the caller's TEST territory)`);
       }
       assert.deepEqual(mismatches, []);
+      for (const line of dispoFixes) console.log(`intended dispo fix: ${line}`);
       assert.deepEqual(loosened, []);
+      assert.equal(dispoFixes.length, intendedDispoFix.size);
       assert.deepEqual(allowedExceptions, [
         `${intendedException}: deployed denied, tightened allowed`,
       ]);

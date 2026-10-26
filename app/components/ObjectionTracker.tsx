@@ -95,6 +95,7 @@ export default function ObjectionTracker({ lead, currentUserId, onSave, onClose 
             <div className="relative">
               <MessageSquare className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
               <textarea
+                maxLength={2000}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Any specific details about the objection? (e.g., 'Roof needs replacement in 2 years', 'Current bill is only $80/month')"
