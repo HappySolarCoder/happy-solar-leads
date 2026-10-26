@@ -36,6 +36,15 @@ export type TooFarRow = {
   percent: string;
 };
 
+/** Dry-run preview of every counted rep. Not used in the email or a real send. */
+export type TooFarRep = {
+  userId: string;
+  name: string;
+  tooFar: number;
+  total: number;
+  pct: string;
+};
+
 export type AlertEmail = {
   from: string;
   to: string;
@@ -314,6 +323,29 @@ export function rowsFromTallies(
   return rows;
 }
 
+/** Every rep with at least one counted knock, including those at or under 5%. */
+export function perRepFromTallies(
+  tallies: Map<string, Tally>,
+  users: Map<string, Record<string, unknown> | null>,
+): TooFarRep[] {
+  const reps: TooFarRep[] = [];
+  for (const [userId, tally] of tallies) {
+    if (tally.total < 1) continue;
+    const user = users.get(userId) ?? null;
+    if (blockedTestUser(userId, user)) continue;
+    const named = user && typeof user.name === 'string' && user.name.trim() ? user.name.trim() : tally.rep;
+    reps.push({
+      userId,
+      name: named,
+      tooFar: tally.tooFar,
+      total: tally.total,
+      pct: percentLabel(tally.tooFar, tally.total),
+    });
+  }
+  reps.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name) || a.userId.localeCompare(b.userId));
+  return reps;
+}
+
 export async function loadDispositionedLeads(
   fetchPage: TooFarAlertDeps['fetchPage'],
   startMs: number,
@@ -401,7 +433,15 @@ export async function handleTooFarKnockAlert(
   if (dryRun) {
     return {
       status: 200,
-      body: { ok: true, dryRun: true, date: day.key, rows, email, truncated: loaded.truncated },
+      body: {
+        ok: true,
+        dryRun: true,
+        date: day.key,
+        rows,
+        perRep: perRepFromTallies(tallies, users),
+        email,
+        truncated: loaded.truncated,
+      },
     };
   }
   if (!email) {

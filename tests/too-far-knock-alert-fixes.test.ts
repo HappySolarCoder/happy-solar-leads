@@ -10,6 +10,7 @@ import {
   handleTooFarKnockAlert,
   nyDayWindow,
   parseDateParam,
+  percentLabel,
   tallyKnocks,
   type AlertEmail,
   type DispositionDef,
@@ -30,7 +31,7 @@ function req(params: Record<string, string> = {}, auth: string | null = `Bearer 
   };
 }
 
-function rig(opts: { now?: Date; leads?: Lead[]; env?: Record<string, string | undefined>; dispositions?: DispositionDef[]; fullPages?: boolean }) {
+function rig(opts: { now?: Date; leads?: Lead[]; env?: Record<string, string | undefined>; dispositions?: DispositionDef[]; fullPages?: boolean; users?: Record<string, Record<string, unknown> | null> }) {
   const log = { pages: 0, dispositions: 0, claims: 0, users: 0 };
   const markers = new Set<string>();
   const sent: AlertEmail[] = [];
@@ -51,7 +52,7 @@ function rig(opts: { now?: Date; leads?: Lead[]; env?: Record<string, string | u
       const docs = (opts.leads ?? []).map((l) => ({ id: l.id, data: () => l.data }));
       return { size: docs.length, docs };
     },
-    getUsers: async (uids) => { log.users += 1; return new Map(uids.map((u) => [u, { name: u }])); },
+    getUsers: async (uids) => { log.users += 1; return new Map(uids.map((u) => [u, opts.users?.[u] ?? { name: u }])); },
     getDispositions: async () => { log.dispositions += 1; return opts.dispositions ?? []; },
     claimMarker: async (day) => { log.claims += 1; if (markers.has(day)) return false; markers.add(day); return true; },
     releaseMarker: async (day) => { markers.delete(day); },
@@ -280,6 +281,81 @@ describe('#173 fix 7: ?date=YYYY-MM-DD', () => {
     assert.equal(t.sent.length, 0);
     assert.equal(t.log.claims, 0);
     assert.equal(t.markers.size, 0);
+  });
+});
+
+describe('#173 dry-run perRep', () => {
+  it('lists every counted rep on dry runs only, with the same totals as the alert', async () => {
+    const leads: Lead[] = [{
+      id: 'a',
+      data: {
+        dispositionHistory: [
+          entry(s, 'over', { ...flag('too_far'), userName: 'History Over' }),
+          entry(s + 1, 'over', flag('too_far')),
+          entry(s + 2, 'over'),
+          entry(s + 3, 'exact', flag('too_far')),
+          ...Array.from({ length: 19 }, (_, i) => entry(s + 10 + i, 'exact')),
+          entry(s + 40, 'quiet'),
+          entry(s + 50, 'user-test-qa', flag('too_far')),
+          entry(s + 51, 'user-test-qa', flag('too_far')),
+        ],
+      },
+    }];
+    const t = rig({
+      leads,
+      users: {
+        over: { name: 'Ada Over' },
+        exact: { name: 'Bea Exact' },
+        quiet: { name: 'Cal Quiet' },
+        'user-test-qa': { name: 'Should Not Show', email: 'qa@test.com' },
+      },
+    });
+    const dry = await t.run({ dryRun: '1' });
+    const perRep = dry.body.perRep as Array<{ userId: string; name: string; tooFar: number; total: number; pct: string }>;
+    const rows = dry.body.rows as Array<{ userId: string; rep: string; tooFar: number; total: number; percent: string }>;
+    const computed = tallyKnocks(leads, day.startMs, day.endMs, doorKnockKeys([]));
+    assert.deepEqual(perRep.map((rep) => [rep.userId, rep.name, rep.tooFar, rep.total]), [
+      ['exact', 'Bea Exact', 1, 20],
+      ['over', 'Ada Over', 2, 3],
+      ['quiet', 'Cal Quiet', 0, 1],
+    ]);
+    for (const rep of perRep) {
+      const tally = computed.get(rep.userId);
+      assert.ok(tally);
+      assert.equal(rep.tooFar, tally.tooFar);
+      assert.equal(rep.total, tally.total);
+      assert.equal(rep.pct, percentLabel(tally.tooFar, tally.total));
+    }
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].userId, 'over');
+    assert.equal(rows[0].rep, 'Ada Over');
+    assert.equal(rows[0].tooFar, 2);
+    assert.equal(rows[0].total, 3);
+    assert.equal(rows[0].percent, perRep.find((rep) => rep.userId === 'over')!.pct);
+    const preview = dry.body.email as AlertEmail;
+    assert.match(preview.html, /<td>Ada Over<\/td>/);
+    assert.doesNotMatch(preview.html, /Bea Exact|Cal Quiet|Should Not Show|user-test-qa|perRep/);
+    assert.equal(t.sent.length, 0);
+    assert.equal(t.log.claims, 0);
+
+    const dated = await t.run({ date: '2026-10-25' });
+    assert.equal(dated.body.dryRun, true);
+    assert.deepEqual(dated.body.perRep, perRep);
+    assert.deepEqual(dated.body.rows, rows);
+    assert.equal(t.sent.length, 0);
+    assert.equal(t.log.claims, 0);
+
+    const live = await t.run();
+    assert.equal(live.body.sent, true);
+    assert.equal(Object.hasOwn(live.body, 'perRep'), false);
+    assert.deepEqual(live.body.rows, rows);
+    assert.equal(t.sent.length, 1);
+    assert.equal(t.sent[0].html, preview.html);
+    assert.doesNotMatch(t.sent[0].html, /Bea Exact|Cal Quiet|Should Not Show|user-test-qa|perRep/);
+    const again = await t.run();
+    assert.equal(again.body.alreadySent, true);
+    assert.equal(Object.hasOwn(again.body, 'perRep'), false);
+    assert.equal(t.sent.length, 1);
   });
 });
 
