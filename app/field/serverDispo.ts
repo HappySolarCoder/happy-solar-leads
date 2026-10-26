@@ -6,10 +6,10 @@ import { coerceLegacyContactDraft, hasContactFields, notesWereEdited } from "./c
 import { freshDraftId } from "./draftQueue";
 import { commitDirectMutation, historyGpsFlag, reportingPatch, type DirectCommitIo } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
-import { rebaseNotes } from "./notesRebase";
+import { notesAfterConflict } from "./notesRebase";
 import { deliberateNotesClear, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
-import { FIELD_DISPO_UNAVAILABLE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
+import { ACTION_AT_FUTURE_MS, FIELD_DISPO_UNAVAILABLE, PHONE_CLOCK_NOTICE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
 
 export { rebaseNotes } from "./notesRebase";
@@ -406,6 +406,8 @@ export type FieldDispoDeps = {
   ) => Promise<{ replayed: boolean; lead?: Lead }>;
   /** Defense in depth for a direct notes write. The route dedupes by draftId and does not use this. */
   persistDraft?: (draft: PendingMutation) => Promise<unknown>;
+  /** Clock check for a 400 actionAt. Defaults to Date.now. */
+  now?: () => number;
 };
 
 async function readJson(response: Response): Promise<{
@@ -498,7 +500,7 @@ export async function postFieldDispo(
     if (response.status === 409 && !notesRetried && draft.kind === "notes" && body.clearNotes !== true) {
       const data = await readJson(response);
       const currentNotes = typeof data?.currentNotes === "string" ? data.currentNotes : "";
-      const rebased = rebaseNotes(draft.baseNotes ?? "", body.notes ?? draft.notes ?? "", currentNotes);
+      const rebased = notesAfterConflict(draft, currentNotes);
       notesRetried = true;
       draft = {
         ...draft,
@@ -551,18 +553,25 @@ export async function postFieldDispo(
     fail(routeError("This lead is gone.", 410, SYNC_REASON.notFound));
   if (response.status === 413) {
     await readJson(response);
-    fail(routeError("Notes too long", 413, SYNC_REASON.notesTooLong));
+    if (draft.kind === "notes")
+      fail(routeError("Notes too long", 413, SYNC_REASON.notesTooLong));
+    fail(routeError("Disposition route rejected this knock.", 413, SYNC_REASON.payloadTooLarge));
   }
   if (response.status === 400) {
     const data = await readJson(response);
     const field = typeof data?.field === "string" ? data.field : "";
     const reason = typeof data?.reasonCode === "string" ? data.reasonCode : "";
-    if (field === "actionAt")
+    if (field === "actionAt" && actionAtAhead(draft.createdAt, deps.now?.() ?? Date.now()))
+      fail(Object.assign(Error(PHONE_CLOCK_NOTICE), { status: 400, code: "clock_ahead" }));
+    if (draft.kind === "notes" && field === "actionAt")
       fail(routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected));
     if (
-      reason === SYNC_REASON.notesEmpty
-      || reason === SYNC_REASON.notesClearMismatch
-      || field === "clearNotes"
+      draft.kind === "notes"
+      && (
+        reason === SYNC_REASON.notesEmpty
+        || reason === SYNC_REASON.notesClearMismatch
+        || field === "clearNotes"
+      )
     ) fail(routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected));
     if (draft.kind === "notes" && (field === "notes" || field === "baseNotes"))
       fail(routeError("Notes too long", 400, SYNC_REASON.notesTooLong));
@@ -595,10 +604,16 @@ function permissionDenied(error: Error & { status?: number; code?: string }): bo
   return error.code === "permission-denied";
 }
 
+function actionAtAhead(createdAt: string | undefined, now: number): boolean {
+  const at = Date.parse(createdAt || "");
+  return Number.isFinite(at) && at > now + ACTION_AT_FUTURE_MS;
+}
+
 function terminalNotesFailure(error: unknown, draft?: PendingMutation): boolean {
+  if (draft?.kind !== "notes") return false;
   const code = (error as { reasonCode?: string }).reasonCode;
   if (code === SYNC_REASON.notesTooLong || code === SYNC_REASON.notesRejected) return true;
-  return code === SYNC_REASON.notesConflict && !!draft && deliberateNotesClear(draft);
+  return code === SYNC_REASON.notesConflict && deliberateNotesClear(draft);
 }
 
 /** Offline and transport failures must stay queued. They do not adopt the route status. */

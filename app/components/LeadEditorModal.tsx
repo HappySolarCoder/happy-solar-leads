@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
-import { NOTES_BLANK_MESSAGE, NOTES_TOO_LONG_MESSAGE, notesEditTooLong, parkedNotesNotice, whitespaceNotesChange, type NotesLengthDraft } from '@/app/field/notesLimits';
+import { NOTES_BLANK_MESSAGE, NOTES_TOO_LONG_MESSAGE, notesEditTooLong, parkedNotesNotice, phoneClockNotice, whitespaceNotesChange, type NotesLengthDraft } from '@/app/field/notesLimits';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
 import { contactSaveFields, editorSavePatch, officeLeadSave } from './contactPatch';
 import { isDeviceOnline } from '@/app/utils/connectivity';
@@ -114,6 +114,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
     parkedNotes: pendingDrafts,
   });
   const parkedNotesMessage = parkedNotesNotice(pendingDrafts, lead.id);
+  const clockNotice = phoneClockNotice(pendingDrafts, lead.id);
 
   const persistEditor = async (notesBlocked: boolean) => {
     const form = notesBlocked ? { ...formData, notes: lead.notes || '' } : formData;
@@ -430,6 +431,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
               {notesTooLong ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_TOO_LONG_MESSAGE}</p> : null}
               {notesNotice ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{notesNotice}</p> : null}
               {parkedNotesMessage ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{parkedNotesMessage}</p> : null}
+              {clockNotice ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{clockNotice}</p> : null}
             </div>
 
             {/* Solar Info (Read-only) */}

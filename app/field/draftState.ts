@@ -1,4 +1,4 @@
-import { FIELD_DISPO_UNAVAILABLE, SYNC_REASON } from "./syncReasons";
+import { FIELD_DISPO_UNAVAILABLE, PHONE_CLOCK_NOTICE, SYNC_REASON } from "./syncReasons";
 import type { ParkedReason, PendingMutation, SyncState } from "./types";
 
 export function effectiveSyncState(m: PendingMutation): SyncState {
@@ -56,6 +56,9 @@ export function classifySyncFailure(
   const reason = knownReason(code) || knownReason(String((error as { reasonCode?: string }).reasonCode || ""));
   if (reason === SYNC_REASON.notesConflict || /Notes changed on another device/i.test(message))
     return { kind: "transient" };
+  // A phone clock ahead of the server. Stay queued and do not change actionAt.
+  if (code === "clock_ahead" || message === PHONE_CLOCK_NOTICE)
+    return { kind: "transient" };
   // A notes transaction that cannot finish stays queued. Never park or drop it.
   if (
     code === "unavailable"
@@ -66,10 +69,11 @@ export function classifySyncFailure(
     || code === "offline"
     || /offline|network|failed to fetch/i.test(message)
   ) return { kind: "transient" };
-  // Park. A 413 has no smaller retry, including a body with no reasonCode.
-  // It must not stay queued or hold the next draft.
-  if (status === 413 || reason === SYNC_REASON.notesTooLong || reason === SYNC_REASON.payloadTooLarge)
+  // A notes 413 parks. A knock 413 stays queued, matching 14.18 (aca724f).
+  if (reason === SYNC_REASON.notesTooLong || message === "Notes too long")
     return { kind: "denial", parkedReason: SYNC_REASON.notesTooLong };
+  if (status === 413 || reason === SYNC_REASON.payloadTooLarge)
+    return { kind: "slow", parkedReason: SYNC_REASON.payloadTooLarge };
   if (reason) return { kind: "denial", parkedReason: reason };
   if (/Legacy handoff|Invalid knock time|Use the claim\/unclaim|Draft id is not/i.test(message))
     return { kind: "denial", parkedReason: SYNC_REASON.invalidPayload };

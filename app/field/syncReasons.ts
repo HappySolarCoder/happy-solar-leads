@@ -10,7 +10,10 @@ export const SYNC_REASON = {
   permissionDenied: "permission_denied",
   outOfTerritory: "out_of_territory",
   ownedByOther: "owned_by_other",
-  /** A 413 from the route. Parked as notes_too_long. Not a slow retry. */
+  /**
+   * A knock 413. Stays queued for a slow retry, as in 14.18. A notes 413
+   * is notes_too_long instead and is not this code.
+   */
   payloadTooLarge: "payload_too_large",
   historicalPin: "historical_pin",
   notFound: "not_found",
@@ -40,6 +43,12 @@ export const SYNC_REASON = {
   invalidPayload: "invalid_payload",
   other: "other",
 } as const;
+
+/** Shown while a draft stays queued because the phone clock is ahead of the server. */
+export const PHONE_CLOCK_NOTICE = "Check your phone's date and time";
+
+/** The route rejects actionAt more than this far in the future. */
+export const ACTION_AT_FUTURE_MS = 10 * 60 * 1000;
 
 export type SyncReasonCode = (typeof SYNC_REASON)[keyof typeof SYNC_REASON];
 

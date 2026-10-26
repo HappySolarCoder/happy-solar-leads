@@ -24,6 +24,23 @@ export function endsWithAdditionOnLine(current: string, addition: string): boole
   return start === 0 || current[start - 1] === "\n";
 }
 
+/**
+ * A 409 whose server text is the base, or any text this draft already sent,
+ * means that earlier text landed. The rep's text then wins exactly.
+ * Anything else uses the three-way rule.
+ */
+export function notesAfterConflict(
+  draft: { notes?: string; baseNotes?: string; knownSentNotes?: readonly string[] },
+  currentNotes: string,
+): { notes: string; baseNotes: string } {
+  const edited = draft.notes || "";
+  const base = draft.baseNotes || "";
+  const known = draft.knownSentNotes || [];
+  if (currentNotes === base || known.includes(currentNotes))
+    return { notes: edited, baseNotes: currentNotes };
+  return rebaseNotes(base, edited, currentNotes);
+}
+
 export function rebaseNotes(baseNotes: string, edited: string, currentNotes: string): { notes: string; baseNotes: string } {
   const base = baseNotes || "";
   const current = currentNotes || "";

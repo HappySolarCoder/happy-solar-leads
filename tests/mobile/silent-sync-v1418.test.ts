@@ -35,7 +35,7 @@ import {
   rebaseNotes,
   releaseFieldDispoHolds,
 } from "../../app/field/serverDispo";
-import { SYNC_REASON } from "../../app/field/syncReasons";
+import { PHONE_CLOCK_NOTICE, SYNC_REASON } from "../../app/field/syncReasons";
 import { syncOutbox } from "../../app/field/syncOutbox";
 import type { PendingMutation } from "../../app/field/types";
 import { deletionBlockedReason } from "../../app/mobile/_lib/accountPolicy";
@@ -371,11 +371,11 @@ test("409 rebases notes onto currentNotes and retries instead of parking", async
   assert.equal(rows[0].blocked, undefined);
 });
 
-test("410, 400, and 413 park, and a 403 without a known reason uses other", async () => {
+test("410 and 400 park, 413 stays queued as payload_too_large, and a 403 without a known reason uses other", async () => {
   const cases: Array<[number, string, string]> = [
     [410, "parked", "not_found"],
     [400, "parked", "invalid_payload"],
-    [413, "parked", "notes_too_long"],
+    [413, "queued", "payload_too_large"],
     [403, "parked", "other"],
   ];
   for (const [status, state, reason] of cases) {
@@ -398,11 +398,45 @@ test("410, 400, and 413 park, and a 403 without a known reason uses other", asyn
     assert.equal(rows[0].syncState, state);
     assert.equal(rows[0].parkedReason, reason);
     if (status === 413) {
-      assert.equal(rows[0].routeHold, undefined);
-      assert.equal(rows[0].nextAttemptAt, undefined);
-      assert.equal(rows[0].lastError, "Notes too long");
+      assert.equal(rows[0].routeHold, "field-dispo");
+      assert.ok((rows[0].nextAttemptAt || 0) > 0);
+      assert.equal(rows[0].lastError, "Disposition route rejected this knock.");
+      assert.equal(rows[0].createdAt, at);
     }
   }
+});
+
+test("a knock whose actionAt is more than 10 minutes ahead stays queued", async () => {
+  const now = Date.parse(at);
+  const createdAt = new Date(now + 11 * 60 * 1000).toISOString();
+  let rows = [knock({ id: "future-knock", createdAt, direct: { patch: { status: "not-home" }, serverDispo: true } })];
+  await syncOutbox({
+    now: () => now,
+    random: () => 0,
+    read: async () => rows,
+    send: async (row) => postFieldDispo(row, user, {
+      now: () => now,
+      getToken: async () => "token",
+      post: async (_path, init) => {
+        const body = JSON.parse(String(init?.body)) as { actionAt?: string };
+        assert.equal(body.actionAt, createdAt);
+        return json(400, { field: "actionAt" });
+      },
+    }),
+    remove: async () => {
+      throw Error("must not remove");
+    },
+    update: async (row) => {
+      rows = [row];
+    },
+    report: async () => {},
+    active: () => true,
+  });
+  assert.equal(rows[0].syncState, "retry");
+  assert.equal(rows[0].parkedReason, undefined);
+  assert.equal(rows[0].createdAt, createdAt);
+  assert.equal(rows[0].lastError, PHONE_CLOCK_NOTICE);
+  assert.equal(rows[0].kind, "knock");
 });
 
 test("401 refreshes the token once and then backs off", async () => {

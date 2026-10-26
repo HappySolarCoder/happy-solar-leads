@@ -16,7 +16,7 @@
  */
 import { compareQueuedDrafts } from "./draftQueue";
 import { rebaseNotes } from "./notesRebase";
-import { SYNC_REASON } from "./syncReasons";
+import { PHONE_CLOCK_NOTICE, SYNC_REASON } from "./syncReasons";
 
 export const NOTES_MAX_CHARS = 100_000;
 export const NOTES_ROUTE_BODY_MAX_BYTES = 262_144;
@@ -175,6 +175,19 @@ export function parkedNotesNotice(drafts: NotesLengthDraft[] | undefined, leadId
 /** One field-tools banner for every parked notes draft. */
 export function parkedNotesBanner(drafts: NotesLengthDraft[] | undefined): string | null {
   return parkedNoteMessages(drafts);
+}
+
+/** A future actionAt stays queued. The notice is the draft's lastError. */
+export function phoneClockNotice(
+  drafts: { leadId?: string; lastError?: string; syncState?: string }[] | undefined,
+  leadId?: string,
+): string | null {
+  const hit = (drafts || []).some((row) =>
+    (leadId == null || row.leadId === leadId)
+    && row.syncState !== "parked"
+    && row.lastError === PHONE_CLOCK_NOTICE
+  );
+  return hit ? PHONE_CLOCK_NOTICE : null;
 }
 
 /** The notes body enqueue would send, after absorbing a notes_too_long row on this lead. */

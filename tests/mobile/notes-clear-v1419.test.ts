@@ -323,7 +323,7 @@ test("a 409 on a manager clear parks as notes_rejected and keeps clearNotes", as
 test("a 413 with reasonCode payload_too_large is classified from the body", async () => {
   assert.deepEqual(
     classifySyncFailure(Object.assign(Error("too big"), { status: 413, reasonCode: SYNC_REASON.payloadTooLarge })),
-    { kind: "denial", parkedReason: SYNC_REASON.notesTooLong },
+    { kind: "slow", parkedReason: SYNC_REASON.payloadTooLarge },
   );
   assert.deepEqual(
     classifySyncFailure(Object.assign(Error("Notes too long"), { status: 413 })),
@@ -627,10 +627,12 @@ test("same-millisecond clear and type leave the queue in the order the rep acted
     const first = acceptDisposition([], draft(item.first));
     const second = acceptDisposition([first], draft(item.second));
     assert.equal(first.queueSeq, 1, item.name);
-    assert.equal(second.queueSeq, 2, item.name);
+    assert.equal(second.queueSeq, 1, item.name);
+    assert.equal(second.baseNotes, item.first.baseNotes, item.name);
+    assert.equal(second.createdAt, atSame, item.name);
     assert.equal(acceptDisposition([first, second], first).queueSeq, 1, `${item.name} replay`);
-    assert.ok(second.id < first.id, item.name);
-    let rows = [second, first];
+    assert.notEqual(second.id, first.id, item.name);
+    let rows = [second];
     let record: Record<string, unknown> = { notes: item.start };
     const io = {
       db: {},

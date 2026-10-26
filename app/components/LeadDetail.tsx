@@ -8,7 +8,7 @@ import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap, knownPolygonsSync } from '
 import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
 import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
-import { NOTES_BLANK_MESSAGE, NOTES_TOO_LONG_MESSAGE, notesEditTooLong, notesQueuedBody, parkedNotesNotice, saveNotesFromEditor, whitespaceNotesChange } from '@/app/field/notesLimits';
+import { NOTES_BLANK_MESSAGE, NOTES_TOO_LONG_MESSAGE, notesEditTooLong, notesQueuedBody, parkedNotesNotice, phoneClockNotice, saveNotesFromEditor, whitespaceNotesChange } from '@/app/field/notesLimits';
 import { recordSyncEvent } from '@/app/field/syncDiagnostics';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
 import { beginWarmGps, bestFixInWindow } from '@/app/field/warmGps';
@@ -458,6 +458,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   });
 
   const parkedNotesMessage = parkedNotesNotice(field?.drafts, lead.id);
+  const clockNotice = phoneClockNotice(field?.drafts, lead.id);
 
   const handleSaveNotes = async () => {
     if (summaryOnly) return;
@@ -992,6 +993,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             {notesTooLong ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_TOO_LONG_MESSAGE}</p> : null}
             {fieldMessage === NOTES_BLANK_MESSAGE ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_BLANK_MESSAGE}</p> : null}
             {parkedNotesMessage ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{parkedNotesMessage}</p> : null}
+            {clockNotice ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{clockNotice}</p> : null}
             <button
               onClick={handleSaveNotes}
               disabled={notesSaving || summaryOnly || notesTooLong}

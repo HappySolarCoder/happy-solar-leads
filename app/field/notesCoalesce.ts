@@ -1,6 +1,6 @@
 /**
- * Send order for notes drafts on one lead. They are not merged.
- * This is a strict total order: legacy rows (no queueSeq) first, then
+ * Sync order across leads and kinds. One lead has at most one unsent notes
+ * draft, so this is not a notes chain. Legacy rows (no queueSeq) first, then
  * queueSeq, then createdAt, then id. Text lineage is not part of the order.
  */
 export function hasQueueSeq(row: { queueSeq?: number }): boolean {

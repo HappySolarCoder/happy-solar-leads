@@ -187,6 +187,12 @@ export type FieldMutation = {
    */
   appliedNotes?: string;
   appliedAgainst?: string;
+  /**
+   * Device queue only. Notes text this draft replaced, which may already
+   * have been received under an older draftId. Capped at 10. Never sent.
+   * Never copied onto the lead.
+   */
+  knownSentNotes?: string[];
   status?: string;
   disposition?: string;
   notes?: string;

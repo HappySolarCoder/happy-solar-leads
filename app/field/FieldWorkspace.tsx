@@ -29,7 +29,7 @@ import {
 } from "./analysis";
 import { getAppointmentOutcome } from "@/app/utils/appointmentOutcome";
 import { DIRECT_MOBILE_WRITES } from './directWrites';
-import { parkedNotesBanner, type NotesLengthDraft } from './notesLimits';
+import { parkedNotesBanner, phoneClockNotice, type NotesLengthDraft } from './notesLimits';
 import PersonPicker from "@/app/mobile/_components/PersonPicker";
 import { MobileHeader, MobileNav } from "@/app/mobile/_components/MobileShell";
 const rate = (n: number, d: number) =>
@@ -193,6 +193,7 @@ export default function FieldWorkspace(p: Props) {
         )
       : [];
   const notesParked = parkedNotesBanner(p.drafts);
+  const clockNotice = phoneClockNotice(p.drafts);
   return (
     <div className="rm-shell rf-workspace">
       <MobileHeader name={p.user.name} />
@@ -236,6 +237,11 @@ export default function FieldWorkspace(p: Props) {
         {notesParked && (
           <div className="rf-notice" role="status">
             {notesParked}
+          </div>
+        )}
+        {clockNotice && (
+          <div className="rf-notice" role="status">
+            {clockNotice}
           </div>
         )}
         {(p.error || message) && (

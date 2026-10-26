@@ -1,6 +1,7 @@
+import { splitNotesAndContact } from "./contactSave";
 import { effectiveSyncState } from "./draftState";
-import { compareNotesSend, hasQueueSeq } from "./notesCoalesce";
-import { SYNC_REASON } from "./syncReasons";
+import { compareNotesSend, notesLineageNewer } from "./notesCoalesce";
+import { splitCombinedDraft } from "./serverDispo";
 import type { FieldMutation, PendingMutation } from "./types";
 
 /**
@@ -65,110 +66,286 @@ export function freshDraftId(base: string, suffix: string, existing: ReadonlySet
   return mintDraftId([...existing].map((id) => ({ id })));
 }
 
-function parkedUnapplied(row: PendingMutation): boolean {
-  if (row.direct?.gps) return false;
+const KNOWN_SENT_CAP = 10;
+
+/** Queued or retrying. A parked note is not replaced; the next save absorbs it. */
+export function isUnsentNotesDraft(row: PendingMutation): boolean {
+  if (row.kind !== "notes" || row.direct?.gps) return false;
   const state = effectiveSyncState(row);
-  if (state === "parked" || state === "gps") return true;
-  return row.parkedReason === SYNC_REASON.notesTooLong
-    || row.parkedReason === SYNC_REASON.notesRejected
-    || row.parkedReason === SYNC_REASON.payloadTooLarge;
+  return state !== "parked" && state !== "gps";
 }
 
-/**
- * baseNotes chained to a draft that parked or was rejected is not on the
- * server. Walk back to that draft's own baseNotes. A base that is still only
- * the text of an unsent earlier draft is not used either.
- */
-export function baseFromAppliedAncestor(
-  draft: Pick<PendingMutation, "id" | "kind" | "leadId" | "userId" | "baseNotes">,
-  queued: readonly PendingMutation[],
-): string {
-  if (draft.kind !== "notes") return draft.baseNotes || "";
-  let base = draft.baseNotes || "";
-  const seen = new Set<string>();
-  while (seen.size <= queued.length) {
-    const pred = queued
-      .filter((row) =>
-        row.kind === "notes"
-        && row.leadId === draft.leadId
-        && row.userId === draft.userId
-        && row.id !== draft.id
-        && !seen.has(row.id)
-        && notesText(row) === base
-        && parkedUnapplied(row)
-      )
-      .sort(compareNotesSend)
-      .at(-1);
-    if (!pred) return base;
-    seen.add(pred.id);
-    base = pred.baseNotes || "";
+function rememberSent(prior: PendingMutation): string[] {
+  const list = [...(prior.knownSentNotes || [])];
+  const text = notesText(prior);
+  if (!list.includes(text)) list.push(text);
+  return list.slice(-KNOWN_SENT_CAP);
+}
+
+function capKnown(texts: readonly string[]): string[] {
+  const list: string[] = [];
+  for (const text of texts) {
+    if (!list.includes(text)) list.push(text);
   }
-  return base;
+  return list.slice(-KNOWN_SENT_CAP);
+}
+
+/** Keep each line once, in the order the texts were written. */
+export function keepBothOnce(left: string, right: string): string {
+  if (!left) return right;
+  if (!right) return left;
+  if (left === right) return left;
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const line of `${left}\n${right}`.split("\n")) {
+    if (seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+function oldestNotes(rows: readonly PendingMutation[]): PendingMutation {
+  return rows.slice().sort((a, b) => {
+    const byTime = (a.createdAt || "").localeCompare(b.createdAt || "");
+    if (byTime !== 0) return byTime;
+    return (a.id || "").localeCompare(b.id || "");
+  })[0];
 }
 
 /**
- * The base a notes draft should send with. A parked or still-unsent predecessor
- * contributes its own base, never its unapplied text. Otherwise the last notes
- * text this flush actually applied wins, so the route hits current===base.
+ * A single chain uses the newest text. A cycle or a fork keeps every text once.
  */
-export function notesBaseForSend(
-  draft: PendingMutation,
-  queued: readonly PendingMutation[],
-  lastAppliedNotes?: string,
-): PendingMutation {
-  if (draft.kind !== "notes") return draft;
-  const original = draft.baseNotes || "";
-  const walked = baseFromAppliedAncestor(draft, queued);
-  if (walked !== original) return { ...draft, baseNotes: walked };
-  const notes = draft.notes || "";
-  if (
-    lastAppliedNotes !== undefined
-    && lastAppliedNotes !== original
-    && notes.startsWith(lastAppliedNotes)
-  ) return { ...draft, baseNotes: lastAppliedNotes };
-  return draft;
+function lineageNotes(rows: readonly PendingMutation[]): { notes: string; ambiguous: boolean } {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const incoming = new Map<string, number>();
+  const outgoing = new Map<string, string[]>();
+  for (const row of rows) {
+    incoming.set(row.id, 0);
+    outgoing.set(row.id, []);
+  }
+  for (const older of rows) {
+    for (const newer of rows) {
+      if (older.id === newer.id || !notesLineageNewer(older, newer)) continue;
+      outgoing.get(older.id)?.push(newer.id);
+      incoming.set(newer.id, (incoming.get(newer.id) || 0) + 1);
+    }
+  }
+  const queue = rows.map((row) => row.id).filter((id) => incoming.get(id) === 0);
+  const order: string[] = [];
+  const degree = new Map(incoming);
+  let ambiguous = false;
+  while (queue.length) {
+    if (queue.length > 1) ambiguous = true;
+    const id = queue.shift() as string;
+    order.push(id);
+    for (const next of outgoing.get(id) || []) {
+      const left = (degree.get(next) || 1) - 1;
+      degree.set(next, left);
+      if (left === 0) queue.push(next);
+    }
+  }
+  if (order.length !== rows.length) ambiguous = true;
+  if (!ambiguous && order.length > 1) {
+    const reach = new Map<string, Set<string>>();
+    for (const id of [...order].reverse()) {
+      const seen = new Set<string>();
+      for (const next of outgoing.get(id) || []) {
+        seen.add(next);
+        for (const item of reach.get(next) || []) seen.add(item);
+      }
+      reach.set(id, seen);
+    }
+    for (let i = 0; i < order.length; i += 1) {
+      for (let j = i + 1; j < order.length; j += 1) {
+        if (!reach.get(order[i])?.has(order[j])) ambiguous = true;
+      }
+    }
+  }
+  if (ambiguous || !order.length) {
+    const notes = rows
+      .slice()
+      .sort(compareNotesSend)
+      .reduce((text, row) => keepBothOnce(text, notesText(row)), "");
+    return { notes, ambiguous: true };
+  }
+  return { notes: notesText(byId.get(order[order.length - 1]) as PendingMutation), ambiguous: false };
 }
 
-/** A sequenced notes draft waits until every legacy notes row for the lead is sent or parked. */
-export function legacyNotesOutstanding(rows: readonly PendingMutation[], draft: PendingMutation): boolean {
-  if (draft.kind !== "notes" || !hasQueueSeq(draft)) return false;
-  return rows.some((row) =>
-    row.kind === "notes"
-    && !hasQueueSeq(row)
-    && row.leadId === draft.leadId
-    && row.userId === draft.userId
-    && row.id !== draft.id
-    && !row.direct?.gps
-    && !parkedUnapplied(row)
-    && effectiveSyncState(row) !== "gps"
-  );
+/** One notes draft from several legacy rows. Oldest base, newest lineage text. */
+export function collapseNotesGroup(rows: readonly PendingMutation[]): PendingMutation {
+  const root = oldestNotes(rows);
+  const { notes } = lineageNotes(rows);
+  const known = capKnown([
+    ...rows.flatMap((row) => row.knownSentNotes || []),
+    ...rows.map((row) => notesText(row)),
+  ]);
+  const clearing = notes === "" && rows.some((row) => row.clearNotes === true && notesText(row) === "");
+  const serverDispo = rows.some((row) => row.direct?.serverDispo === true);
+  const collapsed: PendingMutation = {
+    ...root,
+    id: mintDraftId(rows),
+    notes,
+    baseNotes: root.baseNotes,
+    createdAt: root.createdAt,
+    knownSentNotes: known,
+    syncState: "queued",
+    attempts: 0,
+    direct: {
+      ...(root.direct || { patch: { notes } }),
+      patch: { notes },
+      ...(serverDispo ? { serverDispo: true } : {}),
+    },
+  };
+  if (typeof root.queueSeq !== "number") delete collapsed.queueSeq;
+  else collapsed.queueSeq = root.queueSeq;
+  delete collapsed.nextAttemptAt;
+  delete collapsed.lastError;
+  delete collapsed.routeHold;
+  delete collapsed.parkedReason;
+  delete collapsed.appliedNotes;
+  delete collapsed.appliedAgainst;
+  delete collapsed.blocked;
+  delete collapsed.error;
+  delete collapsed.status;
+  delete collapsed.disposition;
+  if (clearing) collapsed.clearNotes = true;
+  else delete collapsed.clearNotes;
+  return collapsed;
 }
 
 /**
- * Point a new notes draft at the unsent notes draft that will send immediately
- * before it. After that draft applies, the server equals this base, so this
- * draft hits current===base and wins exactly.
+ * A new notes save replaces the unsent notes draft for that lead and account.
+ * The original baseNotes and actionAt stay. The id is new, because the old
+ * one may already have been received.
  */
-export function chainNotesBase(existing: readonly PendingMutation[], next: PendingMutation): PendingMutation {
+export function foldNotesSave(existing: readonly PendingMutation[], next: PendingMutation): PendingMutation {
   if (next.kind !== "notes") return next;
-  const prior = existing
-    .filter((row) =>
-      row.kind === "notes"
-      && row.leadId === next.leadId
-      && row.userId === next.userId
-      && row.id !== next.id
-      && !row.direct?.gps
-      && effectiveSyncState(row) !== "parked"
-      && effectiveSyncState(row) !== "gps"
-      && compareNotesSend(row, next) < 0
-    )
-    .sort(compareNotesSend)
-    .at(-1);
-  if (!prior) return next;
-  return { ...next, baseNotes: notesText(prior) };
+  const priors = existing.filter((row) =>
+    isUnsentNotesDraft(row)
+    && row.leadId === next.leadId
+    && row.userId === next.userId
+    && row.id !== next.id
+  );
+  if (!priors.length) return next;
+  const prior = priors.length === 1 ? priors[0] : collapseNotesGroup(priors);
+  const notes = notesText(next);
+  const clearing = next.clearNotes === true && notes === "";
+  const serverDispo = next.direct?.serverDispo === true || prior.direct?.serverDispo === true;
+  const folded: PendingMutation = {
+    ...prior,
+    id: mintDraftId([...existing, next]),
+    notes,
+    baseNotes: prior.baseNotes,
+    createdAt: prior.createdAt,
+    knownSentNotes: rememberSent(prior),
+    syncState: "queued",
+    attempts: 0,
+    userName: next.userName || prior.userName,
+    direct: {
+      ...(prior.direct || { patch: { notes } }),
+      patch: { notes },
+      ...(serverDispo ? { serverDispo: true } : {}),
+    },
+  };
+  if (typeof prior.queueSeq !== "number") delete folded.queueSeq;
+  else folded.queueSeq = prior.queueSeq;
+  delete folded.nextAttemptAt;
+  delete folded.lastError;
+  delete folded.routeHold;
+  delete folded.parkedReason;
+  delete folded.appliedNotes;
+  delete folded.appliedAgainst;
+  delete folded.blocked;
+  delete folded.error;
+  if (clearing) folded.clearNotes = true;
+  else delete folded.clearNotes;
+  return folded;
 }
 
-/** A new dispo always joins the queue. Older drafts for the same lead stay. */
+/** Ids of unsent notes drafts that foldNotesSave replaced. The caller deletes them. */
+export function supersededNotesIds(existing: readonly PendingMutation[], stored: PendingMutation): string[] {
+  if (stored.kind !== "notes") return [];
+  return existing
+    .filter((row) =>
+      isUnsentNotesDraft(row)
+      && row.leadId === stored.leadId
+      && row.userId === stored.userId
+      && row.id !== stored.id
+    )
+    .map((row) => row.id);
+}
+
+/**
+ * Startup pass. Split contact off notes drafts, then one unsent notes draft
+ * per lead and account. A second call is a no-op.
+ */
+export function collapseLegacyNotesQueue(drafts: readonly PendingMutation[]): PendingMutation[] {
+  const ids = new Set(drafts.map((row) => row.id));
+  const pieces: PendingMutation[] = [];
+  let structural = false;
+  for (const row of drafts) {
+    if (row.kind === "notes") {
+      const contact = splitNotesAndContactSafe(row, ids);
+      if (contact) {
+        structural = true;
+        ids.add(contact.contact.id);
+        ids.add(contact.notes.id);
+        pieces.push(contact.contact, contact.notes);
+        continue;
+      }
+    }
+    if (row.kind === "knock") {
+      const split = splitKnockNotesSafe(row, ids);
+      if (split) {
+        structural = true;
+        ids.add(split.knock.id);
+        ids.add(split.notes.id);
+        pieces.push(split.knock, split.notes);
+        continue;
+      }
+    }
+    pieces.push(row);
+  }
+  const groups = new Map<string, PendingMutation[]>();
+  const rest: PendingMutation[] = [];
+  for (const row of pieces) {
+    if (isUnsentNotesDraft(row)) {
+      const key = `${row.userId}\n${row.leadId}`;
+      const list = groups.get(key) || [];
+      list.push(row);
+      groups.set(key, list);
+    } else rest.push(row);
+  }
+  const notes: PendingMutation[] = [];
+  for (const list of groups.values()) {
+    if (list.length === 1) notes.push(list[0]);
+    else {
+      structural = true;
+      notes.push(collapseNotesGroup(list));
+    }
+  }
+  if (!structural) return drafts as PendingMutation[];
+  return [...rest, ...notes];
+}
+
+function splitNotesAndContactSafe(
+  row: PendingMutation,
+  ids: Set<string>,
+): { contact: PendingMutation; notes: PendingMutation } | null {
+  const split = splitNotesAndContact(row, ids);
+  return split && split !== "unsafe" ? split : null;
+}
+
+function splitKnockNotesSafe(
+  row: PendingMutation,
+  ids: Set<string>,
+): { knock: PendingMutation; notes: PendingMutation } | null {
+  const split = splitCombinedDraft(row, ids);
+  return split && split !== "unsafe" ? split : null;
+}
+
+/** A new dispo joins the queue. A second unsent note for the same lead replaces the first. */
 export function acceptDisposition(
   existing: PendingMutation[],
   next: FieldMutation,
@@ -191,5 +368,5 @@ export function acceptDisposition(
   };
   if (alreadyQueued) return queued;
   const id = existing.some((row) => row.id === queued.id) ? mintDraftId(existing) : queued.id;
-  return chainNotesBase(existing, id === queued.id ? queued : { ...queued, id });
+  return foldNotesSave(existing, id === queued.id ? queued : { ...queued, id });
 }

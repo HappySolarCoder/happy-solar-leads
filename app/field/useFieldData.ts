@@ -14,7 +14,7 @@ import {
 import { cleanConfig } from "./config";
 import { pilotFlags } from "./analysis";
 import { DIRECT_MOBILE_WRITES, directPatch, rejectCombinedKnockAndNotes } from './directWrites';
-import { acceptDisposition } from './draftQueue';
+import { acceptDisposition, collapseLegacyNotesQueue, supersededNotesIds } from './draftQueue';
 import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
 import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
@@ -238,7 +238,13 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         if (DIRECT_MOBILE_WRITES && actor?.id === uid && auth?.currentUser?.uid === uid) {
           const migrated = drafts.map((m) => migrateDraft(m, actor));
           const opened = releaseFieldDispoHolds(reopenDeniedParked(migrated, uid));
-          for (let i = 0; i < opened.length; i++) if (opened[i] !== drafts[i]) await putDraft(opened[i]);
+          const collapsed = collapseLegacyNotesQueue(opened);
+          const kept = new Set(collapsed.map((row) => row.id));
+          for (const row of collapsed) {
+            const prev = drafts.find((item) => item.id === row.id);
+            if (prev !== row) await putDraft(row);
+          }
+          for (const row of drafts) if (!kept.has(row.id)) await removeDraft(row.id);
           drafts = await readDrafts(uid);
           for (const m of drafts) if (m.syncState === 'gps' && m.direct?.gps) void resolveDraftGps(m, {
             read: () => readDrafts(uid), put: updatePendingGpsDraft,
@@ -314,6 +320,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         throw e;
       }
       await putDraft(stored);
+      for (const id of supersededNotesIds(drafts, stored)) await removeDraft(id);
       await reloadDrafts();
       if (stored.syncState === "parked") void recordSyncEvent({
         id: crypto.randomUUID(), userId: uid, at: Date.now(), draftId: stored.id, leadId: stored.leadId,
