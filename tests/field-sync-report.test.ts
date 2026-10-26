@@ -526,6 +526,43 @@ describe('field sync report validation', () => {
     assert.equal(duplicateResult.body.index, 1);
     assert.equal(duplicate.creates.length, 0);
   });
+
+  it('stores gpsUnverifiedReason and locationPrecision and keeps field plus index on a bad value', async () => {
+    const ok = harness();
+    const okResult = await ok.post({
+      reports: [
+        item({ draftId: 'gps_reason', gpsUnverifiedReason: 'too_far', locationPrecision: 'reduced' }),
+        item({ draftId: 'gps_other', gpsUnverifiedReason: 'other', locationPrecision: 'precise' }),
+        item({ draftId: 'gps_area', gpsUnverifiedReason: 'out_of_area', locationPrecision: 'precise' }),
+      ],
+    });
+    assert.equal(okResult.status, 200);
+    assert.equal(ok.creates[0].data.gpsUnverifiedReason, 'too_far');
+    assert.equal(ok.creates[0].data.locationPrecision, 'reduced');
+    assert.equal(ok.creates[1].data.gpsUnverifiedReason, 'other');
+    assert.equal(ok.creates[1].data.locationPrecision, 'precise');
+    assert.equal(ok.creates[2].data.gpsUnverifiedReason, 'out_of_area');
+
+    for (const value of ['nope', '', 1, null, 'NO_FIX']) {
+      const test = harness();
+      const result = await test.post({ reports: [item(), item({ draftId: 'bad_reason', gpsUnverifiedReason: value })] });
+      assert.equal(result.status, 400, String(value));
+      assert.equal(result.body.error, 'Invalid report');
+      assert.equal(result.body.field, 'gpsUnverifiedReason');
+      assert.equal(result.body.index, 1);
+      assert.equal(test.creates.length, 0);
+    }
+
+    for (const value of ['Precise', 'approximate', 1]) {
+      const test = harness();
+      const result = await test.post({ reports: [item({ locationPrecision: value })] });
+      assert.equal(result.status, 400, String(value));
+      assert.equal(result.body.error, 'Invalid report');
+      assert.equal(result.body.field, 'locationPrecision');
+      assert.equal(result.body.index, 0);
+      assert.equal(test.creates.length, 0);
+    }
+  });
 });
 
 describe('field sync report writes', () => {

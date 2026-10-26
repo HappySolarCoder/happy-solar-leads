@@ -385,6 +385,12 @@ function cases(): RuleCase[] {
     { id: 'admin fieldSyncReports create', uid: 'admin', run: (db) => db.collection('fieldSyncReports').doc('x').set({ reasonCode: 'other' }), expectTight: 'deny' },
     { id: 'admin fieldSyncReports get', uid: 'admin', run: (db) => db.collection('fieldSyncReports').doc('x').get(), expectTight: 'deny' },
     { id: 'admin fieldSyncReports list', uid: 'admin', run: (db) => db.collection('fieldSyncReports').get(), expectTight: 'deny' },
+
+    // fieldDispoReceipts stays client-closed (default deny). No match block.
+    { id: 'setter fieldDispoReceipts get', uid: 'realSetter', run: (db) => db.collection('fieldDispoReceipts').doc('x').get(), expectTight: 'deny' },
+    { id: 'setter fieldDispoReceipts create', uid: 'realSetter', run: (db) => db.collection('fieldDispoReceipts').doc('x').set({ uid: 'realSetter' }), expectTight: 'deny' },
+    { id: 'admin fieldDispoReceipts get', uid: 'admin', run: (db) => db.collection('fieldDispoReceipts').doc('x').get(), expectTight: 'deny' },
+    { id: 'admin fieldDispoReceipts create', uid: 'admin', run: (db) => db.collection('fieldDispoReceipts').doc('x').set({ uid: 'admin' }), expectTight: 'deny' },
   ];
 }
 

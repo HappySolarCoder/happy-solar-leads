@@ -8,6 +8,7 @@ import type { Lead } from '@/app/types';
 
 // No new index, collection or writes. Queries use existing single-field indexes.
 const PAGE = 500;
+export const MOBILE_TERRITORY_LIMIT = 200;
 const SUMMARY_FIELDS = ['name','phone','email','address','city','state','status','disposition','dispositionedAt','dispositionHistory','claimedBy','assignedTo','createdAt','goBackScheduledBy','goBackScheduledDate','goBackScheduledTime','appointmentOutcome','appointmentOutcomeAt','appointmentDateTime','ghlLastUpdatedAt','ghlAppointmentStatus','ghlOpportunityStatus','ghlContactId','ghlAppointmentId','leadType','lat','lng','solarScore','solarCategory','source','setterId','claimedAt','assignedAt','fieldDoor','fieldHandoff','estimatedBill','hasSouthFacingRoof','solarMaxPanels','zip','objectionType','objectionNotes','goBackNotes','tags','ghlStatus','ghlOpportunityId','pipelineStageId','dispositionNotes','notes'];
 function jsonValue(x: any): any {
   if (x?.toDate) return x.toDate().toISOString();
@@ -63,16 +64,20 @@ return async function GET(request: NextRequest) {
     if (![south,north,west,east,zoom].every(Number.isFinite) || zoom < 15 || north <= south || east <= west || north-south > .06 || east-west > .09 || south < -85 || north > 85 || west < -180 || east > 180)
       throw Error('Zoom closer to load this neighborhood.');
     const browseAll = ['admin','manager'].includes(user?.role);
-    const territories = browseAll ? null : (await db.collection('territories').where('userId','==',uid).select('polygon','archived').get()).docs.map(d=>d.data()).filter(t=>!t.archived && Array.isArray(t.polygon) && t.polygon.length>=3);
+    const territorySnap = browseAll ? null : await db.collection('territories').where('userId','==',uid).select('polygon','archived').limit(MOBILE_TERRITORY_LIMIT).get();
+    const territoriesTruncated = Boolean(territorySnap && territorySnap.size >= MOBILE_TERRITORY_LIMIT);
+    if (territoriesTruncated) console.log('[mobile/leads] territories truncated');
+    const truncatedBody = territoriesTruncated ? { truncated: true as const } : {};
+    const territories = territorySnap ? territorySnap.docs.map(d=>d.data()).filter(t=>!t.archived && Array.isArray(t.polygon) && t.polygon.length>=3) : null;
     const overlapping = territories?.filter(t=>{const b=territoryBounds(t.polygon); return b.north>=south && b.south<=north && b.east>=west && b.west<=east;});
-    if (overlapping && !overlapping.length) return NextResponse.json({leads:[],nextCursor:null});
+    if (overlapping && !overlapping.length) return NextResponse.json({leads:[],nextCursor:null,...truncatedBody});
     let q = db.collection('leads').where('lat','>=',south).where('lat','<=',north).orderBy('lat').orderBy(FieldPath.documentId()).select(...SUMMARY_FIELDS).limit(PAGE);
     const after = p.get('after'), afterLat = Number(p.get('afterLat'));
     if (after) { if (!validId(after) || !Number.isFinite(afterLat) || afterLat < south || afterLat > north) throw Error('Invalid map cursor.'); q=q.startAfter(afterLat,after); }
     const snapshot = await q.get();
     const leads = snapshot.docs.filter(d=>{const l=d.data(); return typeof l.lng==='number' && l.lng>=west && l.lng<=east && (!overlapping || overlapping.some(t=>insideTerritory(l.lat,l.lng,t.polygon)));}).map(d=>summary(d.id,d.data()));
     const last = snapshot.docs.at(-1);
-    return NextResponse.json({leads, scanned:snapshot.size, nextCursor:snapshot.size===PAGE ? {id:last!.id,lat:last!.data().lat}:null}, {headers:{'Cache-Control':'private, no-store'}});
+    return NextResponse.json({leads, scanned:snapshot.size, nextCursor:snapshot.size===PAGE ? {id:last!.id,lat:last!.data().lat}:null, ...truncatedBody}, {headers:{'Cache-Control':'private, no-store'}});
   } catch (e: any) {
     const unauthorized = String(e?.code||'').startsWith('auth/');
     return NextResponse.json({error:unauthorized ? 'Sign in again to load leads.' : 'Leads could not load. Please retry.'},{status:unauthorized ? 401 : 400});

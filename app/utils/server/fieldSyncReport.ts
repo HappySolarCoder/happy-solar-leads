@@ -6,6 +6,7 @@ import {
   type UserProfile,
 } from './requireApprovedUser';
 import { isTestAccount } from './discordNotification';
+import { isGpsUnverifiedReason } from '@/app/utils/gpsRule';
 import { FIELD_REASON_CODES } from './fieldReasonCodes';
 
 export const SYNC_REPORT_LIMIT = 10;
@@ -28,6 +29,7 @@ const LIST_ROLES = new Set(['admin', 'manager']);
 const REASON_CODES = new Set<string>(FIELD_REASON_CODES);
 
 const OUTCOMES = new Set(['refused', 'flagged_accepted']);
+const LOCATION_PRECISIONS = new Set(['precise', 'reduced']);
 
 const ITEM_KEYS = new Set([
   'draftId',
@@ -40,6 +42,8 @@ const ITEM_KEYS = new Set([
   'lastError',
   'gpsAccuracyM',
   'distanceM',
+  'gpsUnverifiedReason',
+  'locationPrecision',
 ]);
 
 /**
@@ -105,6 +109,8 @@ type ReportItem = {
   lastError?: string;
   gpsAccuracyM?: number;
   distanceM?: number;
+  gpsUnverifiedReason?: string;
+  locationPrecision?: string;
 };
 
 export function resetSyncReportRateLimit(): void {
@@ -260,6 +266,16 @@ function validateItem(item: unknown, now: number): { ok: true; value: ReportItem
     if (meters === null) return { ok: false, field: 'distanceM' };
     value.distanceM = meters;
   }
+  if (Object.prototype.hasOwnProperty.call(item, 'gpsUnverifiedReason')) {
+    if (!isGpsUnverifiedReason(item.gpsUnverifiedReason)) return { ok: false, field: 'gpsUnverifiedReason' };
+    value.gpsUnverifiedReason = item.gpsUnverifiedReason;
+  }
+  if (Object.prototype.hasOwnProperty.call(item, 'locationPrecision')) {
+    if (typeof item.locationPrecision !== 'string' || !LOCATION_PRECISIONS.has(item.locationPrecision)) {
+      return { ok: false, field: 'locationPrecision' };
+    }
+    value.locationPrecision = item.locationPrecision;
+  }
   return { ok: true, value };
 }
 
@@ -344,6 +360,8 @@ function buildDoc(item: ReportItem, approved: ApprovedUser, deps: FieldSyncRepor
   if (item.lastError !== undefined) doc.lastError = item.lastError;
   if (item.gpsAccuracyM !== undefined) doc.gpsAccuracyM = item.gpsAccuracyM;
   if (item.distanceM !== undefined) doc.distanceM = item.distanceM;
+  if (item.gpsUnverifiedReason !== undefined) doc.gpsUnverifiedReason = item.gpsUnverifiedReason;
+  if (item.locationPrecision !== undefined) doc.locationPrecision = item.locationPrecision;
   return doc;
 }
 
