@@ -5,11 +5,13 @@ import type { PendingMutation } from './types';
 import { mapLeadDoc } from '@/app/utils/firestore';
 import { createLeadOnce } from './createLeadOnce';
 import { distanceBetween } from 'geofire-common';
+import { isGpsUnverifiedReason, validGpsMeters } from './gpsPolicy';
 
 // Bundled mobile releases never depend on the undeployed field APIs.
 export const DIRECT_MOBILE_WRITES = process.env.NEXT_PUBLIC_NATIVE_BUILD === '1';
 const fields = new Set(['status', 'disposition', 'dispositionedAt', 'dispositionHistory',
   'knockGpsLat', 'knockGpsLng', 'knockGpsAccuracy', 'knockGpsTimestamp', 'knockDistanceFromAddress',
+  'gpsVerified', 'gpsUnverifiedReason', 'gpsDistanceM',
   'objectionType', 'objectionNotes', 'objectionRecordedAt', 'objectionRecordedBy',
   'goBackScheduledDate', 'goBackScheduledTime', 'goBackNotes', 'goBackScheduledBy',
   'notes', 'photos', 'name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill']);
@@ -20,8 +22,16 @@ export function dateValue(value: unknown): Date {
   if (!Number.isFinite(date.getTime())) throw Error('Invalid knock time. Check the device clock.');
   return date;
 }
+function allowedDirectValue(key: string, value: unknown): boolean {
+  if (!fields.has(key) || value === undefined) return false;
+  if (key === 'homeownerId' || key === 'gpsPointSource') return false;
+  if (key === 'gpsVerified') return typeof value === 'boolean';
+  if (key === 'gpsUnverifiedReason') return isGpsUnverifiedReason(value);
+  if (key === 'gpsDistanceM' || key === 'knockDistanceFromAddress') return validGpsMeters(value);
+  return true;
+}
 export function directPatch(patch: Partial<Lead>): Partial<Lead> {
-  return Object.fromEntries(Object.entries(patch).filter(([k, v]) => fields.has(k) && v !== undefined));
+  return Object.fromEntries(Object.entries(patch).filter(([k, v]) => allowedDirectValue(k, v)));
 }
 /** No new server fields/collections. Ownership is never part of an update. */
 export function reportingPatch(m: PendingMutation, user: User): Partial<Lead> {
@@ -36,7 +46,8 @@ export function reportingPatch(m: PendingMutation, user: User): Partial<Lead> {
       dispositionHistory: [{ disposition: m.disposition || m.status, timestamp: at,
         userId: m.userId, userName: m.userName || user.name }],
       ...(!m.direct && gps ? { knockGpsLat: gps.lat, knockGpsLng: gps.lng,
-        knockGpsAccuracy: gps.accuracy, knockGpsTimestamp: dateValue(gps.timestamp) } : {}),
+        knockGpsAccuracy: gps.accuracy, knockGpsTimestamp: dateValue(gps.timestamp),
+        ...(gps.distance != null ? { knockDistanceFromAddress: gps.distance } : {}) } : {}),
       ...(!m.direct && m.objectionType ? { objectionType: m.objectionType as Lead['objectionType'],
         objectionNotes: m.objectionNotes || '', objectionRecordedAt: at, objectionRecordedBy: m.userId } : {}),
       ...(!m.direct && m.goBackScheduledDate ? { disposition: m.disposition || m.status,

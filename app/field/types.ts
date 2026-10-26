@@ -1,4 +1,5 @@
 import type { Lead } from "@/app/types";
+import type { SyncReasonCode } from "./syncReasons";
 export const FEATURE_KEYS = [
   "capture",
   "scoring",
@@ -136,7 +137,27 @@ export const DEFAULT_FIELD_CONFIG: FieldConfig = {
 export type FieldMutation = {
   // Device-only queue payload. Never written as a new Firestore document/field.
   userName?: string;
-  direct?: { patch: Partial<Lead>; create?: Lead; legacy?: boolean; gps?: { lat?: number; lng?: number; deadline: number; required: boolean } };
+  direct?: {
+    patch: Partial<Lead>;
+    create?: Lead;
+    legacy?: boolean;
+    /** Territory-API pin, or a pin with no territory that this rep does not own. */
+    serverDispo?: boolean;
+    /** Route body only. Never copied onto the Firestore patch. */
+    homeownerId?: string;
+    /** Diagnostics only. Never copied onto the Firestore patch or sync-report. */
+    gpsPointSource?: "homeowner_corrected" | "lead_stored";
+    gps?: {
+      lat?: number;
+      lng?: number;
+      deadline: number;
+      required: boolean;
+      /** Tap instant. The fix window is [tappedAt−30s, tappedAt+15s], not save time. */
+      tappedAt?: number;
+      source?: "homeowner_corrected" | "lead_stored";
+      homeownerId?: string;
+    };
+  };
   id: string;
   userId: string;
   leadId: string;
@@ -156,9 +177,20 @@ export type FieldMutation = {
   handoff?: FieldHandoff["state"];
   callbackAt?: string;
 };
+export type SyncState = "queued" | "gps" | "retry" | "parked";
+export type ParkedReason = SyncReasonCode;
 export type PendingMutation = FieldMutation & {
+  /** Legacy flag. Readable only while migrating a draft from 14.17 or earlier. */
   error?: string;
+  /** Legacy flag. Readable only while migrating a draft from 14.17 or earlier. */
   blocked?: boolean;
+  syncState?: SyncState;
+  attempts?: number;
+  nextAttemptAt?: number;
+  parkedReason?: ParkedReason;
+  lastError?: string;
+  /** Set when /api/field/dispo is not deployed. The draft stays queued for a slow retry. */
+  routeHold?: "field-dispo";
 };
 export type FieldEvent = {
   id: string;

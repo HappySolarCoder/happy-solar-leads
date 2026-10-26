@@ -16,7 +16,6 @@ const mocks = {
   './_components/MobileShell': `export * from '@/app/mobile/_components/MobileShell';`,
   './MobileShell': `export * from '@/app/mobile/_components/MobileShell';`,
   './_components/MobileViews': `import React from 'react';export const TodayView=p=><div><h1>Today</h1><span data-testid="target">{p.dailyTarget}</span></div>;`,
-  './UnsyncedNotice': `export default ()=>null;`,
   '@/app/utils/firebase': `export const db={};export const auth={get currentUser(){return window.fx.account},authStateReady:async()=>{}};`,
   'firebase/auth': `export const onAuthStateChanged=(a,cb)=>{const fn=()=>cb(a.currentUser);window.fx.authListeners.add(fn);queueMicrotask(fn);return()=>window.fx.authListeners.delete(fn)};`,
   'firebase/firestore': `

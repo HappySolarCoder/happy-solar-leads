@@ -1,7 +1,6 @@
 "use client";
 import { useState, useMemo } from "react";
-import { ArrowUpRight, Radio, Sun } from "lucide-react";
-import Link from "next/link";
+import { Radio, Sun } from "lucide-react";
 import type { Lead } from "@/app/types";
 import type { FieldObservation } from "./types";
 import { useOptionalMobileData } from "@/app/mobile/_components/MobileDataProvider";
@@ -38,18 +37,9 @@ export default function FieldDoorPanel({
   }, [data?.field.flags.timing, data?.field.config, data?.leads, data?.dispositions, lead]);
   if (!data?.field.flags.capture) return null;
   const { field } = data,
-    score = scoreDoor(lead),
-    pending = field.drafts.filter((m) => m.leadId === lead.id);
+    score = scoreDoor(lead);
   return (
     <section className="rf-door">
-      {pending.length > 0 && (
-        <Link className="rf-sync-status" href="/mobile/field-tools?tab=sync">
-          {pending.some((x) => x.blocked)
-            ? "Sync needs review"
-            : `${pending.length} ${pending.length === 1 ? "change" : "changes"} saved on this device; awaiting sync`}{" "}
-          <ArrowUpRight size={14} />
-        </Link>
-      )}
       <details>
         <summary>
           <Radio size={17} />

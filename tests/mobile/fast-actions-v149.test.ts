@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {resolveDraftGps,verifiedKnockGps} from '../../app/field/pendingGps';
+import {evaluateKnockFix,resolveDraftGps} from '../../app/field/pendingGps';
+import {resetWarmGpsForTests} from '../../app/field/warmGps';
 import {syncOutbox} from '../../app/field/syncOutbox';
 import type {PendingMutation} from '../../app/field/types';
 import {runTerritoryAssignment,authorizedTerritoryWorker} from '../../app/utils/server/territoryQueue';
@@ -11,23 +12,27 @@ test('GPS pending holds only its own door; durable completion preserves original
  const m=draft(),at=m.createdAt;let rows=[m,{...draft(),id:'second',leadId:'other',direct:{patch:{status:'not-home'}}}];const sent:string[]=[];
  await syncOutbox({read:async()=>rows,send:async m=>{sent.push(m.id);},remove:async id=>{rows=rows.filter(m=>m.id!==id);},block:async()=>{},active:()=>true});
  assert.deepEqual(sent,['second']);assert.equal(rows.length,1);
- await resolveDraftGps(m,{read:async()=>rows,put:async m=>{rows=[m];},active:()=>true,locate:async()=>location()});
+ await resolveDraftGps(m,{read:async()=>rows,put:async m=>{rows=[m];},active:()=>true,locate:async()=>location(),sleep:async()=>{}});
  assert.equal(rows[0].createdAt,at);assert.equal(rows[0].direct?.gps,undefined);assert.equal(rows[0].direct?.patch.knockGpsLat,43);
+ assert.equal(rows[0].direct?.patch.gpsVerified,true);assert.equal(typeof rows[0].direct?.patch.knockDistanceFromAddress,'number');
 });
-test('GPS rejects old fixes, expired capture, and far-away locations',()=>{
- const m=draft();assert.throws(()=>verifiedKnockGps(m,{...location(),timestamp:Date.now()-60000}),/expired/);
- assert.throws(()=>verifiedKnockGps(m,location(),Date.now()+20000),/expired/);
- assert.throws(()=>verifiedKnockGps(m,{...location(),coords:{latitude:44,longitude:-77,accuracy:5}}),/164 feet/);
+test('GPS flags old fixes, expired capture, and far-away locations without throwing',()=>{
+ resetWarmGpsForTests();
+ const m=draft();
+ const stale=evaluateKnockFix(m,{...location(),timestamp:Date.now()-60000},{stale:true});
+ assert.equal(stale.gpsVerified,false);assert.equal(stale.reason,'stale');
+ const far=evaluateKnockFix(m,{...location(),coords:{latitude:44,longitude:-77,accuracy:5}},{});
+ assert.equal(far.gpsVerified,false);assert.equal(far.reason,'too_far');assert.equal(typeof far.distanceM,'number');
 });
-test('expired recovery never requests current GPS and remains visibly blocked',async()=>{
+test('expired capture is flagged no_fix and still never requests late GPS',async()=>{
  const m=draft();m.direct!.gps!.deadline=0;let saved:PendingMutation|undefined;
- await resolveDraftGps(m,{read:async()=>[m],put:async m=>{saved=m;},active:()=>true,locate:async()=>{throw Error('Must not request late GPS');}});
- assert.equal(saved?.blocked,true);assert.match(saved!.error!,/expired/);assert.equal(saved!.createdAt,m.createdAt);
+ await resolveDraftGps(m,{read:async()=>[m],put:async m=>{saved=m;},active:()=>true,locate:async()=>{throw Error('Must not request late GPS');},sleep:async()=>{}});
+ assert.equal(saved?.syncState,'queued');assert.equal(saved?.parkedReason,undefined);assert.equal(saved?.direct?.patch.gpsUnverifiedReason,'no_fix');assert.equal(saved!.createdAt,m.createdAt);
 });
 test('discard and account changes cannot resurrect a knock during GPS capture',async()=>{
  const m=draft();let puts=0;
- await resolveDraftGps(m,{read:async()=>[],put:async()=>{puts++;},active:()=>true,locate:async()=>location()});assert.equal(puts,0);
- await resolveDraftGps(m,{read:async()=>[m],put:async()=>{puts++;},active:()=>false,locate:async()=>location()});assert.equal(puts,0);
+ await resolveDraftGps(m,{read:async()=>[],put:async()=>{puts++;},active:()=>true,locate:async()=>location(),sleep:async()=>{}});assert.equal(puts,0);
+ await resolveDraftGps(m,{read:async()=>[m],put:async()=>{puts++;},active:()=>false,locate:async()=>location(),sleep:async()=>{}});assert.equal(puts,0);
 });
 test('worker resumes committed pages without a phone and preserves worked pins',async()=>{
  const f=fixture();f.seed('users/manager',{name:'Manager',role:'admin',isActive:true});f.seed('users/rep',{name:'Rep',role:'setter',isActive:true,approved:true});

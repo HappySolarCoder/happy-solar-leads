@@ -12,7 +12,6 @@ import {
 import {
   putDraft,
   readDrafts,
-  removeDraft,
   putArea,
   readArea,
 } from "@/app/field/deviceStore";
@@ -217,8 +216,7 @@ export default function FieldPreview() {
         flags={config.enabled}
         now={data.now}
         offline={offline}
-        drafts={drafts}
-        syncing={false}
+        diagnostics={[]}
         error={error}
         prepared={prepared}
         demo
@@ -233,13 +231,6 @@ export default function FieldPreview() {
           });
           await load();
           return leads.length;
-        }}
-        onSync={async () => {
-          throw Error("Design preview: no server sync or customer changes.");
-        }}
-        onDiscard={async (id) => {
-          await removeDraft(id);
-          await load();
         }}
         onHandoff={async () => {
           throw Error("Design preview: no customer changes.");

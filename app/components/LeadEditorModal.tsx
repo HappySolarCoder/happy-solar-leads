@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
+import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
+import { changedContactPatch } from './contactPatch';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 import { auth } from '@/app/utils/firebase';
@@ -113,7 +115,12 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
       };
 
       if (saveLeadPatch) {
-        await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+        if (DIRECT_MOBILE_WRITES) {
+          const patch = changedContactPatch(lead, formData);
+          if (patch) await saveLeadPatch(patch);
+        } else {
+          await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+        }
       } else if (mobileMode) {
         const { updateLeadAsync } = await import('@/app/utils/storage');
         await updateLeadAsync(lead.id, { name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });

@@ -95,7 +95,7 @@ test("a missing route falls back to email and does not sign out yet", () => {
 
 test("401 with no earlier unknown attempt asks for a fresh sign-in", () => {
   for (const error of ["Missing credentials", "Sign in again."]) {
-    const decision = interpretAccountDeletionResponse(401, { ok: false, error }, false, false);
+    const decision = interpretAccountDeletionResponse(401, { ok: false, error }, false);
     assert.deepEqual(decision, {
       action: "stay",
       message: ACCOUNT_DELETION_SIGN_IN_AGAIN,

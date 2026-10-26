@@ -9,12 +9,17 @@ export type PreparedArea = {
   config: FieldConfig;
 };
 let connection: Promise<IDBDatabase> | undefined;
+export function fieldDatabase() {
+  return database();
+}
 function database() {
   return (connection ??= new Promise((resolve, reject) => {
-    const r = indexedDB.open("raydar-field-v11", 1);
+    const r = indexedDB.open("raydar-field-v11", 2);
     r.onupgradeneeded = () => {
-      r.result.createObjectStore("drafts", { keyPath: "id" });
-      r.result.createObjectStore("areas", { keyPath: "userId" });
+      const db = r.result;
+      if (!db.objectStoreNames.contains("drafts")) db.createObjectStore("drafts", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("areas")) db.createObjectStore("areas", { keyPath: "userId" });
+      if (!db.objectStoreNames.contains("diagnostics")) db.createObjectStore("diagnostics", { keyPath: "id" });
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => {
@@ -79,32 +84,30 @@ export async function readArea(uid: string) {
 export const clearArea = (uid: string) =>
   request("areas", "readwrite", (s) => s.delete(uid));
 
-/** Provisional overlay only; no source objects or live history are changed. */
+function byAction(a: PendingMutation, b: PendingMutation) {
+  return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+}
+
+/** Provisional overlay only; no source objects or live history are changed.
+ * Queued, retrying, GPS, and parked drafts all show the rep's newest local dispo. */
 export function overlayDrafts(
   leads: Lead[],
   drafts: PendingMutation[],
 ): Lead[] {
   if (drafts.some(m => m.direct)) {
     const map = new Map(leads.map(l => [l.id, l]));
-    for (const m of drafts) {
-      if (!m.direct) continue;
-      const lead = map.get(m.leadId) || m.direct.create;
-      if (!lead) continue;
+    for (const m of drafts.filter(m => m.direct).sort(byAction)) {
+      const lead = map.get(m.leadId) || m.direct?.create;
+      if (!lead || !m.direct) continue;
       try {
         const patch = reportingPatch(m, { id: m.userId, name: m.userName || 'Pending sync' } as User);
         map.set(lead.id, { ...lead, ...mergeReportingPatch(lead, patch).patch });
-      } catch { /* The visible queue error keeps malformed drafts reviewable. */ }
+      } catch { /* Malformed drafts stay in the diagnostics log. */ }
     }
     return overlayDrafts([...map.values()], drafts.filter(m => !m.direct));
   }
-  const byId = new Map<string, PendingMutation[]>(),
-    blocked = new Set<string>();
-  for (const m of drafts) {
-    if (m.blocked) {
-      blocked.add(m.leadId);
-      continue;
-    }
-    if (blocked.has(m.leadId)) continue;
+  const byId = new Map<string, PendingMutation[]>();
+  for (const m of [...drafts].sort(byAction)) {
     const list = byId.get(m.leadId) || [];
     list.push(m);
     byId.set(m.leadId, list);
@@ -120,26 +123,33 @@ export function overlayDrafts(
         m.status &&
         !next.dispositionHistory?.some((h) => h.field?.eventId === m.id)
       ) {
+        const at = new Date(m.createdAt);
+        const history = [
+          {
+            disposition: m.disposition || m.status,
+            timestamp: at,
+            userId: m.userId,
+            userName: "Pending sync",
+            field: m.observation,
+          },
+          ...(next.dispositionHistory || []),
+        ].sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
+        const newer = !next.dispositionedAt || at.getTime() >= +new Date(next.dispositionedAt);
         next = {
           ...next,
-          status: m.status,
-          dispositionedAt: new Date(m.createdAt),
-          dispositionHistory: [
-            {
-              disposition: m.disposition || m.status,
-              timestamp: new Date(m.createdAt),
-              userId: m.userId,
-              userName: "Pending sync",
-              field: m.observation,
-            },
-            ...(next.dispositionHistory || []),
-          ],
-          ...(m.goBackScheduledDate
+          dispositionHistory: history,
+          ...(newer
             ? {
-                goBackScheduledDate: new Date(m.goBackScheduledDate),
-                goBackScheduledTime: m.goBackScheduledTime,
-                goBackNotes: m.goBackNotes,
-                goBackScheduledBy: m.userId,
+                status: m.status,
+                dispositionedAt: at,
+                ...(m.goBackScheduledDate
+                  ? {
+                      goBackScheduledDate: new Date(m.goBackScheduledDate),
+                      goBackScheduledTime: m.goBackScheduledTime,
+                      goBackNotes: m.goBackNotes,
+                      goBackScheduledBy: m.userId,
+                    }
+                  : {}),
               }
             : {}),
         };

@@ -125,6 +125,12 @@ export interface Lead {
   knockGpsAccuracy?: number;     // GPS accuracy in meters
   knockGpsTimestamp?: Date;      // Timestamp of GPS capture
   knockDistanceFromAddress?: number; // Distance from address in meters
+  /** True when the knock satisfied the shared radius and accuracy rule. */
+  gpsVerified?: boolean;
+  /** Why an unverified knock still saved. Absent when gpsVerified is true. */
+  gpsUnverifiedReason?: "no_fix" | "stale" | "low_accuracy" | "reduced_accuracy" | "too_far";
+  /** Meters from the point the map showed, when a fix exists. */
+  gpsDistanceM?: number;
   // Easter Eggs
   hasEasterEgg?: boolean;        // HIDDEN - only for hidden pin eggs
   easterEggId?: string;          // Which egg is hidden here

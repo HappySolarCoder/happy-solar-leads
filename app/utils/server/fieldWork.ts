@@ -4,9 +4,13 @@ import { DEFAULT_DISPOSITIONS } from "@/app/types/disposition";
 import { cleanConfig } from "@/app/field/config";
 import { localParts, pilotFlags } from "@/app/field/analysis";
 import {
-  isProximityRequired,
-  PROXIMITY_MAX_DISTANCE_METERS,
-} from "../proximityEnforcement";
+  GPS_WINDOW_AFTER_MS,
+  GPS_WINDOW_BEFORE_MS,
+  REDUCED_ACCURACY_METERS,
+  classifyKnock,
+  precisionFromSignals,
+} from "@/app/field/gpsPolicy";
+import { SYNC_REASON } from "@/app/field/syncReasons";
 import type { FieldMutation, FieldObservation } from "@/app/field/types";
 
 export function fieldFail(message: string, status = 400): never {
@@ -158,6 +162,7 @@ export function createFieldHandlers(deps: {
             { id: m.id, at: serverNow.toISOString() },
           ],
         };
+        let gpsFlag: { outcome: "flagged_accepted"; reasonCode: typeof SYNC_REASON.gpsUnverifiedFlagged } | undefined;
         if (m.kind === "notes") {
           if (
             typeof m.notes !== "string" ||
@@ -263,6 +268,7 @@ export function createFieldHandlers(deps: {
           if (pilot.flags.proof && rawObservation.proofShown === true)
             f.proofShown = true;
           const gps = rawObservation.gps;
+          const fixMs = gps ? Date.parse(gps.timestamp) : NaN;
           const validGps =
             gps &&
             Number.isFinite(gps.lat) &&
@@ -271,26 +277,44 @@ export function createFieldHandlers(deps: {
             Math.abs(gps.lng) <= 180 &&
             Number.isFinite(gps.accuracy) &&
             gps.accuracy >= 0 &&
-            Math.abs(Date.parse(gps.timestamp) - at.getTime()) < 2 * 60000;
+            Number.isFinite(fixMs);
           const hasLocation = Number.isFinite(l.lat) && Number.isFinite(l.lng);
           const dist =
             validGps && hasLocation
               ? distance(gps.lat, gps.lng, l.lat, l.lng)
               : undefined;
-          if (
-            d!.countsAsDoorKnock &&
-            isProximityRequired(
-              u as Parameters<typeof isProximityRequired>[0],
-            ) &&
-            (!validGps ||
-              !hasLocation ||
-              dist! > PROXIMITY_MAX_DISTANCE_METERS ||
-              gps!.accuracy > 100)
-          )
-            fieldFail(
-              "Location could not verify this knock within 50 meters of the door. The draft is kept for review.",
-              409,
-            );
+          const inWindow =
+            Number.isFinite(fixMs) &&
+            fixMs >= at.getTime() - GPS_WINDOW_BEFORE_MS &&
+            fixMs <= at.getTime() + GPS_WINDOW_AFTER_MS;
+          const precision = precisionFromSignals({
+            platform: "server",
+            accuracy: validGps ? gps.accuracy : undefined,
+          });
+          const reduced =
+            validGps && gps.accuracy >= REDUCED_ACCURACY_METERS
+              ? "reduced"
+              : precision;
+          if (d!.countsAsDoorKnock) {
+            const verdict = classifyKnock({
+              hasFix: !!validGps,
+              inWindow: !!validGps && inWindow,
+              hadStaleFix: !!validGps && !inWindow,
+              accuracyM: validGps ? gps.accuracy : undefined,
+              distanceM: dist,
+              precision: reduced,
+            });
+            if (!verdict.gpsVerified) {
+              gpsFlag = { outcome: "flagged_accepted", reasonCode: SYNC_REASON.gpsUnverifiedFlagged };
+              Object.assign(patch, {
+                gpsVerified: false,
+                gpsUnverifiedReason: verdict.reason,
+                ...(dist !== undefined ? { gpsDistanceM: dist } : {}),
+              });
+            } else {
+              Object.assign(patch, { gpsVerified: true, ...(dist !== undefined ? { gpsDistanceM: dist } : {}) });
+            }
+          }
           if (validGps) {
             f.gps = {
               lat: gps.lat,
@@ -346,7 +370,7 @@ export function createFieldHandlers(deps: {
           }
         }
         tx.update(ref, patch);
-        return { ok: true, replayed: false };
+        return { ok: true, replayed: false, ...gpsFlag };
       });
       return fieldJson(result);
     } catch (e) {

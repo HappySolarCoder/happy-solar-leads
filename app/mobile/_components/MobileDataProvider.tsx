@@ -35,7 +35,6 @@ import {
 import { useFieldData } from '@/app/field/useFieldData';
 import { readArea } from '@/app/field/deviceStore';
 import { FeedbackSync } from "./VoiceFeedback";
-import UnsyncedNotice from './UnsyncedNotice';
 import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
 
 const EMPTY_LEADS: Lead[] = [];
@@ -173,8 +172,6 @@ function MobileDataProvider({ children }: { children: ReactNode }) {
       >
         {children}
         {data.user && <FeedbackSync uid={data.user.id} />}
-        <UnsyncedNotice drafts={data.field.drafts} syncing={data.field.syncing}
-          error={data.field.error} onSync={data.field.retrySync} />
       </Fragment>
     </MobileDataContext.Provider>
   );

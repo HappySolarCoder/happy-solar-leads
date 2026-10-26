@@ -7,17 +7,16 @@ import {
   ArrowUpRight,
   CloudDownload,
   Radio,
-  RefreshCw,
   Settings2,
   Target,
 } from "lucide-react";
 import type { Lead, User } from "@/app/types";
 import type { Disposition } from "@/app/types/disposition";
+import type { SyncEvent } from "./syncDiagnostics";
 import type {
   FieldConfig,
   FieldEvent,
   FieldFlags,
-  PendingMutation,
 } from "./types";
 import {
   accessibleDoor,
@@ -43,24 +42,20 @@ type Props = {
   flags: FieldFlags;
   now: Date;
   offline: boolean;
-  drafts: PendingMutation[];
-  syncing: boolean;
+  diagnostics: SyncEvent[];
   error: string;
   prepared?: number;
   demo?: boolean;
   onSelect: (l: Lead) => void;
   onPrepare: (leads: Lead[]) => Promise<number>;
-  onSync: () => Promise<void>;
-  onDiscard: (id: string) => Promise<void>;
   onHandoff: (lead: Lead, state: "acknowledged" | "closed") => Promise<void>;
 };
 export default function FieldWorkspace(p: Props) {
-  const [tab, setTab] = useState(() =>
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).get("tab") === "sync"
-        ? "sync"
-        : "doors",
-    ),
+  const [tab, setTab] = useState(() => {
+      if (typeof window === "undefined") return "doors";
+      const requested = new URLSearchParams(window.location.search).get("tab");
+      return requested === "sync" || requested === "diagnostics" ? "diagnostics" : "doors";
+    }),
     [mode, setMode] = useState("sweep"),
     [search, setSearch] = useState(""),
     [rep, setRep] = useState(p.user.id),
@@ -259,7 +254,7 @@ export default function FieldWorkspace(p: Props) {
             ["doors", "Doors"],
             ["insights", "Insights"],
             ["handoffs", "Handoffs"],
-            ["sync", `Sync${p.drafts.length ? ` (${p.drafts.length})` : ""}`],
+            ["diagnostics", "Diagnostics"],
           ].map(([id, label]) => (
             <button
               role="tab"
@@ -613,76 +608,58 @@ export default function FieldWorkspace(p: Props) {
             )}
           </>
         )}
-        {tab === "sync" && (
-          <>
-            <div className="rf-card">
-              <h2>
-                {p.drafts.length
-                  ? `${p.drafts.length} changes on this device`
-                  : "All queued changes are synced"}
-              </h2>
-              <p>
-                Reconnect to sync. Conflicts stay here for review; Raydar does
-                not overwrite another person’s outcome.
-              </p>
-              <button
-                className="rf-button"
-                disabled={p.syncing || p.offline}
-                onClick={() => void action(p.onSync)}
-              >
-                <RefreshCw size={16} />
-                {p.syncing ? "Syncing…" : "Sync now"}
-              </button>
-            </div>
-            {p.drafts.slice(0, limit).map((d) => (
-              <article className="rf-card" key={d.id}>
-                <h3>
-                  {p.leads.find((l) => l.id === d.leadId)?.address ||
-                    "Door no longer loaded"}
-                </h3>
-                <p>
-                  {d.kind} · {new Date(d.createdAt).toLocaleString()}
-                </p>
-                {d.error && <p role="alert">{d.error}</p>}
-                {d.notes && (
-                  <textarea
-                    readOnly
-                    aria-label="Unsynced note draft"
-                    value={d.notes}
-                  />
-                )}
-                <details>
-                  <summary>Copy full draft for review</summary>
-                  <textarea
-                    readOnly
-                    aria-label="Unsynced field draft"
-                    value={JSON.stringify(d, null, 2)}
-                  />
-                </details>
-                <button
-                  className="rf-button"
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Discard this unsynced draft? Copy anything you need first. Saved pin history will not change.",
-                      )
-                    )
-                      void action(() => p.onDiscard(d.id));
-                  }}
-                >
-                  Discard draft
-                </button>
-              </article>
-            ))}
-            {p.drafts.length > limit && (
-              <button
-                className="rf-button"
-                onClick={() => setLimit((n) => n + 25)}
-              >
-                Show 25 more
-              </button>
+        {tab === "diagnostics" && (
+          <div className="rf-card">
+            <h2>Diagnostics</h2>
+            <p>
+              On-device sync log. Knocks keep saving while this list is open.
+            </p>
+            <button
+              className="rf-button"
+              type="button"
+              onClick={() => {
+                const text = [...p.diagnostics]
+                  .slice(-300)
+                  .map((event) =>
+                    [
+                      new Date(event.at).toISOString(),
+                      event.leadId,
+                      event.disposition || event.status || "",
+                      event.state,
+                      event.gpsPointSource || "",
+                      event.gpsUnverifiedReason || "",
+                      event.parkedReason || "",
+                      String(event.attempts ?? ""),
+                      event.lastError || "",
+                    ].join("\t"),
+                  )
+                  .join("\n");
+                void navigator.clipboard.writeText(text).then(
+                  () => setMessage("Diagnostics copied."),
+                  () => setMessage("Could not copy the diagnostics log."),
+                );
+              }}
+            >
+              Copy log
+            </button>
+            {p.diagnostics.length === 0 ? (
+              <p>No sync events on this phone.</p>
+            ) : (
+              <ul>
+                {[...p.diagnostics].slice(-limit).reverse().map((event) => (
+                  <li key={event.id}>
+                    {new Date(event.at).toLocaleString()} · {event.leadId.slice(-6)} ·{" "}
+                    {event.disposition || event.status || "—"} · {event.state}
+                    {event.gpsPointSource ? ` · ${event.gpsPointSource}` : ""}
+                    {event.gpsUnverifiedReason ? ` · ${event.gpsUnverifiedReason}` : ""}
+                    {event.parkedReason ? ` · ${event.parkedReason}` : ""}
+                    {event.attempts != null ? ` · ${event.attempts}` : ""}
+                    {event.lastError ? ` · ${event.lastError}` : ""}
+                  </li>
+                ))}
+              </ul>
             )}
-          </>
+          </div>
         )}
       </main>
       <MobileNav />

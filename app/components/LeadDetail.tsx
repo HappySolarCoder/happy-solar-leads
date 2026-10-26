@@ -5,6 +5,9 @@ import { HomeownerSection } from '@/app/homeowners/Details';
 import type { Homeowner } from '@/app/homeowners/model';
 import { homeownerKnockGps } from '@/app/homeowners/knockGps';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
+import { recordSyncEvent } from '@/app/field/syncDiagnostics';
+import { displayedKnockPoint } from '@/app/field/knockPoint';
+import { beginWarmGps } from '@/app/field/warmGps';
 import { knockPatch } from '@/app/field/knockPatch';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
@@ -18,6 +21,7 @@ import { localParts } from '@/app/field/analysis';
 
 import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { getLocation } from '@/app/utils/geolocation';
+import { distanceBetween } from 'geofire-common';
 
 import { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
@@ -138,16 +142,30 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const pausedWithDrafts = !DIRECT_MOBILE_WRITES && hasPendingFieldWork && !field?.flags.capture;
   const capture = !DIRECT_MOBILE_WRITES && !!field?.flags.capture;
   async function saveReportingPatch(patch: Partial<Lead>, deferGps = false) {
+    const point = displayedKnockPoint(lead, homeowner || lead.homeowner);
     if (saveLeadPatch) await saveLeadPatch(patch, deferGps);
     else if (DIRECT_MOBILE_WRITES) {
       if (!field) throw Error('Open the mobile Knock screen to save this action safely.');
-      await field.enqueueDirect(lead, patch, undefined, deferGps);
+      await field.enqueueDirect(lead, patch, undefined, deferGps, point);
     }
     else { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, patch); }
     if (DIRECT_MOBILE_WRITES) setFieldMessage('');
   }
   const [visit, setVisit] = useState<VisitDraft>({});
   const [fieldMessage, setFieldMessage] = useState('');
+  function reportSilent(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[raydar-sync]', message);
+    if (!currentUser) return;
+    void recordSyncEvent({
+      id: crypto.randomUUID(), userId: currentUser.id, at: Date.now(), draftId: 'ui', leadId: lead.id,
+      createdAt: new Date().toISOString(), state: 'retry', lastError: message, attempts: 0,
+    });
+  }
+  function isFieldValidation(error: unknown) {
+    const message = error instanceof Error ? error.message : '';
+    return /Reload your dispositions|Connect before claiming|Only the rep who claimed|Field capture is paused|Review pending drafts|Sign in to save this visit|Open the mobile Knock screen|Sign in with the rep/i.test(message);
+  }
   async function recordField(kind: FieldMutation['kind'], patch: Partial<FieldMutation> = {}) {
     if (!field || !currentUser) throw Error('Sign in to save this visit.');
     const at = new Date(), id = crypto.randomUUID(), zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -167,10 +185,23 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           lat: gps.knockGpsLat, lng: gps.knockGpsLng, accuracy: gps.knockGpsAccuracy!, timestamp: gps.knockGpsTimestamp!.toISOString(),
         };
       } else try {
-        const position = await getLocation({ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
-        observation.gps = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, timestamp: new Date().toISOString() };
+        const position = await getLocation({ enableHighAccuracy: true, timeout: 10000 });
+        const point = displayedKnockPoint(lead, homeowner || lead.homeowner);
+        const distance = point
+          ? distanceBetween(
+            [position.coords.latitude, position.coords.longitude],
+            [point.lat, point.lng],
+          ) * 1000
+          : undefined;
+        observation.gps = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: new Date(position.timestamp).toISOString(),
+          ...(distance !== undefined ? { distance } : {}),
+        };
       } catch {
-        if (isProximityRequired(currentUser)) throw Error('Your location could not be verified. Enable precise location and retry.');
+        /* A missing fix is recorded with the knock. It does not stop the save. */
       }
     }
     await prepareLead?.();
@@ -235,6 +266,11 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   }, [currentUser?.id, currentUser?.role]);
 
   // Lock background scroll while lead detail is open so the app header/page does not fight the panel
+  useEffect(() => {
+    if (!DIRECT_MOBILE_WRITES) return;
+    return beginWarmGps();
+  }, []);
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
 
@@ -363,10 +399,9 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
       }
 
       onUpdate();
-    } catch (error: any) {
-      console.error('Disposition save failed:', error);
-      const msg = error?.code ? `${error.code}: ${error.message || ''}` : (error?.message || String(error));
-      alert(`Disposition failed to save.\n\n${msg}`);
+    } catch (error: unknown) {
+      if (DIRECT_MOBILE_WRITES && !isFieldValidation(error)) reportSilent(error);
+      else setFieldMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setIsUpdating(false);
     }
@@ -397,8 +432,8 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
       if (!DIRECT_MOBILE_WRITES) setFieldMessage('Notes saved.');
       if (onUpdate) onUpdate();
     } catch (error) {
-      console.error('Error saving notes:', error);
-      setFieldMessage((error as Error).message || 'Notes could not be saved. Please retry.');
+      if (DIRECT_MOBILE_WRITES) reportSilent(error);
+      else setFieldMessage((error as Error).message || 'Notes could not be saved. Please retry.');
     } finally {
       setNotesSaving(false);
     }
@@ -444,7 +479,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
         objectionType, objectionNotes, objectionRecordedAt: at, objectionRecordedBy: currentUser.id, ...gps,
       }), disposition.countsAsDoorKnock);
       setShowObjectionTracker(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
-    } catch (e) { setFieldMessage((e as Error).message); throw e; }
+    } catch (e) {
+      if (DIRECT_MOBILE_WRITES && !isFieldValidation(e)) { reportSilent(e); return; }
+      setFieldMessage((e as Error).message); throw e;
+    }
     finally { setIsUpdating(false); }
   };
 
@@ -463,7 +501,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
         goBackScheduledBy: currentUser.id, ...gps,
       }), disposition.countsAsDoorKnock);
       setShowGoBackSchedule(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
-    } catch (e) { setFieldMessage((e as Error).message); throw e; }
+    } catch (e) {
+      if (DIRECT_MOBILE_WRITES && !isFieldValidation(e)) { reportSilent(e); return; }
+      setFieldMessage((e as Error).message); throw e;
+    }
     finally { setIsUpdating(false); }
   };
 
@@ -632,7 +673,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             </div>
           </a>
 
-          {fieldMessage && <p className="rf-sync-status" role="status">{fieldMessage}</p>}
+          {fieldMessage && <p className="rf-notice" role="status">{fieldMessage}</p>}
           {fieldMemory && !summaryOnly && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
           {/* Contact Info */}
           {(lead.phone || lead.email) && (
