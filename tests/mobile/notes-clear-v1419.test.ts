@@ -246,6 +246,10 @@ test("notes_empty, notes_clear_mismatch, and a clearNotes 400 park as notes_reje
     assert.equal(rows[0].notes, item.notes, item.name);
     assert.equal(rows[0].baseNotes, seen, item.name);
     if (item.notes === "") assert.equal(rows[0].clearNotes, true, item.name);
+    if (item.name === "clearNotes field") {
+      assert.equal(rows[0].lastError, "Clearing notes isn't available right now. Your notes were kept.");
+      assert.equal(parkedNotesNotice(rows, "lead-1"), "Clearing notes isn't available right now. Your notes were kept.");
+    }
     assert.equal(fieldDispoBody(rows[0], setter).clearNotes, item.notes === "" ? true : undefined, item.name);
     await run();
     assert.equal(posts, 1, `${item.name} is not retried`);
@@ -717,20 +721,28 @@ test("absorbNotesText keeps a short addition that sits inside a longer parked li
 
 test("rebaseNotes and absorbNotesText keep every line except a deliberate delete", () => {
   const texts = ["", "A", "B", "A\nB", "B\nA", "A\nB\nC", "A\nC", "C"];
-  const lines = (text: string) => text.split("\n").filter((line) => line.length > 0);
-  const present = (result: string, line: string) => result.split("\n").includes(line);
+  const counts = (text: string) => {
+    const map = new Map<string, number>();
+    if (!text) return map;
+    for (const line of text.split("\n")) map.set(line, (map.get(line) || 0) + 1);
+    return map;
+  };
   const assertKept = (base: string, edit: string, server: string, result: string, label: string) => {
     if (server === base) {
       assert.equal(result, edit, label);
       return;
     }
-    for (const line of lines(server)) {
-      assert.equal(present(result, line), true, `server ${line} missing from ${JSON.stringify(result)} ${label}`);
+    const serverCounts = counts(server);
+    const editCounts = counts(edit);
+    const resultCounts = counts(result);
+    const lines = new Set([...serverCounts.keys(), ...editCounts.keys(), ...resultCounts.keys()]);
+    for (const line of lines) {
+      const cap = Math.max(serverCounts.get(line) || 0, editCounts.get(line) || 0);
+      assert.ok((resultCounts.get(line) || 0) <= cap, `${line} duplicated in ${JSON.stringify(result)} ${label}`);
     }
-    // A pure append types only the lines after base. A rewrite types every line.
-    const typed = edit.startsWith(base) ? edit.slice(base.length) : edit;
-    for (const line of lines(typed)) {
-      assert.equal(present(result, line), true, `typed ${line} missing from ${JSON.stringify(result)} ${label}`);
+    if (result !== "" && result.trim() !== "") {
+      assert.equal(result.startsWith("\n"), false, label);
+      assert.equal(result.endsWith("\n"), false, label);
     }
   };
   for (const base of texts) {

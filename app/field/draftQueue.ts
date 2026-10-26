@@ -90,6 +90,15 @@ function capKnown(texts: readonly string[]): string[] {
   return list.slice(-KNOWN_SENT_CAP);
 }
 
+/**
+ * 14.18 and early 14.19 drafts never stored knownSentNotes. The text may
+ * already be on the server. Remember it so a later 409 does not append it again.
+ */
+function seedLegacyKnown(row: PendingMutation): PendingMutation {
+  if (row.knownSentNotes) return row;
+  return { ...row, knownSentNotes: capKnown([notesText(row)]) };
+}
+
 /** Keep each line once, in the order the texts were written. */
 export function keepBothOnce(left: string, right: string): string {
   if (!left) return right;
@@ -319,8 +328,11 @@ export function collapseLegacyNotesQueue(drafts: readonly PendingMutation[]): Pe
   }
   const notes: PendingMutation[] = [];
   for (const list of groups.values()) {
-    if (list.length === 1) notes.push(list[0]);
-    else {
+    if (list.length === 1) {
+      const seeded = seedLegacyKnown(list[0]);
+      if (seeded !== list[0]) structural = true;
+      notes.push(seeded);
+    } else {
       structural = true;
       notes.push(collapseNotesGroup(list));
     }

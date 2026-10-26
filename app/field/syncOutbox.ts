@@ -156,16 +156,6 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       if (!deps.active()) return { accepted, retried, parked };
       if (seen.has(m.id)) continue;
       seen.add(m.id);
-      // A 429 pauses this draft and everything ordered after it. An earlier
-      // draft can still send. The waiting draft is not parked or reordered.
-      const paced = all.some((row) =>
-        row.id !== m.id
-        && effectiveSyncState(row) === "retry"
-        && (row.nextAttemptAt ?? 0) > now()
-        && /asked us to wait/i.test(row.lastError || "")
-        && compareNotesSend(row, m) < 0
-      );
-      if (paced) continue;
       const state = effectiveSyncState(m);
       if (m.direct?.gps || state === "gps" || state === "parked") continue;
       if (notesTooLongRow(m) && (m.nextAttemptAt ?? 0) > now()) continue;
@@ -276,7 +266,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
         const error = caught as Error & { status?: number; code?: string; rebasedDraft?: PendingMutation; retryAfterMs?: number };
         if (error.status === 429) {
           await fail(current, error, "retry");
-          return { accepted, retried, parked };
+          continue;
         }
         const outcome = classifySyncFailure(error);
         const kept = outcome.kind === "denial" ? withRebasedNotes(current, error.rebasedDraft) : current;

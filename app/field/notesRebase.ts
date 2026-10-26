@@ -1,33 +1,53 @@
 /**
- * Three ways to combine a notes edit with the text on the server.
+ * Combine a notes edit with the text on the server.
  * Server text still equals baseNotes: the edit wins exactly, including a
  * deletion or a full rewrite.
- * The edit starts with that base and the server moved: append only the
- * addition. A same-line addition is written onto the server's last line only
- * when that line is still the base's last line. If the server's last line is
- * a different line, the base's last line plus the full addition is kept on its
- * own line, including lines typed after that extension. An addition that starts
- * a new line keeps its newline. Skip the
- * append only when the server text already ends with that exact addition on a
- * line boundary.
- * Anything else keeps both texts. An empty edit does not wipe a server change.
+ * Otherwise the lines we added, minus lines already in the server text, are
+ * appended to that text. A line the server already has is not written again.
+ * A pure deletion keeps the server text and restores a kept line the server
+ * dropped. Both versions stay when we and the server rewrote the same line.
+ * Leading and trailing blank lines of a merge are removed. Blank lines inside
+ * the text stay. A merge that is only blank lines is left as it is.
+ * An empty edit does not wipe a server change.
  */
-export function lastLine(text: string): string {
-  const index = text.lastIndexOf("\n");
-  return index === -1 ? text : text.slice(index + 1);
+function splitLines(text: string): string[] {
+  return text === "" ? [] : text.split("\n");
 }
 
-export function endsWithAdditionOnLine(current: string, addition: string): boolean {
-  if (!addition || !current.endsWith(addition)) return false;
-  if (addition.startsWith("\n")) return true;
-  const start = current.length - addition.length;
-  return start === 0 || current[start - 1] === "\n";
+function tally(lines: readonly string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const line of lines) counts.set(line, (counts.get(line) || 0) + 1);
+  return counts;
+}
+
+function multisetDiff(source: readonly string[], subtract: readonly string[]): string[] {
+  const left = tally(subtract);
+  const out: string[] = [];
+  for (const line of source) {
+    const n = left.get(line) || 0;
+    if (n > 0) left.set(line, n - 1);
+    else out.push(line);
+  }
+  return out;
+}
+
+/** Drop blank lines at the ends. Never erase a non-empty merge down to "". */
+export function trimEdgeBlankLines(text: string): string {
+  if (!text) return text;
+  const lines = text.split("\n");
+  let start = 0;
+  let end = lines.length;
+  while (start < end && lines[start] === "") start += 1;
+  while (end > start && lines[end - 1] === "") end -= 1;
+  if (start >= end) return text;
+  return lines.slice(start, end).join("\n");
 }
 
 /**
  * A 409 whose server text is the base, or any text this draft already sent,
  * means that earlier text landed. The rep's text then wins exactly.
- * Anything else uses the three-way rule.
+ * Server text that contains a sent line plus someone else's edit uses the
+ * line rule, so that sent line is not written twice.
  */
 export function notesAfterConflict(
   draft: { notes?: string; baseNotes?: string; knownSentNotes?: readonly string[] },
@@ -46,37 +66,29 @@ export function rebaseNotes(baseNotes: string, edited: string, currentNotes: str
   const current = currentNotes || "";
   const edit = edited || "";
   if (current === base) return { notes: edit, baseNotes: current };
-  // Nothing on the server to preserve. The typed note wins, including its base.
-  if (!current) return { notes: edit, baseNotes: current };
-  // The local note already begins with the server text. Keep the new tail once.
-  if (current && edit.startsWith(current)) {
-    const tail = edit.slice(current.length);
-    if (!tail || endsWithAdditionOnLine(current, tail)) return { notes: current, baseNotes: current };
-    return { notes: `${current}${tail}`, baseNotes: current };
+  if (!current) return { notes: trimEdgeBlankLines(edit), baseNotes: current };
+  if (!edit) return { notes: trimEdgeBlankLines(current), baseNotes: current };
+  // Our text already begins with the server text. Keep that tail once.
+  if (edit.startsWith(current))
+    return { notes: edit.length === current.length ? current : trimEdgeBlankLines(edit), baseNotes: current };
+
+  const baseLines = splitLines(base);
+  const ourLines = splitLines(edit);
+  const currentLines = splitLines(current);
+  const weAdded = multisetDiff(ourLines, baseLines);
+  const ourCounts = tally(ourLines);
+  const present = tally(currentLines);
+  // New lines are appended once. A line the server already has is not written
+  // again. A pure deletion restores a kept line the server dropped.
+  const extras: string[] = [];
+  for (const line of (weAdded.length > 0 ? weAdded : ourLines)) {
+    const have = present.get(line) || 0;
+    const cap = ourCounts.get(line) || 0;
+    if (have >= cap) continue;
+    extras.push(line);
+    present.set(line, have + 1);
   }
-  if (edit.startsWith(base)) {
-    const addition = edit.slice(base.length);
-    if (!addition) {
-      if (!edit || endsWithAdditionOnLine(current, edit)) return { notes: current, baseNotes: current };
-      return { notes: current ? `${current}\n${edit}` : edit, baseNotes: current };
-    }
-    if (endsWithAdditionOnLine(current, addition)) return { notes: current, baseNotes: current };
-    if (addition.startsWith("\n") || !base) {
-      const separated = addition.startsWith("\n") ? addition : `\n${addition}`;
-      if (endsWithAdditionOnLine(current, separated)) return { notes: current, baseNotes: current };
-      return { notes: `${current}${separated}`, baseNotes: current };
-    }
-    if (lastLine(current) === lastLine(base)) {
-      if (current.endsWith(addition)) return { notes: current, baseNotes: current };
-      return { notes: `${current}${addition}`, baseNotes: current };
-    }
-    const editedLine = `${lastLine(base)}${addition}`;
-    if (endsWithAdditionOnLine(current, editedLine)) return { notes: current, baseNotes: current };
-    return { notes: current ? `${current}\n${editedLine}` : edit, baseNotes: current };
-  }
-  if (!edit) return { notes: current, baseNotes: current };
-  if (endsWithAdditionOnLine(current, edit)) return { notes: current, baseNotes: current };
-  return { notes: current ? `${current}\n${edit}` : edit, baseNotes: current };
+  return { notes: trimEdgeBlankLines([...currentLines, ...extras].join("\n")), baseNotes: current };
 }
 
 /**

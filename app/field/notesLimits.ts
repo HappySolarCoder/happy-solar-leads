@@ -25,6 +25,8 @@ export const NON_OWNER_DIRECT_NOTES_MAX_CHARS = 10_000;
 export const NOTES_TOO_LONG_MESSAGE = "Notes too long";
 export const NOTES_BLANK_MESSAGE = "Notes weren't saved because they're blank.";
 export const NOTES_UNSAVED_MESSAGE = "These notes weren't saved.";
+export const NOTES_OTHER_REP_MESSAGE = "Notes weren't saved. This lead belongs to another rep.";
+export const NOTES_CLEAR_UNAVAILABLE_MESSAGE = "Clearing notes isn't available right now. Your notes were kept.";
 
 /** Same length as crypto.randomUUID() and Date.toISOString(), both ASCII. */
 export const NOTES_DRAFT_ID_PLACEHOLDER = "00000000-0000-4000-8000-000000000000";
@@ -148,8 +150,11 @@ function parkedNoteCopy(row: NotesLengthDraft): string {
   if (row.parkedReason === SYNC_REASON.notesTooLong) return "These notes weren't saved. Too long.";
   if (row.parkedReason === SYNC_REASON.notesConflict) return "Notes changed on another device.";
   if (row.parkedReason === SYNC_REASON.combinedDraft) return "Save the knock and the note separately.";
+  if (row.parkedReason === SYNC_REASON.ownedByOther) return NOTES_OTHER_REP_MESSAGE;
   if (row.parkedReason === SYNC_REASON.notesRejected) {
     const notes = typeof row.notes === "string" ? row.notes : "";
+    if (row.clearNotes === true && row.lastError === NOTES_CLEAR_UNAVAILABLE_MESSAGE)
+      return NOTES_CLEAR_UNAVAILABLE_MESSAGE;
     if (row.clearNotes === true) return "These notes weren't saved. The server rejected this clear.";
     if (!notes.trim()) return "These notes weren't saved. Blank notes aren't sent.";
     return "These notes weren't saved. The server rejected these notes.";

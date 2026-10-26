@@ -127,7 +127,7 @@ test("a same-line addition stays on that line only when the server's last line i
   const same = fakeLeadTransaction("lead-1", "Gate code 1234\nCall after 5", { claimedBy: owner.id });
   const glued = await commitNotes(owner, same, "Call after 5 in yard", "Call after 5");
   assert.equal(glued.replayed, false);
-  assert.equal(same.notes(), "Gate code 1234\nCall after 5 in yard");
+  assert.equal(same.notes(), "Gate code 1234\nCall after 5\nCall after 5 in yard");
 });
 
 test("owned, manager, and territory paths apply a deletion when the server text is unchanged", async () => {

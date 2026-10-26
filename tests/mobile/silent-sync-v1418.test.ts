@@ -406,18 +406,20 @@ test("410 and 400 park, 413 stays queued as payload_too_large, and a 403 without
   }
 });
 
-test("a knock whose actionAt is more than 10 minutes ahead stays queued", async () => {
+test("xK7KnockActionAt400 parks a knock 400 actionAt as invalid_payload", async () => {
   const now = Date.parse(at);
   const createdAt = new Date(now + 11 * 60 * 1000).toISOString();
+  let posts = 0;
   let rows = [knock({ id: "future-knock", createdAt, direct: { patch: { status: "not-home" }, serverDispo: true } })];
-  await syncOutbox({
-    now: () => now,
+  const run = (clock: number) => syncOutbox({
+    now: () => clock,
     random: () => 0,
     read: async () => rows,
     send: async (row) => postFieldDispo(row, user, {
       now: () => now,
       getToken: async () => "token",
       post: async (_path, init) => {
+        posts += 1;
         const body = JSON.parse(String(init?.body)) as { actionAt?: string };
         assert.equal(body.actionAt, createdAt);
         return json(400, { field: "actionAt" });
@@ -432,11 +434,15 @@ test("a knock whose actionAt is more than 10 minutes ahead stays queued", async 
     report: async () => {},
     active: () => true,
   });
-  assert.equal(rows[0].syncState, "retry");
-  assert.equal(rows[0].parkedReason, undefined);
+  await run(now);
+  assert.equal(posts, 1);
+  assert.equal(rows[0].syncState, "parked");
+  assert.equal(rows[0].parkedReason, SYNC_REASON.invalidPayload);
   assert.equal(rows[0].createdAt, createdAt);
-  assert.equal(rows[0].lastError, PHONE_CLOCK_NOTICE);
+  assert.notEqual(rows[0].lastError, PHONE_CLOCK_NOTICE);
   assert.equal(rows[0].kind, "knock");
+  await run(now + 60 * 60 * 1000);
+  assert.equal(posts, 1);
 });
 
 test("401 refreshes the token once and then backs off", async () => {

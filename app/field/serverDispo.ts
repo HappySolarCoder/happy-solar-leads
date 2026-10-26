@@ -7,7 +7,7 @@ import { freshDraftId } from "./draftQueue";
 import { commitDirectMutation, historyGpsFlag, reportingPatch, type DirectCommitIo } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
 import { notesAfterConflict } from "./notesRebase";
-import { deliberateNotesClear, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
+import { deliberateNotesClear, NOTES_CLEAR_UNAVAILABLE_MESSAGE, NOTES_OTHER_REP_MESSAGE, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
 import { ACTION_AT_FUTURE_MS, FIELD_DISPO_UNAVAILABLE, PHONE_CLOCK_NOTICE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
@@ -497,6 +497,25 @@ export async function postFieldDispo(
       response = await send(token);
       continue;
     }
+    if (response.status === 409 && !notesRetried && draft.kind === "notes" && deliberateNotesClear(draft)) {
+      const data = await readJson(response);
+      const currentNotes = typeof data?.currentNotes === "string" ? data.currentNotes : "";
+      if (currentNotes === "") return { replayed: true, appliedNotes: "" };
+      if ((draft.knownSentNotes || []).includes(currentNotes)) {
+        notesRetried = true;
+        draft = {
+          ...draft,
+          notes: "",
+          baseNotes: currentNotes,
+          clearNotes: true,
+          ...(draft.direct ? { direct: { ...draft.direct, patch: { ...draft.direct.patch, notes: "" } } } : {}),
+        };
+        rebasedDraft = draft;
+        body = fieldDispoBody(draft, user);
+        response = await send(token);
+        continue;
+      }
+    }
     if (response.status === 409 && !notesRetried && draft.kind === "notes" && body.clearNotes !== true) {
       const data = await readJson(response);
       const currentNotes = typeof data?.currentNotes === "string" ? data.currentNotes : "";
@@ -561,29 +580,33 @@ export async function postFieldDispo(
     const data = await readJson(response);
     const field = typeof data?.field === "string" ? data.field : "";
     const reason = typeof data?.reasonCode === "string" ? data.reasonCode : "";
-    if (field === "actionAt" && actionAtAhead(draft.createdAt, deps.now?.() ?? Date.now()))
+    if (draft.kind === "notes" && field === "actionAt" && actionAtAhead(draft.createdAt, deps.now?.() ?? Date.now()))
       fail(Object.assign(Error(PHONE_CLOCK_NOTICE), { status: 400, code: "clock_ahead" }));
     if (draft.kind === "notes" && field === "actionAt")
       fail(routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected));
+    if (draft.kind === "notes" && field === "clearNotes")
+      fail(routeError(NOTES_CLEAR_UNAVAILABLE_MESSAGE, 400, SYNC_REASON.notesRejected));
     if (
       draft.kind === "notes"
-      && (
-        reason === SYNC_REASON.notesEmpty
-        || reason === SYNC_REASON.notesClearMismatch
-        || field === "clearNotes"
-      )
+      && (reason === SYNC_REASON.notesEmpty || reason === SYNC_REASON.notesClearMismatch)
     ) fail(routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected));
     if (draft.kind === "notes" && (field === "notes" || field === "baseNotes"))
       fail(routeError("Notes too long", 400, SYNC_REASON.notesTooLong));
+    if (field === "actionAt")
+      fail(Object.assign(routeError("Disposition route rejected this knock.", 400, SYNC_REASON.invalidPayload), { field: "actionAt" }));
     fail(routeError("Disposition route rejected this knock.", 400, SYNC_REASON.invalidPayload));
   }
   if (response.status === 403) {
     const data = await readJson(response);
-    fail(routeError(
-      "The disposition route denied this knock.",
-      403,
-      knownReason(data?.reasonCode) || SYNC_REASON.other,
-    ));
+    const reason = knownReason(data?.reasonCode) || SYNC_REASON.other;
+    if (draft.kind === "notes") {
+      fail(routeError(
+        reason === SYNC_REASON.ownedByOther ? NOTES_OTHER_REP_MESSAGE : "Notes weren't saved.",
+        403,
+        reason,
+      ));
+    }
+    fail(routeError("The disposition route denied this knock.", 403, reason));
   }
   if (response.status === 409) {
     if (deliberateNotesClear(draft))
@@ -614,6 +637,14 @@ function terminalNotesFailure(error: unknown, draft?: PendingMutation): boolean 
   const code = (error as { reasonCode?: string }).reasonCode;
   if (code === SYNC_REASON.notesTooLong || code === SYNC_REASON.notesRejected) return true;
   return code === SYNC_REASON.notesConflict && deliberateNotesClear(draft);
+}
+
+/** A knock 413 stays queued. A knock 400 whose field is actionAt parks. Neither falls back to a direct write. */
+function knockRouteStands(draft: PendingMutation, error: unknown): boolean {
+  if (draft.kind !== "knock") return false;
+  const failure = error as { status?: number; field?: string };
+  if (failure.status === 413) return true;
+  return failure.status === 400 && failure.field === "actionAt";
 }
 
 /** Offline and transport failures must stay queued. They do not adopt the route status. */
@@ -710,7 +741,7 @@ export async function deliverFieldDispo(
     try {
       return await postFieldDispo(prepared, user, deps);
     } catch (routeFailure) {
-      if (terminalNotesFailure(routeFailure, prepared)) throw routeFailure;
+      if (terminalNotesFailure(routeFailure, prepared) || knockRouteStands(prepared, routeFailure)) throw routeFailure;
       return plainPatchAfterRoute(prepared, user, routeFailure, commit);
     }
   }
@@ -721,7 +752,7 @@ export async function deliverFieldDispo(
     try {
       return await postFieldDispo(prepared, user, deps);
     } catch (routeFailure) {
-      if (terminalNotesFailure(routeFailure, prepared)) throw routeFailure;
+      if (terminalNotesFailure(routeFailure, prepared) || knockRouteStands(prepared, routeFailure)) throw routeFailure;
       return plainPatchAfterRoute(prepared, user, routeFailure, commit);
     }
   }
