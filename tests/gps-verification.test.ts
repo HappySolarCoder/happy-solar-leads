@@ -7,8 +7,7 @@ import {
   GPS_VERIFIED_MAX_ADJUSTED_M,
   decideKnockGps,
   gpsRulePasses,
-  leadDetailKnockGps,
-} from '../app/utils/gpsVerification';
+} from '../app/utils/gpsRule';
 
 describe('shared GPS verification rule', () => {
   it('uses d - min(acc, 40) <= 75 and acc <= 65, inclusive', () => {
@@ -51,30 +50,11 @@ describe('shared GPS verification rule', () => {
     assert.equal(onPin.gpsDistanceM, 0);
   });
 
-  it('saves a far LeadDetail knock as a silent flag', () => {
-    const lead = { lat: 33.45, lng: -112.07 };
-    const far = leadDetailKnockGps({ lat: 33.46, lng: -112.07, accuracyM: 5 }, lead);
-    assert.equal(far.fields.gpsVerified, false);
-    assert.equal(far.fields.gpsUnverifiedReason, 'too_far');
-    assert.equal(far.fields.knockGpsLat, 33.46);
-    assert.equal(far.gpsFlag.gpsVerified, false);
-    assert.equal(far.keepFix, true);
-    assert.equal(JSON.stringify(far).toLowerCase().includes('feet'), false);
-    assert.equal(JSON.stringify(far).toLowerCase().includes('closer'), false);
-
-    const none = leadDetailKnockGps(null, lead);
-    assert.equal(none.fields.gpsUnverifiedReason, 'no_fix');
-    assert.equal(Object.hasOwn(none.fields, 'knockGpsLat'), false);
-    assert.equal(none.keepFix, false);
-
-    const low = leadDetailKnockGps({ lat: lead.lat, lng: lead.lng, accuracyM: 80 }, lead);
-    assert.equal(low.fields.gpsUnverifiedReason, 'low_accuracy');
-    assert.equal(low.fields.knockGpsLat, lead.lat);
-
+  it('leaves LeadDetail and the map pin gate for the rules PR', () => {
     const detail = readFileSync(new URL('../app/components/LeadDetail.tsx', import.meta.url), 'utf8');
-    assert.equal(detail.includes('not close enough'), false);
-    assert.equal(detail.includes('PROXIMITY_MAX_DISTANCE_METERS'), false);
-    assert.equal(detail.includes('leadDetailKnockGps'), true);
+    assert.equal(detail.includes('gpsRule'), false);
+    assert.equal(detail.includes('leadDetailKnockGps'), false);
+    assert.equal(detail.includes('not close enough'), true);
 
     const map = readFileSync(new URL('../app/components/LeadMap.tsx', import.meta.url), 'utf8');
     assert.equal(map.includes('PROXIMITY_MAX_DISTANCE_METERS'), true);

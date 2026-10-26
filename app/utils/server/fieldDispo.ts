@@ -11,7 +11,7 @@ import {
   type GpsDecision,
   type KnockFix,
   type LatLng,
-} from '@/app/utils/gpsVerification';
+} from '@/app/utils/gpsRule';
 import { isTestAccount } from './discordNotification';
 import { FIELD_REASON_CODES, type FieldReasonCode } from './fieldReasonCodes';
 

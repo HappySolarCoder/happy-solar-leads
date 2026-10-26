@@ -119,7 +119,7 @@ export interface Lead {
   knockGpsAccuracy?: number;     // GPS accuracy in meters
   knockGpsTimestamp?: Date;      // Timestamp of GPS capture
   knockDistanceFromAddress?: number; // Distance from address in meters
-  /** Server or LeadDetail verification. Reps do not see this. */
+  /** Written by the dispo route. Reps do not see this. */
   gpsVerified?: boolean;
   gpsUnverifiedReason?: 'no_fix' | 'stale' | 'low_accuracy' | 'reduced_accuracy' | 'too_far' | 'other';
   gpsDistanceM?: number;

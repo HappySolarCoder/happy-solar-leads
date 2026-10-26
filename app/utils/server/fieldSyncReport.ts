@@ -6,7 +6,7 @@ import {
   type UserProfile,
 } from './requireApprovedUser';
 import { isTestAccount } from './discordNotification';
-import { isGpsUnverifiedReason } from '@/app/utils/gpsVerification';
+import { isGpsUnverifiedReason } from '@/app/utils/gpsRule';
 import { FIELD_REASON_CODES } from './fieldReasonCodes';
 
 export const SYNC_REPORT_LIMIT = 10;

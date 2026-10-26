@@ -1,8 +1,9 @@
 import { distanceBetween } from 'geofire-common';
 
 /**
- * One shared GPS rule for the dispo route and LeadDetail.
- * A fix is verified only when d - min(accuracy, 40) <= 75 and accuracy <= 65.
+ * Shared GPS verification rule for the dispo route and direct disposition saves.
+ * Import `gpsRulePasses` from here. A fix is verified only when
+ * d - min(accuracyM, 40) <= 75 and accuracyM <= 65.
  * GPS never blocks a disposition. A failed check is stored as a flag.
  */
 export const GPS_ACCURACY_CREDIT_CAP_M = 40;
@@ -82,7 +83,7 @@ function captureIsStale(fix: KnockFix, actionAtMs: number | undefined): boolean 
 }
 
 /**
- * Server (and LeadDetail) reason for an unverified fix.
+ * Reason for an unverified fix.
  * Stale capture wins, then accuracy above 65 m, then a miss inside the
  * 40–65 m band (reduced_accuracy), then too_far. `other` is only for a
  * malformed fix that is dropped. `no_fix` is only for a missing fix.
@@ -124,37 +125,4 @@ export function gpsFlagOf(decision: GpsDecision): GpsFlag {
   if (decision.gpsUnverifiedReason) flag.gpsUnverifiedReason = decision.gpsUnverifiedReason;
   if (decision.gpsDistanceM != null) flag.gpsDistanceM = decision.gpsDistanceM;
   return flag;
-}
-
-/**
- * Fields LeadDetail merges into a door-knock update. Never includes a
- * user-visible message. A far or inaccurate fix is saved and flagged.
- */
-export function leadDetailKnockGps(
-  position: { lat: number; lng: number; accuracyM: number } | null,
-  lead: { lat?: number; lng?: number },
-): { fields: Record<string, number | boolean | string>; gpsFlag: GpsFlag; keepFix: boolean } {
-  let fix: KnockFix | 'absent' | 'malformed' = 'absent';
-  if (position) {
-    const point = finitePoint(position.lat, position.lng);
-    if (!point || typeof position.accuracyM !== 'number' || !Number.isFinite(position.accuracyM)) {
-      fix = 'malformed';
-    } else {
-      fix = { ...point, accuracyM: position.accuracyM };
-    }
-  }
-  const decision = decideKnockGps({
-    fix,
-    reference: finitePoint(lead.lat, lead.lng),
-  });
-  const fields: Record<string, number | boolean | string> = { gpsVerified: decision.gpsVerified };
-  if (decision.gpsUnverifiedReason) fields.gpsUnverifiedReason = decision.gpsUnverifiedReason;
-  if (decision.gpsDistanceM != null) fields.gpsDistanceM = decision.gpsDistanceM;
-  if (decision.keepFix && position) {
-    fields.knockGpsLat = position.lat;
-    fields.knockGpsLng = position.lng;
-    fields.knockGpsAccuracy = position.accuracyM;
-    if (decision.gpsDistanceM != null) fields.knockDistanceFromAddress = decision.gpsDistanceM;
-  }
-  return { fields, gpsFlag: gpsFlagOf(decision), keepFix: decision.keepFix };
 }
