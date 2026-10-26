@@ -377,6 +377,14 @@ function cases(): RuleCase[] {
     { id: 'anon history create', uid: 'anon', provider: 'anonymous', run: (db) => db.collection('disposition_history').doc('hist-anon').set({ userId: 'anon' }), expectTight: 'deny' },
     { id: 'anon session', uid: 'anon', provider: 'anonymous', run: (db) => db.collection('userSessions').doc('anon').set({ step: 1 }), expectTight: 'deny' },
     { id: 'anon territory', uid: 'anon', provider: 'anonymous', run: (db) => db.collection('territories').doc('realTerritory').get(), expectTight: 'deny' },
+
+    // fieldSyncReports stays client-closed (default deny). No match block.
+    { id: 'setter fieldSyncReports create', uid: 'realSetter', run: (db) => db.collection('fieldSyncReports').doc('x').set({ reasonCode: 'other' }), expectTight: 'deny' },
+    { id: 'setter fieldSyncReports get', uid: 'realSetter', run: (db) => db.collection('fieldSyncReports').doc('x').get(), expectTight: 'deny' },
+    { id: 'setter fieldSyncReports list', uid: 'realSetter', run: (db) => db.collection('fieldSyncReports').get(), expectTight: 'deny' },
+    { id: 'admin fieldSyncReports create', uid: 'admin', run: (db) => db.collection('fieldSyncReports').doc('x').set({ reasonCode: 'other' }), expectTight: 'deny' },
+    { id: 'admin fieldSyncReports get', uid: 'admin', run: (db) => db.collection('fieldSyncReports').doc('x').get(), expectTight: 'deny' },
+    { id: 'admin fieldSyncReports list', uid: 'admin', run: (db) => db.collection('fieldSyncReports').get(), expectTight: 'deny' },
   ];
 }
 

@@ -79,6 +79,20 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "fieldSyncReports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "reasonCode",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []
