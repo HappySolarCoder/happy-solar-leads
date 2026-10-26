@@ -10,7 +10,7 @@ export const SYNC_REASON = {
   permissionDenied: "permission_denied",
   outOfTerritory: "out_of_territory",
   ownedByOther: "owned_by_other",
-  /** Queued slow retry when a knock body is over the route's 32 KB limit. */
+  /** A 413 from the route. Parked as notes_too_long. Not a slow retry. */
   payloadTooLarge: "payload_too_large",
   historicalPin: "historical_pin",
   notFound: "not_found",
@@ -27,7 +27,7 @@ export const SYNC_REASON = {
    * to invalid_payload, which the live route accepts.
    */
   notesRejected: "notes_rejected",
-  /** Parked. A notes route 413 without reasonCode, a notes body over 256 KB, or a notes/baseNotes 400 that is not a clear rejection. Not retried in a loop. */
+  /** Parked. Every notes 413, including one with no reasonCode, a notes body over 256 KB, or a notes/baseNotes 400 that is not a clear rejection. Not retried. */
   notesTooLong: "notes_too_long",
   /** Parked. An old draft carried both a knock and a note, and it could not be split. */
   combinedDraft: "combined_draft",

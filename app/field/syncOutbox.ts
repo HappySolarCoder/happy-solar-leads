@@ -1,6 +1,6 @@
 import { coerceLegacyContactDraft, hasContactFields, notesWereEdited, splitNotesAndContact } from "./contactSave";
-import { compareNotesSend } from "./notesCoalesce";
-import { compareQueuedDrafts } from "./draftQueue";
+import { compareNotesSend, hasQueueSeq } from "./notesCoalesce";
+import { compareQueuedDrafts, legacyNotesOutstanding, notesBaseForSend } from "./draftQueue";
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
 import { absorbNotesText } from "./notesLimits";
 import { SERVER_DISPO_SLOW_RETRY_MS, splitCombinedDraft } from "./serverDispo";
@@ -93,9 +93,24 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
   const random = deps.random ?? Math.random;
   const write = deps.update ?? deps.block;
   const seen = new Set<string>();
+  const lastApplied = new Map<string, string>();
   let accepted = 0,
     retried = 0,
     parked = 0;
+  const leadKey = (row: PendingMutation) => `${row.userId}\n${row.leadId}`;
+  const retargetFollowers = async (applied: PendingMutation, appliedText: string) => {
+    if (!write || applied.kind !== "notes") return;
+    const live = await deps.read();
+    for (const row of live) {
+      if (row.kind !== "notes" || row.id === applied.id) continue;
+      if (row.leadId !== applied.leadId || row.userId !== applied.userId) continue;
+      if (effectiveSyncState(row) === "parked") continue;
+      if (compareNotesSend(row, applied) <= 0) continue;
+      const rowNotes = row.notes || "";
+      if (!rowNotes.startsWith(appliedText) || (row.baseNotes || "") === appliedText) continue;
+      await write({ ...row, baseNotes: appliedText });
+    }
+  };
   while (deps.active()) {
     const all = (await deps.read())
       .slice()
@@ -126,9 +141,12 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
         ids.add(contactSplit.contact.id);
         ids.add(contactSplit.notes.id);
         await deps.insert(contactSplit.contact);
-        await deps.insert(contactSplit.notes);
-        await deps.remove(coerced.id);
-        seen.add(coerced.id);
+        if (contactSplit.notes.id === coerced.id && write) await write(contactSplit.notes);
+        else {
+          await deps.insert(contactSplit.notes);
+          await deps.remove(coerced.id);
+        }
+        seen.delete(contactSplit.notes.id);
         flushed = true;
       }
     }
@@ -209,8 +227,12 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           continue;
         }
         await deps.insert(split.knock);
-        await deps.insert(split.notes);
-        await deps.remove(current.id);
+        if (split.notes.id === current.id && write) await write(split.notes);
+        else {
+          await deps.insert(split.notes);
+          await deps.remove(current.id);
+        }
+        seen.delete(split.notes.id);
         continue;
       }
       const fail = async (
@@ -252,14 +274,48 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           await deps.remove(prior.id);
         }
       };
+      if (current.kind === "notes" && !hasContactFields(current)) {
+        const live = await deps.read();
+        if (legacyNotesOutstanding(live, current)) {
+          deferred.add(current.leadId);
+          const legacyCanSend = live.some((row) =>
+            row.kind === "notes"
+            && !hasQueueSeq(row)
+            && row.leadId === current.leadId
+            && row.userId === current.userId
+            && row.id !== current.id
+            && !holding(row)
+            && effectiveSyncState(row) !== "parked"
+            && effectiveSyncState(row) !== "gps"
+          );
+          if (legacyCanSend) seen.delete(current.id);
+          continue;
+        }
+        const prepared = notesBaseForSend(current, live, lastApplied.get(leadKey(current)));
+        if ((prepared.baseNotes || "") !== (current.baseNotes || "")) {
+          current = prepared;
+          if (write) await write(current);
+        }
+      }
       try {
-        await deps.send(current);
+        const sent = await deps.send(current);
+        const appliedText = sent && typeof sent === "object" && typeof (sent as { appliedNotes?: unknown }).appliedNotes === "string"
+          ? (sent as { appliedNotes: string }).appliedNotes
+          : (current.notes || "");
         await deps.remove(current.id);
         await dropAbsorbed();
+        if (current.kind === "notes") {
+          lastApplied.set(leadKey(current), appliedText);
+          await retargetFollowers(current, appliedText);
+        }
         accepted += 1;
         await recordSyncEvent(eventFor(current, "accepted"));
       } catch (caught) {
-        const error = caught as Error & { status?: number; code?: string; rebasedDraft?: PendingMutation };
+        const error = caught as Error & { status?: number; code?: string; rebasedDraft?: PendingMutation; retryAfterMs?: number };
+        if (error.status === 429) {
+          await fail(current, error, "retry");
+          return { accepted, retried, parked };
+        }
         const outcome = classifySyncFailure(error);
         const kept = outcome.kind === "denial" ? withRebasedNotes(current, error.rebasedDraft) : current;
         if (outcome.kind === "gps-pending") continue;

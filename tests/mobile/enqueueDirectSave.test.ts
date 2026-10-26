@@ -92,7 +92,9 @@ async function saveThroughEnqueue(input: {
         return commitDirectMutation(mutation, user, io);
       },
       post: async (_path, init) => {
-        routes.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        routes.push(body);
+        if (body.kind === "notes" && typeof body.notes === "string") record = { ...record, notes: body.notes };
         return new Response(JSON.stringify({ ok: true }), { status: 200 });
       },
     }),
@@ -157,8 +159,11 @@ test("notes plus contact persists both fields", async () => {
     { kind: "contact", patch: { phone: "556" }, notes: undefined },
     { kind: "notes", patch: { notes: "a new note" }, notes: "a new note" },
   ]);
-  assert.deepEqual(saved.updates, [{ phone: "556" }, { notes: "a new note" }]);
-  assert.deepEqual(saved.routes, []);
+  assert.deepEqual(saved.updates, [{ phone: "556" }]);
+  assert.equal(saved.routes.length, 1);
+  assert.equal(saved.routes[0].kind, "notes");
+  assert.equal(saved.routes[0].notes, "a new note");
+  assert.equal(saved.routes[0].draftId, "notes-1");
   assert.equal(saved.notes, "a new note");
   assert.deepEqual(saved.remaining, []);
 });
@@ -168,8 +173,11 @@ test("notes-only writes the note", async () => {
   assert.equal(saved.queued.length, 1);
   assert.equal(saved.queued[0].kind, "notes");
   assert.deepEqual(saved.queued[0].direct?.patch, { notes: "only the note" });
-  assert.deepEqual(saved.updates, [{ notes: "only the note" }]);
-  assert.deepEqual(saved.routes, []);
+  assert.deepEqual(saved.updates, []);
+  assert.equal(saved.routes.length, 1);
+  assert.equal(saved.routes[0].kind, "notes");
+  assert.equal(saved.routes[0].notes, "only the note");
+  assert.equal(saved.routes[0].draftId, "notes-1");
   assert.equal(saved.notes, "only the note");
 });
 

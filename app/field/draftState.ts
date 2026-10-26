@@ -66,11 +66,10 @@ export function classifySyncFailure(
     || code === "offline"
     || /offline|network|failed to fetch/i.test(message)
   ) return { kind: "transient" };
-  // Park. A 15-minute retry cannot shrink the body, and it must not hold the lead.
-  if (reason === SYNC_REASON.notesTooLong)
+  // Park. A 413 has no smaller retry, including a body with no reasonCode.
+  // It must not stay queued or hold the next draft.
+  if (status === 413 || reason === SYNC_REASON.notesTooLong || reason === SYNC_REASON.payloadTooLarge)
     return { kind: "denial", parkedReason: SYNC_REASON.notesTooLong };
-  if (status === 413 || reason === SYNC_REASON.payloadTooLarge)
-    return { kind: "slow", parkedReason: SYNC_REASON.payloadTooLarge };
   if (reason) return { kind: "denial", parkedReason: reason };
   if (/Legacy handoff|Invalid knock time|Use the claim\/unclaim|Draft id is not/i.test(message))
     return { kind: "denial", parkedReason: SYNC_REASON.invalidPayload };

@@ -323,7 +323,11 @@ test("a 409 on a manager clear parks as notes_rejected and keeps clearNotes", as
 test("a 413 with reasonCode payload_too_large is classified from the body", async () => {
   assert.deepEqual(
     classifySyncFailure(Object.assign(Error("too big"), { status: 413, reasonCode: SYNC_REASON.payloadTooLarge })),
-    { kind: "slow", parkedReason: SYNC_REASON.payloadTooLarge },
+    { kind: "denial", parkedReason: SYNC_REASON.notesTooLong },
+  );
+  assert.deepEqual(
+    classifySyncFailure(Object.assign(Error("Notes too long"), { status: 413 })),
+    { kind: "denial", parkedReason: SYNC_REASON.notesTooLong },
   );
   let posts = 0;
   let rows: PendingMutation[] = [{
@@ -353,9 +357,9 @@ test("a 413 with reasonCode payload_too_large is classified from the body", asyn
     random: () => 0,
   });
   assert.equal(posts, 1);
-  assert.equal(rows[0].syncState, "queued");
-  assert.equal(rows[0].parkedReason, SYNC_REASON.payloadTooLarge);
-  assert.equal(rows[0].routeHold, "field-dispo");
+  assert.equal(rows[0].syncState, "parked");
+  assert.equal(rows[0].parkedReason, SYNC_REASON.notesTooLong);
+  assert.equal(rows[0].routeHold, undefined);
   assert.equal(rows[0].lastError, "Notes too long");
   assert.equal(rows[0].notes, "still here");
   assert.match(readFileSync(path.join(root, "app/field/notesLimits.ts"), "utf8"), /15efe05/);
@@ -647,8 +651,16 @@ test("same-millisecond clear and type leave the queue in the order the rep acted
       send: async (row) => deliverFieldDispo(row, owner, {
         getToken: async () => "token",
         commit: async (mutation, user) => commitDirectMutation(mutation, user, io),
-        post: async () => {
-          throw Error("same-millisecond notes must not use the route");
+        post: async (_path, init) => {
+          const body = JSON.parse(String(init?.body)) as { notes?: string; baseNotes?: string };
+          const notes = body.notes ?? "";
+          const baseNotes = body.baseNotes ?? "";
+          const current = String(record.notes ?? "");
+          if (current !== baseNotes && current !== notes) {
+            return json(409, { ok: false, reasonCode: "notes_conflict", currentNotes: current });
+          }
+          record = { ...record, notes };
+          return json(200, { ok: true });
         },
       }),
       remove: async (id) => {
@@ -775,16 +787,21 @@ test("queued notes drafts send one at a time and a knock stays a knock", async (
     ...extra,
   });
   const legacyReverse = [
-    note("a-l2", "S\nL1\nL2", "S\nL1"),
-    note("z-l1", "S\nL1", "S"),
+    note("b-l2", "S\nL1\nL2", "S\nL1"),
+    note("a-l1", "S\nL1", "S"),
   ];
-  assert.deepEqual(orderQueuedNotes(legacyReverse).map((row) => row.id), ["z-l1", "a-l2"]);
+  assert.deepEqual(orderQueuedNotes(legacyReverse).map((row) => row.id), ["a-l1", "b-l2"]);
+  const earlySeq = note("n0", "S\nL1\nL2\nN0", "S", {
+    queueSeq: 1,
+    createdAt: "2026-10-26T12:00:00.000Z",
+  });
+  assert.deepEqual(orderQueuedNotes([...legacyReverse, earlySeq]).map((row) => row.id), ["a-l1", "b-l2", "n0"]);
   const chain = [
     ...legacyReverse,
     note("n1", "S\nL1\nL2\nN1", "S\nL1\nL2", { queueSeq: 1 }),
     note("n2", "S\nL1\nL2\nN1\nN2", "S\nL1\nL2\nN1", { queueSeq: 2 }),
   ];
-  assert.deepEqual(orderQueuedNotes(chain).map((row) => row.id), ["z-l1", "a-l2", "n1", "n2"]);
+  assert.deepEqual(orderQueuedNotes(chain).map((row) => row.id), ["a-l1", "b-l2", "n1", "n2"]);
   const history = [{ disposition: "Not Home", timestamp: new Date(stamp), userId: owner.id, userName: owner.name }];
   const knock: PendingMutation = {
     id: "k-knock",
@@ -829,8 +846,16 @@ test("queued notes drafts send one at a time and a knock stays a knock", async (
       return deliverFieldDispo(row, owner, {
         getToken: async () => "token",
         commit: async (mutation, user) => commitDirectMutation(mutation, user, io),
-        post: async () => {
-          throw Error("owned notes must not use the route");
+        post: async (_path, init) => {
+          const body = JSON.parse(String(init?.body)) as { draftId: string; notes?: string; baseNotes?: string };
+          const notes = body.notes ?? "";
+          const baseNotes = body.baseNotes ?? "";
+          const current = String(record.notes ?? "");
+          if (current !== baseNotes && current !== notes) {
+            return json(409, { ok: false, reasonCode: "notes_conflict", currentNotes: current });
+          }
+          if (current !== notes) record = { ...record, notes };
+          return json(200, { ok: true });
         },
       });
     },
@@ -862,7 +887,7 @@ test("queued notes drafts send one at a time and a knock stays a knock", async (
   assert.equal(rows.length, 0);
   const notesSent = sent.filter((row) => row.kind === "notes");
   assert.equal(notesSent.length, 4);
-  assert.deepEqual(notesSent.map((row) => row.id), ["z-l1", "a-l2", "n1", "n2"]);
+  assert.deepEqual(notesSent.map((row) => row.id), ["a-l1", "b-l2", "n1", "n2"]);
   assert.equal(knocks.length, 1);
   assert.equal(knocks[0].id, "k-knock");
   assert.deepEqual(knocks[0].direct?.patch.dispositionHistory, history);

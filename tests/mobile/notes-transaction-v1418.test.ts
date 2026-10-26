@@ -182,37 +182,39 @@ function setterRoute(): User {
   return { id: "territory-rep", name: "Territory", role: "setter" } as User;
 }
 
-test("a route notes conflict retries the plain patch with the rebased text", async () => {
+test("a route notes conflict rebases once and does not direct-write", async () => {
   let posts = 0;
-  let committed: PendingMutation | undefined;
-  await deliverFieldDispo({
-    id: "note-1",
-    userId: user.id,
-    userName: user.name,
-    leadId: "lead-1",
-    createdAt: "2026-10-25T15:00:00.000Z",
-    kind: "notes",
-    baseStatus: "claimed",
-    notes: "local only",
-    baseNotes: "",
-    direct: { patch: { notes: "local only" }, serverDispo: true },
-  }, user, {
-    getToken: async () => "token",
-    post: async () => {
-      posts += 1;
-      return new Response(JSON.stringify({ currentNotes: "phone two" }), {
-        status: 409,
-        headers: { "content-type": "application/json" },
-      });
-    },
-    commit: async (draft) => {
-      committed = draft;
-      return { replayed: false };
-    },
-  });
+  let committed = 0;
+  await assert.rejects(
+    () => deliverFieldDispo({
+      id: "note-1",
+      userId: user.id,
+      userName: user.name,
+      leadId: "lead-1",
+      createdAt: "2026-10-25T15:00:00.000Z",
+      kind: "notes",
+      baseStatus: "claimed",
+      notes: "local only",
+      baseNotes: "",
+      direct: { patch: { notes: "local only" }, serverDispo: true },
+    }, user, {
+      getToken: async () => "token",
+      post: async () => {
+        posts += 1;
+        return new Response(JSON.stringify({ currentNotes: "phone two" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      commit: async () => {
+        committed += 1;
+        return { replayed: false };
+      },
+    }),
+    (error: Error) => /another device/i.test(error.message),
+  );
   assert.equal(posts, 2);
-  assert.equal(committed?.notes, "phone two\nlocal only");
-  assert.equal(committed?.direct?.patch.notes, "phone two\nlocal only");
+  assert.equal(committed, 0);
 });
 
 test("a notes transaction that cannot finish stays queued", async () => {
@@ -339,7 +341,6 @@ test("a combined knock and note is split into two drafts and nothing is dropped"
   await syncOutbox({
     read: async () => rows,
     send: async (row) => {
-      assert.notEqual(row.id, combined.id);
       sent.push(row);
     },
     remove: async (id) => {
@@ -362,6 +363,8 @@ test("a combined knock and note is split into two drafts and nothing is dropped"
   assert.equal(sent.length, 2);
   const note = sent.find((row) => row.kind === "notes");
   const knock = sent.find((row) => row.kind === "knock");
+  assert.equal(note?.id, combined.id);
+  assert.equal(knock?.id, `${combined.id}-knock`);
   assert.equal(note?.notes, "keep this note");
   assert.equal(note?.direct?.patch.notes, "keep this note");
   assert.equal(note?.direct?.patch.dispositionHistory, undefined);

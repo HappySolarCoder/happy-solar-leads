@@ -3,10 +3,11 @@ import { apiFetch } from "@/app/utils/apiFetch";
 import { auth } from "@/app/utils/firebase";
 import { isScheduledGoBackStatus } from "@/app/types/disposition";
 import { coerceLegacyContactDraft, hasContactFields, notesWereEdited } from "./contactSave";
+import { freshDraftId } from "./draftQueue";
 import { commitDirectMutation, historyGpsFlag, reportingPatch, type DirectCommitIo } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
 import { rebaseNotes } from "./notesRebase";
-import { deliberateNotesClear, NON_OWNER_DIRECT_NOTES_MAX_CHARS, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
+import { deliberateNotesClear, NOTES_ROUTE_BODY_MAX_BYTES, notesRouteBody, notesTextOf, utf8Bytes } from "./notesLimits";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
 import { FIELD_DISPO_UNAVAILABLE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
@@ -51,18 +52,17 @@ export function prefersServerDispo(lead: DispoLead, uid: string, role?: string):
 }
 
 /**
- * Notes from 10,001 through 100,000 characters on a lead this rep does not own
- * go to the route. #170 accepts them. An owner or admin still writes directly.
+ * Every notes draft goes to /api/field/dispo. Main 15efe05 accepts the owner
+ * and an admin: ownership skips the territory gate, and applyNotes only checks
+ * baseNotes. The receipt dedupes a replay. Contact and photo writes stay direct.
  */
 export function notesDraftUsesRoute(
-  lead: DispoLead,
-  uid: string,
-  role: string | undefined,
-  notes: string,
+  _lead: DispoLead,
+  _uid: string,
+  _role: string | undefined,
+  _notes: string,
 ): boolean {
-  if (prefersServerDispo(lead, uid, role)) return true;
-  if (role === "admin" || leadOwnedBy(lead, uid)) return false;
-  return notes.length > NON_OWNER_DIRECT_NOTES_MAX_CHARS;
+  return true;
 }
 
 export function notesRouteBodyTooLarge(body: FieldDispoBody): boolean {
@@ -79,8 +79,8 @@ export function splitCombinedDraft(
   const history = patch.dispositionHistory;
   const notes = typeof patch.notes === "string" ? patch.notes : undefined;
   if (notes == null || !history?.length) return null;
-  const knockId = `${m.id}-knock`;
-  const notesId = `${m.id}-notes`;
+  const notesId = DRAFT_ID_PATTERN.test(m.id) ? m.id : freshDraftId(m.id, "notes", existingIds);
+  const knockId = freshDraftId(m.id, "knock", existingIds);
   const status = (typeof patch.status === "string" && patch.status) || m.status || "";
   const disposition = history[0]?.disposition || m.disposition || status;
   if (
@@ -88,8 +88,9 @@ export function splitCombinedDraft(
     || !m.userId
     || !DRAFT_ID_PATTERN.test(knockId)
     || !DRAFT_ID_PATTERN.test(notesId)
+    || knockId === notesId
     || existingIds.has(knockId)
-    || existingIds.has(notesId)
+    || (notesId !== m.id && existingIds.has(notesId))
     || !status
     || status === "claimed"
     || status === "unclaimed"
@@ -403,7 +404,7 @@ export type FieldDispoDeps = {
     m: PendingMutation,
     user: User,
   ) => Promise<{ replayed: boolean; lead?: Lead }>;
-  /** Owned notes write-ahead. The route dedupes by draftId and does not use this. */
+  /** Defense in depth for a direct notes write. The route dedupes by draftId and does not use this. */
   persistDraft?: (draft: PendingMutation) => Promise<unknown>;
 };
 
@@ -411,6 +412,7 @@ async function readJson(response: Response): Promise<{
   currentNotes?: unknown;
   reasonCode?: unknown;
   field?: unknown;
+  duplicate?: unknown;
   lead?: Lead;
   result?: unknown;
   gps?: { outcome?: unknown };
@@ -420,6 +422,7 @@ async function readJson(response: Response): Promise<{
       currentNotes?: unknown;
       reasonCode?: unknown;
       field?: unknown;
+      duplicate?: unknown;
       lead?: Lead;
       result?: unknown;
       gps?: { outcome?: unknown };
@@ -455,7 +458,7 @@ export async function postFieldDispo(
   m: PendingMutation,
   user: User,
   deps: FieldDispoDeps = {},
-): Promise<{ replayed: boolean; lead?: Lead }> {
+): Promise<{ replayed: boolean; lead?: Lead; appliedNotes?: string }> {
   const post = deps.post ?? apiFetch;
   const getToken = deps.getToken ?? (async (forceRefresh = false) => {
     const current = auth?.currentUser;
@@ -515,6 +518,8 @@ export async function postFieldDispo(
   }
   if (response.status === 200 || response.status === 201) {
     const data = await readJson(response);
+    const appliedNotes = draft.kind === "notes" && typeof draft.notes === "string" ? draft.notes : undefined;
+    if (data?.duplicate === true) return { replayed: true, appliedNotes };
     if (data?.gps?.outcome === "flagged_accepted") {
       try {
         await recordSyncEvent({
@@ -533,7 +538,7 @@ export async function postFieldDispo(
         await reportParked(m.userId);
       } catch { /* a sync-report failure never stops a saved dispo */ }
     }
-    return { replayed: false, lead: data?.lead };
+    return { replayed: false, lead: data?.lead, appliedNotes };
   }
   const fail = (error: Error): never => {
     if (rebasedDraft) (error as Error & { rebasedDraft?: PendingMutation }).rebasedDraft = rebasedDraft;
@@ -545,21 +550,15 @@ export async function postFieldDispo(
   if (response.status === 410)
     fail(routeError("This lead is gone.", 410, SYNC_REASON.notFound));
   if (response.status === 413) {
-    const data = await readJson(response);
-    const reason = typeof data?.reasonCode === "string" ? data.reasonCode : "";
-    if (draft.kind === "notes") {
-      fail(routeError(
-        "Notes too long",
-        413,
-        reason === SYNC_REASON.payloadTooLarge ? SYNC_REASON.payloadTooLarge : SYNC_REASON.notesTooLong,
-      ));
-    }
-    fail(routeError("Disposition route rejected this knock.", 413, SYNC_REASON.payloadTooLarge));
+    await readJson(response);
+    fail(routeError("Notes too long", 413, SYNC_REASON.notesTooLong));
   }
   if (response.status === 400) {
     const data = await readJson(response);
     const field = typeof data?.field === "string" ? data.field : "";
     const reason = typeof data?.reasonCode === "string" ? data.reasonCode : "";
+    if (field === "actionAt")
+      fail(routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected));
     if (
       reason === SYNC_REASON.notesEmpty
       || reason === SYNC_REASON.notesClearMismatch
@@ -691,6 +690,7 @@ export async function deliverFieldDispo(
     throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
   if (prepared.kind === "handoff") return commit(prepared, user);
   if (writesContactDirect(prepared)) return commitContactWrite(prepared, user, commit);
+  if (prepared.kind === "notes") return postFieldDispo(prepared, user, deps);
   if (prepared.direct?.serverDispo) {
     try {
       return await postFieldDispo(prepared, user, deps);

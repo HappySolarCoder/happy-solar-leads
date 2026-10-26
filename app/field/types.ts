@@ -181,10 +181,9 @@ export type FieldMutation = {
    */
   clearNotes?: boolean;
   /**
-   * Device queue only. The notes text an owned direct write is about to store,
-   * and the server notes that text was computed against. A replay whose server
-   * notes still equal appliedNotes removes the draft and does not write.
-   * Never sent. Never copied onto the lead.
+   * Device queue only. Defense in depth if a notes draft is ever written
+   * directly. The route dedupes by draftId and is the notes path. Never sent.
+   * Never copied onto the lead.
    */
   appliedNotes?: string;
   appliedAgainst?: string;

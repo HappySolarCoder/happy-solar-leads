@@ -71,8 +71,8 @@ test("12k and 20k notes on non-owned leads send by the route", async () => {
       assert.equal(saved.replayed, false);
     }
   }
-  assert.equal(notesDraftUsesRoute(claimedByB, owner.id, owner.role, "n".repeat(20_000)), false);
-  assert.equal(notesDraftUsesRoute(claimedByB, "admin-1", "admin", "n".repeat(20_000)), false);
+  assert.equal(notesDraftUsesRoute(claimedByB, owner.id, owner.role, "n".repeat(20_000)), true);
+  assert.equal(notesDraftUsesRoute(claimedByB, "admin-1", "admin", "n".repeat(20_000)), true);
 });
 
 function json(status: number, body: unknown) {
@@ -598,7 +598,7 @@ test("notesTooLong is enforced only when the notes changed", async () => {
   assert.match(modal, /contactSaveFields/);
 });
 
-test("an owner direct write of a 20k note still saves", async () => {
+test("an owner 20k note is a route save, and a direct notes write sets only notes", async () => {
   const text = "o".repeat(20_000);
   let record = { notes: "" };
   const updates: unknown[] = [];
@@ -622,17 +622,23 @@ test("an owner direct write of a 20k note still saves", async () => {
   assert.equal(saved.lead?.notes, text);
   assert.equal(record.notes, text);
   assert.deepEqual(updates, [{ notes: text }]);
+  assert.equal(Object.prototype.hasOwnProperty.call(updates[0], "updatedAt"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(updates[0], "lastActivity"), false);
   let posts = 0;
-  await deliverFieldDispo(notesDraft(owner, text, false), owner, {
-    getToken: async () => "token",
-    post: async () => {
-      posts += 1;
-      return new Response("{}", { status: 500 });
-    },
-    commit: async (draft) => {
-      assert.equal(draft.direct?.patch.notes, text);
-      return { replayed: false };
-    },
-  });
-  assert.equal(posts, 0);
+  let committed = 0;
+  await assert.rejects(
+    () => deliverFieldDispo(notesDraft(owner, text, false), owner, {
+      getToken: async () => "token",
+      post: async () => {
+        posts += 1;
+        return new Response("{}", { status: 500 });
+      },
+      commit: async () => {
+        committed += 1;
+        return { replayed: false };
+      },
+    }),
+  );
+  assert.equal(posts, 1);
+  assert.equal(committed, 0);
 });

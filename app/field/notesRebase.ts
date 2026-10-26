@@ -5,8 +5,9 @@
  * The edit starts with that base and the server moved: append only the
  * addition. A same-line addition is written onto the server's last line only
  * when that line is still the base's last line. If the server's last line is
- * a different line, the edited line is kept on its own line instead of being
- * glued on. An addition that starts a new line keeps its newline. Skip the
+ * a different line, the base's last line plus the full addition is kept on its
+ * own line, including lines typed after that extension. An addition that starts
+ * a new line keeps its newline. Skip the
  * append only when the server text already ends with that exact addition on a
  * line boundary.
  * Anything else keeps both texts. An empty edit does not wipe a server change.
@@ -52,7 +53,7 @@ export function rebaseNotes(baseNotes: string, edited: string, currentNotes: str
       if (current.endsWith(addition)) return { notes: current, baseNotes: current };
       return { notes: `${current}${addition}`, baseNotes: current };
     }
-    const editedLine = lastLine(edit);
+    const editedLine = `${lastLine(base)}${addition}`;
     if (endsWithAdditionOnLine(current, editedLine)) return { notes: current, baseNotes: current };
     return { notes: current ? `${current}\n${editedLine}` : edit, baseNotes: current };
   }

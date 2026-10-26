@@ -450,18 +450,18 @@ test("contact and photo saves keep their fields and never blank notes", async ()
       assert.deepEqual(observed.updates.map(plain), row.expectUpdate.map(plain), row.case);
     }
     if (row.case === "notes only") {
-      if (row.path === "direct") assert.deepEqual(observed.updates, [{ notes: "a new note" }]);
-      else {
-        assert.deepEqual(observed.routes, [notesRouteBody({
-          leadId: "lead-1", draftId: "notes-1", actionAt: at, notes: "a new note", baseNotes: kept,
-        })]);
-        assert.equal(observed.updates.length, 0);
-      }
+      assert.deepEqual(observed.routes, [notesRouteBody({
+        leadId: "lead-1", draftId: "notes-1", actionAt: at, notes: "a new note", baseNotes: kept,
+      })]);
+      assert.equal(observed.updates.length, 0);
     }
     if (row.case === "notes + phone") {
       if (row.path === "direct") {
         assert.deepEqual(observed.updates.filter((update) => update.phone), [{ phone: "556" }]);
-        assert.deepEqual(observed.updates.filter((update) => update.notes), [{ notes: "a new note" }]);
+        assert.equal(observed.updates.filter((update) => update.notes).length, 0);
+        assert.equal(observed.routes.length, 1);
+        assert.equal(observed.routes[0].kind, "notes");
+        assert.equal(observed.routes[0].notes, "a new note");
       } else {
         assert.equal(observed.updates.filter((update) => update.phone).length, 0);
         const contact = observed.remaining.find((item) => item.kind === "contact");
@@ -496,9 +496,10 @@ test("contact and photo saves keep their fields and never blank notes", async ()
       assert.equal(sent.length, 1);
       assert.equal(sent[0].notes, "");
       if (row.path === "direct") {
-        assert.equal(observed.routes.length, 0);
-        assert.equal(sent[0].clearNotes, undefined);
-        assert.deepEqual(observed.updates.map(plain), [{ notes: "" }]);
+        assert.equal(observed.routes.length, 1);
+        assert.equal(observed.routes[0].notes, "");
+        assert.equal(observed.routes[0].clearNotes, true);
+        assert.equal(observed.updates.length, 0);
       } else {
         assert.equal(observed.routes.length, 1);
         assert.equal(observed.routes[0].notes, "");

@@ -371,11 +371,11 @@ test("409 rebases notes onto currentNotes and retries instead of parking", async
   assert.equal(rows[0].blocked, undefined);
 });
 
-test("410 and 400 park, 413 stays queued as payload_too_large, and a 403 without a known reason uses other", async () => {
+test("410, 400, and 413 park, and a 403 without a known reason uses other", async () => {
   const cases: Array<[number, string, string]> = [
     [410, "parked", "not_found"],
     [400, "parked", "invalid_payload"],
-    [413, "queued", "payload_too_large"],
+    [413, "parked", "notes_too_long"],
     [403, "parked", "other"],
   ];
   for (const [status, state, reason] of cases) {
@@ -398,8 +398,9 @@ test("410 and 400 park, 413 stays queued as payload_too_large, and a 403 without
     assert.equal(rows[0].syncState, state);
     assert.equal(rows[0].parkedReason, reason);
     if (status === 413) {
-      assert.equal(rows[0].routeHold, "field-dispo");
-      assert.ok((rows[0].nextAttemptAt || 0) > 0);
+      assert.equal(rows[0].routeHold, undefined);
+      assert.equal(rows[0].nextAttemptAt, undefined);
+      assert.equal(rows[0].lastError, "Notes too long");
     }
   }
 });

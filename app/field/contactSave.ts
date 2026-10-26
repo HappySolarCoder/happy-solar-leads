@@ -1,4 +1,5 @@
 import type { Lead } from "@/app/types";
+import { freshDraftId } from "./draftQueue";
 import type { NotesLengthDraft } from "./notesLimits";
 import { NOTES_TOO_LONG_MESSAGE, notesEditTooLong, notesQueuedBody } from "./notesLimits";
 import type { PendingMutation } from "./types";
@@ -75,13 +76,16 @@ export function splitNotesAndContact(
   existingIds: ReadonlySet<string>,
 ): { contact: PendingMutation; notes: PendingMutation } | "unsafe" | null {
   if (m.kind !== "notes" || !notesWereEdited(m) || !hasContactFields(m) || !m.direct?.patch) return null;
-  const contactId = `${m.id}-contact`;
-  const notesId = `${m.id}-notes`;
+  // The combined row has not been posted. The notes part keeps that id so the
+  // receipt is not burned by the contact part. The contact part always gets its own id.
+  const notesId = DRAFT_ID_PATTERN.test(m.id) ? m.id : freshDraftId(m.id, "notes", existingIds);
+  const contactId = freshDraftId(m.id, "contact", existingIds);
   if (
     !DRAFT_ID_PATTERN.test(contactId)
     || !DRAFT_ID_PATTERN.test(notesId)
+    || contactId === notesId
+    || (notesId !== m.id && existingIds.has(notesId))
     || existingIds.has(contactId)
-    || existingIds.has(notesId)
   ) return "unsafe";
   const notes = m.direct.patch.notes as string;
   const contact: PendingMutation = asContactDraft({
