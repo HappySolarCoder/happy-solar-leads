@@ -115,13 +115,24 @@ export function firestoreValue(value: unknown): unknown {
     .filter(([, v]) => v !== undefined).map(([k, v]) => [k, firestoreValue(v)]));
   return value;
 }
-export async function commitDirectMutation(m: PendingMutation, user: User) {
-  if (!db) throw Error('Firestore is not configured. Your action stays unsynced.');
-  const check = () => { if (auth?.currentUser?.uid !== m.userId || user.id !== m.userId)
+export type DirectCommitIo = {
+  db: NonNullable<typeof db>;
+  auth: NonNullable<typeof auth>;
+  doc: typeof doc;
+  runTransaction: typeof runTransaction;
+};
+
+export async function commitDirectMutation(m: PendingMutation, user: User, io?: DirectCommitIo) {
+  const database = io?.db ?? db;
+  const session = io?.auth ?? auth;
+  const docOf = io?.doc ?? doc;
+  const transact = io?.runTransaction ?? runTransaction;
+  if (!database) throw Error('Firestore is not configured. Your action stays unsynced.');
+  const check = () => { if (session?.currentUser?.uid !== m.userId || user.id !== m.userId)
     throw Error('Account changed. Reconnect with the rep who recorded this action.'); };
   check();
   if (m.direct?.gps) throw Object.assign(Error('GPS verification is still pending. Your knock is saved on this phone.'), {status:409});
-  const ref = doc(db, 'leads', m.leadId), patch = reportingPatch(m, user);
+  const ref = docOf(database, 'leads', m.leadId), patch = reportingPatch(m, user);
   try {
     const seed = m.direct?.create;
     if (seed) {
@@ -129,7 +140,7 @@ export async function commitDirectMutation(m: PendingMutation, user: User) {
         throw Object.assign(Error('New lead ownership must match the signed-in rep.'), { status: 403 });
       if (await createLeadOnce(m.leadId, m.userId, { ...seed, ...patch })) return { replayed: false, lead: { ...seed, ...patch } as Lead };
     }
-    return await runTransaction(db, async tx => {
+    return await transact(database, async tx => {
       check();
       const snapshot = await tx.get(ref);
       check();

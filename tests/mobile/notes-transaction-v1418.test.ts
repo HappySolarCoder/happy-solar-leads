@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { classifySyncFailure } from "../../app/field/draftState";
-import { notesTransactionPatch } from "../../app/field/notesRebase";
-import { directPatch, firestoreValue, rejectCombinedKnockAndNotes, reportingPatch } from "../../app/field/directWrites";
+import { commitDirectMutation, directPatch, firestoreValue, rejectCombinedKnockAndNotes, reportingPatch, type DirectCommitIo } from "../../app/field/directWrites";
 import { DISPOSITION_RULES_KEYS, LEGACY_14_17_PATCH_KEYS, deliverFieldDispo, fieldDispoBody, plainFallbackMutation } from "../../app/field/serverDispo";
 import { syncOutbox } from "../../app/field/syncOutbox";
 import type { PendingMutation } from "../../app/field/types";
@@ -10,24 +9,105 @@ import type { Lead, User } from "../../app/types";
 import { Timestamp } from "firebase/firestore";
 
 const user = { id: "rep", name: "Rep" } as User;
+const owner = { id: "owner-rep", name: "Owner Rep", role: "setter" } as User;
+const admin = { id: "admin-rep", name: "Admin Rep", role: "admin" } as User;
 
-function applyPhones(label: string) {
-  let server = "seed";
-  const phone1 = notesTransactionPatch(server, "seed", "seed\nfrom phone 1");
-  assert.equal(phone1.replayed, false, label);
-  server = phone1.notes;
-  const phone2 = notesTransactionPatch(server, "seed", "seed\nfrom phone 2");
-  assert.equal(phone2.replayed, false, label);
-  server = phone2.notes;
-  assert.equal(server, "seed\nfrom phone 1\nfrom phone 2", label);
-  const replay = notesTransactionPatch(server, "seed", "seed\nfrom phone 2");
-  assert.equal(replay.replayed, true, label);
-  assert.equal(replay.notes, server, label);
+function fakeLeadTransaction(leadId: string, notes: string, extra: Record<string, unknown> = {}) {
+  const path = `leads/${leadId}`;
+  let record: Record<string, unknown> = { notes, ...extra };
+  const updates: unknown[] = [];
+  const actors: string[] = [];
+  let uid = "";
+  const io = {
+    db: {},
+    auth: { get currentUser() { return uid ? { uid } : null; } },
+    doc: (_database: unknown, collection: string, id: string) => ({ path: `${collection}/${id}` }),
+    runTransaction: async (_database: unknown, fn: (tx: {
+      get: (ref: { path: string }) => Promise<{ exists: () => boolean; data: () => Record<string, unknown> }>;
+      update: (ref: { path: string }, data: Record<string, unknown>) => void;
+    }) => Promise<unknown>) => {
+      actors.push(uid);
+      return fn({
+        get: async (ref) => ({
+          exists: () => ref.path === path,
+          data: () => ({ ...record }),
+        }),
+        update: (ref, data) => {
+          assert.equal(ref.path, path);
+          updates.push(data);
+          record = { ...record, ...data };
+        },
+      });
+    },
+  };
+  return {
+    io: io as unknown as DirectCommitIo,
+    updates,
+    actors,
+    notes: () => record.notes,
+    setUid: (next: string) => { uid = next; },
+  };
 }
 
-test("two phones keep both notes on an owned lead and an admin lead", () => {
-  applyPhones("owned");
-  applyPhones("admin");
+function notesDraft(actor: User, leadId: string, notes: string, baseNotes: string): PendingMutation {
+  return {
+    id: `${actor.id}-${leadId}-${notes.length}`,
+    userId: actor.id,
+    userName: actor.name,
+    leadId,
+    createdAt: "2026-10-25T15:00:00.000Z",
+    kind: "notes",
+    baseStatus: "claimed",
+    notes,
+    baseNotes,
+    direct: { patch: { notes } },
+  };
+}
+
+async function commitNotes(actor: User, store: ReturnType<typeof fakeLeadTransaction>, notes: string, baseNotes: string) {
+  store.setUid(actor.id);
+  return commitDirectMutation(notesDraft(actor, "lead-1", notes, baseNotes), actor, store.io);
+}
+
+test("an uncontested notes edit is stored exactly and a replay writes nothing more", async () => {
+  const cases = [
+    { name: "delete", server: "Keep this\nDrop this", edit: "Keep this" },
+    { name: "clear", server: "Call aftr 5", edit: "" },
+    { name: "typo", server: "Call aftr 5", edit: "Call after 5" },
+  ];
+  for (const item of cases) {
+    const store = fakeLeadTransaction("lead-1", item.server, { claimedBy: owner.id });
+    const saved = await commitNotes(owner, store, item.edit, item.server);
+    assert.equal(saved.replayed, false, item.name);
+    assert.equal(saved.lead?.notes, item.edit, item.name);
+    assert.equal(store.notes(), item.edit, item.name);
+    assert.deepEqual(store.updates, [{ notes: item.edit }], item.name);
+    assert.deepEqual(store.actors, [owner.id], item.name);
+    const replay = await commitNotes(owner, store, item.edit, item.server);
+    assert.equal(replay.replayed, true, item.name);
+    assert.equal(replay.lead?.notes, item.edit, item.name);
+    assert.equal(store.notes(), item.edit, item.name);
+    assert.equal(store.updates.length, 1, item.name);
+  }
+});
+
+test("two phones keep both notes on an owned lead and an admin lead", async () => {
+  assert.notEqual(owner.id, admin.id);
+  for (const actor of [owner, admin]) {
+    const store = fakeLeadTransaction("lead-1", "seed", {
+      claimedBy: actor.role === "admin" ? "owner-rep" : actor.id,
+    });
+    const phone1 = await commitNotes(actor, store, "seed\nfrom phone 1", "seed");
+    assert.equal(phone1.replayed, false, actor.id);
+    const phone2 = await commitNotes(actor, store, "seed\nfrom phone 2", "seed");
+    assert.equal(phone2.replayed, false, actor.id);
+    assert.equal(store.notes(), "seed\nfrom phone 1\nfrom phone 2", actor.id);
+    assert.deepEqual(store.actors, [actor.id, actor.id], actor.id);
+    const replay = await commitNotes(actor, store, "seed\nfrom phone 2", "seed");
+    assert.equal(replay.replayed, true, actor.id);
+    assert.equal(store.notes(), "seed\nfrom phone 1\nfrom phone 2", actor.id);
+    assert.equal(store.updates.length, 2, actor.id);
+  }
 });
 
 test("a route notes conflict retries the plain patch with the rebased text", async () => {

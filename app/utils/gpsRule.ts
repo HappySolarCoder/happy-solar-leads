@@ -1,5 +1,6 @@
 /**
  * Ported 1:1 from PR #170 app/utils/gpsRule.ts at 69a3167d0ddf3629fd5d6eea2a48705cd533a347.
+ * Verified identical at 468c5d7d4d07358b4e34eb9d9e48f3ca028382d1.
  * Function bodies, constants, precedence, and distance math match that commit.
  */
 
