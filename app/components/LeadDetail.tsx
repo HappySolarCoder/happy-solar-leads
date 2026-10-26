@@ -26,7 +26,7 @@ import { EasterEgg } from '@/app/types/easterEgg';
 import EasterEggWinModal from './EasterEggWinModal';
 import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
-import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
+import { leadDetailKnockGps } from '@/app/utils/gpsVerification';
 
 interface LeadDetailProps {
   lead: Lead;
@@ -177,60 +177,36 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
     setIsUpdating(true);
     
     try {
-      // Capture GPS for knock verification (if disposition counts as door knock)
+      // Door knocks record GPS and flag a weak fix. The flag is stored only.
+      // Reps are not told about distance or accuracy.
       const disposition = dispositions.find(d => d.id === newStatus);
-      let gpsData = {};
-      
-      if (disposition?.countsAsDoorKnock && navigator.geolocation) {
-        try {
-          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 5000,
-              maximumAge: 0,
+      let gpsData: Record<string, unknown> = {};
+      let gpsFlag: LeadDispositionHistoryEntry['gpsFlag'] = undefined;
+
+      if (disposition?.countsAsDoorKnock) {
+        let position: { lat: number; lng: number; accuracyM: number } | null = null;
+        if (navigator.geolocation) {
+          try {
+            const reading = await new Promise<GeolocationPosition>((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 0,
+              });
             });
-          });
-          
-          // Calculate distance from lead address
-          let distanceFromAddress: number | undefined;
-          if (lead.lat && lead.lng) {
-            const R = 6371000; // Earth's radius in meters
-            const dLat = (lead.lat - position.coords.latitude) * Math.PI / 180;
-            const dLng = (lead.lng - position.coords.longitude) * Math.PI / 180;
-            const a = 
-              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(position.coords.latitude * Math.PI / 180) * 
-              Math.cos(lead.lat * Math.PI / 180) *
-              Math.sin(dLng / 2) * Math.sin(dLng / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            distanceFromAddress = R * c;
+            position = {
+              lat: reading.coords.latitude,
+              lng: reading.coords.longitude,
+              accuracyM: reading.coords.accuracy,
+            };
+          } catch (err) {
+            console.warn('GPS capture failed:', err);
           }
-          
-          // Distance verification for setter, manager, sales (not admin).
-          // Per-user opt-out: users.features.proximityEnforcement === false
-          if (isProximityRequired(currentUser) && distanceFromAddress && distanceFromAddress > PROXIMITY_MAX_DISTANCE_METERS) {
-            setIsUpdating(false);
-            const distanceFeet = Math.round(distanceFromAddress * 3.281); // Convert to feet
-            alert(
-              `You are not close enough to this address to disposition it.\n\n` +
-              `Distance: ${distanceFeet} feet away\n` +
-              `Required: Within 100 feet\n\n` +
-              `Please move closer to the address and try again.`
-            );
-            return;
-          }
-          
-          gpsData = {
-            knockGpsLat: position.coords.latitude,
-            knockGpsLng: position.coords.longitude,
-            knockGpsAccuracy: position.coords.accuracy,
-            knockGpsTimestamp: new Date(),
-            knockDistanceFromAddress: distanceFromAddress,
-          };
-        } catch (err) {
-          console.warn('GPS capture failed:', err);
-          // Continue without GPS if it fails (allows indoor knocking where GPS might not work)
         }
+        const knockGps = leadDetailKnockGps(position, { lat: lead.lat, lng: lead.lng });
+        gpsData = knockGps.fields;
+        if (knockGps.keepFix) gpsData.knockGpsTimestamp = new Date();
+        gpsFlag = knockGps.gpsFlag;
       }
       
       if (newStatus === 'claimed') {
@@ -250,6 +226,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
           timestamp: new Date(),
           userId: currentUser.id,
           userName: currentUser.name,
+          ...(gpsFlag ? { gpsFlag } : {}),
         };
 
         await updateLeadAsync(lead.id, {

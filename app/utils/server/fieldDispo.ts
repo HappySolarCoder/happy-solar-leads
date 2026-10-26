@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
-import { distanceBetween } from 'geofire-common';
+import { normalizeMunicipality, normalizeStreet } from '@/app/homeowners/model';
 import { insideTerritory, territoryBounds } from '@/app/utils/territoryManager';
-import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
+import {
+  GPS_HOMEOWNER_NEAR_LEAD_M,
+  GPS_HOMEOWNER_SAME_STREET_M,
+  decideKnockGps,
+  finitePoint,
+  gpsFlagOf,
+  metersBetween,
+  type GpsDecision,
+  type KnockFix,
+  type LatLng,
+} from '@/app/utils/gpsVerification';
 import { isTestAccount } from './discordNotification';
 import { FIELD_REASON_CODES, type FieldReasonCode } from './fieldReasonCodes';
 
@@ -23,16 +33,6 @@ const ACTION_PAST_MS = 30 * 24 * 60 * 60 * 1000;
 const ACTION_FUTURE_MS = 10 * 60 * 1000;
 const GOBACK_PAST_MS = 24 * 60 * 60 * 1000;
 const GOBACK_FUTURE_MS = 366 * 24 * 60 * 60 * 1000;
-const GPS_BEFORE_MS = 5_000;
-const GPS_AFTER_MS = 15_000;
-const DISTANCE_MAX_M = 100_000;
-
-/**
- * Evan has not picked a policy. `hold` matches the phone today.
- * This is a code constant, not an environment variable.
- */
-export const FIELD_DISPO_GPS_POLICY: 'hold' | 'flag' = 'hold';
-export type FieldDispoGpsPolicy = 'hold' | 'flag';
 
 const DRAFT_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const STATUS_RE = /^[a-z0-9-]{1,64}$/;
@@ -59,6 +59,10 @@ const TOP_KEYS = new Set([
   'disposition',
   'userName',
   'gps',
+  'gpsVerified',
+  'gpsUnverifiedReason',
+  'gpsDistanceM',
+  'homeownerId',
   'goBack',
   'objection',
   'notes',
@@ -73,6 +77,10 @@ const KNOCK_KEYS = new Set([
   'disposition',
   'userName',
   'gps',
+  'gpsVerified',
+  'gpsUnverifiedReason',
+  'gpsDistanceM',
+  'homeownerId',
   'goBack',
   'objection',
 ]);
@@ -91,6 +99,9 @@ export const ALLOWED_PATCH_KEYS = new Set([
   'knockGpsAccuracy',
   'knockGpsTimestamp',
   'knockDistanceFromAddress',
+  'gpsVerified',
+  'gpsUnverifiedReason',
+  'gpsDistanceM',
   'goBackScheduledDate',
   'goBackScheduledTime',
   'goBackNotes',
@@ -158,8 +169,6 @@ export type FieldDispoDeps = RequireApprovedUserDeps & {
   db: DispoDb;
   now?: () => number;
   rateLimitStore?: RateLimitStore;
-  /** Tests only. Production leaves this unset and uses FIELD_DISPO_GPS_POLICY. */
-  gpsPolicy?: FieldDispoGpsPolicy;
   Timestamp: TimestampFactory;
   serverTimestamp: () => unknown;
 };
@@ -170,12 +179,7 @@ export type FieldDispoResult = {
   headers?: Record<string, string>;
 };
 
-type GpsFix = {
-  lat: number;
-  lng: number;
-  accuracyM: number;
-  capturedAtMs: number;
-};
+type GpsFix = KnockFix & { capturedAtMs: number };
 
 type GoBackInput = {
   scheduledDateMs: number;
@@ -196,7 +200,9 @@ type ParsedKnock = {
   status: string;
   disposition: string;
   userName: string;
-  gps: GpsFix | 'absent' | 'unusable';
+  gps: GpsFix | 'absent' | 'malformed';
+  /** Set only when the body id matches the homeowner id pattern. Never stored. */
+  homeownerId: string | null;
   goBack: GoBackInput | null;
   objection: ObjectionInput | null;
 };
@@ -341,25 +347,21 @@ function firstUnknown(body: Record<string, unknown>, allowed: Set<string>): stri
   return null;
 }
 
-function parseGps(value: unknown): { ok: true; gps: GpsFix | 'unusable' } | { ok: false; field: string } {
-  if (!isPlainObject(value)) return { ok: false, field: 'gps' };
-  const unknown = firstUnknown(value, GPS_KEYS);
-  if (unknown) return { ok: false, field: `gps.${unknown}` };
+/** A present gps value that is not a usable fix is dropped and flagged. Never a 400. */
+function parseGps(value: unknown): GpsFix | 'malformed' {
+  if (!isPlainObject(value)) return 'malformed';
+  if (firstUnknown(value, GPS_KEYS)) return 'malformed';
   for (const key of GPS_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(value, key)) return { ok: false, field: `gps.${key}` };
+    if (!Object.prototype.hasOwnProperty.call(value, key)) return 'malformed';
   }
   const capturedAtMs = parseIsoMillis(value.capturedAt);
-  if (capturedAtMs == null) return { ok: false, field: 'gps.capturedAt' };
-  const { lat, lng, accuracyM } = value;
-  if (typeof lat !== 'number' || typeof lng !== 'number' || typeof accuracyM !== 'number') {
-    const field = typeof lat !== 'number' ? 'gps.lat' : typeof lng !== 'number' ? 'gps.lng' : 'gps.accuracyM';
-    return { ok: false, field };
+  if (capturedAtMs == null) return 'malformed';
+  const point = finitePoint(value.lat, value.lng);
+  const { accuracyM } = value;
+  if (!point || typeof accuracyM !== 'number' || !Number.isFinite(accuracyM) || accuracyM < 0 || accuracyM > 100_000) {
+    return 'malformed';
   }
-  const usable = Number.isFinite(lat) && lat >= -90 && lat <= 90
-    && Number.isFinite(lng) && lng >= -180 && lng <= 180
-    && Number.isFinite(accuracyM) && accuracyM >= 0 && accuracyM <= DISTANCE_MAX_M;
-  if (!usable) return { ok: true, gps: 'unusable' };
-  return { ok: true, gps: { lat, lng, accuracyM, capturedAtMs } };
+  return { ...point, accuracyM, capturedAtMs };
 }
 
 function parseGoBack(value: unknown, now: number): { ok: true; goBack: GoBackInput } | { ok: false; field: string } {
@@ -445,12 +447,13 @@ function parseDraft(body: unknown, now: number): { ok: true; draft: ParsedDraft 
     return { ok: false, field: 'objection' };
   }
 
-  let gps: GpsFix | 'absent' | 'unusable' = 'absent';
+  let gps: GpsFix | 'absent' | 'malformed' = 'absent';
   if (Object.prototype.hasOwnProperty.call(body, 'gps') && body.gps != null) {
-    const parsedGps = parseGps(body.gps);
-    if (!parsedGps.ok) return parsedGps;
-    gps = parsedGps.gps;
+    gps = parseGps(body.gps);
   }
+  const homeownerId = typeof body.homeownerId === 'string' && DRAFT_ID_RE.test(body.homeownerId)
+    ? body.homeownerId
+    : null;
   let goBack: GoBackInput | null = null;
   if (goBackPresent) {
     const parsedGoBack = parseGoBack(body.goBack, now);
@@ -474,6 +477,7 @@ function parseDraft(body: unknown, now: number): { ok: true; draft: ParsedDraft 
       disposition,
       userName,
       gps,
+      homeownerId,
       goBack,
       objection,
     },
@@ -494,12 +498,8 @@ function isOther(value: unknown, uid: string): boolean {
   return !emptyId(value) && value !== uid;
 }
 
-function leadCoords(lead: Record<string, unknown>): { lat: number; lng: number } | null {
-  const { lat, lng } = lead;
-  if (typeof lat !== 'number' || typeof lng !== 'number') return null;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { lat, lng };
+function leadCoords(lead: Record<string, unknown>): LatLng | null {
+  return finitePoint(lead.lat, lead.lng);
 }
 
 function polygonOf(value: unknown): Array<{ lat: number; lng: number }> | null {
@@ -549,55 +549,47 @@ async function loadTerritories(db: DispoDb, tx: DispoTransaction, uid: string): 
   return snap.docs;
 }
 
-function proximitySubject(user: UserProfile): { role?: string; features?: { proximityEnforcement?: boolean } } {
-  const role = typeof user.role === 'string' ? user.role : undefined;
-  const features = isPlainObject(user.features) ? user.features : undefined;
-  if (features?.proximityEnforcement === false) return { role, features: { proximityEnforcement: false } };
-  return { role };
+function placeName(doc: Record<string, unknown>, streetKey: string, fallbackKey: string): string {
+  const primary = doc[streetKey];
+  return normalizeStreet(typeof primary === 'string' ? primary : doc[fallbackKey]);
 }
 
-type GpsEval = {
-  state: 'ok' | 'outside' | 'unverified';
-  /** Present only when lat/lng/accuracy are in range. The capture window may still be closed. */
-  fix: GpsFix | null;
-  windowOk: boolean;
-  distanceM: number | null;
-};
-
-function evaluateGps(draft: ParsedKnock, lead: Record<string, unknown>): GpsEval {
-  if (draft.gps === 'absent' || draft.gps === 'unusable') {
-    return { state: 'unverified', fix: null, windowOk: false, distanceM: null };
-  }
-  const fix = draft.gps;
-  const delta = fix.capturedAtMs - draft.actionAtMs;
-  const windowOk = delta >= -GPS_BEFORE_MS && delta <= GPS_AFTER_MS;
-  const coords = leadCoords(lead);
-  let distanceM: number | null = null;
-  if (coords) {
-    distanceM = distanceBetween([fix.lat, fix.lng], [coords.lat, coords.lng]) * 1000;
-    if (!Number.isFinite(distanceM)) distanceM = null;
-  }
-  if (!windowOk || !coords || distanceM == null) {
-    return { state: 'unverified', fix, windowOk, distanceM };
-  }
-  if (distanceM > PROXIMITY_MAX_DISTANCE_METERS) return { state: 'outside', fix, windowOk, distanceM };
-  return { state: 'ok', fix, windowOk, distanceM };
+function cityName(doc: Record<string, unknown>, primaryKey: string, fallbackKey: string): string {
+  const primary = doc[primaryKey];
+  return normalizeMunicipality(typeof primary === 'string' ? primary : doc[fallbackKey]);
 }
 
-function storeDistance(distanceM: number | null): number | null {
-  if (distanceM == null || !Number.isFinite(distanceM) || distanceM < 0 || distanceM > DISTANCE_MAX_M) return null;
-  return distanceM;
+/**
+ * Use the named homeowner only when it is within 75 m of the lead, or within
+ * 2000 m with the same normalized street and municipality. Otherwise the
+ * lead's own lat/lng is the reference. The route does not search for a match.
+ */
+function referencePoint(lead: Record<string, unknown>, homeowner: Record<string, unknown> | null): LatLng | null {
+  const leadPoint = leadCoords(lead);
+  if (!homeowner || !leadPoint) return leadPoint;
+  const homePoint = leadCoords(homeowner);
+  if (!homePoint) return leadPoint;
+  const apart = metersBetween(homePoint, leadPoint);
+  if (!Number.isFinite(apart)) return leadPoint;
+  if (apart <= GPS_HOMEOWNER_NEAR_LEAD_M) return homePoint;
+  if (apart > GPS_HOMEOWNER_SAME_STREET_M) return leadPoint;
+  const leadStreet = placeName(lead, 'street', 'address');
+  const homeStreet = placeName(homeowner, 'street', 'address');
+  const leadCity = cityName(lead, 'municipality', 'city');
+  const homeCity = cityName(homeowner, 'municipality', 'city');
+  if (leadStreet !== '' && leadStreet === homeStreet && leadCity !== '' && leadCity === homeCity) return homePoint;
+  return leadPoint;
 }
 
-function gpsResponse(
-  reasonCode: 'gps_unverified_flagged' | 'outside_50m' | null,
-  distanceM: number | null,
-): Record<string, unknown> {
-  return {
-    reasonCode,
-    outcome: reasonCode ? 'flagged_accepted' : null,
-    distanceM,
+function gpsResponse(decision: GpsDecision): Record<string, unknown> {
+  const gps: Record<string, unknown> = {
+    reasonCode: decision.gpsVerified ? null : 'gps_unverified_flagged',
+    outcome: decision.gpsVerified ? null : 'flagged_accepted',
+    gpsVerified: decision.gpsVerified,
   };
+  if (decision.gpsUnverifiedReason) gps.gpsUnverifiedReason = decision.gpsUnverifiedReason;
+  if (decision.gpsDistanceM != null) gps.gpsDistanceM = decision.gpsDistanceM;
+  return gps;
 }
 
 function millisOf(value: unknown): number | null {
@@ -729,16 +721,13 @@ export async function handleFieldDispo(input: {
   if (!parsed.ok) return invalid(parsed.field);
 
   const draft = parsed.draft;
-  const policy: FieldDispoGpsPolicy = input.deps.gpsPolicy === 'flag' ? 'flag' : FIELD_DISPO_GPS_POLICY;
   const outcome = await input.deps.db.runTransaction((tx) => applyDraft({
     tx,
     db: input.deps.db,
     deps: input.deps,
     uid: approved.uid,
     role: approved.role,
-    user: approved.user,
     draft,
-    policy,
   }));
   if (outcome.mismatch) console.log('[field/dispo] duplicate_mismatch 1');
   if (outcome.historyDropped && outcome.historyDropped > 0) {
@@ -747,15 +736,24 @@ export async function handleFieldDispo(input: {
   return finish(outcome.status, outcome.body);
 }
 
+async function loadHomeowner(
+  db: DispoDb,
+  tx: DispoTransaction,
+  draft: ParsedKnock,
+): Promise<Record<string, unknown> | null> {
+  if (!draft.homeownerId || draft.gps === 'absent' || draft.gps === 'malformed') return null;
+  const snap = await tx.get(db.collection('homeowners').doc(draft.homeownerId));
+  if (!snap.exists) return null;
+  return snap.data() ?? null;
+}
+
 async function applyDraft(input: {
   tx: DispoTransaction;
   db: DispoDb;
   deps: FieldDispoDeps;
   uid: string;
   role: string;
-  user: UserProfile;
   draft: ParsedDraft;
-  policy: FieldDispoGpsPolicy;
 }): Promise<TxOutcome> {
   const receiptId = `${input.uid}_${input.draft.draftId}`;
   const receiptRef = input.db.collection('fieldDispoReceipts').doc(receiptId);
@@ -798,7 +796,8 @@ async function applyDraft(input: {
   }
 
   if (input.draft.kind === 'notes') return applyNotes(input, leadRef, receiptRef, lead);
-  return applyKnock(input, input.draft, leadRef, receiptRef, lead);
+  const homeowner = await loadHomeowner(input.db, input.tx, input.draft);
+  return applyKnock(input, input.draft, leadRef, receiptRef, lead, homeowner);
 }
 
 function writeReceipt(
@@ -863,40 +862,18 @@ function applyKnock(
     tx: DispoTransaction;
     deps: FieldDispoDeps;
     uid: string;
-    user: UserProfile;
-    policy: FieldDispoGpsPolicy;
   },
   draft: ParsedKnock,
   leadRef: DispoDocRef,
   receiptRef: DispoDocRef,
   lead: Record<string, unknown>,
+  homeowner: Record<string, unknown> | null,
 ): TxOutcome {
-  const evaluation = evaluateGps(draft, lead);
-  const required = isProximityRequired(proximitySubject(input.user));
-  let flag: 'gps_unverified_flagged' | 'outside_50m' | null = null;
-  let storeFix: GpsFix | null = null;
-  let distanceM: number | null = null;
-  // knockGpsTimestamp is only written inside the capture window. An outside-50m
-  // fix is still a valid fix, so flag mode stores it and reports the distance.
-  const storableFix = evaluation.fix && evaluation.windowOk ? evaluation.fix : null;
-
-  if (!required) {
-    if (evaluation.state === 'ok' || evaluation.state === 'outside') {
-      storeFix = storableFix;
-      distanceM = storeDistance(evaluation.distanceM);
-    }
-  } else if (evaluation.state === 'ok') {
-    storeFix = storableFix;
-    distanceM = storeDistance(evaluation.distanceM);
-  } else if (input.policy === 'flag') {
-    flag = evaluation.state === 'outside' ? 'outside_50m' : 'gps_unverified_flagged';
-    distanceM = storeDistance(evaluation.distanceM);
-    if (evaluation.state === 'outside' || storableFix) storeFix = storableFix;
-  } else {
-    const reason: FieldReasonCode = evaluation.state === 'outside' ? 'outside_50m' : 'gps_unverified_held';
-    return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: reason } };
-  }
-
+  const decision = decideKnockGps({
+    fix: draft.gps,
+    actionAtMs: draft.actionAtMs,
+    reference: referencePoint(lead, homeowner),
+  });
   const serverMs = millisOf(lead.dispositionedAt);
   const stale = serverMs != null && draft.actionAtMs <= serverMs;
   const entry = {
@@ -904,6 +881,7 @@ function applyKnock(
     timestamp: input.deps.Timestamp.fromMillis(draft.actionAtMs),
     userId: input.uid,
     userName: draft.userName,
+    gpsFlag: gpsFlagOf(decision),
   };
   const history = mergeHistory(lead.dispositionHistory, entry, input.uid, draft.disposition, draft.actionAtMs);
   const patch: Record<string, unknown> = {};
@@ -913,12 +891,15 @@ function applyKnock(
     patch.status = draft.status;
     patch.disposition = draft.disposition;
     patch.dispositionedAt = input.deps.Timestamp.fromMillis(draft.actionAtMs);
-    if (storeFix) {
-      patch.knockGpsLat = storeFix.lat;
-      patch.knockGpsLng = storeFix.lng;
-      patch.knockGpsAccuracy = storeFix.accuracyM;
-      patch.knockGpsTimestamp = input.deps.Timestamp.fromMillis(storeFix.capturedAtMs);
-      if (distanceM != null) patch.knockDistanceFromAddress = distanceM;
+    patch.gpsVerified = decision.gpsVerified;
+    if (decision.gpsUnverifiedReason) patch.gpsUnverifiedReason = decision.gpsUnverifiedReason;
+    if (decision.gpsDistanceM != null) patch.gpsDistanceM = decision.gpsDistanceM;
+    if (decision.keepFix && draft.gps !== 'absent' && draft.gps !== 'malformed') {
+      patch.knockGpsLat = draft.gps.lat;
+      patch.knockGpsLng = draft.gps.lng;
+      patch.knockGpsAccuracy = draft.gps.accuracyM;
+      patch.knockGpsTimestamp = input.deps.Timestamp.fromMillis(draft.gps.capturedAtMs);
+      if (decision.gpsDistanceM != null) patch.knockDistanceFromAddress = decision.gpsDistanceM;
     }
     if (draft.goBack) {
       patch.goBackScheduledDate = input.deps.Timestamp.fromMillis(draft.goBack.scheduledDateMs);
@@ -942,7 +923,7 @@ function applyKnock(
       reasonCode: 'stale_tap',
       serverDispositionedAt: new Date(serverMs as number).toISOString(),
     })
-    : receiptBody(draft, 'applied', { gps: gpsResponse(flag, distanceM) });
+    : receiptBody(draft, 'applied', { gps: gpsResponse(decision) });
   writeReceipt(input.tx, receiptRef, input.deps, input.uid, draft, stale ? 'stale_history_only' : 'applied', body);
   return { status: 200, body, historyDropped: history.dropped };
 }

@@ -119,6 +119,10 @@ export interface Lead {
   knockGpsAccuracy?: number;     // GPS accuracy in meters
   knockGpsTimestamp?: Date;      // Timestamp of GPS capture
   knockDistanceFromAddress?: number; // Distance from address in meters
+  /** Server or LeadDetail verification. Reps do not see this. */
+  gpsVerified?: boolean;
+  gpsUnverifiedReason?: 'no_fix' | 'stale' | 'low_accuracy' | 'reduced_accuracy' | 'too_far' | 'other';
+  gpsDistanceM?: number;
   // Easter Eggs
   hasEasterEgg?: boolean;        // HIDDEN - only for hidden pin eggs
   easterEggId?: string;          // Which egg is hidden here
@@ -193,6 +197,12 @@ export interface LeadDispositionHistoryEntry {
   timestamp: Date;          // When the disposition was set
   userId: string;           // User who set the disposition
   userName: string;         // User's name at time (preserved even if user deleted)
+  /** Bounded copy of the GPS flag. Hidden from the rep. */
+  gpsFlag?: {
+    gpsVerified: boolean;
+    gpsUnverifiedReason?: 'no_fix' | 'stale' | 'low_accuracy' | 'reduced_accuracy' | 'too_far' | 'other';
+    gpsDistanceM?: number;
+  };
 }
 
 export type ObjectionType = 

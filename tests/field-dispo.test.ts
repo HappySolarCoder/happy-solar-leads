@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 import { distanceBetween } from 'geofire-common';
 import {
   ALLOWED_PATCH_KEYS,
-  FIELD_DISPO_GPS_POLICY,
   FIELD_DISPO_MAX_BYTES,
   HISTORY_CAP,
   TERRITORY_QUERY_LIMIT,
@@ -220,8 +219,8 @@ function harness(options: {
   leadId?: string;
   territories?: Array<{ id: string; data: Record<string, unknown> }>;
   receipts?: Array<{ id: string; data: Record<string, unknown> }>;
+  homeowners?: Array<{ id: string; data: Record<string, unknown> }>;
   now?: () => number;
-  gpsPolicy?: 'hold' | 'flag';
   verifyError?: unknown;
   authorization?: string | null;
 } = {}) {
@@ -235,6 +234,7 @@ function harness(options: {
   }
   for (const territory of options.territories ?? []) db.put(`territories/${territory.id}`, territory.data);
   for (const receipt of options.receipts ?? []) db.put(`fieldDispoReceipts/${receipt.id}`, receipt.data);
+  for (const homeowner of options.homeowners ?? []) db.put(`homeowners/${homeowner.id}`, homeowner.data);
   const revoked: boolean[] = [];
   const deps: FieldDispoDeps = {
     verifyIdToken: async (_token, checkRevoked) => {
@@ -249,7 +249,6 @@ function harness(options: {
     db,
     now: options.now ?? (() => NOW),
     rateLimitStore: new Map(),
-    gpsPolicy: options.gpsPolicy,
     Timestamp: FakeTimestamp,
     serverTimestamp: () => SERVER_TS,
   };
@@ -292,7 +291,7 @@ function patch(db: FakeDb): Record<string, unknown> {
 }
 
 describe('field dispo', { concurrency: 1 }, () => {
-  it('keeps the shared reason codes and the hold policy', () => {
+  it('keeps the shared reason codes and does not hold GPS', () => {
     assert.deepEqual([...FIELD_REASON_CODES], [
       'gps_unverified_held',
       'gps_unverified_flagged',
@@ -307,7 +306,10 @@ describe('field dispo', { concurrency: 1 }, () => {
       'invalid_payload',
       'other',
     ]);
-    assert.equal(FIELD_DISPO_GPS_POLICY, 'hold');
+    const source = readFileSync(new URL('../app/utils/server/fieldDispo.ts', import.meta.url), 'utf8');
+    assert.equal(source.includes('FIELD_DISPO_GPS_POLICY'), false);
+    assert.equal(source.includes('gps_unverified_held'), false);
+    assert.equal(source.includes('outside_50m'), false);
     assert.throws(() => assertAllowedPatch({ claimedBy: 'uid-setter', status: 'go-back' }));
     assert.doesNotThrow(() => assertAllowedPatch({ status: 'go-back', notes: 'ok' }));
   });
@@ -701,7 +703,8 @@ describe('field dispo', { concurrency: 1 }, () => {
     assert.equal(history[3], noTs);
     assert.equal((history[1] as { userId: string }).userId, 'uid-setter');
     assert.equal((history[1] as { disposition: string }).disposition, 'Go Back');
-    assert.deepEqual(Object.keys(history[1] as object).sort(), ['disposition', 'timestamp', 'userId', 'userName']);
+    assert.deepEqual(Object.keys(history[1] as object).sort(), ['disposition', 'gpsFlag', 'timestamp', 'userId', 'userName']);
+    assert.equal((history[1] as { gpsFlag: { gpsVerified: boolean } }).gpsFlag.gpsVerified, true);
 
     const replay = harness({
       lead: {
@@ -763,6 +766,9 @@ describe('field dispo', { concurrency: 1 }, () => {
     assert.equal(olderResult.body.reasonCode, 'stale_tap');
     assert.equal(olderResult.body.serverDispositionedAt, new Date(NOW + 60_000).toISOString());
     assert.deepEqual(Object.keys(patch(older.db)), ['dispositionHistory']);
+    const olderHistory = patch(older.db).dispositionHistory as Array<{ gpsFlag?: { gpsVerified: boolean } }>;
+    assert.equal(olderHistory[0].gpsFlag?.gpsVerified, true);
+    assert.equal(Object.hasOwn(patch(older.db), 'gpsVerified'), false);
     assert.equal(creates(older.db).length, 1);
     assert.equal(older.db.docs.get('leads/lead-1')?.status, 'not-home');
 
@@ -914,89 +920,155 @@ describe('field dispo', { concurrency: 1 }, () => {
     assert.equal(creates(denied.db).length, 0);
   });
 
-  it('holds or flags GPS from the single policy constant', async () => {
+  it('flags every GPS problem and still saves the knock', async () => {
     const at = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();
-    const inside = pointDueNorth(LEAD_LAT, LEAD_LNG, 50);
-    const outside = pointDueNorth(LEAD_LAT, LEAD_LNG, 50.1);
-    while (inside.distanceM > 50) {
-      const nudged = pointDueNorth(LEAD_LAT, LEAD_LNG, inside.distanceM - 0.01);
-      inside.lat = nudged.lat;
-      inside.distanceM = nudged.distanceM;
-    }
-    while (outside.distanceM <= 50.1) {
-      const nudged = pointDueNorth(LEAD_LAT, LEAD_LNG, outside.distanceM + 0.01);
-      outside.lat = nudged.lat;
-      outside.distanceM = nudged.distanceM;
-    }
-    assert.ok(inside.distanceM <= 50);
-    assert.ok(outside.distanceM > 50.1);
+    const close = pointDueNorth(LEAD_LAT, LEAD_LNG, 10);
+    const far = pointDueNorth(LEAD_LAT, LEAD_LNG, 200);
+    const comfortable = pointDueNorth(LEAD_LAT, LEAD_LNG, 100);
 
-    const holdCases: Array<{ name: string; user?: Record<string, unknown>; lead?: Record<string, unknown>; body: Record<string, unknown>; status: number; reason?: string }> = [
-      { name: 'missing', body: knockBody({ gps: undefined }), status: 403, reason: 'gps_unverified_held' },
-      { name: '6s before', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(-6000) } }), status: 403, reason: 'gps_unverified_held' },
-      { name: '16s after', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(16000) } }), status: 403, reason: 'gps_unverified_held' },
-      { name: '5s before', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(-5000) } }), status: 200 },
-      { name: '15s after', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(15000) } }), status: 200 },
-      { name: '50.0', body: knockBody({ gps: { lat: inside.lat, lng: inside.lng, accuracyM: 5, capturedAt: at(1000) } }), status: 200 },
-      { name: '50.1', body: knockBody({ gps: { lat: outside.lat, lng: outside.lng, accuracyM: 5, capturedAt: at(1000) } }), status: 403, reason: 'outside_50m' },
-      {
-        name: 'closer',
-        user: approvedUser({ role: 'closer' }),
-        lead: { claimedBy: 'uid-setter' },
-        body: knockBody({ gps: undefined }),
-        status: 200,
-      },
-      {
-        name: 'opt out',
-        user: approvedUser({ features: { proximityEnforcement: false } }),
-        body: knockBody({ gps: undefined }),
-        status: 200,
-      },
+    const flagged: Array<{ name: string; body: Record<string, unknown>; reason: string; keepFix: boolean }> = [
+      { name: 'missing', body: knockBody({ gps: undefined }), reason: 'no_fix', keepFix: false },
+      { name: 'null gps', body: knockBody({ gps: null }), reason: 'no_fix', keepFix: false },
+      { name: '6s before', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(-6000) } }), reason: 'stale', keepFix: true },
+      { name: '16s after', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(16000) } }), reason: 'stale', keepFix: true },
+      { name: 'low accuracy', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 65.1, capturedAt: at(1000) } }), reason: 'low_accuracy', keepFix: true },
+      { name: 'reduced band', body: knockBody({ gps: { lat: far.lat, lng: far.lng, accuracyM: 50, capturedAt: at(1000) } }), reason: 'reduced_accuracy', keepFix: true },
+      { name: 'too far', body: knockBody({ gps: { lat: far.lat, lng: far.lng, accuracyM: 5, capturedAt: at(1000) } }), reason: 'too_far', keepFix: true },
+      { name: 'string gps', body: knockBody({ gps: 'nope' }), reason: 'other', keepFix: false },
+      { name: 'unknown gps key', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(1000), extra: true } }), reason: 'other', keepFix: false },
+      { name: 'bad latitude', body: knockBody({ gps: { lat: 91, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(1000) } }), reason: 'other', keepFix: false },
+      { name: 'bad capturedAt', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: 'yesterday' } }), reason: 'other', keepFix: false },
     ];
-    for (const item of holdCases) {
-      const test = harness({ user: item.user, lead: item.lead, gpsPolicy: 'hold' });
-      const result = await test.run(item.body);
-      assert.equal(result.status, item.status, `${item.name} ${JSON.stringify(result.body)}`);
-      if (item.reason) {
-        assert.equal(result.body.reasonCode, item.reason, item.name);
-        assert.equal(creates(test.db).length, 0, item.name);
-      }
-    }
-
-    const flagCases: Array<{ name: string; body: Record<string, unknown>; reason: string }> = [
-      { name: 'missing', body: knockBody({ gps: undefined }), reason: 'gps_unverified_flagged' },
-      { name: '6s before', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(-6000) } }), reason: 'gps_unverified_flagged' },
-      { name: '16s after', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(16000) } }), reason: 'gps_unverified_flagged' },
-      { name: '50.1', body: knockBody({ gps: { lat: outside.lat, lng: outside.lng, accuracyM: 5, capturedAt: at(1000) } }), reason: 'outside_50m' },
-    ];
-    for (const item of flagCases) {
-      const test = harness({ gpsPolicy: 'flag' });
+    for (const item of flagged) {
+      const test = harness();
       const result = await test.run(item.body);
       assert.equal(result.status, 200, `${item.name} ${JSON.stringify(result.body)}`);
-      const gps = result.body.gps as { reasonCode: string; outcome: string; distanceM: number | null };
+      assert.equal(result.body.result, 'applied', item.name);
+      const gps = result.body.gps as { reasonCode: string; outcome: string; gpsVerified: boolean; gpsUnverifiedReason: string };
       assert.equal(gps.outcome, 'flagged_accepted', item.name);
-      assert.equal(gps.reasonCode, item.reason, item.name);
+      assert.equal(gps.reasonCode, 'gps_unverified_flagged', item.name);
+      assert.equal(gps.gpsVerified, false, item.name);
+      assert.equal(gps.gpsUnverifiedReason, item.reason, item.name);
       assert.equal(creates(test.db).length, 1, item.name);
-      assert.equal(test.db.docs.get('leads/lead-1')?.status, 'go-back', item.name);
+      const written = patch(test.db);
+      assert.equal(written.gpsVerified, false, item.name);
+      assert.equal(written.gpsUnverifiedReason, item.reason, item.name);
+      assert.equal(written.status, 'go-back', item.name);
+      assert.equal(Object.hasOwn(written, 'knockGpsLat'), item.keepFix, item.name);
+      assert.equal(Object.hasOwn(written, 'homeownerId'), false, item.name);
+      const flag = (written.dispositionHistory as Array<{ gpsFlag: { gpsUnverifiedReason: string } }>)[0].gpsFlag;
+      assert.equal(flag.gpsUnverifiedReason, item.reason, item.name);
     }
 
-    const flaggedFar = harness({ gpsPolicy: 'flag' });
-    await flaggedFar.run(knockBody({ gps: { lat: outside.lat, lng: outside.lng, accuracyM: 9, capturedAt: at(1000) } }));
-    assert.equal(patch(flaggedFar.db).knockGpsLat, outside.lat);
-    assert.equal(typeof patch(flaggedFar.db).knockDistanceFromAddress, 'number');
+    const verifiedCases = [
+      { name: 'on the pin', body: knockBody() },
+      { name: '5s before', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(-5000) } }) },
+      { name: '15s after', body: knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(15000) } }) },
+      { name: '10m', body: knockBody({ gps: { lat: close.lat, lng: close.lng, accuracyM: 8, capturedAt: at(1000) } }) },
+      { name: 'accuracy 65 at 100m', body: knockBody({ gps: { lat: comfortable.lat, lng: comfortable.lng, accuracyM: 65, capturedAt: at(1000) } }) },
+    ];
+    for (const item of verifiedCases) {
+      const test = harness();
+      const result = await test.run(item.body);
+      assert.equal(result.status, 200, `${item.name} ${JSON.stringify(result.body)}`);
+      const gps = result.body.gps as { reasonCode: null; outcome: null; gpsVerified: boolean; gpsDistanceM: number };
+      assert.equal(gps.gpsVerified, true, item.name);
+      assert.equal(gps.outcome, null, item.name);
+      assert.equal(gps.reasonCode, null, item.name);
+      assert.equal(Object.hasOwn(gps, 'gpsUnverifiedReason'), false, item.name);
+      assert.equal(typeof gps.gpsDistanceM, 'number', item.name);
+      assert.equal(patch(test.db).gpsVerified, true, item.name);
+      assert.equal(Object.hasOwn(patch(test.db), 'gpsUnverifiedReason'), false, item.name);
+    }
 
-    const flaggedEarly = harness({ gpsPolicy: 'flag' });
-    await flaggedEarly.run(knockBody({ gps: { lat: LEAD_LAT, lng: LEAD_LNG, accuracyM: 5, capturedAt: at(-6000) } }));
-    assert.equal(Object.hasOwn(patch(flaggedEarly.db), 'knockGpsLat'), false);
+    const past = harness();
+    const pastResult = await past.run(knockBody({
+      gps: { lat: far.lat, lng: far.lng, accuracyM: 40, capturedAt: at(1000) },
+    }));
+    assert.equal((pastResult.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'too_far');
 
-    const closerFlag = harness({
-      gpsPolicy: 'flag',
-      user: approvedUser({ role: 'closer' }),
-      lead: { claimedBy: 'uid-setter' },
+    const clientWins = harness();
+    const clientResult = await clientWins.run(knockBody({
+      gps: { lat: far.lat, lng: far.lng, accuracyM: 5, capturedAt: at(1000) },
+      gpsVerified: true,
+      gpsUnverifiedReason: 'no_fix',
+      gpsDistanceM: 1,
+    }));
+    assert.equal(clientResult.status, 200);
+    const clientGps = clientResult.body.gps as { gpsVerified: boolean; gpsUnverifiedReason: string; gpsDistanceM: number };
+    assert.equal(clientGps.gpsVerified, false);
+    assert.equal(clientGps.gpsUnverifiedReason, 'too_far');
+    assert.ok(clientGps.gpsDistanceM > 100);
+    assert.equal(patch(clientWins.db).gpsDistanceM, clientGps.gpsDistanceM);
+    assert.equal(patch(clientWins.db).gpsVerified, false);
+
+    const banned = harness();
+    const bannedResult = await banned.run(knockBody({ gpsClientVerified: true }));
+    assert.equal(bannedResult.status, 400);
+    assert.equal(bannedResult.body.field, 'gpsClientVerified');
+    assert.equal(banned.db.txCount, 0);
+
+    const ignoredId = harness();
+    await ignoredId.run(knockBody({ homeownerId: 'bad id' }));
+    assert.equal(ignoredId.db.ops.some((op) => op.op === 'get' && op.path.startsWith('homeowners/')), false);
+    assert.equal(patch(ignoredId.db).gpsVerified, true);
+
+    const home = pointDueNorth(LEAD_LAT, LEAD_LNG, 70);
+    const beyondLead = pointDueNorth(LEAD_LAT, LEAD_LNG, 140);
+    const linked = harness({
+      lead: { lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-setter', address: '123 Main St.', city: 'Phoenix' },
+      homeowners: [{ id: 'home-1', data: { lat: home.lat, lng: home.lng, address: '999 Other Rd', city: 'Phoenix' } }],
     });
-    const closerResult = await closerFlag.run(knockBody({ gps: undefined }));
+    const linkedResult = await linked.run(knockBody({
+      homeownerId: 'home-1',
+      gps: { lat: beyondLead.lat, lng: beyondLead.lng, accuracyM: 5, capturedAt: at(1000) },
+    }));
+    assert.equal((linkedResult.body.gps as { gpsVerified: boolean }).gpsVerified, true, JSON.stringify(linkedResult.body.gps));
+    assert.equal(linked.db.ops.filter((op) => op.op === 'get' && op.path === 'homeowners/home-1').length, 1);
+    assert.equal(Object.hasOwn(patch(linked.db), 'homeownerId'), false);
+
+    const streetPoint = pointDueNorth(LEAD_LAT, LEAD_LNG, 1500);
+    const sameStreet = harness({
+      lead: { lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-setter', address: '123 Main St.', city: 'Phoenix' },
+      homeowners: [{ id: 'home-street', data: { lat: streetPoint.lat, lng: streetPoint.lng, street: '123 main st', municipality: 'phoenix' } }],
+    });
+    const streetResult = await sameStreet.run(knockBody({
+      homeownerId: 'home-street',
+      gps: { lat: streetPoint.lat, lng: streetPoint.lng, accuracyM: 5, capturedAt: at(1000) },
+    }));
+    assert.equal((streetResult.body.gps as { gpsVerified: boolean }).gpsVerified, true);
+
+    const otherStreet = harness({
+      lead: { lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-setter', address: '123 Main St.', city: 'Phoenix' },
+      homeowners: [{ id: 'home-other', data: { lat: streetPoint.lat, lng: streetPoint.lng, address: '9 Side Ave', city: 'Phoenix' } }],
+    });
+    const otherStreetResult = await otherStreet.run(knockBody({
+      homeownerId: 'home-other',
+      gps: { lat: streetPoint.lat, lng: streetPoint.lng, accuracyM: 5, capturedAt: at(1000) },
+    }));
+    assert.equal((otherStreetResult.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'too_far');
+
+    const missingHome = harness();
+    const missingHomeResult = await missingHome.run(knockBody({
+      homeownerId: 'missing-home',
+      gps: { lat: far.lat, lng: far.lng, accuracyM: 5, capturedAt: at(1000) },
+    }));
+    assert.equal((missingHomeResult.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'too_far');
+    assert.equal(missingHome.db.ops.some((op) => op.op === 'get' && op.path === 'homeowners/missing-home'), true);
+
+    const noGpsHome = harness();
+    await noGpsHome.run(knockBody({ gps: undefined, homeownerId: 'home-1' }));
+    assert.equal(noGpsHome.db.ops.some((op) => op.op === 'get' && op.path.startsWith('homeowners/')), false);
+
+    const closer = harness({ user: approvedUser({ role: 'closer' }), lead: { claimedBy: 'uid-setter' } });
+    const closerResult = await closer.run(knockBody({ gps: undefined }));
     assert.equal(closerResult.status, 200);
-    assert.equal((closerResult.body.gps as { outcome: null }).outcome, null);
+    assert.equal((closerResult.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'no_fix');
+
+    const optedOut = harness({ user: approvedUser({ features: { proximityEnforcement: false } }) });
+    const optedResult = await optedOut.run(knockBody({ gps: { lat: far.lat, lng: far.lng, accuracyM: 5, capturedAt: at(1000) } }));
+    assert.equal(optedResult.status, 200);
+    assert.equal((optedResult.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'too_far');
   });
 
   it('rate limits the 61st request in a 60 second window', async () => {
