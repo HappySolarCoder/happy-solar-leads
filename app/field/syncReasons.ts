@@ -6,12 +6,16 @@ export const SYNC_REASON = {
   permissionDenied: "permission_denied",
   outOfTerritory: "out_of_territory",
   ownedByOther: "owned_by_other",
-  /** Queued slow retry. The server caps kind:notes at 256 KB, and notes and baseNotes at 100000 characters. */
+  /** Queued slow retry when a knock body is over the route's 32 KB limit. */
   payloadTooLarge: "payload_too_large",
   historicalPin: "historical_pin",
   notFound: "not_found",
   staleTap: "stale_tap",
   notesConflict: "notes_conflict",
+  /** Queued slow retry. A notes route 413, a notes body over 256 KB, or a notes/baseNotes 400. */
+  notesTooLong: "notes_too_long",
+  /** Parked. An old draft carried both a knock and a note, and it could not be split. */
+  combinedDraft: "combined_draft",
   invalidPayload: "invalid_payload",
   other: "other",
 } as const;

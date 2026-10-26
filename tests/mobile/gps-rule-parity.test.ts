@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,4 +78,16 @@ test("client gpsRule matches the #170 vectors, including the proximity warning c
   assert.ok(seen.has("closer|android|true|stale|1000|none"));
   assert.ok(seen.has("manager|ios|false|missing|0|none"));
   assert.ok(seen.has("admin|android|true|fresh|100000|none"));
+});
+
+test("gpsRule.ts is byte-identical to #170 at 468c5d7", () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const bytes = readFileSync(path.join(root, "app/utils/gpsRule.ts"));
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const provenance = readFileSync(path.join(root, "app/utils/gpsRule.PROVENANCE.md"), "utf8");
+  assert.equal(hash, "d4b876ed5977358486a29a4eb64bcf4a20d7e86ad56d0816d83c3708dea6d77c");
+  assert.match(provenance, /468c5d7d4d07358b4e34eb9d9e48f3ca028382d1/);
+  assert.match(provenance, /2026-10-26/);
+  assert.match(provenance, new RegExp(hash));
+  assert.equal(bytes.includes(Buffer.from("Ported 1:1")), false);
 });

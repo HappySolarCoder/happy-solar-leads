@@ -110,6 +110,18 @@ test("two phones keep both notes on an owned lead and an admin lead", async () =
   }
 });
 
+test("a contested edit that changes the end of a line is appended on a new line", async () => {
+  const store = fakeLeadTransaction("lead-1", "Call after 5\nDog in yard", { claimedBy: owner.id });
+  const saved = await commitNotes(owner, store, "Call after 5 today", "Call after 5");
+  assert.equal(saved.replayed, false);
+  assert.equal(store.notes(), "Call after 5\nDog in yard\n today");
+  assert.equal(String(store.notes()).endsWith("yard today"), false);
+  const replay = await commitNotes(owner, store, "Call after 5 today", "Call after 5");
+  assert.equal(replay.replayed, true);
+  assert.equal(store.notes(), "Call after 5\nDog in yard\n today");
+  assert.equal(store.updates.length, 1);
+});
+
 test("a route notes conflict retries the plain patch with the rebased text", async () => {
   let posts = 0;
   let committed: PendingMutation | undefined;
@@ -238,6 +250,128 @@ test("the route body sends goBack or objection, never both", () => {
   }, user);
   assert.equal(objection.goBack, undefined);
   assert.equal(objection.objection?.type, "cost");
+});
+
+test("a combined knock and note is split into two drafts and nothing is dropped", async () => {
+  const at = new Date("2026-10-25T15:00:00.000Z");
+  const combined: PendingMutation = {
+    id: "draft-combined",
+    userId: user.id,
+    userName: user.name,
+    leadId: "lead-1",
+    createdAt: at.toISOString(),
+    kind: "knock",
+    baseStatus: "claimed",
+    notes: "keep this note",
+    baseNotes: "",
+    status: "not-home",
+    disposition: "Not Home",
+    direct: {
+      patch: {
+        status: "not-home",
+        notes: "keep this note",
+        dispositionHistory: [{ disposition: "Not Home", timestamp: at, userId: user.id, userName: user.name }],
+      },
+    },
+  };
+  let rows = [combined];
+  const sent: PendingMutation[] = [];
+  await syncOutbox({
+    read: async () => rows,
+    send: async (row) => {
+      assert.notEqual(row.id, combined.id);
+      sent.push(row);
+    },
+    remove: async (id) => {
+      rows = rows.filter((row) => row.id !== id);
+    },
+    insert: async (row) => {
+      rows = [...rows.filter((item) => item.id !== row.id), row];
+    },
+    update: async (row) => {
+      rows = rows.map((item) => item.id === row.id ? row : item);
+    },
+    report: async () => {
+      throw Error("must not park a draft that can be split");
+    },
+    active: () => true,
+    now: () => at.getTime(),
+    random: () => 0,
+  });
+  assert.equal(rows.length, 0);
+  assert.equal(sent.length, 2);
+  const note = sent.find((row) => row.kind === "notes");
+  const knock = sent.find((row) => row.kind === "knock");
+  assert.equal(note?.notes, "keep this note");
+  assert.equal(note?.direct?.patch.notes, "keep this note");
+  assert.equal(note?.direct?.patch.dispositionHistory, undefined);
+  assert.equal(knock?.direct?.patch.notes, undefined);
+  assert.equal(knock?.status, "not-home");
+  assert.equal(knock?.direct?.patch.dispositionHistory?.length, 1);
+});
+
+test("an unsplittable combined draft is parked and the text is kept", async () => {
+  const at = new Date("2026-10-25T15:00:00.000Z");
+  const combined: PendingMutation = {
+    id: "draft-unsafe",
+    userId: user.id,
+    userName: user.name,
+    leadId: "lead-1",
+    createdAt: at.toISOString(),
+    kind: "knock",
+    baseStatus: "claimed",
+    notes: "keep this note",
+    direct: {
+      patch: {
+        notes: "keep this note",
+        dispositionHistory: [{ disposition: "", timestamp: at, userId: user.id, userName: user.name }],
+      },
+    },
+  };
+  let rows = [combined];
+  let sent = 0;
+  await syncOutbox({
+    read: async () => rows,
+    send: async () => {
+      sent += 1;
+    },
+    remove: async () => {
+      throw Error("must not drop the combined draft");
+    },
+    insert: async () => {
+      throw Error("must not split an unsafe draft");
+    },
+    update: async (row) => {
+      rows = [row];
+    },
+    report: async () => {},
+    active: () => true,
+    now: () => at.getTime(),
+    random: () => 0,
+  });
+  assert.equal(sent, 0);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, combined.id);
+  assert.equal(rows[0].syncState, "parked");
+  assert.equal(rows[0].parkedReason, "combined_draft");
+  assert.equal(rows[0].direct?.patch.notes, "keep this note");
+  await syncOutbox({
+    read: async () => rows,
+    send: async () => {
+      sent += 1;
+    },
+    remove: async () => {
+      throw Error("must not drop the parked draft");
+    },
+    update: async () => {
+      throw Error("must not retry a parked combined draft");
+    },
+    active: () => true,
+    now: () => at.getTime(),
+    random: () => 0,
+  });
+  assert.equal(sent, 0);
+  assert.equal(rows[0].direct?.patch.notes, "keep this note");
 });
 
 test("a knock and a note cannot share one patch", () => {

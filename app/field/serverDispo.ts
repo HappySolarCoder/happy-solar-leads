@@ -5,6 +5,7 @@ import { isScheduledGoBackStatus } from "@/app/types/disposition";
 import { commitDirectMutation, historyGpsFlag, reportingPatch } from "./directWrites";
 import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
 import { rebaseNotes } from "./notesRebase";
+import { NON_OWNER_DIRECT_NOTES_MAX_CHARS, NOTES_ROUTE_BODY_MAX_BYTES, utf8Bytes } from "./notesLimits";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
 import { FIELD_DISPO_UNAVAILABLE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
@@ -46,6 +47,76 @@ export function prefersServerDispo(lead: DispoLead, uid: string, role?: string):
   if (role === "admin") return false;
   if (leadOwnedBy(lead, uid)) return false;
   return !lead.territoryId;
+}
+
+/**
+ * Notes from 10,001 through 100,000 characters on a lead this rep does not own
+ * go to the route. #170 accepts them. An owner or admin still writes directly.
+ */
+export function notesDraftUsesRoute(
+  lead: DispoLead,
+  uid: string,
+  role: string | undefined,
+  notes: string,
+): boolean {
+  if (prefersServerDispo(lead, uid, role)) return true;
+  if (role === "admin" || leadOwnedBy(lead, uid)) return false;
+  return notes.length > NON_OWNER_DIRECT_NOTES_MAX_CHARS;
+}
+
+export function notesRouteBodyTooLarge(body: FieldDispoBody): boolean {
+  return body.kind === "notes" && utf8Bytes(JSON.stringify(body)) > NOTES_ROUTE_BODY_MAX_BYTES;
+}
+
+/** Split a queued knock-plus-note into two drafts. Unsafe drafts are parked, never dropped. */
+export function splitCombinedDraft(
+  m: PendingMutation,
+  existingIds: ReadonlySet<string>,
+): { knock: PendingMutation; notes: PendingMutation } | "unsafe" | null {
+  const patch = m.direct?.patch;
+  if (!patch) return null;
+  const history = patch.dispositionHistory;
+  const notes = typeof patch.notes === "string" ? patch.notes : undefined;
+  if (notes == null || !history?.length) return null;
+  const knockId = `${m.id}-knock`;
+  const notesId = `${m.id}-notes`;
+  const status = (typeof patch.status === "string" && patch.status) || m.status || "";
+  const disposition = history[0]?.disposition || m.disposition || status;
+  if (
+    !m.leadId
+    || !m.userId
+    || !DRAFT_ID_PATTERN.test(knockId)
+    || !DRAFT_ID_PATTERN.test(notesId)
+    || existingIds.has(knockId)
+    || existingIds.has(notesId)
+    || !status
+    || status === "claimed"
+    || status === "unclaimed"
+    || !disposition
+  ) return "unsafe";
+  const knockPatch = { ...patch };
+  delete knockPatch.notes;
+  const knock: PendingMutation = {
+    ...m,
+    id: knockId,
+    kind: "knock",
+    status,
+    disposition,
+    direct: { ...m.direct, patch: knockPatch },
+  };
+  delete knock.notes;
+  return {
+    knock,
+    notes: {
+      ...m,
+      id: notesId,
+      kind: "notes",
+      notes,
+      status: undefined,
+      disposition: undefined,
+      direct: { ...m.direct, patch: { notes } },
+    },
+  };
 }
 
 export function releaseFieldDispoHolds(drafts: PendingMutation[]): PendingMutation[] {
@@ -319,6 +390,7 @@ export type FieldDispoDeps = {
 async function readJson(response: Response): Promise<{
   currentNotes?: unknown;
   reasonCode?: unknown;
+  field?: unknown;
   lead?: Lead;
   result?: unknown;
   gps?: { outcome?: unknown };
@@ -327,6 +399,7 @@ async function readJson(response: Response): Promise<{
     return (await response.json()) as {
       currentNotes?: unknown;
       reasonCode?: unknown;
+      field?: unknown;
       lead?: Lead;
       result?: unknown;
       gps?: { outcome?: unknown };
@@ -372,6 +445,8 @@ export async function postFieldDispo(
   let draft = m;
   let rebasedDraft: PendingMutation | undefined;
   let body = fieldDispoBody(draft, user);
+  if (notesRouteBodyTooLarge(body))
+    throw routeError("Notes too long", 413, SYNC_REASON.notesTooLong);
   let token = await getToken(false);
   if (!token) throw Error("Sign in again to sync your work.");
   let refreshed = false;
@@ -443,12 +518,19 @@ export async function postFieldDispo(
     fail(Object.assign(Error("Sign in again to sync your work."), { status: 401 }));
   if (response.status === 410)
     fail(routeError("This lead is gone.", 410, SYNC_REASON.notFound));
-  // The server caps kind:notes at 256 KB, and notes and baseNotes at 100000 characters.
-  // A 413 stays queued for a slow retry. The client does not park on size.
   if (response.status === 413)
-    fail(routeError("Disposition route rejected this knock.", 413, SYNC_REASON.payloadTooLarge));
-  if (response.status === 400)
+    fail(routeError(
+      draft.kind === "notes" ? "Notes too long" : "Disposition route rejected this knock.",
+      413,
+      draft.kind === "notes" ? SYNC_REASON.notesTooLong : SYNC_REASON.payloadTooLarge,
+    ));
+  if (response.status === 400) {
+    const data = await readJson(response);
+    const field = typeof data?.field === "string" ? data.field : "";
+    if (draft.kind === "notes" && (field === "notes" || field === "baseNotes"))
+      fail(routeError("Notes too long", 400, SYNC_REASON.notesTooLong));
     fail(routeError("Disposition route rejected this knock.", 400, SYNC_REASON.invalidPayload));
+  }
   if (response.status === 403) {
     const data = await readJson(response);
     fail(routeError(
@@ -471,6 +553,10 @@ export async function postFieldDispo(
 
 function permissionDenied(error: Error & { status?: number; code?: string }): boolean {
   return error.code === "permission-denied";
+}
+
+function notesTooLongFailure(error: unknown): boolean {
+  return (error as { reasonCode?: string }).reasonCode === SYNC_REASON.notesTooLong;
 }
 
 /** Offline and transport failures must stay queued. They do not adopt the route status. */
@@ -528,6 +614,7 @@ export async function deliverFieldDispo(
     try {
       return await postFieldDispo(m, user, deps);
     } catch (routeFailure) {
+      if (notesTooLongFailure(routeFailure)) throw routeFailure;
       return plainPatchAfterRoute(m, user, routeFailure, commit);
     }
   }
@@ -538,6 +625,7 @@ export async function deliverFieldDispo(
     try {
       return await postFieldDispo(m, user, deps);
     } catch (routeFailure) {
+      if (notesTooLongFailure(routeFailure)) throw routeFailure;
       return plainPatchAfterRoute(m, user, routeFailure, commit);
     }
   }

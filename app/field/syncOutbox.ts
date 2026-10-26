@@ -1,6 +1,7 @@
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
-import { SERVER_DISPO_SLOW_RETRY_MS } from "./serverDispo";
+import { SERVER_DISPO_SLOW_RETRY_MS, splitCombinedDraft } from "./serverDispo";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
+import { SYNC_REASON } from "./syncReasons";
 import type { PendingMutation } from "./types";
 
 export type SyncOutboxDeps = {
@@ -8,6 +9,8 @@ export type SyncOutboxDeps = {
   send: (m: PendingMutation) => Promise<unknown>;
   remove: (id: string) => Promise<unknown>;
   update?: (m: PendingMutation) => Promise<unknown>;
+  /** Writes a draft created by splitting a combined knock and note. */
+  insert?: (m: PendingMutation) => Promise<unknown>;
   /** @deprecated 14.17 writer. Still accepted so older tests can pass a no-op. */
   block?: (m: PendingMutation) => Promise<unknown>;
   report?: (userId: string) => Promise<unknown>;
@@ -71,6 +74,30 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       }
       if (deferred.has(m.leadId)) continue;
       progressed = true;
+      const split = splitCombinedDraft(m, new Set(all.map((row) => row.id)));
+      if (split) {
+        if (split === "unsafe" || !deps.insert) {
+          const parkedDraft: PendingMutation = {
+            ...m,
+            syncState: "parked",
+            attempts: (m.attempts ?? 0) + 1,
+            parkedReason: SYNC_REASON.combinedDraft,
+            lastError: "Save the knock and the note as separate actions.",
+          };
+          delete parkedDraft.blocked;
+          delete parkedDraft.error;
+          delete parkedDraft.nextAttemptAt;
+          if (write) await write(parkedDraft);
+          parked += 1;
+          await recordSyncEvent(eventFor(parkedDraft, "parked"));
+          try { await (deps.report ?? reportParked)(m.userId); } catch { /* sync-report never stops a dispo */ }
+          continue;
+        }
+        await deps.insert(split.knock);
+        await deps.insert(split.notes);
+        await deps.remove(m.id);
+        continue;
+      }
       const fail = async (
         current: PendingMutation,
         error: Error,

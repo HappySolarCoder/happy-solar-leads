@@ -8,6 +8,7 @@ import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap, knownPolygonsSync } from '
 import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
 import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
+import { NOTES_MAX_CHARS, NOTES_TOO_LONG_MESSAGE, saveNotesFromEditor } from '@/app/field/notesLimits';
 import { recordSyncEvent } from '@/app/field/syncDiagnostics';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
 import { beginWarmGps, bestFixInWindow } from '@/app/field/warmGps';
@@ -445,28 +446,31 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const handleSaveNotes = async () => {
     if (summaryOnly) return;
     if (!currentUser) return;
+    if (notes.length > NOTES_MAX_CHARS) return;
     if (pausedWithDrafts) { setFieldMessage('Review pending drafts in Field tools before changing these notes.'); return; }
     
     setNotesSaving(true);
-    if (capture) {
-      try { await recordField('notes', { notes }); }
-      catch (e) { setFieldMessage((e as Error).message); }
-      finally { setNotesSaving(false); }
-      return;
-    }
     try {
-      const { saveLeadAsync } = await import('@/app/utils/storage');
-      const updatedLead: Lead = {
-        ...lead,
-        notes,
-      };
-      if (DIRECT_MOBILE_WRITES) await saveReportingPatch({ notes });
-      else if (saveLeadPatch) await saveLeadPatch({ notes });
-      else await saveLeadAsync(updatedLead);
-      if (!DIRECT_MOBILE_WRITES) setFieldMessage('Notes saved.');
-      if (onUpdate) onUpdate();
+      await saveNotesFromEditor(notes, async () => {
+        if (capture) {
+          await recordField('notes', { notes });
+          return;
+        }
+        const { saveLeadAsync } = await import('@/app/utils/storage');
+        const updatedLead: Lead = {
+          ...lead,
+          notes,
+        };
+        if (DIRECT_MOBILE_WRITES) await saveReportingPatch({ notes });
+        else if (saveLeadPatch) await saveLeadPatch({ notes });
+        else await saveLeadAsync(updatedLead);
+        if (!DIRECT_MOBILE_WRITES) setFieldMessage('Notes saved.');
+        if (onUpdate) onUpdate();
+      });
     } catch (error) {
-      if (DIRECT_MOBILE_WRITES) reportSilent(error);
+      if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) return;
+      if (capture) setFieldMessage((error as Error).message);
+      else if (DIRECT_MOBILE_WRITES) reportSilent(error);
       else setFieldMessage((error as Error).message || 'Notes could not be saved. Please retry.');
     } finally {
       setNotesSaving(false);
@@ -959,9 +963,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
               className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
               rows={3}
             />
+            {notes.length > NOTES_MAX_CHARS ? <p className="mt-2 text-sm font-semibold text-[#C53030]">{NOTES_TOO_LONG_MESSAGE}</p> : null}
             <button
               onClick={handleSaveNotes}
-              disabled={notesSaving || summaryOnly}
+              disabled={notesSaving || summaryOnly || notes.length > NOTES_MAX_CHARS}
               className="mt-2 px-4 py-2 bg-[#FF5F5A] text-white rounded-lg text-sm font-semibold hover:bg-[#F27141] disabled:opacity-50"
             >
               {notesSaving ? 'Saving...' : 'Save Notes'}

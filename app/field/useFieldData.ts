@@ -17,7 +17,8 @@ import { DIRECT_MOBILE_WRITES, directPatch, rejectCombinedKnockAndNotes } from '
 import { acceptDisposition } from './draftQueue';
 import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
-import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
+import { deliverFieldDispo, leadOwnedBy, notesDraftUsesRoute, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
+import { NOTES_MAX_CHARS, NOTES_TOO_LONG_MESSAGE } from './notesLimits';
 import { readSyncLog, recordSyncEvent, reportParked, type SyncEvent } from './syncDiagnostics';
 import { displayedKnockPoint, type KnockPoint } from './knockPoint';
 import { GPS_WINDOW_AFTER_MS } from './gpsPolicy';
@@ -202,6 +203,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         },
         remove: removeDraft,
         update: putDraft,
+        insert: putDraft,
         active: () => active.current === uid && auth?.currentUser?.uid === uid && isDeviceOnline(),
       });
       void reportParked(uid);
@@ -338,6 +340,8 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     const recordedAt = new Date();
     rejectCombinedKnockAndNotes(patch);
     const clean = directPatch(patch), entry = clean.dispositionHistory?.[0];
+    const noteText = !entry && typeof clean.notes === "string" ? clean.notes : "";
+    if (!entry && noteText.length > NOTES_MAX_CHARS) throw Error(NOTES_TOO_LONG_MESSAGE);
     if (entry) clean.dispositionHistory = [entry];
     if (entry && (entry.userId !== uid || entry.userName !== actor.name))
       throw Error('The knock identity does not match the signed-in rep.');
@@ -353,11 +357,11 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       id: crypto.randomUUID(), userId: uid, userName: actor.name,
       leadId: lead.id, createdAt: tappedAt.toISOString(),
       kind: entry ? 'knock' : 'notes', baseStatus: lead.status, baseNotes: lead.notes || '',
-      ...(entry ? { status: clean.status, disposition: entry.disposition } : {}),
+      ...(entry ? { status: clean.status, disposition: entry.disposition } : { notes: noteText }),
       direct: {
         patch: clean,
         ...(create ? { create } : {}),
-        ...(prefersServerDispo(lead, uid, actor.role) ? { serverDispo: true } : {}),
+        ...((entry ? prefersServerDispo(lead, uid, actor.role) : notesDraftUsesRoute(lead, uid, actor.role, noteText)) ? { serverDispo: true } : {}),
         ...(shown?.source === 'homeowner_corrected' && shown.homeownerId ? { homeownerId: shown.homeownerId } : {}),
         ...(shown ? { gpsPointSource: shown.source } : {}),
         ...(deferGps && entry ? { gps: {

@@ -680,12 +680,14 @@ test("the route is for historical pins and unowned pins a rep cannot read; admin
 
 test("reason codes are the shared dispo and sync-report list", async () => {
   assert.deepEqual(Object.values(SYNC_REASON).sort(), [
+    "combined_draft",
     "gps_unverified_flagged",
     "gps_unverified_held",
     "historical_pin",
     "invalid_payload",
     "not_found",
     "notes_conflict",
+    "notes_too_long",
     "other",
     "out_of_territory",
     "outside_50m",
