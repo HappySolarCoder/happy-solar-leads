@@ -5,6 +5,7 @@ import { X, Phone, Save, Send } from 'lucide-react';
 import { deleteField } from 'firebase/firestore';
 import { Lead } from '@/app/types';
 import { buildLeadEditorPatch } from '@/app/utils/leadEditorPatch';
+import { useSlowSaveAlert } from '@/app/utils/useSlowSaveAlert';
 import { updateLeadAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 import { postDiscordNotification, readNotificationError } from '@/app/utils/notificationsClient';
@@ -32,6 +33,7 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
     notes: lead.notes || '',
   });
   const [isSaving, setIsSaving] = useState(false);
+  const slowSave = useSlowSaveAlert();
   const [isSending, setIsSending] = useState(false);
   const [infoSent, setInfoSent] = useState(false);
   // Cached before the call tap. Reading this during the click must not await.
@@ -55,10 +57,9 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
   }, []);
 
   const handleSave = async () => {
+    // Ignore a second click while the 15s timer from this attempt is running.
+    if (!slowSave.arm()) return;
     setIsSaving(true);
-    const slowSave = window.setTimeout(() => {
-      alert('Still saving, check your connection');
-    }, 15000);
 
     try {
       // Partial update of only the contact fields that changed. A full-doc
@@ -82,9 +83,9 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
         ? String((error as { code?: unknown }).code || '')
         : '';
       const message = error instanceof Error ? error.message : 'The lead was not updated.';
-      alert(`Could not save these changes.\n\n${code ? `${code}: ${message}` : message}`);
+      slowSave.fail(`Could not save these changes.\n\n${code ? `${code}: ${message}` : message}`);
     } finally {
-      window.clearTimeout(slowSave);
+      slowSave.finish();
       setIsSaving(false);
     }
   };
@@ -332,6 +333,9 @@ export default function LeadEditorModal({ lead, onClose, onSave }: LeadEditorMod
 
           {/* Footer Actions */}
           <div className="sticky bottom-0 bg-white border-t border-[#E2E8F0] px-6 py-4 space-y-3">
+            {slowSave.notice && (
+              <p role="alert" className="text-sm text-center text-[#C53030]">{slowSave.notice}</p>
+            )}
             {/* Save Button */}
             <button
               onClick={handleSave}

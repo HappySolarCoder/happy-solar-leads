@@ -33,6 +33,7 @@ import {
   type GpsUnverifiedReason,
 } from '@/app/utils/gpsRule';
 import { leadDetailKnockGps } from '@/app/utils/leadDetailGps';
+import { useSlowSaveAlert } from '@/app/utils/useSlowSaveAlert';
 
 /** Shared reason. Removing out_of_area from gpsRule.ts fails this file. */
 const SHARED_AREA_REASON: (typeof GPS_UNVERIFIED_REASONS)[number] = 'out_of_area';
@@ -127,6 +128,7 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
   const [notesSaving, setNotesSaving] = useState(false);
+  const slowNotesSave = useSlowSaveAlert();
   const [showAllStatuses, setShowAllStatuses] = useState(false);
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
@@ -323,11 +325,10 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
   // Handle saving notes
   const handleSaveNotes = async () => {
     if (!currentUser) return;
-    
+    // Ignore a second click while the 15s timer from this attempt is running.
+    if (!slowNotesSave.arm()) return;
+
     setNotesSaving(true);
-    const slowSave = window.setTimeout(() => {
-      alert('Still saving, check your connection');
-    }, 15000);
     try {
       // Partial update: only the changed key. A full-doc setDoc adds/removes
       // unrelated keys and is denied by the dispo-only rules on non-owned leads.
@@ -340,9 +341,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
         ? String((error as { code?: unknown }).code || '')
         : '';
       const message = error instanceof Error ? error.message : 'Notes were not updated.';
-      alert(`Notes failed to save.\n\n${code ? `${code}: ${message}` : message}`);
+      slowNotesSave.fail(`Notes failed to save.\n\n${code ? `${code}: ${message}` : message}`);
     } finally {
-      window.clearTimeout(slowSave);
+      slowNotesSave.finish();
       setNotesSaving(false);
     }
   };
@@ -840,6 +841,9 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
               className="w-full px-4 py-3 border border-[#E2E8F0] rounded-lg text-sm focus:outline-none focus:border-[#FF5F5A] focus:ring-2 focus:ring-[#FF5F5A]/10"
               rows={3}
             />
+            {slowNotesSave.notice && (
+              <p role="alert" className="mt-2 text-sm text-[#C53030]">{slowNotesSave.notice}</p>
+            )}
             <button
               onClick={handleSaveNotes}
               disabled={notesSaving}

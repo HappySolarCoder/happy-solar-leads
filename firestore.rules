@@ -141,42 +141,26 @@ service cloud.firestore {
     // is checked. Overwrite stays denied. A removed phone, email, or estimatedBill
     // is judged from the post-write doc, so clearing one field does not fail the
     // missing-beforehand check for a different key in the same save.
-    // Bounds: name <= 200, address <= 300, city <= 100, state <= 32, zip <= 16,
-    // phone <= 40, email <= 254, estimatedBill number 0 through 100000.
-    function contactFillsValid() {
-      let k = request.resource.data.diff(resource.data).affectedKeys();
-      let d = request.resource.data;
-      return addedContactString(k, d, 'name', 200)
-        && addedContactString(k, d, 'address', 300)
-        && addedContactString(k, d, 'city', 100)
-        && addedContactString(k, d, 'state', 32)
-        && addedContactString(k, d, 'zip', 16)
-        && addedContactString(k, d, 'phone', 40)
-        && addedContactString(k, d, 'email', 254)
-        && addedContactBill(k, d);
-    }
-
-    function addedContactString(k, d, field, max) {
-      return !k.hasAny([field])
-        || (!(field in d) && field in ['phone', 'email'])
-        || (
-          !(field in resource.data)
-          && (field in d)
-          && d[field] is string
-          && d[field].size() <= max
-        );
-    }
-
-    function addedContactBill(k, d) {
-      return !k.hasAny(['estimatedBill'])
-        || !('estimatedBill' in d)
-        || (
-          !('estimatedBill' in resource.data)
-          && ('estimatedBill' in d)
-          && d.estimatedBill is number
-          && d.estimatedBill >= 0
-          && d.estimatedBill <= 100000
-        );
+    // The add-only branch is before the removal branch, and the checks are
+    // inlined: a call per field exhausts the shared 1000-expression budget when
+    // the editor resends every contact key. Bounds: name <= 200, address <= 300,
+    // city <= 100, state <= 32, zip <= 16, phone <= 40, email <= 254,
+    // estimatedBill a number 0 through 100000, or '' when the key was absent
+    // (the 14.17 editor sends '' for a missing bill).
+    function contactFillsValid(k, d) {
+      return (!k.hasAny(['name']) || (!('name' in resource.data) && d.name is string && d.name.size() <= 200))
+        && (!k.hasAny(['address']) || (!('address' in resource.data) && d.address is string && d.address.size() <= 300))
+        && (!k.hasAny(['city']) || (!('city' in resource.data) && d.city is string && d.city.size() <= 100))
+        && (!k.hasAny(['state']) || (!('state' in resource.data) && d.state is string && d.state.size() <= 32))
+        && (!k.hasAny(['zip']) || (!('zip' in resource.data) && d.zip is string && d.zip.size() <= 16))
+        && (!k.hasAny(['phone']) || (!('phone' in resource.data) && ('phone' in d) && d.phone is string && d.phone.size() <= 40) || !('phone' in d))
+        && (!k.hasAny(['email']) || (!('email' in resource.data) && ('email' in d) && d.email is string && d.email.size() <= 254) || !('email' in d))
+        && (!k.hasAny(['estimatedBill'])
+          || (!('estimatedBill' in resource.data) && ('estimatedBill' in d) && (
+            (d.estimatedBill is number && d.estimatedBill >= 0 && d.estimatedBill <= 100000)
+            || d.estimatedBill == ''
+          ))
+          || !('estimatedBill' in d));
     }
 
     // Photos from LeadDetail.handleAddPhoto / the 14.17 direct outbox.
@@ -508,27 +492,17 @@ service cloud.firestore {
     // on a pin in their territory, can deleteField phone, email, estimatedBill,
     // or notes on a lead they do not own. The same save may also fill other
     // contact keys. Those fills stay add-only. Removals of name or photos fail.
-    // Explicit null is not a removal. Pure clears are checked first so a
-    // delete-only write does not also run the fill checks.
-    function contactClearsValid(k, d) {
-      return k.hasAny(['phone', 'email', 'estimatedBill', 'notes'])
-        && k.hasOnly(['phone', 'email', 'estimatedBill', 'notes'])
-        && (!k.hasAny(['phone']) || !('phone' in d))
-        && (!k.hasAny(['email']) || !('email' in d))
-        && (!k.hasAny(['estimatedBill']) || !('estimatedBill' in d))
-        && (!k.hasAny(['notes']) || !('notes' in d));
-    }
-
+    // Explicit null is not a removal. Notes are checked here, with the same
+    // k and d, so this allow does not diff the document again.
     function contactFillUpdate() {
       let k = request.resource.data.diff(resource.data).affectedKeys();
       let d = request.resource.data;
       return (
-          contactClearsValid(k, d)
-          || (
+          (
             k.hasAny(['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill', 'notes'])
             && k.hasOnly(['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'estimatedBill', 'notes'])
-            && contactFillsValid()
-            && dispoNotesValid()
+            && contactFillsValid(k, d)
+            && (!k.hasAny(['notes']) || !('notes' in d) || (d.get('notes', null) is string && d.notes.size() <= 10000 && !('notes' in resource.data)))
           )
         )
         && addsNoOwnership(['claimedBy', 'assignedTo', 'territoryId'])
