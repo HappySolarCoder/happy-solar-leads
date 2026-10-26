@@ -61,15 +61,16 @@ export type NotesDraftText = { notes: string; baseNotes: string };
 
 /**
  * A later notes edit absorbs one parked or waiting notes_too_long draft.
- * The new edit replaces it when it already contains the parked text.
- * A shorter revision of that same note replaces it too, so a shrink can send
- * and the parked row is not sent beside it. Anything else rebases onto the
- * parked text so that text is kept.
+ * The new edit replaces it when it already contains the parked text, when it
+ * is a shorter copy of that text, or when next.baseNotes is the parked text
+ * itself (the rep edited that note). The result is the edit plus the parked
+ * draft's server baseNotes, not parked + "\n" + edit. Anything else rebases
+ * onto the parked text so that text is kept.
  */
 export function absorbNotesText(parked: NotesDraftText, next: NotesDraftText): NotesDraftText {
   const parkedText = parked.notes || "";
   const nextText = next.notes || "";
-  if (parkedText && (nextText.includes(parkedText) || parkedText.includes(nextText))) {
+  if (parkedText && (next.baseNotes === parkedText || nextText.includes(parkedText) || parkedText.includes(nextText))) {
     return { notes: nextText, baseNotes: parked.baseNotes || "" };
   }
   return rebaseNotes(parked.baseNotes || "", nextText, parkedText);
@@ -121,13 +122,39 @@ export function notesQueuedBody(input: {
   return { notes, baseNotes, tooLong, bytes };
 }
 
+/** The limit applies only when the rep changed the notes. An unchanged oversize note does not block. */
+export function notesEditTooLong(input: {
+  currentNotes: string;
+  notes: string;
+  leadId: string;
+  baseNotes?: string | null;
+  parkedNotes?: NotesLengthDraft[];
+  draftId?: string;
+  actionAt?: string;
+}): boolean {
+  if ((input.notes || "") === (input.currentNotes || "")) return false;
+  return notesQueuedBody({
+    leadId: input.leadId,
+    notes: input.notes,
+    baseNotes: input.baseNotes ?? input.currentNotes ?? "",
+    parkedNotes: input.parkedNotes,
+    draftId: input.draftId,
+    actionAt: input.actionAt,
+  }).tooLong;
+}
+
 /** Editor validation. Over the limit, Save stays disabled and nothing is queued. */
 export async function saveNotesFromEditor(
   text: string,
   enqueue: (text: string) => Promise<void> | void,
-  route?: Omit<Parameters<typeof notesQueuedBody>[0], "notes">,
+  route?: Omit<Parameters<typeof notesQueuedBody>[0], "notes"> & { currentNotes?: string },
 ): Promise<void> {
-  if (route ? notesQueuedBody({ ...route, notes: text }).tooLong : notesTextTooLong(text))
+  if (route?.currentNotes !== undefined) {
+    if (notesEditTooLong({ ...route, currentNotes: route.currentNotes, notes: text }))
+      throw Error(NOTES_TOO_LONG_MESSAGE);
+    if (text === route.currentNotes && notesQueuedBody({ ...route, notes: text }).tooLong) return;
+  } else if (route ? notesQueuedBody({ ...route, notes: text }).tooLong : notesTextTooLong(text)) {
     throw Error(NOTES_TOO_LONG_MESSAGE);
+  }
   await enqueue(text);
 }

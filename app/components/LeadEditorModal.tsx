@@ -3,9 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Phone, Save, Send } from 'lucide-react';
 import { Lead, User } from '@/app/types';
-import { NOTES_TOO_LONG_MESSAGE, notesQueuedBody, type NotesLengthDraft } from '@/app/field/notesLimits';
+import { NOTES_TOO_LONG_MESSAGE, notesEditTooLong, type NotesLengthDraft } from '@/app/field/notesLimits';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
-import { changedContactPatch } from './contactPatch';
+import { changedContactPatch, contactSaveFields } from './contactPatch';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
 import { auth } from '@/app/utils/firebase';
@@ -98,12 +98,13 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
     return () => window.clearInterval(id);
   }, [cooldownUntil]);
 
-  const notesTooLong = notesQueuedBody({
-    leadId: lead.id,
+  const notesTooLong = notesEditTooLong({
+    currentNotes: lead.notes || '',
     notes: formData.notes,
+    leadId: lead.id,
     baseNotes: lead.notes || '',
     parkedNotes: pendingDrafts,
-  }).tooLong;
+  });
 
   const handleSave = async () => {
     if (notesTooLong) return;
@@ -129,12 +130,12 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
           const patch = changedContactPatch(lead, formData);
           if (patch) await saveLeadPatch(patch);
         } else {
-          await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+          await saveLeadPatch(contactSaveFields(lead, formData));
         }
       } else if (mobileMode) {
         const { updateLeadAsync } = await import('@/app/utils/storage');
-        await updateLeadAsync(lead.id, { name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
-      } else await saveLeadAsync(updatedLead);
+        await updateLeadAsync(lead.id, contactSaveFields(lead, formData));
+      } else await saveLeadAsync({ ...updatedLead, ...contactSaveFields(lead, formData) });
       invalidateLeadsCache(); // Ensure fresh data after update
       onSave();
     } catch (error) {
@@ -175,10 +176,16 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
         return;
       }
 
-      if (notesTooLong) return;
+      if (notesTooLong) {
+        setSendNotice(NOTES_TOO_LONG_MESSAGE);
+        return;
+      }
       // Persist the lead before the notification so the request has a real visit.
       try {
-        if (saveLeadPatch) await saveLeadPatch({ name: formData.name, address: formData.address, city: formData.city, state: formData.state, zip: formData.zip, phone: formData.phone || '', email: formData.email || '', notes: formData.notes || '', ...(formData.estimatedBill ? { estimatedBill: Number(formData.estimatedBill) } : {}) });
+        if (saveLeadPatch) {
+          const patch = DIRECT_MOBILE_WRITES ? changedContactPatch(lead, formData) : contactSaveFields(lead, formData);
+          if (patch) await saveLeadPatch(patch);
+        }
         await beforeSend?.();
       } catch (error) {
         if ((error as Error).message !== NOTES_TOO_LONG_MESSAGE)

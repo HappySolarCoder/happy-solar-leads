@@ -8,7 +8,7 @@ import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap, knownPolygonsSync } from '
 import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
 import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
-import { NOTES_TOO_LONG_MESSAGE, notesQueuedBody, saveNotesFromEditor } from '@/app/field/notesLimits';
+import { NOTES_TOO_LONG_MESSAGE, notesEditTooLong, notesQueuedBody, saveNotesFromEditor } from '@/app/field/notesLimits';
 import { recordSyncEvent } from '@/app/field/syncDiagnostics';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
 import { beginWarmGps, bestFixInWindow } from '@/app/field/warmGps';
@@ -449,12 +449,19 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     baseNotes: lead.notes || '',
     parkedNotes: field?.drafts,
   });
-  const notesTooLong = notesRoute.tooLong;
+  const notesTooLong = notesEditTooLong({
+    currentNotes: lead.notes || '',
+    notes,
+    leadId: lead.id,
+    baseNotes: lead.notes || '',
+    parkedNotes: field?.drafts,
+  });
 
   const handleSaveNotes = async () => {
     if (summaryOnly) return;
     if (!currentUser) return;
     if (notesTooLong) return;
+    if (notes === (lead.notes || '') && notesRoute.tooLong) return;
     if (pausedWithDrafts) { setFieldMessage('Review pending drafts in Field tools before changing these notes.'); return; }
     
     setNotesSaving(true);
@@ -477,6 +484,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
       }, {
         leadId: lead.id,
         baseNotes: lead.notes || '',
+        currentNotes: lead.notes || '',
         parkedNotes: field?.drafts,
       });
     } catch (error) {

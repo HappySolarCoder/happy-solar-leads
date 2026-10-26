@@ -151,6 +151,11 @@ export async function commitDirectMutation(m: PendingMutation, user: User, io?: 
       if (m.direct?.legacy && patch.knockGpsLat != null && patch.knockGpsLng != null && current.lat != null && current.lng != null)
         patch.knockDistanceFromAddress = distanceBetween([patch.knockGpsLat, patch.knockGpsLng], [current.lat, current.lng]) * 1000;
       if (current.historicalTerritoryPin) throw Object.assign(Error('Historical pins cannot be dispositioned.'), { status: 403 });
+      if (m.kind === 'notes' && typeof patch.notes !== 'string') {
+        const merged = mergeReportingPatch(current, patch);
+        if (!merged.replayed) tx.update(ref, firestoreValue(merged.patch) as Record<string, unknown>);
+        return { replayed: merged.replayed, lead: mapLeadDoc({ id: m.leadId, data: () => ({ ...current, ...merged.patch }) }) };
+      }
       if (m.kind === 'notes') {
         const edited = typeof patch.notes === 'string' ? patch.notes : (m.notes || '');
         const applied = notesTransactionPatch(current.notes, m.baseNotes, edited);

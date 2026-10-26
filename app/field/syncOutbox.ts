@@ -122,6 +122,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       if (deferred.has(m.leadId)) continue;
       progressed = true;
       let current = m;
+      let absorbedPriors: PendingMutation[] = [];
       if (m.kind === "notes") {
         const priors = all.filter((row) =>
           notesTooLongRow(row)
@@ -132,10 +133,8 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
         if (priors.length) {
           current = absorbNotesTooLong(m, priors);
           if (write) await write(current);
-          for (const prior of priors) {
-            seen.add(prior.id);
-            await deps.remove(prior.id);
-          }
+          // The parked row stays until this replacement is saved.
+          absorbedPriors = priors;
         }
       }
       const split = splitCombinedDraft(m, new Set(all.map((row) => row.id)));
@@ -195,9 +194,16 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           try { await (deps.report ?? reportParked)(current.userId); } catch { /* sync-report never stops a dispo */ }
         }
       };
+      const dropAbsorbed = async () => {
+        for (const prior of absorbedPriors) {
+          seen.add(prior.id);
+          await deps.remove(prior.id);
+        }
+      };
       try {
         await deps.send(current);
         await deps.remove(current.id);
+        await dropAbsorbed();
         accepted += 1;
         await recordSyncEvent(eventFor(current, "accepted"));
       } catch (caught) {
@@ -228,6 +234,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           try {
             await deps.send(current);
             await deps.remove(current.id);
+            await dropAbsorbed();
             accepted += 1;
             await recordSyncEvent(eventFor(current, "accepted"));
           } catch (again) {

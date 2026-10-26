@@ -86,15 +86,18 @@ test("client gpsRule matches the #170 vectors, including the proximity warning c
   assert.ok(seen.has("admin|android|true|fresh|100000|none"));
 });
 
-test("gpsRule.ts is byte-identical to #170 at 2063c6c", () => {
+test("gpsRule.ts matches main at 49f4762 and the code is unchanged", () => {
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const bytes = readFileSync(path.join(root, "app/utils/gpsRule.ts"));
   const hash = createHash("sha256").update(bytes).digest("hex");
+  const code = createHash("sha256").update(bytes.toString("utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")).digest("hex");
   const provenance = readFileSync(path.join(root, "app/utils/gpsRule.PROVENANCE.md"), "utf8");
-  assert.equal(hash, "d4b876ed5977358486a29a4eb64bcf4a20d7e86ad56d0816d83c3708dea6d77c");
+  assert.equal(hash, "6afd8e20a7ffddefd7a43e31a0a9a90374bb9f3ba1a1afdef58aaa7a0002b655");
+  assert.equal(code, "7c279563d3deb0ceeda064929e0b37f083cae1a0a7458c9cfb96fcf0a1309185");
+  assert.match(provenance, /49f4762d1c88edd7663bce2e625e108d964d3d6d/);
   assert.match(provenance, /468c5d7d4d07358b4e34eb9d9e48f3ca028382d1/);
-  assert.match(provenance, /2063c6c8e46cb13721dd4aa7f0dfe65f456d8afb/);
   assert.match(provenance, /2026-10-26/);
   assert.match(provenance, new RegExp(hash));
+  assert.match(provenance, new RegExp(code));
   assert.equal(bytes.includes(Buffer.from("Ported 1:1")), false);
 });

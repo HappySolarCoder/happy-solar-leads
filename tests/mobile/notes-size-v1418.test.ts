@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { changedContactPatch, contactSaveFields } from "../../app/components/contactPatch";
 import { overlayDrafts } from "../../app/field/deviceStore";
 import { commitDirectMutation, type DirectCommitIo } from "../../app/field/directWrites";
 import {
@@ -10,6 +11,8 @@ import {
   NOTES_MAX_CHARS,
   NOTES_ROUTE_BODY_MAX_BYTES,
   NOTES_TOO_LONG_MESSAGE,
+  absorbNotesText,
+  notesEditTooLong,
   notesQueuedBody,
   notesRouteBodyBytes,
   saveNotesFromEditor,
@@ -216,7 +219,7 @@ test("notes over the char cap or the full route body are blocked at input and no
   assert.match(editor, /notesQueuedBody/);
   assert.match(editor, /notesTooLong/);
   assert.match(modal, /NOTES_TOO_LONG_MESSAGE/);
-  assert.match(modal, /notesQueuedBody/);
+  assert.match(modal, /notesEditTooLong/);
   assert.match(modal, /if \(notesTooLong\) return/);
   assert.match(modal, /disabled=\{isSaving \|\| notesTooLong\}/);
 });
@@ -421,6 +424,177 @@ test("a later unrelated note rebases onto the parked text and only one note is s
   assert.equal(bodies[0].includes("Keep this sentence."), true);
   assert.equal(bodies[0].includes("A different sentence."), true);
   assert.equal(rows.length, 0);
+});
+
+test("cutting the middle out of a parked note replaces it and syncs one note", async () => {
+  const now = Date.parse("2026-10-26T12:05:00.000Z");
+  const x = "中".repeat(40_000);
+  const y = "中".repeat(10_000);
+  const z = "中".repeat(40_000);
+  const parkedText = `${x}MID${y}${z}`;
+  const edit = `${x}${z}`;
+  const absorbed = absorbNotesText({ notes: parkedText, baseNotes: "" }, { notes: edit, baseNotes: parkedText });
+  assert.equal(absorbed.notes, edit);
+  assert.equal(absorbed.baseNotes, "");
+  assert.equal(absorbed.notes.includes("MID"), false);
+  const bytes = notesRouteBodyBytes({
+    leadId: "lead-1",
+    draftId: "note-edit",
+    actionAt: "2026-10-26T12:02:00.000Z",
+    notes: edit,
+    baseNotes: "",
+  });
+  assert.ok(bytes >= 240_000 && bytes < NOTES_ROUTE_BODY_MAX_BYTES);
+  const parked: PendingMutation = {
+    ...notesDraft(otherRep, parkedText, true),
+    id: "note-parked",
+    syncState: "parked",
+    parkedReason: "notes_too_long",
+    baseNotes: "",
+    createdAt: "2026-10-26T12:00:00.000Z",
+  };
+  const replacement: PendingMutation = {
+    ...notesDraft(otherRep, edit, true),
+    id: "note-edit",
+    baseNotes: parkedText,
+    createdAt: "2026-10-26T12:02:00.000Z",
+    syncState: "queued",
+  };
+  let rows = [parked, replacement];
+  const order: string[] = [];
+  let parkedPresentAtSend = false;
+  await syncOutbox({
+    read: async () => rows,
+    send: async (row) => {
+      order.push(`send:${row.id}`);
+      parkedPresentAtSend = rows.some((item) => item.id === "note-parked");
+      return postFieldDispo(row, otherRep, {
+        getToken: async () => "token",
+        post: async (_path, init) => {
+          const body = JSON.parse(String(init?.body)) as { notes?: string; baseNotes?: string };
+          assert.equal(body.notes, edit);
+          assert.equal(body.baseNotes, "");
+          return json(200, { ok: true });
+        },
+      });
+    },
+    remove: async (id) => {
+      order.push(`remove:${id}`);
+      rows = rows.filter((row) => row.id !== id);
+    },
+    update: async (row) => {
+      rows = rows.map((item) => (item.id === row.id ? row : item));
+    },
+    report: async () => {},
+    active: () => true,
+    now: () => now,
+    random: () => 0,
+  });
+  assert.equal(parkedPresentAtSend, true);
+  assert.deepEqual(order, ["send:note-edit", "remove:note-edit", "remove:note-parked"]);
+  assert.equal(rows.length, 0);
+});
+
+test("notesTooLong is enforced only when the notes changed", async () => {
+  const overChars = "n".repeat(NOTES_MAX_CHARS + 1);
+  const overBytes = "中".repeat(90_000);
+  for (const notes of [overChars, overBytes]) {
+    assert.equal(notesEditTooLong({ currentNotes: notes, notes, leadId: "lead-1" }), false);
+    const lead = {
+      id: "lead-1",
+      name: "Ada",
+      address: "1 Main",
+      city: "Rochester",
+      state: "NY",
+      zip: "14601",
+      phone: "555",
+      email: "a@b.c",
+      notes,
+      estimatedBill: 120,
+      status: "claimed",
+      createdAt: new Date("2026-10-26T12:00:00.000Z"),
+    } as Lead;
+    const form = {
+      name: lead.name,
+      address: lead.address,
+      city: lead.city,
+      state: lead.state,
+      zip: lead.zip,
+      phone: "556",
+      email: "c@d.e",
+      notes,
+      estimatedBill: 120,
+    };
+    assert.deepEqual(changedContactPatch(lead, form), { phone: "556", email: "c@d.e" });
+    const saved = contactSaveFields(lead, form);
+    assert.equal(Object.prototype.hasOwnProperty.call(saved, "notes"), false);
+    assert.equal(saved.phone, "556");
+    assert.equal(saved.email, "c@d.e");
+    const updates: Record<string, unknown>[] = [];
+    let record: Record<string, unknown> = { notes, phone: "555", email: "a@b.c" };
+    await commitDirectMutation({
+      id: "contact-1",
+      userId: owner.id,
+      userName: owner.name,
+      leadId: "lead-1",
+      createdAt: "2026-10-26T12:00:00.000Z",
+      kind: "notes",
+      baseStatus: "claimed",
+      baseNotes: notes,
+      direct: { patch: { phone: "556", email: "c@d.e" } },
+    }, owner, {
+      db: {},
+      auth: { currentUser: { uid: owner.id } },
+      doc: () => ({ path: "leads/lead-1" }),
+      runTransaction: async (_database: unknown, fn: (tx: {
+        get: () => Promise<{ exists: () => boolean; data: () => Record<string, unknown> }>;
+        update: (_ref: unknown, data: Record<string, unknown>) => void;
+      }) => Promise<unknown>) => fn({
+        get: async () => ({ exists: () => true, data: () => ({ ...record }) }),
+        update: (_ref, data) => {
+          updates.push(data);
+          record = { ...record, ...data };
+        },
+      }),
+    } as unknown as DirectCommitIo);
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].phone, "556");
+    assert.equal(updates[0].email, "c@d.e");
+    assert.equal(Object.prototype.hasOwnProperty.call(updates[0], "notes"), false);
+    assert.equal(record.notes, notes);
+  }
+
+  const current = "n".repeat(NOTES_MAX_CHARS + 100);
+  const smaller = "n".repeat(NOTES_MAX_CHARS + 10);
+  assert.equal(smaller.length < current.length, true);
+  assert.equal(notesEditTooLong({ currentNotes: current, notes: smaller, leadId: "lead-1" }), true);
+  assert.equal(notesEditTooLong({
+    currentNotes: overBytes,
+    notes: "中".repeat(87_382),
+    leadId: "lead-1",
+  }), true);
+  const queued: string[] = [];
+  await saveNotesFromEditor(overChars, async (text) => {
+    queued.push(text);
+  }, { leadId: "lead-1", baseNotes: overChars, currentNotes: overChars });
+  assert.equal(queued.length, 0);
+  await assert.rejects(
+    () => saveNotesFromEditor(smaller, async (text) => {
+      queued.push(text);
+    }, { leadId: "lead-1", baseNotes: current, currentNotes: current }),
+    (error: Error) => error.message === NOTES_TOO_LONG_MESSAGE,
+  );
+  assert.equal(queued.length, 0);
+
+  const detail = readFileSync(path.join(root, "app/components/LeadDetail.tsx"), "utf8");
+  const modal = readFileSync(path.join(root, "app/components/LeadEditorModal.tsx"), "utf8");
+  const gates = [...detail.matchAll(/disabled=\{([^}]+)\}/g)].map((match) => match[1]);
+  assert.deepEqual(gates.filter((gate) => gate.includes("notesTooLong")), ["notesSaving || summaryOnly || notesTooLong"]);
+  assert.match(detail, /notesEditTooLong/);
+  assert.match(detail, /NOTES_TOO_LONG_MESSAGE/);
+  assert.match(modal, /notesEditTooLong/);
+  assert.match(modal, /setSendNotice\(NOTES_TOO_LONG_MESSAGE\)/);
+  assert.match(modal, /contactSaveFields/);
 });
 
 test("an owner direct write of a 20k note still saves", async () => {

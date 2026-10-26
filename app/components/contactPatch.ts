@@ -25,6 +25,23 @@ function bill(value: string | number | undefined): number | undefined {
   return Number.isFinite(number) ? number : undefined;
 }
 
+/** Contact fields for a full save. Notes are included only when the editor changed them. */
+export function contactSaveFields(lead: Lead, form: ContactForm): Partial<Lead> {
+  const patch: Partial<Lead> = {
+    name: form.name,
+    address: form.address,
+    city: form.city,
+    state: form.state,
+    zip: form.zip,
+    phone: form.phone || "",
+    email: form.email || "",
+  };
+  const nextBill = bill(form.estimatedBill);
+  if (nextBill != null) patch.estimatedBill = nextBill;
+  if ((form.notes || "") !== (lead.notes || "")) patch.notes = form.notes || "";
+  return patch;
+}
+
 /** Fields whose editor values differ from the lead. Null when the save would be a no-op. */
 export function changedContactPatch(lead: Lead, form: ContactForm): Partial<Lead> | null {
   const patch: Partial<Lead> = {};

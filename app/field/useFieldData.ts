@@ -18,7 +18,7 @@ import { acceptDisposition } from './draftQueue';
 import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
 import { deliverFieldDispo, leadOwnedBy, notesDraftUsesRoute, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
-import { NOTES_TOO_LONG_MESSAGE, notesQueuedBody } from './notesLimits';
+import { NOTES_TOO_LONG_MESSAGE, notesEditTooLong, notesQueuedBody } from './notesLimits';
 import { readSyncLog, recordSyncEvent, reportParked, type SyncEvent } from './syncDiagnostics';
 import { displayedKnockPoint, type KnockPoint } from './knockPoint';
 import { GPS_WINDOW_AFTER_MS } from './gpsPolicy';
@@ -340,26 +340,37 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     const recordedAt = new Date();
     rejectCombinedKnockAndNotes(patch);
     const clean = directPatch(patch), entry = clean.dispositionHistory?.[0];
-    let noteText = !entry && typeof clean.notes === "string" ? clean.notes : "";
+    let noteText = "";
     let baseNotes = lead.notes || "";
     const draftId = crypto.randomUUID();
     const tappedAt = entry?.timestamp ? new Date(entry.timestamp) : recordedAt;
-    if (!entry && typeof clean.notes === "string") {
+    if (!entry && typeof clean.notes === "string" && clean.notes === (lead.notes || "")) delete clean.notes;
+    const editingNotes = !entry && typeof clean.notes === "string";
+    if (editingNotes) {
       const priors = (await readDrafts(uid)).filter((row) =>
         row.leadId === lead.id && row.kind === "notes" && row.parkedReason === SYNC_REASON.notesTooLong);
+      if (notesEditTooLong({
+        currentNotes: lead.notes || "",
+        notes: clean.notes as string,
+        leadId: lead.id,
+        baseNotes,
+        draftId,
+        actionAt: tappedAt.toISOString(),
+        parkedNotes: priors,
+      })) throw Error(NOTES_TOO_LONG_MESSAGE);
       const queued = notesQueuedBody({
         leadId: lead.id,
-        notes: noteText,
+        notes: clean.notes as string,
         baseNotes,
         draftId,
         actionAt: tappedAt.toISOString(),
         parkedNotes: priors,
       });
-      if (queued.tooLong) throw Error(NOTES_TOO_LONG_MESSAGE);
       noteText = queued.notes;
       baseNotes = queued.baseNotes;
       clean.notes = noteText;
     }
+    if (!entry && !Object.keys(clean).length) return;
     if (entry) clean.dispositionHistory = [entry];
     if (entry && (entry.userId !== uid || entry.userName !== actor.name))
       throw Error('The knock identity does not match the signed-in rep.');
@@ -374,11 +385,11 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       id: draftId, userId: uid, userName: actor.name,
       leadId: lead.id, createdAt: tappedAt.toISOString(),
       kind: entry ? 'knock' : 'notes', baseStatus: lead.status, baseNotes,
-      ...(entry ? { status: clean.status, disposition: entry.disposition } : { notes: noteText }),
+      ...(entry ? { status: clean.status, disposition: entry.disposition } : editingNotes ? { notes: noteText } : {}),
       direct: {
         patch: clean,
         ...(create ? { create } : {}),
-        ...((entry ? prefersServerDispo(lead, uid, actor.role) : notesDraftUsesRoute(lead, uid, actor.role, noteText)) ? { serverDispo: true } : {}),
+        ...((entry ? prefersServerDispo(lead, uid, actor.role) : editingNotes && notesDraftUsesRoute(lead, uid, actor.role, noteText)) ? { serverDispo: true } : {}),
         ...(shown?.source === 'homeowner_corrected' && shown.homeownerId ? { homeownerId: shown.homeownerId } : {}),
         ...(shown ? { gpsPointSource: shown.source } : {}),
         ...(deferGps && entry ? { gps: {
