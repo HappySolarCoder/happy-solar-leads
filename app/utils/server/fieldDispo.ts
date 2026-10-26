@@ -72,6 +72,7 @@ const TOP_KEYS = new Set([
   'objection',
   'notes',
   'baseNotes',
+  'clearNotes',
 ]);
 const KNOCK_KEYS = new Set([
   'draftId',
@@ -89,7 +90,16 @@ const KNOCK_KEYS = new Set([
   'goBack',
   'objection',
 ]);
-const NOTES_KEYS = new Set(['draftId', 'leadId', 'kind', 'actionAt', 'notes', 'baseNotes']);
+const NOTES_KEYS = new Set(['draftId', 'leadId', 'kind', 'actionAt', 'notes', 'baseNotes', 'clearNotes']);
+/**
+ * notes_empty and notes_clear_mismatch are in FIELD_REASON_CODES so
+ * sync-report and Raydar Mobile share them. payload_too_large is a
+ * route-body code and stays off that list.
+ */
+export const NOTES_EMPTY_REASON = 'notes_empty' satisfies FieldReasonCode;
+export const NOTES_CLEAR_MISMATCH_REASON = 'notes_clear_mismatch' satisfies FieldReasonCode;
+export const PAYLOAD_TOO_LARGE_REASON = 'payload_too_large';
+type NotesRejectReason = typeof NOTES_EMPTY_REASON | typeof NOTES_CLEAR_MISMATCH_REASON;
 const GPS_KEYS = new Set(['lat', 'lng', 'accuracyM', 'capturedAt']);
 const GOBACK_KEYS = new Set(['scheduledDate', 'scheduledTime', 'notes']);
 const OBJECTION_KEYS = new Set(['type', 'notes']);
@@ -338,12 +348,18 @@ function invalid(field: string): FieldDispoResult {
   return finish(400, { ok: false, error: 'invalid_payload', reasonCode: 'invalid_payload', field });
 }
 
+/** Logs too_large as before. The body also carries reasonCode payload_too_large. */
 function tooLarge(): FieldDispoResult {
-  return finish(413, { ok: false, error: 'too_large' });
+  logLine(413, 'too_large');
+  return { status: 413, body: { ok: false, error: 'too_large', reasonCode: PAYLOAD_TOO_LARGE_REASON } };
 }
 
 function payloadTooLarge(): FieldDispoResult {
-  return finish(413, { ok: false, error: 'payload_too_large' });
+  return finish(413, { ok: false, error: 'payload_too_large', reasonCode: PAYLOAD_TOO_LARGE_REASON });
+}
+
+function rejectNotes(reasonCode: NotesRejectReason): FieldDispoResult {
+  return finish(400, { ok: false, error: 'invalid_payload', reasonCode, field: 'notes' });
 }
 
 /** True when the unread or oversized body is a notes draft. */
@@ -439,7 +455,10 @@ function parseObjection(value: unknown): { ok: true; objection: ObjectionInput }
   return { ok: true, objection: { type: value.type, notes } };
 }
 
-function parseDraft(body: unknown, now: number): { ok: true; draft: ParsedDraft } | { ok: false; field: string } {
+function parseDraft(
+  body: unknown,
+  now: number,
+): { ok: true; draft: ParsedDraft } | { ok: false; field: string; reasonCode?: NotesRejectReason } {
   if (!isPlainObject(body)) return { ok: false, field: 'body' };
   const unknown = firstUnknown(body, TOP_KEYS);
   if (unknown) return { ok: false, field: unknown };
@@ -463,6 +482,16 @@ function parseDraft(body: unknown, now: number): { ok: true; draft: ParsedDraft 
       if (parsedBase == null) return { ok: false, field: 'baseNotes' };
       baseNotes = parsedBase;
     }
+    let clearNotes = false;
+    if (Object.prototype.hasOwnProperty.call(body, 'clearNotes') && body.clearNotes != null) {
+      if (typeof body.clearNotes !== 'boolean') return { ok: false, field: 'clearNotes' };
+      clearNotes = body.clearNotes;
+    }
+    // A blank or whitespace-only note replaces the lead's notes with nothing.
+    // Accept it only as a deliberate clear: clearNotes:true with notes ''.
+    // applyNotes then still requires baseNotes to match the server copy.
+    if (clearNotes && notes !== '') return { ok: false, field: 'notes', reasonCode: NOTES_CLEAR_MISMATCH_REASON };
+    if (!clearNotes && notes.trim() === '') return { ok: false, field: 'notes', reasonCode: NOTES_EMPTY_REASON };
     return { ok: true, draft: { kind: 'notes', draftId: body.draftId, leadId: body.leadId, actionAtMs, notes, baseNotes } };
   }
 
@@ -784,7 +813,7 @@ export async function handleFieldDispo(input: {
     return tooLarge();
   }
   const parsed = parseDraft(payload, now);
-  if (!parsed.ok) return invalid(parsed.field);
+  if (!parsed.ok) return parsed.reasonCode ? rejectNotes(parsed.reasonCode) : invalid(parsed.field);
 
   const draft = parsed.draft;
   const outcome = await input.deps.db.runTransaction((tx) => applyDraft({

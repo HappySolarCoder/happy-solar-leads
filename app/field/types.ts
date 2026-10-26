@@ -145,6 +145,8 @@ export type FieldMutation = {
   /** Missing on older queued knocks. Those save; newest status wins. */
   baseStatus?: string;
   baseNotes?: string;
+  /** True only when the user deliberately cleared notes. Required to send notes "". */
+  clearNotes?: boolean;
   status?: string;
   disposition?: string;
   notes?: string;

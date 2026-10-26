@@ -151,6 +151,14 @@ export function createFieldHandlers(deps: {
         !["knock", "notes", "handoff"].includes(m.kind)
       )
         fieldFail("Invalid field update.");
+      // Same guard as /api/field/dispo: a blank note is a clear only when the
+      // client says so. The transaction below still requires baseNotes to match.
+      if (m.kind === "notes" && typeof m.notes === "string") {
+        if (m.clearNotes === true && m.notes !== "")
+          return fieldJson({ error: "Clearing notes must send empty notes.", reason: "notes_clear_mismatch" }, 400);
+        if (m.clearNotes !== true && m.notes.trim() === "")
+          return fieldJson({ error: "Notes are empty. Clear them on purpose to save.", reason: "notes_empty" }, 400);
+      }
       const db = deps.adminDb(),
         ref = db.collection("leads").doc(m.leadId),
         at = new Date(m.createdAt),
