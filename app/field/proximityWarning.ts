@@ -5,7 +5,7 @@ import type { PendingMutation } from "./types";
 
 /** Confirmed by Evan on Oct 25, 2026. The warning is on for every role that is not opted out. */
 export const PROXIMITY_WARNING_ENABLED = true;
-export const PROXIMITY_WARNING_MESSAGE = "You are not close to this home. You can still mark it, but leadership will be notified.";
+export const PROXIMITY_WARNING_MESSAGE = "You are not close to the home. You can mark this home, but leadership will be notified.";
 export const PROXIMITY_WARNING_CONFIRM = "Mark it anyway";
 export const PROXIMITY_WARNING_CANCEL = "Cancel";
 

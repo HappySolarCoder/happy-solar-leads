@@ -24,7 +24,7 @@ const lead = { id: "door", status: "claimed", dispositionHistory: [] } as unknow
 
 test("the warning is the exact sentence and only appears for an in-window too_far fix", () => {
   assert.equal(PROXIMITY_WARNING_ENABLED, true);
-  assert.equal(PROXIMITY_WARNING_MESSAGE, "You are not close to this home. You can still mark it, but leadership will be notified.");
+  assert.equal(PROXIMITY_WARNING_MESSAGE, "You are not close to the home. You can mark this home, but leadership will be notified.");
   assert.equal(PROXIMITY_WARNING_CONFIRM, "Mark it anyway");
   assert.equal(PROXIMITY_WARNING_CANCEL, "Cancel");
   const reasons = ["no_fix", "stale", "low_accuracy", "reduced_accuracy", "out_of_area", "other", "too_far"];
