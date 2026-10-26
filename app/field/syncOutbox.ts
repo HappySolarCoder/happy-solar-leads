@@ -124,7 +124,8 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           };
           delete next.blocked;
           delete next.error;
-          delete next.parkedReason;
+          if (outcome.parkedReason) next.parkedReason = outcome.parkedReason;
+          else delete next.parkedReason;
           if (write) await write(next);
           retried += 1;
           deferred.add(m.leadId);

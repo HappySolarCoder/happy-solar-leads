@@ -13,7 +13,7 @@ import {
 } from "./types";
 import { cleanConfig } from "./config";
 import { pilotFlags } from "./analysis";
-import { DIRECT_MOBILE_WRITES, directPatch } from './directWrites';
+import { DIRECT_MOBILE_WRITES, directPatch, rejectCombinedKnockAndNotes } from './directWrites';
 import { acceptDisposition } from './draftQueue';
 import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
@@ -336,6 +336,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     if (!DIRECT_MOBILE_WRITES || !actor || actor.id !== uid || auth?.currentUser?.uid !== uid)
       throw Error('Sign in with the rep who is recording this action.');
     const recordedAt = new Date();
+    rejectCombinedKnockAndNotes(patch);
     const clean = directPatch(patch), entry = clean.dispositionHistory?.[0];
     if (entry) clean.dispositionHistory = [entry];
     if (entry && (entry.userId !== uid || entry.userName !== actor.name))

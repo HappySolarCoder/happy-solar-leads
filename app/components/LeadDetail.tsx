@@ -4,11 +4,13 @@ import HouseHistory from '@/app/homeowners/HouseHistory';
 import { HomeownerSection } from '@/app/homeowners/Details';
 import type { Homeowner } from '@/app/homeowners/model';
 import { homeownerKnockGps } from '@/app/homeowners/knockGps';
-import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap } from '@/app/field/areaGate';
+import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap, knownPolygonsSync } from '@/app/field/areaGate';
+import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
+import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
 import { recordSyncEvent } from '@/app/field/syncDiagnostics';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
-import { beginWarmGps } from '@/app/field/warmGps';
+import { beginWarmGps, bestFixInWindow } from '@/app/field/warmGps';
 import { knockPatch } from '@/app/field/knockPatch';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import AppointmentOutcomeCard from './AppointmentOutcomeBadge';
@@ -143,27 +145,46 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const pausedWithDrafts = !DIRECT_MOBILE_WRITES && hasPendingFieldWork && !field?.flags.capture;
   const capture = !DIRECT_MOBILE_WRITES && !!field?.flags.capture;
   async function saveReportingPatch(patch: Partial<Lead>, deferGps = false) {
+    const point = displayedKnockPoint(lead, homeowner || lead.homeowner);
+    const write = async () => {
+      if (saveLeadPatch) await saveLeadPatch(patch, deferGps);
+      else if (DIRECT_MOBILE_WRITES) {
+        if (!field) throw Error('Open the mobile Knock screen to save this action safely.');
+        await field.enqueueDirect(lead, patch, undefined, deferGps, point);
+      }
+      else { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, patch); }
+      if (DIRECT_MOBILE_WRITES) setFieldMessage('');
+    };
     if (deferGps && currentUser) {
       const tappedAt = patch.dispositionedAt instanceof Date ? patch.dispositionedAt.getTime() : Date.now();
-      await assertAssignedAreaAtTap({
-        user: currentUser,
-        lead,
-        tappedAt,
-        status: typeof patch.status === 'string' ? patch.status : undefined,
-        disposition: patch.dispositionHistory?.[0]?.disposition,
+      const actorId = currentUser.id;
+      await saveWithProximityWarning({
+        guardId: `${lead.id}:${actorId}`,
+        checkArea: () => assertAssignedAreaAtTap({
+          user: currentUser,
+          lead,
+          tappedAt,
+          status: typeof patch.status === 'string' ? patch.status : undefined,
+          disposition: patch.dispositionHistory?.[0]?.disposition,
+        }),
+        verdict: proximityVerdictAtTap({
+          fix: bestFixInWindow(tappedAt, tappedAt),
+          tappedAt,
+          pin: point,
+          role: currentUser.role,
+          optOut: currentUser.features?.proximityEnforcement === false,
+          polygons: knownPolygonsSync(currentUser.id)?.polygons,
+        }),
+        ask: proximity.ask,
+        save: write,
       });
+      return;
     }
-    const point = displayedKnockPoint(lead, homeowner || lead.homeowner);
-    if (saveLeadPatch) await saveLeadPatch(patch, deferGps);
-    else if (DIRECT_MOBILE_WRITES) {
-      if (!field) throw Error('Open the mobile Knock screen to save this action safely.');
-      await field.enqueueDirect(lead, patch, undefined, deferGps, point);
-    }
-    else { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, patch); }
-    if (DIRECT_MOBILE_WRITES) setFieldMessage('');
+    await write();
   }
   const [visit, setVisit] = useState<VisitDraft>({});
   const [fieldMessage, setFieldMessage] = useState('');
+  const proximity = useProximityPrompt();
   function reportSilent(error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn('[raydar-sync]', message);
@@ -412,6 +433,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
 
       onUpdate();
     } catch (error: unknown) {
+      if (isProximityWarningCancelled(error)) return;
       if (DIRECT_MOBILE_WRITES && !isFieldValidation(error)) reportSilent(error);
       else setFieldMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -492,6 +514,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
       }), disposition.countsAsDoorKnock);
       setShowObjectionTracker(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
     } catch (e) {
+      if (isProximityWarningCancelled(e)) return;
       if (DIRECT_MOBILE_WRITES && !isFieldValidation(e)) { reportSilent(e); return; }
       setFieldMessage((e as Error).message); throw e;
     }
@@ -514,6 +537,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
       }), disposition.countsAsDoorKnock);
       setShowGoBackSchedule(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
     } catch (e) {
+      if (isProximityWarningCancelled(e)) return;
       if (DIRECT_MOBILE_WRITES && !isFieldValidation(e)) { reportSilent(e); return; }
       setFieldMessage((e as Error).message); throw e;
     }
@@ -625,6 +649,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
 
   return (
     <>
+      {proximity.dialog}
       <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto w-full md:max-w-sm bg-white shadow-2xl z-[80] overflow-hidden flex flex-col md:border-l border-[#E2E8F0]">
         {/* Header */}
         <div className="sticky top-0 z-10 p-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F7FAFC]">

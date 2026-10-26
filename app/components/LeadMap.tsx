@@ -17,8 +17,10 @@ import { buildLeadViewportIndex, queryLeadViewport } from '@/app/utils/mapViewpo
 import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { getLocation } from '@/app/utils/geolocation';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
-import { AREA_BLOCK_MESSAGE, assertDropPinArea } from '@/app/field/areaGate';
+import { AREA_BLOCK_MESSAGE, assertDropPinArea, knownPolygonsSync } from '@/app/field/areaGate';
 import { droppedPinGps } from '@/app/field/pendingGps';
+import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
+import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { bestFixInWindow, noteWarmFix } from '@/app/field/warmGps';
 
 import { apiFetch } from '@/app/utils/apiFetch';
@@ -224,6 +226,7 @@ export default function LeadMap({
   const hasFitRouteBoundsRef = useRef<boolean>(false); // Track if we've already fit bounds for single route mode
   const userInteractedRef = useRef<boolean>(false); // After user pans/zooms, never auto-fit/auto-pan
   const [isClient, setIsClient] = useState(false);
+  const proximity = useProximityPrompt();
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [loadedDispositions, setDispositions] = useState<Disposition[]>([]);
   const dispositions = dispositionOptions ?? loadedDispositions;
@@ -1464,11 +1467,29 @@ export default function LeadMap({
         const warm = bestFixInWindow(tappedAt, tappedAt);
         const position = warm ?? await getLocation({ enableHighAccuracy: true, timeout: 10000 });
         if (!warm) noteWarmFix(position);
-        if (currentUser) await assertDropPinArea({ user: currentUser, fix: position, leadId: id, tappedAt });
-        if (typeof pinLat === 'number' && typeof pinLng === 'number') {
-          gpsFields = droppedPinGps(position, pinLat, pinLng);
+        const pin = typeof pinLat === 'number' && typeof pinLng === 'number' ? { lat: pinLat, lng: pinLng } : null;
+        if (currentUser) {
+          await saveWithProximityWarning({
+            guardId: `drop:${id}:${currentUser.id}`,
+            checkArea: () => assertDropPinArea({ user: currentUser, fix: position, leadId: id, tappedAt }),
+            verdict: proximityVerdictAtTap({
+              fix: warm,
+              tappedAt,
+              pin,
+              role: currentUser.role,
+              optOut: currentUser.features?.proximityEnforcement === false,
+              polygons: knownPolygonsSync(currentUser.id)?.polygons,
+            }),
+            ask: proximity.ask,
+            save: async () => {
+              if (pin) gpsFields = droppedPinGps(position, pin.lat, pin.lng);
+            },
+          });
+        } else if (pin) {
+          gpsFields = droppedPinGps(position, pin.lat, pin.lng);
         }
       } catch (err) {
+        if (isProximityWarningCancelled(err)) throw err;
         if (err instanceof Error && err.message === AREA_BLOCK_MESSAGE) throw err;
         console.warn('[LeadMap] Manual pin GPS capture failed:', err);
         gpsFields = { gpsVerified: false, gpsUnverifiedReason: 'no_fix' };
@@ -1582,6 +1603,7 @@ export default function LeadMap({
         onLeadAdded(newLead);
       }
     } catch (error: any) {
+      if (isProximityWarningCancelled(error)) throw error;
       if (error?.message === AREA_BLOCK_MESSAGE) throw error;
       console.error('Error saving dropped lead:', error);
       // Surface the real reason up to UI (permission-denied vs auth-not-ready)
@@ -1611,6 +1633,7 @@ export default function LeadMap({
 
   return (
     <div className="relative w-full h-full">
+      {proximity.dialog}
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       
       {showHomeowners && <HomeownerStatus state={homeState} onSelect={selectListedHome} />}

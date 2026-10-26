@@ -28,7 +28,7 @@ import {
 import { leadOwnedBy, prefersServerDispo } from "../../app/field/serverDispo";
 import { directPatch } from "../../app/field/directWrites";
 import { classifyKnock } from "../../app/field/gpsPolicy";
-import { resolveDraftGps } from "../../app/field/pendingGps";
+import { evaluateKnockFix, resolveDraftGps } from "../../app/field/pendingGps";
 import { readSyncLog, reportParked, resetSyncLogForTests, syncReportItem } from "../../app/field/syncDiagnostics";
 import { noteWarmFix, resetWarmGpsForTests } from "../../app/field/warmGps";
 import type { PendingMutation } from "../../app/field/types";
@@ -75,7 +75,7 @@ test("proximity boundaries, malformed fixes, and reason order never throw", () =
     classifyKnock({ hasFix: false, inWindow: false, hadStaleFix: false, precision: "precise", outsideArea: true }),
     classifyKnock({ hasFix: true, inWindow: false, hadStaleFix: false, accuracyM: 5, distanceM: 1, precision: "precise", outsideArea: true }),
     classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 66, distanceM: 1, precision: "precise", outsideArea: true }),
-    classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 5, distanceM: 1, precision: "reduced", outsideArea: true }),
+    classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 1000, distanceM: 1, precision: "reduced", outsideArea: true }),
     classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 5, distanceM: 80, precision: "precise", outsideArea: true }),
     classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 5, distanceM: 80, precision: "precise" }),
   ];
@@ -136,39 +136,75 @@ test("the area gate blocks only a good fix outside every assigned polygon", () =
   assert.equal(directPatch({ gpsVerified: false, gpsUnverifiedReason: "out_of_area" }).gpsUnverifiedReason, "too_far");
 });
 
-test("setterId ownership is shared by the route and the area gate", async () => {
-  assert.equal(leadOwnedBy({ setterId: "rep" }, "rep"), true);
-  assert.equal(leadOwnedBy({ claimedBy: "other", assignedTo: "other", setterId: "rep" }, "rep"), true);
-  assert.equal(leadOwnedBy({ setterId: "other" }, "rep"), false);
-  assert.equal(leadOwnedBy({ setterId: "rep" }, ""), false);
+test("setterId counts only for a manually-added lead", async () => {
+  assert.equal(leadOwnedBy({ setterId: "rep" }, "rep"), false);
+  assert.equal(leadOwnedBy({ setterId: "rep", source: "manually-added" }, "rep"), true);
+  assert.equal(leadOwnedBy({ claimedBy: "other", assignedTo: "other", setterId: "rep", source: "manually-added" }, "rep"), true);
+  assert.equal(leadOwnedBy({ setterId: "other", source: "manually-added" }, "rep"), false);
+  assert.equal(leadOwnedBy({ setterId: "rep", source: "manually-added" }, ""), false);
   assert.equal(prefersServerDispo({ setterId: "rep", territoryId: "t" }, "rep"), false);
+  assert.equal(prefersServerDispo({ setterId: "rep" }, "rep"), true);
+  assert.equal(prefersServerDispo({ setterId: "rep", source: "manually-added" }, "rep"), false);
   const outside = northOf(home, 80);
-  const flagged = evaluateAreaGate({ ...setter, owned: leadOwnedBy({ setterId: "rep" }, "rep"), fix: outside });
+  const flagged = evaluateAreaGate({ ...setter, owned: leadOwnedBy({ setterId: "rep", source: "manually-added" }, "rep"), fix: outside });
   assert.equal(flagged.action, "flag");
   if (flagged.action === "flag") assert.equal(flagged.reason, "out_of_area");
+  const blocked = evaluateAreaGate({ ...setter, owned: leadOwnedBy({ setterId: "rep" }, "rep"), fix: outside });
+  assert.equal(blocked.action, "block");
 
   resetWarmGpsForTests();
   resetAreaCacheForTests();
   rememberOwnPolygons("rep", [home]);
   const tappedAt = Date.now();
   noteWarmFix({ timestamp: tappedAt, coords: { latitude: outside.lat, longitude: outside.lng, accuracy: 10 } });
-  await assertAssignedAreaAtTap({
-    user: { id: "rep", role: "setter" },
-    lead: { id: "owned-through-setter", setterId: "rep" },
-    tappedAt,
-    status: "not-home",
-    disposition: "Not Home",
-  });
   await assert.rejects(
     () => assertAssignedAreaAtTap({
       user: { id: "rep", role: "setter" },
-      lead: { id: "unowned", setterId: "someone-else" },
+      lead: { id: "setter-only", setterId: "rep" },
       tappedAt,
       status: "not-home",
       disposition: "Not Home",
     }),
     (error: Error) => error.message === AREA_BLOCK_MESSAGE,
   );
+  await assertAssignedAreaAtTap({
+    user: { id: "rep", role: "setter" },
+    lead: { id: "manual", setterId: "rep", source: "manually-added" },
+    tappedAt,
+    status: "not-home",
+    disposition: "Not Home",
+  });
+});
+
+test("a closer outside the area is not blocked and still stores out_of_area", () => {
+  const outside = northOf(home, 80);
+  assert.equal(evaluateAreaGate({ ...setter, role: "closer", fix: outside }).action, "allow");
+  assert.equal(evaluateAreaGate({ ...setter, proximityOptOut: true, fix: outside }).action, "allow");
+  const tappedAt = Date.now();
+  const draft = {
+    id: "closer",
+    userId: "rep",
+    leadId: "door",
+    createdAt: new Date(tappedAt).toISOString(),
+    kind: "knock" as const,
+    baseStatus: "claimed",
+    direct: { patch: {}, gps: { lat: outside.lat, lng: outside.lng, tappedAt, deadline: tappedAt, required: true } },
+  };
+  const closer = evaluateKnockFix(draft, {
+    timestamp: tappedAt,
+    coords: { latitude: outside.lat, longitude: outside.lng, accuracy: 10 },
+  }, { role: "closer", polygons: [home] });
+  assert.equal(closer.reason, "out_of_area");
+  const opted = evaluateKnockFix(draft, {
+    timestamp: tappedAt,
+    coords: { latitude: outside.lat, longitude: outside.lng, accuracy: 10 },
+  }, { role: "setter", polygons: [home] });
+  assert.equal(opted.reason, "out_of_area");
+  const manager = evaluateKnockFix(draft, {
+    timestamp: tappedAt,
+    coords: { latitude: outside.lat, longitude: outside.lng, accuracy: 10 },
+  }, { role: "manager", polygons: [home] });
+  assert.equal(manager.gpsVerified, true);
 });
 
 test("a truncated territory response is unknown and does not block", async () => {

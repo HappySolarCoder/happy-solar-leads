@@ -80,7 +80,7 @@ test("a dispo saves beside a parked draft and both stay", () => {
   assert.equal(parked.syncState, "parked");
 });
 
-test("a failed-precondition rebases once and then syncs", async () => {
+test("a failed-precondition stays queued instead of sending twice", async () => {
   let rows = [knock()];
   let sends = 0;
   await syncOutbox({
@@ -89,8 +89,8 @@ test("a failed-precondition rebases once and then syncs", async () => {
       sends += 1;
       if (sends === 1) throw Object.assign(Error("stale"), { code: "failed-precondition" });
     },
-    remove: async (id) => {
-      rows = rows.filter((row) => row.id !== id);
+    remove: async () => {
+      throw Error("must not remove");
     },
     update: async (row) => {
       rows = [row];
@@ -98,8 +98,10 @@ test("a failed-precondition rebases once and then syncs", async () => {
     report: async () => {},
     active: () => true,
   });
-  assert.equal(sends, 2);
-  assert.equal(rows.length, 0);
+  assert.equal(sends, 1);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].syncState, "retry");
+  assert.equal(rows[0].parkedReason, undefined);
 });
 
 test("newest action time wins and history keeps both entries", () => {
@@ -369,14 +371,14 @@ test("409 rebases notes onto currentNotes and retries instead of parking", async
   assert.equal(rows[0].blocked, undefined);
 });
 
-test("410, 400, and 413 park and a 403 without a known reason uses other", async () => {
-  const cases: Array<[number, string]> = [
-    [410, "not_found"],
-    [400, "invalid_payload"],
-    [413, "invalid_payload"],
-    [403, "other"],
+test("410 and 400 park, 413 stays queued as payload_too_large, and a 403 without a known reason uses other", async () => {
+  const cases: Array<[number, string, string]> = [
+    [410, "parked", "not_found"],
+    [400, "parked", "invalid_payload"],
+    [413, "queued", "payload_too_large"],
+    [403, "parked", "other"],
   ];
-  for (const [status, reason] of cases) {
+  for (const [status, state, reason] of cases) {
     let rows = [knock({ id: `draft-${status}` })];
     await syncOutbox({
       read: async () => rows,
@@ -393,8 +395,12 @@ test("410, 400, and 413 park and a 403 without a known reason uses other", async
       report: async () => {},
       active: () => true,
     });
-    assert.equal(rows[0].syncState, "parked");
+    assert.equal(rows[0].syncState, state);
     assert.equal(rows[0].parkedReason, reason);
+    if (status === 413) {
+      assert.equal(rows[0].routeHold, "field-dispo");
+      assert.ok((rows[0].nextAttemptAt || 0) > 0);
+    }
   }
 });
 
@@ -552,7 +558,7 @@ test("rep-facing sync copy and the Sync tab are gone", () => {
   for (const file of files) assert.doesNotMatch(readFileSync(file, "utf8"), banned, file);
   assert.equal(existsSync(path.join(root, "app/mobile/_components/UnsyncedNotice.tsx")), false);
   assert.doesNotMatch(readFileSync(path.join(root, "app/field/FieldWorkspace.tsx"), "utf8"), /Sync \(/);
-  assert.match(readFileSync(path.join(root, "app/field/directWrites.ts"), "utf8"), /Notes changed on another device\. Review this draft\./);
+  assert.match(readFileSync(path.join(root, "app/field/serverDispo.ts"), "utf8"), /Notes changed on another device\. Review this draft\./);
 });
 
 test("scheduling is posted once on an ambiguous timeout and is not an outbox route", async () => {
@@ -636,14 +642,14 @@ test("default GPS policy flags instead of holding, with the shared 35/15/65 rule
   const order = classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 10, distanceM: 80, precision: "precise", outsideArea: true });
   assert.equal(order.gpsVerified, false);
   if (!order.gpsVerified) assert.equal(order.reason, "out_of_area");
-  const accuracyFirst = classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 66, distanceM: 80, precision: "reduced", outsideArea: true });
+  const accuracyFirst = classifyKnock({ hasFix: true, inWindow: true, hadStaleFix: false, accuracyM: 1000, distanceM: 80, precision: "reduced", outsideArea: true });
   assert.equal(accuracyFirst.gpsVerified, false);
   if (!accuracyFirst.gpsVerified) assert.equal(accuracyFirst.reason, "reduced_accuracy");
   const draft = knock({
     createdAt: new Date().toISOString(),
     direct: { patch: { status: "not-home" }, gps: { lat: 43, lng: -77, required: true, deadline: Date.now() + 15_000, tappedAt: Date.now() } },
   });
-  const far = evaluateKnockFix(draft, { timestamp: Date.now(), coords: { latitude: 44, longitude: -77, accuracy: 5 } });
+  const far = evaluateKnockFix(draft, { timestamp: Date.now(), coords: { latitude: 43.01, longitude: -77, accuracy: 5 } });
   assert.equal(far.gpsVerified, false);
   assert.equal(far.reason, "too_far");
   assert.equal(typeof far.distanceM, "number");
@@ -684,6 +690,7 @@ test("reason codes are the shared dispo and sync-report list", async () => {
     "out_of_territory",
     "outside_50m",
     "owned_by_other",
+    "payload_too_large",
     "permission_denied",
     "stale_tap",
   ]);

@@ -21,7 +21,7 @@ test('GPS flags old fixes, expired capture, and far-away locations without throw
  const m=draft();
  const stale=evaluateKnockFix(m,{...location(),timestamp:Date.now()-60000},{stale:true});
  assert.equal(stale.gpsVerified,false);assert.equal(stale.reason,'stale');
- const far=evaluateKnockFix(m,{...location(),coords:{latitude:44,longitude:-77,accuracy:5}},{});
+ const far=evaluateKnockFix(m,{...location(),coords:{latitude:43.01,longitude:-77,accuracy:5}},{});
  assert.equal(far.gpsVerified,false);assert.equal(far.reason,'too_far');assert.equal(typeof far.distanceM,'number');
 });
 test('expired capture is flagged no_fix and still never requests late GPS',async()=>{

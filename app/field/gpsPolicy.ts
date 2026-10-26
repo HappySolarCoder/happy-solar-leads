@@ -29,6 +29,7 @@ export const GPS_UNVERIFIED_REASONS = [
   "reduced_accuracy",
   "out_of_area",
   "too_far",
+  "other",
 ] as const;
 
 export type GpsUnverifiedReason = (typeof GPS_UNVERIFIED_REASONS)[number];
@@ -78,20 +79,25 @@ export function classifyKnock(input: {
 }): { gpsVerified: true } | { gpsVerified: false; reason: GpsUnverifiedReason } {
   try {
     const accuracy = input.accuracyM;
-    const accuracyMalformed = typeof accuracy === "number" && (!Number.isFinite(accuracy) || accuracy < 0);
+    const accuracyMalformed = typeof accuracy === "number"
+      && (!Number.isFinite(accuracy) || accuracy < 0 || accuracy > GPS_DISTANCE_MAX_M);
     if (input.malformed || accuracyMalformed) return { gpsVerified: false, reason: "no_fix" };
     if (!input.hasFix) {
       return { gpsVerified: false, reason: input.hadStaleFix ? "stale" : "no_fix" };
     }
     if (!input.inWindow) return { gpsVerified: false, reason: "stale" };
-    if (input.precision === "reduced") return { gpsVerified: false, reason: "reduced_accuracy" };
+    // reduced_accuracy is accuracy >= 1000, before low_accuracy. Platform does not decide it.
+    if (typeof accuracy === "number" && accuracy >= REDUCED_ACCURACY_METERS) {
+      return { gpsVerified: false, reason: "reduced_accuracy" };
+    }
     if (typeof accuracy !== "number" || accuracy > ACCURACY_MAX_M) {
       return { gpsVerified: false, reason: "low_accuracy" };
     }
     if (input.outsideArea) return { gpsVerified: false, reason: "out_of_area" };
-    if (typeof input.distanceM !== "number" || !Number.isFinite(input.distanceM) || !knockVerified(input.distanceM, accuracy)) {
-      return { gpsVerified: false, reason: "too_far" };
+    if (typeof input.distanceM !== "number" || !Number.isFinite(input.distanceM)) {
+      return { gpsVerified: false, reason: "other" };
     }
+    if (!knockVerified(input.distanceM, accuracy)) return { gpsVerified: false, reason: "too_far" };
     return { gpsVerified: true };
   } catch {
     return { gpsVerified: false, reason: "no_fix" };

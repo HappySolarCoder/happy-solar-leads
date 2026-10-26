@@ -1,11 +1,9 @@
 import type { Lead } from "@/app/types";
 import type { LocationPosition } from "@/app/utils/geolocation";
-import { distanceBetween } from "geofire-common";
-import { areaDecisionForDraft, areaFixFromPosition, currentAreaActor, evaluateAreaGate, knownPolygonsSync } from "./areaGate";
+import { decideKnockGps, finitePoint, outsideBy, type AreaPolygons, type KnockFix } from "@/app/utils/gpsRule";
+import { currentAreaActor, knownPolygons, knownPolygonsSync } from "./areaGate";
 import {
   GPS_WINDOW_AFTER_MS,
-  GPS_WINDOW_BEFORE_MS,
-  classifyKnock,
   type GpsUnverifiedReason,
   type LocationPrecision,
 } from "./gpsPolicy";
@@ -27,6 +25,7 @@ export type KnockEvaluation = {
   areaDistanceM?: number;
   accuracyM?: number;
   source?: GpsPointSource;
+  keepFix: boolean;
 };
 
 function windowAnchor(m: PendingMutation): number {
@@ -41,82 +40,90 @@ function pinOf(m: PendingMutation): { lat?: number; lng?: number } {
   return { lat: gps?.lat, lng: gps?.lng };
 }
 
-function areaAtSave(
-  m: PendingMutation,
-  fix: LocationPosition | null,
-  precision: LocationPrecision,
-): { outsideArea: boolean; areaDistanceM?: number } {
-  const signedIn = currentAreaActor();
-  if (!signedIn || signedIn.id !== m.userId) return { outsideArea: false };
-  const cached = knownPolygonsSync(m.userId);
-  const decision = evaluateAreaGate({
-    role: signedIn.role,
-    proximityOptOut: signedIn.proximityOptOut,
-    owned: m.direct?.gps?.areaOwned === true,
-    fix: areaFixFromPosition(fix, precision),
-    polygons: cached?.polygons ?? null,
-    polygonsKnown: !!cached,
-  });
-  if (decision.action === "allow") return { outsideArea: false };
-  return { outsideArea: true, areaDistanceM: decision.distanceM };
+function clientFix(fix: LocationPosition | null): KnockFix | "absent" | "malformed" {
+  if (!fix) return "absent";
+  const lat = fix.coords?.latitude;
+  const lng = fix.coords?.longitude;
+  const accuracyM = fix.coords?.accuracy;
+  if (typeof lat !== "number" || typeof lng !== "number" || typeof accuracyM !== "number") return "malformed";
+  if (fix.timestamp != null && !Number.isFinite(fix.timestamp)) return "malformed";
+  const point: KnockFix = { lat, lng, accuracyM };
+  if (Number.isFinite(fix.timestamp)) point.capturedAtMs = fix.timestamp;
+  return point;
 }
 
 export function evaluateKnockFix(
   m: PendingMutation,
   fix: LocationPosition | null,
-  options: { now?: number; precision?: LocationPrecision; stale?: boolean; outsideArea?: boolean; areaDistanceM?: number } = {},
+  options: {
+    now?: number;
+    precision?: LocationPrecision;
+    stale?: boolean;
+    role?: string;
+    polygons?: AreaPolygons;
+  } = {},
 ): KnockEvaluation {
   const at = windowAnchor(m);
-  const now = options.now ?? Date.now();
   const precision = options.precision ?? currentLocationPrecision();
   const source = m.direct?.gps?.source;
-  const finitePoint = !!fix && Number.isFinite(fix.coords.latitude) && Number.isFinite(fix.coords.longitude);
-  const finiteAccuracy = !!fix && Number.isFinite(fix.coords.accuracy);
-  const malformed = !!fix && (!finitePoint || !finiteAccuracy || fix.coords.accuracy < 0);
-  const inWindow = !!fix
-    && finitePoint
-    && fix.timestamp >= at - GPS_WINDOW_BEFORE_MS
-    && fix.timestamp <= at + GPS_WINDOW_AFTER_MS
-    && fix.timestamp <= now;
-  const pin = pinOf(m);
-  const distanceM = finitePoint && Number.isFinite(pin.lat) && Number.isFinite(pin.lng)
-    ? distanceBetween([fix.coords.latitude, fix.coords.longitude], [pin.lat as number, pin.lng as number]) * 1000
-    : undefined;
-  const outcome = classifyKnock({
-    hasFix: finitePoint && finiteAccuracy && !malformed,
-    inWindow,
-    hadStaleFix: options.stale ?? false,
-    accuracyM: fix?.coords.accuracy,
-    distanceM,
-    precision: inWindow ? precision : "unknown",
-    malformed,
-    outsideArea: options.outsideArea,
-  });
-  const patch: Partial<Lead> = { gpsVerified: outcome.gpsVerified };
-  if (!outcome.gpsVerified) patch.gpsUnverifiedReason = outcome.reason;
-  if (fix && inWindow && [fix.coords.latitude, fix.coords.longitude, fix.coords.accuracy].every(Number.isFinite)) {
-    patch.knockGpsLat = fix.coords.latitude;
-    patch.knockGpsLng = fix.coords.longitude;
-    patch.knockGpsAccuracy = fix.coords.accuracy;
-    patch.knockGpsTimestamp = new Date(fix.timestamp);
-    if (distanceM !== undefined) {
-      patch.knockDistanceFromAddress = distanceM;
-      patch.gpsDistanceM = distanceM;
-    }
-  } else if (distanceM !== undefined) {
-    patch.gpsDistanceM = distanceM;
-    patch.knockDistanceFromAddress = distanceM;
-  }
-  return {
-    patch,
-    gpsVerified: outcome.gpsVerified,
-    ...(!outcome.gpsVerified ? { reason: outcome.reason } : {}),
+  const empty = (reason: GpsUnverifiedReason, keepFix = false): KnockEvaluation => ({
+    patch: { gpsVerified: false, gpsUnverifiedReason: reason },
+    gpsVerified: false,
+    reason,
     locationPrecision: precision,
-    distanceM,
-    ...(outcome.gpsVerified ? {} : outcome.reason === "out_of_area" ? { areaDistanceM: options.areaDistanceM } : {}),
     accuracyM: fix?.coords.accuracy,
     source,
-  };
+    keepFix,
+  });
+  try {
+    if (!fix && options.stale) return empty("stale");
+    const pin = pinOf(m);
+    const reference = finitePoint(pin.lat, pin.lng);
+    const decision = decideKnockGps({
+      fix: clientFix(fix),
+      actionAtMs: at,
+      reference,
+      role: options.role,
+      polygons: options.polygons,
+    });
+    const patch: Partial<Lead> = { gpsVerified: decision.gpsVerified };
+    if (!decision.gpsVerified && decision.gpsUnverifiedReason) patch.gpsUnverifiedReason = decision.gpsUnverifiedReason;
+    if (decision.keepFix && fix && Number.isFinite(fix.coords.latitude) && Number.isFinite(fix.coords.longitude)) {
+      patch.knockGpsLat = fix.coords.latitude;
+      patch.knockGpsLng = fix.coords.longitude;
+      patch.knockGpsAccuracy = fix.coords.accuracy;
+      if (Number.isFinite(fix.timestamp)) patch.knockGpsTimestamp = new Date(fix.timestamp);
+    }
+    if (decision.gpsDistanceM != null) {
+      patch.gpsDistanceM = decision.gpsDistanceM;
+      patch.knockDistanceFromAddress = decision.gpsDistanceM;
+    }
+    let areaDistanceM: number | undefined;
+    if (decision.gpsUnverifiedReason === "out_of_area" && Array.isArray(options.polygons) && fix) {
+      const point = finitePoint(fix.coords.latitude, fix.coords.longitude);
+      if (point) {
+        let nearest = Infinity;
+        for (const polygon of options.polygons) {
+          const distance = outsideBy(point, polygon);
+          if (distance < nearest) nearest = distance;
+        }
+        if (Number.isFinite(nearest)) areaDistanceM = nearest;
+      }
+    }
+    return {
+      patch,
+      gpsVerified: decision.gpsVerified,
+      ...(!decision.gpsVerified ? { reason: decision.gpsUnverifiedReason } : {}),
+      locationPrecision: precision,
+      distanceM: decision.gpsDistanceM,
+      ...(areaDistanceM == null ? {} : { areaDistanceM }),
+      accuracyM: fix?.coords.accuracy,
+      source,
+      keepFix: decision.keepFix,
+    };
+  } catch {
+    return empty("no_fix");
+  }
 }
 
 function applyResult(m: PendingMutation, evaluation: KnockEvaluation): PendingMutation {
@@ -166,7 +173,13 @@ export function stageKnockGps(m: PendingMutation, now = Date.now()): PendingMuta
   const at = windowAnchor(m);
   if (now < at + GPS_WINDOW_AFTER_MS && now <= gps.deadline) return { ...m, syncState: "gps" };
   const fix = bestFixInWindow(at, now);
-  const evaluation = evaluateKnockFix(m, fix, { now, stale: hadFixOutsideWindow(at, now), ...areaAtSave(m, fix, currentLocationPrecision()) });
+  const actor = currentAreaActor();
+  const evaluation = evaluateKnockFix(m, fix, {
+    now,
+    stale: hadFixOutsideWindow(at, now),
+    role: actor?.id === m.userId ? actor.role : undefined,
+    polygons: actor?.id === m.userId ? knownPolygonsSync(m.userId)?.polygons : undefined,
+  });
   const next = applyResult(m, evaluation);
   if (!evaluation.gpsVerified) void logUnverified(next, evaluation);
   return next;
@@ -213,22 +226,13 @@ export function resolveDraftGps(m: PendingMutation, deps: {
     const fix = interrupted() && !buffered ? null : buffered;
     const precision = deps.precision ?? currentLocationPrecision();
     const signedIn = currentAreaActor();
-    const area = fix && signedIn?.id === current.userId
-      ? await areaDecisionForDraft({
-          userId: current.userId,
-          role: signedIn.role,
-          proximityOptOut: signedIn.proximityOptOut,
-          owned: current.direct?.gps?.areaOwned === true,
-          fix: areaFixFromPosition(fix, precision),
-          now: clock,
-        })
-      : { action: "allow" as const };
+    const polygons = signedIn?.id === current.userId ? (await knownPolygons(current.userId, clock))?.polygons : undefined;
     const evaluation = evaluateKnockFix(current, fix, {
       now: clock,
       precision,
       stale: !fix && !interrupted() && hadFixOutsideWindow(anchor, clock),
-      outsideArea: area.action !== "allow",
-      areaDistanceM: area.action === "allow" ? undefined : area.distanceM,
+      role: signedIn?.id === current.userId ? signedIn.role : undefined,
+      polygons,
     });
     if (interrupted() && !fix) {
       evaluation.gpsVerified = false;

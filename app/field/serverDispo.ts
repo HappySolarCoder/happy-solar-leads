@@ -1,10 +1,15 @@
 import type { Lead, User } from "@/app/types";
 import { apiFetch } from "@/app/utils/apiFetch";
 import { auth } from "@/app/utils/firebase";
-import { commitDirectMutation, reportingPatch } from "./directWrites";
+import { isScheduledGoBackStatus } from "@/app/types/disposition";
+import { commitDirectMutation, historyGpsFlag, reportingPatch } from "./directWrites";
+import { decideKnockGps, gpsFlagOf, type GpsFlag } from "@/app/utils/gpsRule";
+import { rebaseNotes } from "./notesRebase";
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
 import { FIELD_DISPO_UNAVAILABLE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
+
+export { rebaseNotes } from "./notesRebase";
 
 export const DRAFT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -14,13 +19,20 @@ export const SERVER_DISPO_SLOW_RETRY_MS = 15 * 60 * 1000;
 
 const GPS_FLAG_FIELDS = ["gpsVerified", "gpsUnverifiedReason", "gpsDistanceM"] as const;
 
-type DispoLead = Pick<Lead, "historicalTerritoryPin" | "claimedBy" | "assignedTo" | "setterId"> & {
+type DispoLead = Pick<Lead, "historicalTerritoryPin" | "claimedBy" | "assignedTo" | "setterId" | "source"> & {
   territoryId?: string;
 };
 
-/** One ownership check for routing and the area gate. setterId counts. */
-export function leadOwnedBy(lead: Pick<DispoLead, "claimedBy" | "assignedTo" | "setterId">, uid: string): boolean {
-  return !!uid && (lead.claimedBy === uid || lead.assignedTo === uid || lead.setterId === uid);
+/** One ownership check for routing and the area gate. setterId counts only on a manual pin. */
+export function leadOwnedBy(
+  lead: Pick<DispoLead, "claimedBy" | "assignedTo" | "setterId" | "source">,
+  uid: string,
+): boolean {
+  return !!uid && (
+    lead.claimedBy === uid
+    || lead.assignedTo === uid
+    || (lead.setterId === uid && lead.source === "manually-added")
+  );
 }
 
 /**
@@ -34,24 +46,6 @@ export function prefersServerDispo(lead: DispoLead, uid: string, role?: string):
   if (role === "admin") return false;
   if (leadOwnedBy(lead, uid)) return false;
   return !lead.territoryId;
-}
-
-/**
- * A notes conflict never overwrites. An edit that extends its base contributes
- * only the added tail. An empty base, or an edit that cannot be lined up,
- * is appended on its own line when the server does not already contain it.
- */
-export function rebaseNotes(baseNotes: string, edited: string, currentNotes: string): { notes: string; baseNotes: string } {
-  const base = baseNotes || "";
-  const current = currentNotes || "";
-  const edit = edited || "";
-  if (edit.startsWith(base)) {
-    const addition = edit.slice(base.length);
-    if (!addition || current.endsWith(addition)) return { notes: current, baseNotes: current };
-    if (base) return { notes: current + addition, baseNotes: current };
-  }
-  if (!edit || current.includes(edit)) return { notes: current, baseNotes: current };
-  return { notes: current ? `${current}\n${edit}` : edit, baseNotes: current };
 }
 
 export function releaseFieldDispoHolds(drafts: PendingMutation[]): PendingMutation[] {
@@ -178,10 +172,15 @@ export function fieldDispoBody(
   };
   const gps = nestedGps(source);
   if (gps) body.gps = gps;
-  const goBack = nestedGoBack(source);
-  if (goBack) body.goBack = goBack;
-  const objection = nestedObjection(source);
-  if (objection) body.objection = objection;
+  const goBackChoice = isScheduledGoBackStatus(status)
+    || /^(go back|house for sale)$/i.test(disposition.trim());
+  if (goBackChoice) {
+    const goBack = nestedGoBack(source);
+    if (goBack) body.goBack = goBack;
+  } else {
+    const objection = nestedObjection(source);
+    if (objection) body.objection = objection;
+  }
   if (m.direct?.gpsPointSource === "homeowner_corrected" && m.direct.homeownerId && !m.direct.homeownerId.includes("/"))
     body.homeownerId = m.direct.homeownerId;
   return body;
@@ -197,6 +196,115 @@ export function withoutGpsFlagKeys(m: PendingMutation): PendingMutation {
   const patch = { ...m.direct.patch } as Record<string, unknown>;
   for (const key of GPS_FLAG_FIELDS) delete patch[key];
   return { ...m, direct: { ...m.direct, patch: patch as Partial<Lead> } };
+}
+
+/** Keys territoryDisposition allows at firestore.rules 79d1daa (PR #171). */
+export const DISPOSITION_RULES_KEYS = [
+  "status",
+  "disposition",
+  "dispositionedAt",
+  "dispositionHistory",
+  "knockGpsLat",
+  "knockGpsLng",
+  "knockGpsAccuracy",
+  "knockGpsTimestamp",
+  "knockDistanceFromAddress",
+  "gpsVerified",
+  "gpsUnverifiedReason",
+  "gpsDistanceM",
+  "objectionType",
+  "objectionNotes",
+  "objectionRecordedAt",
+  "objectionRecordedBy",
+  "goBackScheduledDate",
+  "goBackScheduledTime",
+  "goBackNotes",
+  "goBackScheduledBy",
+  "notes",
+] as const;
+
+/** Fields the 14.17 direct patch carried. Contact and photo keys stay even though #171 denies them. */
+export const LEGACY_14_17_PATCH_KEYS = [
+  "status",
+  "disposition",
+  "dispositionedAt",
+  "dispositionHistory",
+  "knockGpsLat",
+  "knockGpsLng",
+  "knockGpsAccuracy",
+  "knockGpsTimestamp",
+  "knockDistanceFromAddress",
+  "objectionType",
+  "objectionNotes",
+  "objectionRecordedAt",
+  "objectionRecordedBy",
+  "goBackScheduledDate",
+  "goBackScheduledTime",
+  "goBackNotes",
+  "goBackScheduledBy",
+  "notes",
+  "photos",
+  "name",
+  "address",
+  "city",
+  "state",
+  "zip",
+  "phone",
+  "email",
+  "estimatedBill",
+] as const;
+
+const RULES_OR_LEGACY = new Set<string>([...DISPOSITION_RULES_KEYS, ...LEGACY_14_17_PATCH_KEYS]);
+
+/** Copy the true top-level verdict onto the new history entry, then the fallback strips those keys. */
+function withHistoryGpsFlag(m: PendingMutation): PendingMutation {
+  const patch = m.direct?.patch;
+  const history = patch?.dispositionHistory;
+  if (!patch || !history?.length) return m;
+  const flag = historyGpsFlag(patch);
+  if (!flag) return m;
+  const [newest, ...older] = history;
+  const same = newest.gpsFlag?.gpsVerified === flag.gpsVerified
+    && newest.gpsFlag?.gpsUnverifiedReason === flag.gpsUnverifiedReason
+    && newest.gpsFlag?.gpsDistanceM === flag.gpsDistanceM;
+  if (same) return m;
+  return {
+    ...m,
+    direct: {
+      ...m.direct,
+      patch: { ...patch, dispositionHistory: [{ ...newest, gpsFlag: flag }, ...older] },
+    },
+  };
+}
+
+/**
+ * The route writes this flag itself from `gps`. It is not a body field:
+ * #170 rejects unknown keys. The shape is gpsFlagOf(decideKnockGps(...)).
+ */
+export function routeHistoryGpsFlag(
+  body: FieldDispoBody,
+  reference: { lat: number; lng: number } | null,
+  role?: string,
+): GpsFlag {
+  const actionAtMs = Date.parse(body.actionAt);
+  const capturedAtMs = body.gps ? Date.parse(body.gps.capturedAt) : Number.NaN;
+  const fix = body.kind !== "knock" || !body.gps
+    ? "absent" as const
+    : Number.isFinite(capturedAtMs)
+      ? { lat: body.gps.lat, lng: body.gps.lng, accuracyM: body.gps.accuracyM, capturedAtMs }
+      : "malformed" as const;
+  return gpsFlagOf(decideKnockGps({ fix, actionAtMs, reference, role }));
+}
+
+/** Drop a key only when #171 denies it and 14.17 did not write it. Dates stay Dates. */
+export function plainFallbackMutation(m: PendingMutation): PendingMutation {
+  const stripped = withoutGpsFlagKeys(withHistoryGpsFlag(m));
+  if (!stripped.direct?.patch) return stripped;
+  const patch = { ...stripped.direct.patch } as Record<string, unknown>;
+  for (const key of Object.keys(patch)) {
+    if (!RULES_OR_LEGACY.has(key)) delete patch[key];
+  }
+  return { ...stripped, direct: { ...stripped.direct, patch: patch as Partial<Lead> } };
 }
 
 export type FieldDispoDeps = {
@@ -262,6 +370,7 @@ export async function postFieldDispo(
     return current.getIdToken(forceRefresh);
   });
   let draft = m;
+  let rebasedDraft: PendingMutation | undefined;
   let body = fieldDispoBody(draft, user);
   let token = await getToken(false);
   if (!token) throw Error("Sign in again to sync your work.");
@@ -290,7 +399,13 @@ export async function postFieldDispo(
       const currentNotes = typeof data?.currentNotes === "string" ? data.currentNotes : "";
       const rebased = rebaseNotes(draft.baseNotes ?? "", body.notes ?? draft.notes ?? "", currentNotes);
       notesRetried = true;
-      draft = { ...draft, notes: rebased.notes, baseNotes: rebased.baseNotes };
+      draft = {
+        ...draft,
+        notes: rebased.notes,
+        baseNotes: rebased.baseNotes,
+        ...(draft.direct ? { direct: { ...draft.direct, patch: { ...draft.direct.patch, notes: rebased.notes } } } : {}),
+      };
+      rebasedDraft = draft;
       body = fieldDispoBody(draft, user);
       response = await send(token);
       continue;
@@ -319,31 +434,39 @@ export async function postFieldDispo(
     }
     return { replayed: false, lead: data?.lead };
   }
-  if (response.status === 404) throw unavailable();
+  const fail = (error: Error): never => {
+    if (rebasedDraft) (error as Error & { rebasedDraft?: PendingMutation }).rebasedDraft = rebasedDraft;
+    throw error;
+  };
+  if (response.status === 404) fail(unavailable());
   if (response.status === 401)
-    throw Object.assign(Error("Sign in again to sync your work."), { status: 401 });
+    fail(Object.assign(Error("Sign in again to sync your work."), { status: 401 }));
   if (response.status === 410)
-    throw routeError("This lead is gone.", 410, SYNC_REASON.notFound);
-  if (response.status === 400 || response.status === 413)
-    throw routeError("Disposition route rejected this knock.", response.status, SYNC_REASON.invalidPayload);
+    fail(routeError("This lead is gone.", 410, SYNC_REASON.notFound));
+  // The server caps kind:notes at 256 KB, and notes and baseNotes at 100000 characters.
+  // A 413 stays queued for a slow retry. The client does not park on size.
+  if (response.status === 413)
+    fail(routeError("Disposition route rejected this knock.", 413, SYNC_REASON.payloadTooLarge));
+  if (response.status === 400)
+    fail(routeError("Disposition route rejected this knock.", 400, SYNC_REASON.invalidPayload));
   if (response.status === 403) {
     const data = await readJson(response);
-    throw routeError(
+    fail(routeError(
       "The disposition route denied this knock.",
       403,
       knownReason(data?.reasonCode) || SYNC_REASON.other,
-    );
+    ));
   }
   if (response.status === 409)
-    throw routeError("Notes changed on another device. Review this draft.", 409, SYNC_REASON.notesConflict);
+    fail(routeError("Notes changed on another device. Review this draft.", 409, SYNC_REASON.notesConflict));
   if (response.status === 429)
-    throw Object.assign(Error("Disposition route asked us to wait."), {
+    fail(Object.assign(Error("Disposition route asked us to wait."), {
       status: 429,
       retryAfterMs: retryAfterDelayMs(response.headers.get("retry-after")),
-    });
+    }));
   if (response.status >= 500 || response.status === 408)
-    throw Object.assign(Error("Disposition route unavailable."), { status: response.status });
-  throw routeError("Disposition route rejected this knock.", response.status || 400, SYNC_REASON.invalidPayload);
+    fail(Object.assign(Error("Disposition route unavailable."), { status: response.status }));
+  return fail(routeError("Disposition route rejected this knock.", response.status || 400, SYNC_REASON.invalidPayload));
 }
 
 function permissionDenied(error: Error & { status?: number; code?: string }): boolean {
@@ -356,8 +479,14 @@ function temporaryPlainFailure(error: Error & { status?: number; code?: string }
   const code = String(error.code || "").toLowerCase();
   const message = error.message || "";
   if (status === 401 || status === 408 || status === 429 || status >= 500) return true;
-  if (code === "unavailable" || code === "deadline-exceeded" || code === "network-request-failed" || code === "offline")
-    return true;
+  if (
+    code === "unavailable"
+    || code === "deadline-exceeded"
+    || code === "aborted"
+    || code === "failed-precondition"
+    || code === "network-request-failed"
+    || code === "offline"
+  ) return true;
   return /offline|network|failed to fetch/i.test(message);
 }
 
@@ -377,7 +506,8 @@ async function plainPatchAfterRoute(
   commit: NonNullable<FieldDispoDeps["commit"]>,
 ): Promise<{ replayed: boolean; lead?: Lead }> {
   try {
-    return await commit(withoutGpsFlagKeys(m), user);
+    const carried = routeFailure as { rebasedDraft?: PendingMutation };
+    return await commit(plainFallbackMutation(carried?.rebasedDraft ?? m), user);
   } catch (error) {
     const failure = error as Error & { status?: number; code?: string };
     if (!temporaryPlainFailure(failure) && (permissionDenied(failure) || historicalPlainFailure(failure)))

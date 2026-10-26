@@ -6,6 +6,8 @@ export const SYNC_REASON = {
   permissionDenied: "permission_denied",
   outOfTerritory: "out_of_territory",
   ownedByOther: "owned_by_other",
+  /** Queued slow retry. The server caps kind:notes at 256 KB, and notes and baseNotes at 100000 characters. */
+  payloadTooLarge: "payload_too_large",
   historicalPin: "historical_pin",
   notFound: "not_found",
   staleTap: "stale_tap",

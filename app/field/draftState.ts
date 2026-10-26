@@ -56,6 +56,18 @@ export function classifySyncFailure(
   const reason = knownReason(code) || knownReason(String((error as { reasonCode?: string }).reasonCode || ""));
   if (reason === SYNC_REASON.notesConflict || /Notes changed on another device/i.test(message))
     return { kind: "transient" };
+  // A notes transaction that cannot finish stays queued. Never park or drop it.
+  if (
+    code === "unavailable"
+    || code === "deadline-exceeded"
+    || code === "aborted"
+    || code === "failed-precondition"
+    || code === "network-request-failed"
+    || code === "offline"
+    || /offline|network|failed to fetch/i.test(message)
+  ) return { kind: "transient" };
+  if (status === 413 || reason === SYNC_REASON.payloadTooLarge)
+    return { kind: "slow", parkedReason: SYNC_REASON.payloadTooLarge };
   if (reason) return { kind: "denial", parkedReason: reason };
   if (/Legacy handoff|Invalid knock time|Use the claim\/unclaim|Draft id is not/i.test(message))
     return { kind: "denial", parkedReason: SYNC_REASON.invalidPayload };
@@ -68,10 +80,8 @@ export function classifySyncFailure(
   if (/different account|owned by another/i.test(message))
     return { kind: "denial", parkedReason: SYNC_REASON.ownedByOther };
   if (status === 403) return { kind: "denial", parkedReason: SYNC_REASON.other };
-  if (status === 400 || status === 409 || status === 413)
+  if (status === 400 || status === 409)
     return { kind: "denial", parkedReason: SYNC_REASON.invalidPayload };
-  if (code === "failed-precondition" || code === "aborted")
-    return { kind: "conflict" };
   return { kind: "transient" };
 }
 

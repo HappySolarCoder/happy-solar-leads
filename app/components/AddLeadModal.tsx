@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, MapPin, Loader, Home, Phone, Mail, DollarSign } from 'lucide-react';
 import { AREA_BLOCK_MESSAGE } from '@/app/field/areaGate';
+import { isProximityWarningCancelled } from '@/app/field/proximityWarning';
 import { Lead } from '@/app/types';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import type { Disposition } from '@/app/types/disposition';
@@ -132,6 +133,7 @@ export default function AddLeadModal({
       setSelectedDisposition(dispositions[0]?.id || selectedDisposition);
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
+      if (isProximityWarningCancelled(error)) return;
       if (message === AREA_BLOCK_MESSAGE) {
         setAreaMessage(message);
         return;

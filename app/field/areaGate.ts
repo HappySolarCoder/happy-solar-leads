@@ -7,13 +7,20 @@ export { AREA_REASON_DIRECT_WRITE_SUPPORTED };
 import { recordSyncEvent, reportParked } from "./syncDiagnostics";
 import { bestFixInWindow, currentLocationPrecision } from "./warmGps";
 
-/** Closers stay ungated until this is turned on. */
+/**
+ * Defaults confirmed by Evan on Oct 25, 2026.
+ * R35 stays the radius. Owned leads outside the area get a hidden out_of_area
+ * flag only. Setters with no territory are ungated and not flagged. Closers are
+ * not area-checked. Managers and admins keep their hidden flags. Proximity
+ * opt-out also exempts the area gate.
+ */
+/** Closers are not area-checked. */
 export const AREA_GATE_CLOSERS = false;
 /** A rep with no territory is not blocked and is not flagged. */
 export const AREA_GATE_NO_TERRITORY = "ungated" as "ungated" | "block";
-/** Pending Charles. No extra reason value while this is false. */
+/** No extra reason value while this is false. */
 export const AREA_FLAG_NO_TERRITORY = false;
-/** Owned leads save with a hidden out_of_area flag. Pending Evan. */
+/** Owned leads save with a hidden out_of_area flag. */
 export const AREA_GATE_OWNED_LEADS = "exempt" as "exempt" | "block";
 export const AREA_EDGE_FLOOR_M = 30;
 export const AREA_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -317,7 +324,7 @@ async function refuseIfOutside(input: {
 /** Tap-time gate for a sheet knock. No fix saves. A later fix only flags. */
 export async function assertAssignedAreaAtTap(input: {
   user: { id: string; role?: string; features?: { proximityEnforcement?: boolean } };
-  lead: { id: string; claimedBy?: string; assignedTo?: string; setterId?: string };
+  lead: { id: string; claimedBy?: string; assignedTo?: string; setterId?: string; source?: string };
   tappedAt: number;
   status?: string;
   disposition?: string;
