@@ -533,6 +533,7 @@ describe('field sync report validation', () => {
       reports: [
         item({ draftId: 'gps_reason', gpsUnverifiedReason: 'too_far', locationPrecision: 'reduced' }),
         item({ draftId: 'gps_other', gpsUnverifiedReason: 'other', locationPrecision: 'precise' }),
+        item({ draftId: 'gps_area', gpsUnverifiedReason: 'out_of_area', locationPrecision: 'precise' }),
       ],
     });
     assert.equal(okResult.status, 200);
@@ -540,6 +541,7 @@ describe('field sync report validation', () => {
     assert.equal(ok.creates[0].data.locationPrecision, 'reduced');
     assert.equal(ok.creates[1].data.gpsUnverifiedReason, 'other');
     assert.equal(ok.creates[1].data.locationPrecision, 'precise');
+    assert.equal(ok.creates[2].data.gpsUnverifiedReason, 'out_of_area');
 
     for (const value of ['nope', '', 1, null, 'NO_FIX']) {
       const test = harness();

@@ -121,7 +121,7 @@ export interface Lead {
   knockDistanceFromAddress?: number; // Distance from address in meters
   /** Written by the dispo route. Reps do not see this. */
   gpsVerified?: boolean;
-  gpsUnverifiedReason?: 'no_fix' | 'stale' | 'low_accuracy' | 'reduced_accuracy' | 'too_far' | 'other';
+  gpsUnverifiedReason?: 'no_fix' | 'stale' | 'low_accuracy' | 'reduced_accuracy' | 'out_of_area' | 'too_far' | 'other';
   gpsDistanceM?: number;
   // Easter Eggs
   hasEasterEgg?: boolean;        // HIDDEN - only for hidden pin eggs
@@ -200,7 +200,7 @@ export interface LeadDispositionHistoryEntry {
   /** Bounded copy of the GPS flag. Hidden from the rep. */
   gpsFlag?: {
     gpsVerified: boolean;
-    gpsUnverifiedReason?: 'no_fix' | 'stale' | 'low_accuracy' | 'reduced_accuracy' | 'too_far' | 'other';
+    gpsUnverifiedReason?: 'no_fix' | 'stale' | 'low_accuracy' | 'reduced_accuracy' | 'out_of_area' | 'too_far' | 'other';
     gpsDistanceM?: number;
   };
 }

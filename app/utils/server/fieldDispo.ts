@@ -7,7 +7,9 @@ import {
   decideKnockGps,
   finitePoint,
   gpsFlagOf,
+  isAreaExemptRole,
   metersBetween,
+  type AreaPolygons,
   type GpsDecision,
   type KnockFix,
   type LatLng,
@@ -171,6 +173,8 @@ export type FieldDispoDeps = RequireApprovedUserDeps & {
   rateLimitStore?: RateLimitStore;
   Timestamp: TimestampFactory;
   serverTimestamp: () => unknown;
+  /** Firestore field delete. The route passes FieldValue.delete(). */
+  deleteField: () => unknown;
 };
 
 export type FieldDispoResult = {
@@ -297,6 +301,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * TEST gate for this route. firestore.rules isTest() reads only
+ * isTestAccount == true, testData == true, and team == 'TEST'.
+ * This route also denies through isTestAccount(), which the rules do not
+ * read: an email ending in @test.com, accountType 'test', isTest == true,
+ * testAccount == true, a uid prefixed user-test- or test- (any case), and a
+ * nested truthy testData or isTestAccount flag. Those accounts can still
+ * pass a direct rules write. team == 'TEST' is denied here and by the rules.
+ */
 function isBlockedTestAccount(uid: string, user: UserProfile): boolean {
   if (isTestAccount(uid, user)) return true;
   return user.team === 'TEST';
@@ -347,7 +360,7 @@ function firstUnknown(body: Record<string, unknown>, allowed: Set<string>): stri
   return null;
 }
 
-/** A present gps value that is not a usable fix is dropped and flagged. Never a 400. */
+/** A present gps value that is not a usable fix is stored as no_fix. Never a 400. */
 function parseGps(value: unknown): GpsFix | 'malformed' {
   if (!isPlainObject(value)) return 'malformed';
   if (firstUnknown(value, GPS_KEYS)) return 'malformed';
@@ -516,18 +529,23 @@ function polygonOf(value: unknown): Array<{ lat: number; lng: number }> | null {
 
 /**
  * territoryId ownership follows firestore.rules leadInMyTerritory().
- * That predicate does not look at claimedBy, assignedTo, or archived, so a
- * territory owner can still disposition another rep's claimed or assigned pin.
+ * One direct read of territories/{lead.territoryId}. That predicate does not
+ * look at claimedBy, assignedTo, or archived, so a territory owner can still
+ * disposition another rep's claimed or assigned pin. The 200-row user query
+ * is not this check: a rep with more than 200 territories still matches.
  * Polygon containment is only the extra map-pin path for unowned leads, and
  * it ignores archived territories and polygons with fewer than 3 points.
  */
-function territoryOwnedByCaller(docs: DispoSnap[], territoryId: unknown, uid: string): boolean {
-  if (typeof territoryId !== 'string' || territoryId === '') return false;
-  return docs.some((doc) => {
-    if (doc.id !== territoryId) return false;
-    const data = doc.data() ?? {};
-    return data.userId === uid;
-  });
+async function territoryOwnedByDirectRead(
+  db: DispoDb,
+  tx: DispoTransaction,
+  territoryId: unknown,
+  uid: string,
+): Promise<boolean> {
+  if (typeof territoryId !== 'string' || !validLeadId(territoryId)) return false;
+  const snap = await tx.get(db.collection('territories').doc(territoryId));
+  if (!snap.exists) return false;
+  return (snap.data() ?? {}).userId === uid;
 }
 
 function insideCallerPolygon(docs: DispoSnap[], lat: number, lng: number, uid: string): boolean {
@@ -543,10 +561,27 @@ function insideCallerPolygon(docs: DispoSnap[], lat: number, lng: number, uid: s
   return false;
 }
 
-async function loadTerritories(db: DispoDb, tx: DispoTransaction, uid: string): Promise<DispoSnap[]> {
+async function loadTerritories(
+  db: DispoDb,
+  tx: DispoTransaction,
+  uid: string,
+): Promise<{ docs: DispoSnap[]; truncated: boolean }> {
   const query = db.collection('territories').where('userId', '==', uid).limit(TERRITORY_QUERY_LIMIT);
   const snap = await tx.getQuery(query);
-  return snap.docs;
+  const truncated = snap.docs.length >= TERRITORY_QUERY_LIMIT;
+  if (truncated) console.log('[field/dispo] territories_truncated 1');
+  return { docs: snap.docs, truncated };
+}
+
+function countedPolygons(docs: DispoSnap[], uid: string): Array<Array<{ lat: number; lng: number }>> {
+  const polygons: Array<Array<{ lat: number; lng: number }>> = [];
+  for (const doc of docs) {
+    const data = doc.data() ?? {};
+    if (data.userId !== uid || data.archived) continue;
+    const polygon = polygonOf(data.polygon);
+    if (polygon) polygons.push(polygon);
+  }
+  return polygons;
 }
 
 function placeName(doc: Record<string, unknown>, streetKey: string, fallbackKey: string): string {
@@ -779,16 +814,20 @@ async function applyDraft(input: {
 
   const staff = input.role === 'admin' || input.role === 'manager';
   const owned = ownsLead(lead, input.uid);
-  let territories: DispoSnap[] | null = null;
+  let callerTerritories: { docs: DispoSnap[]; truncated: boolean } | null = null;
+  const loadCallerTerritories = async () => {
+    if (!callerTerritories) callerTerritories = await loadTerritories(input.db, input.tx, input.uid);
+    return callerTerritories;
+  };
   if (!staff && !owned) {
-    territories = await loadTerritories(input.db, input.tx, input.uid);
-    const territoryMine = territoryOwnedByCaller(territories, lead.territoryId, input.uid);
+    const territoryMine = await territoryOwnedByDirectRead(input.db, input.tx, lead.territoryId, input.uid);
     if (!territoryMine) {
       if (isOther(lead.claimedBy, input.uid) || isOther(lead.assignedTo, input.uid)) {
         return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: 'owned_by_other' } };
       }
       const coords = leadCoords(lead);
-      const inside = coords ? insideCallerPolygon(territories, coords.lat, coords.lng, input.uid) : false;
+      const loaded = await loadCallerTerritories();
+      const inside = coords ? insideCallerPolygon(loaded.docs, coords.lat, coords.lng, input.uid) : false;
       if (!inside) {
         return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: 'out_of_territory' } };
       }
@@ -797,7 +836,29 @@ async function applyDraft(input: {
 
   if (input.draft.kind === 'notes') return applyNotes(input, leadRef, receiptRef, lead);
   const homeowner = await loadHomeowner(input.db, input.tx, input.draft);
-  return applyKnock(input, input.draft, leadRef, receiptRef, lead, homeowner);
+  const polygons = await areaPolygonsFor(input, loadCallerTerritories);
+  return applyKnock(input, input.draft, leadRef, receiptRef, lead, homeowner, polygons);
+}
+
+/**
+ * Area is a flag, never a 403. Admin and manager are exempt. A missing fix
+ * has no position to test. A truncated territory list is an unknown area, so
+ * it does not flag out_of_area. A rep with no counted polygon is not flagged.
+ */
+async function areaPolygonsFor(
+  input: {
+    uid: string;
+    role: string;
+    draft: ParsedDraft;
+  },
+  loadCallerTerritories: () => Promise<{ docs: DispoSnap[]; truncated: boolean }>,
+): Promise<AreaPolygons | undefined> {
+  if (input.draft.kind !== 'knock') return undefined;
+  if (input.draft.gps === 'absent' || input.draft.gps === 'malformed') return undefined;
+  if (isAreaExemptRole(input.role)) return undefined;
+  const loaded = await loadCallerTerritories();
+  if (loaded.truncated) return 'unknown';
+  return countedPolygons(loaded.docs, input.uid);
 }
 
 function writeReceipt(
@@ -862,17 +923,21 @@ function applyKnock(
     tx: DispoTransaction;
     deps: FieldDispoDeps;
     uid: string;
+    role: string;
   },
   draft: ParsedKnock,
   leadRef: DispoDocRef,
   receiptRef: DispoDocRef,
   lead: Record<string, unknown>,
   homeowner: Record<string, unknown> | null,
+  polygons: AreaPolygons | undefined,
 ): TxOutcome {
   const decision = decideKnockGps({
     fix: draft.gps,
     actionAtMs: draft.actionAtMs,
     reference: referencePoint(lead, homeowner),
+    role: input.role,
+    polygons,
   });
   const serverMs = millisOf(lead.dispositionedAt);
   const stale = serverMs != null && draft.actionAtMs <= serverMs;
@@ -888,18 +953,25 @@ function applyKnock(
   if (history.changed) patch.dispositionHistory = history.history;
 
   if (!stale) {
+    const clear = () => input.deps.deleteField();
     patch.status = draft.status;
     patch.disposition = draft.disposition;
     patch.dispositionedAt = input.deps.Timestamp.fromMillis(draft.actionAtMs);
     patch.gpsVerified = decision.gpsVerified;
-    if (decision.gpsUnverifiedReason) patch.gpsUnverifiedReason = decision.gpsUnverifiedReason;
-    if (decision.gpsDistanceM != null) patch.gpsDistanceM = decision.gpsDistanceM;
+    patch.gpsUnverifiedReason = decision.gpsUnverifiedReason ?? clear();
+    patch.gpsDistanceM = decision.gpsDistanceM ?? clear();
     if (decision.keepFix && draft.gps !== 'absent' && draft.gps !== 'malformed') {
       patch.knockGpsLat = draft.gps.lat;
       patch.knockGpsLng = draft.gps.lng;
       patch.knockGpsAccuracy = draft.gps.accuracyM;
       patch.knockGpsTimestamp = input.deps.Timestamp.fromMillis(draft.gps.capturedAtMs);
-      if (decision.gpsDistanceM != null) patch.knockDistanceFromAddress = decision.gpsDistanceM;
+      patch.knockDistanceFromAddress = decision.gpsDistanceM ?? clear();
+    } else {
+      patch.knockGpsLat = clear();
+      patch.knockGpsLng = clear();
+      patch.knockGpsAccuracy = clear();
+      patch.knockGpsTimestamp = clear();
+      patch.knockDistanceFromAddress = clear();
     }
     if (draft.goBack) {
       patch.goBackScheduledDate = input.deps.Timestamp.fromMillis(draft.goBack.scheduledDateMs);

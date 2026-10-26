@@ -125,6 +125,7 @@ function deps() {
     db: adaptDb(db),
     Timestamp,
     serverTimestamp: () => FieldValue.serverTimestamp(),
+    deleteField: () => FieldValue.delete(),
   };
 }
 
