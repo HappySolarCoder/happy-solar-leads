@@ -19,7 +19,7 @@ import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
 import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
 import { enqueueDirectSave } from './enqueueDirectSave';
-import { CONTACT_NOT_SENT_MESSAGE, contactDraftBlocksSendInfo, parkContactDeniedDrafts, sendInfoMayWriteContact } from './sendInfoGate';
+import { assertContactReadyForSend, contactDraftBlocksSendInfo, parkContactDeniedDrafts, sendInfoMayWriteContact } from './sendInfoGate';
 import { readSyncLog, recordSyncEvent, reportParked, type SyncEvent } from './syncDiagnostics';
 import { displayedKnockPoint, type KnockPoint } from './knockPoint';
 import { GPS_WINDOW_AFTER_MS } from './gpsPolicy';
@@ -453,15 +453,12 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       return;
     }
     const canWrite = !actor || sendInfoMayWriteContact(true, known, uid, actor.role);
-    const refused = () => Object.assign(Error(CONTACT_NOT_SENT_MESSAGE), { code: "contact_denied" });
-    if (!canWrite && !isDeviceOnline()) {
+    if (!canWrite) {
+      // Park existing contact drafts. Never delete them. Send Info still posts.
       await parkDeniedContact(leadId);
-      throw refused();
+      return;
     }
     if (!isDeviceOnline()) {
-      const offlineDrafts = await readDrafts(uid);
-      if (offlineDrafts.some((row) => row.leadId === leadId && row.kind === "contact" && row.syncState === "parked"))
-        throw refused();
       // Offline, and this role may write contact fields: the draft stays durably
       // queued. Send Info does not post. That is unchanged. An ambiguous
       // notification response is never retried.
@@ -469,12 +466,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     }
     await sync();
     const drafts = await readDrafts(uid);
-    if (!canWrite) {
-      if (drafts.some((row) => row.leadId === leadId && row.kind === "contact" && row.syncState !== "parked"))
-        await parkDeniedContact(leadId);
-      throw refused();
-    }
-    if (contactDraftBlocksSendInfo(drafts, leadId)) throw refused();
+    if (contactDraftBlocksSendInfo(drafts, leadId)) assertContactReadyForSend(drafts, leadId);
     const hold = schedulingHold(drafts, leadId);
     if (hold) throw Error(hold);
   }, [uid, sync, current.area, parkDeniedContact]);

@@ -7,6 +7,7 @@ import { enqueueDirectSave } from "../../app/field/enqueueDirectSave";
 import { commitDirectMutation, directPatch, type DirectCommitIo } from "../../app/field/directWrites";
 import { deliverFieldDispo, fieldDispoBody } from "../../app/field/serverDispo";
 import {
+  CONTACT_NOT_ON_PIN_NOTICE,
   CONTACT_NOT_SENT_MESSAGE,
   contactDraftBlocksSendInfo,
   finishSendInfo,
@@ -238,7 +239,7 @@ test("the disposition body builder throws when a notes draft has no notes string
   assert.throws(() => fieldDispoBody({ ...draft, notes: undefined, direct: { patch: {} } }, owner), /does not include a note/);
 });
 
-test("Send Info does not post when the contact save is denied", async () => {
+test("Send Info still posts when the contact save is denied", async () => {
   let posts = 0;
   const roleBlocked = await finishSendInfo({
     online: true,
@@ -248,8 +249,9 @@ test("Send Info does not post when the contact save is denied", async () => {
     },
     post: async () => { posts += 1; },
   });
-  assert.equal(posts, 0);
-  assert.equal(roleBlocked.notice, CONTACT_NOT_SENT_MESSAGE);
+  assert.equal(posts, 1);
+  assert.equal(roleBlocked.posted, 1);
+  assert.equal(roleBlocked.notice, CONTACT_NOT_ON_PIN_NOTICE);
   const writeDenied = await finishSendInfo({
     online: true,
     canWriteContact: true,
@@ -258,9 +260,9 @@ test("Send Info does not post when the contact save is denied", async () => {
     },
     post: async () => { posts += 1; },
   });
-  assert.equal(posts, 0);
-  assert.equal(writeDenied.posted, 0);
-  assert.equal(writeDenied.notice, CONTACT_NOT_SENT_MESSAGE);
+  assert.equal(posts, 2);
+  assert.equal(writeDenied.posted, 1);
+  assert.equal(writeDenied.notice, CONTACT_NOT_ON_PIN_NOTICE);
 });
 
 test("Send Info posts once when the contact save is allowed online", async () => {

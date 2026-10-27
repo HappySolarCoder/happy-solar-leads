@@ -9,8 +9,11 @@ import { contactSaveFields, editorSavePatch, officeLeadSave } from './contactPat
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import {
   CONTACT_NOT_SENT_MESSAGE,
+  CONTACT_OWNER_ONLY_MESSAGE,
+  CONTACT_STILL_SAVING_MESSAGE,
   contactSaveDeniedError,
   finishSendInfo,
+  patchWithoutLockedContact,
   sendInfoMayWriteContact,
 } from '@/app/field/sendInfoGate';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
@@ -116,21 +119,31 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
   const parkedNotesMessage = parkedNotesNotice(pendingDrafts, lead.id);
   const clockNotice = phoneClockNotice(pendingDrafts, lead.id);
 
-  const persistEditor = async (notesBlocked: boolean) => {
+  const persistEditor = async (notesBlocked: boolean): Promise<{ contactSkipped: boolean }> => {
     const form = notesBlocked ? { ...formData, notes: lead.notes || '' } : formData;
+    const actor = signedInRep || currentUser;
+    const mayWrite = !actor || sendInfoMayWriteContact(DIRECT_MOBILE_WRITES, lead, actor.id, actor.role);
     if (saveLeadPatch) {
       if (DIRECT_MOBILE_WRITES) {
-        const patch = editorSavePatch(lead, form, false);
-        if (patch) await saveLeadPatch(patch);
-      } else await saveLeadPatch(contactSaveFields(lead, form));
-      return;
+        const gated = patchWithoutLockedContact(mayWrite, editorSavePatch(lead, form, false));
+        if (gated.patch) await saveLeadPatch(gated.patch);
+        return { contactSkipped: gated.contactSkipped };
+      }
+      await saveLeadPatch(contactSaveFields(lead, form));
+      return { contactSkipped: false };
     }
     if (mobileMode) {
       const { updateLeadAsync } = await import('@/app/utils/storage');
+      if (!mayWrite) {
+        const gated = patchWithoutLockedContact(false, editorSavePatch(lead, form, false));
+        if (gated.patch) await updateLeadAsync(lead.id, gated.patch);
+        return { contactSkipped: gated.contactSkipped };
+      }
       await updateLeadAsync(lead.id, contactSaveFields(lead, form));
-      return;
+      return { contactSkipped: false };
     }
     await saveLeadAsync(officeLeadSave(lead, form));
+    return { contactSkipped: false };
   };
 
   const handleSave = async () => {
@@ -139,8 +152,9 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
       setNotesNotice(NOTES_BLANK_MESSAGE);
       setIsSaving(true);
       try {
-        await persistEditor(true);
+        const saved = await persistEditor(true);
         invalidateLeadsCache();
+        if (saved.contactSkipped) alert(CONTACT_OWNER_ONLY_MESSAGE);
       } catch (error) {
         alert(`Changes could not be saved. ${(error as Error).message}`);
       } finally {
@@ -152,8 +166,12 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
     setIsSaving(true);
 
     try {
-      await persistEditor(notesTooLong);
+      const saved = await persistEditor(notesTooLong);
       invalidateLeadsCache();
+      if (saved.contactSkipped) {
+        alert(CONTACT_OWNER_ONLY_MESSAGE);
+        return;
+      }
       if (!notesTooLong) onSave();
     } catch (error) {
       if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) return;
@@ -194,15 +212,13 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
       }
 
       // Persist contact fields before the notification. Over-long notes are not part of that write.
+      // A rep who cannot write contact fields does not queue a contact draft. The form still posts.
       let notesBlocked = false;
       try {
         await persistEditor(notesTooLong);
       } catch (error) {
         if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) notesBlocked = true;
-        else if (contactSaveDeniedError(error)) {
-          setSendNotice(CONTACT_NOT_SENT_MESSAGE);
-          return;
-        } else {
+        else if (!contactSaveDeniedError(error)) {
           alert(`Changes could not be saved. ${(error as Error).message}`);
           return;
         }
@@ -218,6 +234,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
       }
 
       let result: { posted: number; notice: string | null };
+      let delivered = false;
       try {
         result = await finishSendInfo({
           online: isDeviceOnline(),
@@ -234,6 +251,7 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
               },
             });
             if (outcome.status === 'sent') {
+              delivered = true;
               setInfoSent(true);
               void onInfoSent?.().catch(() => {});
               return;
@@ -254,12 +272,17 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
         });
       } catch (error) {
         if ((error as { sendInfoSave?: boolean }).sendInfoSave) {
-          alert(`Changes could not be saved. ${(error as Error).message}`);
+          const message = (error as Error).message;
+          if (message === CONTACT_STILL_SAVING_MESSAGE || message === CONTACT_NOT_SENT_MESSAGE) {
+            setSendNotice(message);
+            return;
+          }
+          alert(`Changes could not be saved. ${message}`);
           return;
         }
         throw error;
       }
-      if (result.notice) setSendNotice(result.notice);
+      if ((delivered || result.posted === 0) && result.notice) setSendNotice(result.notice);
     } catch {
       // An ambiguous response is never retried.
       setSendNotice(AMBIGUOUS_SEND_MESSAGE);
@@ -460,9 +483,9 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
             </button>
 
             {/* Step 1: Send Info */}
-            {!infoSent && (cooldownUntil > now || sendNotice) && (
+            {(cooldownUntil > now || sendNotice) && (
               <p role="status" className="text-sm text-center text-[#4A5568]">
-                {cooldownUntil > now
+                {cooldownUntil > now && !infoSent
                   ? `Too many requests. You can send again in ${Math.max(1, Math.ceil((cooldownUntil - now) / 1000))} seconds.`
                   : sendNotice}
               </p>
