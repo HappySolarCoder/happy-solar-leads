@@ -18,6 +18,7 @@ import {
 } from '@/app/field/sendInfoGate';
 import { saveLeadAsync, getCurrentUserAsync, invalidateLeadsCache } from '@/app/utils/storage';
 import { getAdminSettingsAsync } from '@/app/utils/adminSettings';
+import { cachedTerritoryIds } from '@/app/hooks/useTeamAreasOverlay';
 import { auth } from '@/app/utils/firebase';
 import {
   FALLBACK_SCHEDULING_MANAGER_PHONE,
@@ -119,10 +120,20 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
   const parkedNotesMessage = parkedNotesNotice(pendingDrafts, lead.id);
   const clockNotice = phoneClockNotice(pendingDrafts, lead.id);
 
-  const persistEditor = async (notesBlocked: boolean): Promise<{ contactSkipped: boolean }> => {
+  const mayWriteContact = (form: typeof formData, actor: User | null) => {
+    if (!actor) return false;
+    return sendInfoMayWriteContact(DIRECT_MOBILE_WRITES, lead, actor.id, actor.role, {
+      patch: editorSavePatch(lead, form, false) ?? undefined,
+      territoryIds: cachedTerritoryIds(actor.id),
+    });
+  };
+
+  const persistEditor = async (
+    notesBlocked: boolean,
+    actor: User | null = signedInRep || currentUser,
+  ): Promise<{ contactSkipped: boolean }> => {
     const form = notesBlocked ? { ...formData, notes: lead.notes || '' } : formData;
-    const actor = signedInRep || currentUser;
-    const mayWrite = !actor || sendInfoMayWriteContact(DIRECT_MOBILE_WRITES, lead, actor.id, actor.role);
+    const mayWrite = mayWriteContact(form, actor);
     if (saveLeadPatch) {
       if (DIRECT_MOBILE_WRITES) {
         const gated = patchWithoutLockedContact(mayWrite, editorSavePatch(lead, form, false));
@@ -213,9 +224,10 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
 
       // Persist contact fields before the notification. Over-long notes are not part of that write.
       // A rep who cannot write contact fields does not queue a contact draft. The form still posts.
+      const actor = signedInRep || currentUser;
       let notesBlocked = false;
       try {
-        await persistEditor(notesTooLong);
+        await persistEditor(notesTooLong, actor);
       } catch (error) {
         if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) notesBlocked = true;
         else if (!contactSaveDeniedError(error)) {
@@ -223,7 +235,10 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
           return;
         }
       }
-      const canWrite = sendInfoMayWriteContact(DIRECT_MOBILE_WRITES, lead, user.id, user.role);
+      const canWrite = mayWriteContact(
+        notesTooLong ? { ...formData, notes: lead.notes || '' } : formData,
+        actor,
+      );
       if (notesTooLong && canWrite) {
         setSendNotice(NOTES_TOO_LONG_MESSAGE);
         return;
@@ -235,11 +250,21 @@ export default function LeadEditorModal({ lead, onClose, onSave, beforeSend, sig
 
       let result: { posted: number; notice: string | null };
       let delivered = false;
+      // Drafts already on screen. prepareSendInfo throws while one is still queued,
+      // and throws contact_denied when the server parked it. A successful return
+      // means that draft landed, so this flag must not cancel the post.
+      let contactPending = DIRECT_MOBILE_WRITES && (pendingDrafts ?? []).some(
+        (row) => row.leadId === lead.id && row.kind === "contact" && row.syncState !== "parked",
+      );
       try {
         result = await finishSendInfo({
           online: isDeviceOnline(),
           canWriteContact: canWrite,
-          confirm: async () => { await beforeSend?.(); },
+          get contactPending() { return contactPending; },
+          confirm: async () => {
+            await beforeSend?.();
+            if (beforeSend) contactPending = false;
+          },
           post: async () => {
             // One attempt. An ambiguous response is never retried.
             const outcome = await sendSchedulingNotification(built.payload, {

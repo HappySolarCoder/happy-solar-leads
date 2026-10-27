@@ -7,6 +7,7 @@ import { enqueueDirectSave } from "../../app/field/enqueueDirectSave";
 import { commitDirectMutation, directPatch, type DirectCommitIo } from "../../app/field/directWrites";
 import { deliverFieldDispo, fieldDispoBody } from "../../app/field/serverDispo";
 import {
+  CONTACT_COULD_NOT_SAVE_NOTICE,
   CONTACT_NOT_ON_PIN_NOTICE,
   CONTACT_NOT_SENT_MESSAGE,
   contactDraftBlocksSendInfo,
@@ -262,7 +263,7 @@ test("Send Info still posts when the contact save is denied", async () => {
   });
   assert.equal(posts, 2);
   assert.equal(writeDenied.posted, 1);
-  assert.equal(writeDenied.notice, CONTACT_NOT_ON_PIN_NOTICE);
+  assert.equal(writeDenied.notice, CONTACT_COULD_NOT_SAVE_NOTICE);
 });
 
 test("Send Info posts once when the contact save is allowed online", async () => {

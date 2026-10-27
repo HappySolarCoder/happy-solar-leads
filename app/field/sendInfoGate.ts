@@ -14,6 +14,13 @@ export const CONTACT_NOT_SENT_MESSAGE =
 export const CONTACT_NOT_ON_PIN_NOTICE =
   "Info sent to Scheduling Manager. The contact info wasn't saved to this pin because it isn't assigned to you.";
 
+/**
+ * The scheduling post went out. An owner or admin was allowed to save, and
+ * the server still parked the contact draft.
+ */
+export const CONTACT_COULD_NOT_SAVE_NOTICE =
+  "Info sent to Scheduling Manager. The contact info couldn't be saved to this pin.";
+
 /** An allowed writer still has a contact draft that has not landed. Send Info waits. */
 export const CONTACT_STILL_SAVING_MESSAGE =
   "Contact info is still saving. Try Send Info again in a moment.";
@@ -24,31 +31,84 @@ export const CONTACT_OWNER_ONLY_MESSAGE =
 
 export const CONNECT_BEFORE_SEND_MESSAGE = "Connect before sending the scheduling request.";
 
+/** Phone and email bounds from contactFillsValid. */
+const CONTACT_PHONE_MAX = 40;
+const CONTACT_EMAIL_MAX = 254;
+
+export type ContactGateLead = Pick<Lead, "claimedBy" | "assignedTo" | "setterId" | "source" | "phone" | "email"> & {
+  territoryId?: string;
+};
+
+/** Patch plus the territory document ids this rep owns. Omitted, a fill is not granted. */
+export type ContactFillContext = {
+  patch?: Partial<Lead>;
+  territoryIds?: readonly string[];
+};
+
+function contactFieldEmpty(value: unknown): boolean {
+  return value == null || value === "";
+}
+
 /**
- * Live rules: an admin, or the rep who owns the lead, can write contact fields.
- * A non-owner cannot. That includes a territory setter and a manager.
+ * contactFillUpdate's add-only phone/email check. Every contact key in the
+ * patch must fill a phone or email that is empty on the server. A value the
+ * server already has is an overwrite and is denied. Notes are not contact.
+ */
+function fillsEmptyPhoneOrEmail(lead: ContactGateLead, patch: Partial<Lead>): boolean {
+  const keys = Object.keys(patch).filter((key) => key !== "notes");
+  if (!keys.length) return false;
+  for (const key of keys) {
+    if (key !== "phone" && key !== "email") return false;
+    const next = patch[key as "phone" | "email"];
+    if (typeof next !== "string" || next === "") return false;
+    if (key === "phone" && next.length > CONTACT_PHONE_MAX) return false;
+    if (key === "email" && next.length > CONTACT_EMAIL_MAX) return false;
+    if (!contactFieldEmpty(lead[key as "phone" | "email"])) return false;
+  }
+  return true;
+}
+
+function territoryIncludes(lead: ContactGateLead, territoryIds: readonly string[] | undefined): boolean {
+  return typeof lead.territoryId === "string"
+    && lead.territoryId.length > 0
+    && !!territoryIds?.includes(lead.territoryId);
+}
+
+/**
+ * Live contactFillUpdate: an admin, or the rep who owns the lead, can write
+ * contact fields. A manager, or a rep whose territories include
+ * lead.territoryId, may fill phone or email only when that field is empty
+ * on the server. That path never overwrites a phone or email.
  */
 export function repMayWriteContactFields(
-  lead: Pick<Lead, "claimedBy" | "assignedTo" | "setterId" | "source">,
+  lead: ContactGateLead,
   uid: string,
   role?: string,
+  fill?: ContactFillContext,
 ): boolean {
+  if (!uid) return false;
   if (role === "admin") return true;
-  return leadOwnedBy(lead, uid);
+  if (leadOwnedBy(lead, uid)) return true;
+  if (!fill?.patch) return false;
+  if (role !== "manager" && !territoryIncludes(lead, fill.territoryIds)) return false;
+  return fillsEmptyPhoneOrEmail(lead, fill.patch);
 }
 
 /**
  * The contact-write gate is native-only. Web Send Info keeps its previous
- * behavior and does not consult repMayWriteContactFields.
+ * behavior and does not consult repMayWriteContactFields. A missing actor
+ * is not allowed to write.
  */
 export function sendInfoMayWriteContact(
   native: boolean,
-  lead: Pick<Lead, "claimedBy" | "assignedTo" | "setterId" | "source"> | null | undefined,
+  lead: ContactGateLead | null | undefined,
   uid: string,
   role?: string,
+  fill?: ContactFillContext,
 ): boolean {
   if (!native || !lead) return true;
-  return repMayWriteContactFields(lead, uid, role);
+  if (!uid) return false;
+  return repMayWriteContactFields(lead, uid, role, fill);
 }
 
 /** Any contact draft still on the lead, parked or not yet written. */
@@ -107,8 +167,12 @@ export function sendInfoPostDecision(input: {
   if (input.canWriteContact && input.contactPending && !input.contactDenied) {
     return { post: false, notice: CONTACT_NOT_SENT_MESSAGE };
   }
-  // The pin will not store the contact info. Scheduling still gets the form.
-  if (!input.canWriteContact || input.contactDenied) {
+  // Allowed writer, and the server denied the save. Scheduling still gets the form.
+  if (input.contactDenied && input.canWriteContact) {
+    return { post: true, notice: CONTACT_COULD_NOT_SAVE_NOTICE };
+  }
+  // This rep cannot write the pin. Scheduling still gets the form.
+  if (!input.canWriteContact) {
     return { post: true, notice: CONTACT_NOT_ON_PIN_NOTICE };
   }
   return { post: true };

@@ -57,3 +57,11 @@ export function useTeamAreasOverlay(enabled: boolean, userId?: string) {
 }
 const EMPTY_TERRITORIES: Territory[] = [];
 const EMPTY_MEMBERS: TeamAreaMember[] = [];
+
+/** Territory document ids this rep owns, from the team-areas cache. Empty when areas have not loaded. */
+export function cachedTerritoryIds(userId: string): string[] {
+  if (!userId) return [];
+  const saved = cache.get(userId);
+  if (!saved) return [];
+  return saved.value.territories.filter((territory) => territory.userId === userId && territory.id).map((territory) => territory.id);
+}

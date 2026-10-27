@@ -11,7 +11,9 @@ import { releaseFieldDispoHolds } from "../../app/field/serverDispo";
 import { syncOutbox } from "../../app/field/syncOutbox";
 import {
   CONNECT_BEFORE_SEND_MESSAGE,
+  CONTACT_COULD_NOT_SAVE_NOTICE,
   CONTACT_NOT_ON_PIN_NOTICE,
+  CONTACT_NOT_SENT_MESSAGE,
   CONTACT_OWNER_ONLY_MESSAGE,
   CONTACT_STILL_SAVING_MESSAGE,
   assertContactReadyForSend,
@@ -220,6 +222,152 @@ test("an allowed writer's queued contact draft blocks Send Info while it is stil
   assert.doesNotThrow(() => assertContactReadyForSend([
     contactOnly("parked-ok", phone, { syncState: "parked", parkedReason: "contact_denied" }),
   ], "pin-steven"));
+});
+
+test("an owner whose contact draft was denied posts once with the save notice", async () => {
+  const pin = manualPin(steven.id);
+  const drafts = [contactOnly("owner-denied", phone, {
+    userId: steven.id,
+    syncState: "parked",
+    parkedReason: "contact_denied",
+  })];
+  assert.doesNotThrow(() => assertContactReadyForSend(drafts, pin.id));
+  let posts = 0;
+  const sent = await finishSendInfo({
+    online: true,
+    canWriteContact: true,
+    contactPending: true,
+    confirm: async () => {
+      throw Object.assign(Error(CONTACT_NOT_SENT_MESSAGE), { code: "contact_denied" });
+    },
+    post: async () => { posts += 1; },
+  });
+  assert.equal(posts, 1);
+  assert.equal(sent.posted, 1);
+  assert.equal(sent.notice, CONTACT_COULD_NOT_SAVE_NOTICE);
+  assert.notEqual(sent.notice, CONTACT_NOT_ON_PIN_NOTICE);
+  const hook = readFileSync(path.join(root, "app/field/useFieldData.ts"), "utf8");
+  const modal = readFileSync(path.join(root, "app/components/LeadEditorModal.tsx"), "utf8");
+  assert.match(hook, /Object\.assign\(Error\(CONTACT_NOT_SENT_MESSAGE\), \{ code: "contact_denied" \}\)/);
+  assert.match(hook, /contactDraftBlocksSendInfo\(drafts, leadId\)/);
+  assert.doesNotMatch(hook, /!actor \|\| sendInfoMayWriteContact/);
+  assert.match(modal, /contactPending/);
+  assert.match(modal, /actor: User \| null = signedInRep \|\| currentUser/);
+  assert.match(modal, /const actor = signedInRep \|\| currentUser/);
+  assert.doesNotMatch(modal, /!actor \|\| sendInfoMayWriteContact/);
+  assert.equal(sendInfoMayWriteContact(true, pin, "", "admin"), false);
+  assert.equal(sendInfoMayWriteContact(true, pin, "", "setter"), false);
+});
+
+function territoryPin(nextPhone = ""): Lead & { territoryId: string } {
+  return { ...manualPin(steven.id), phone: nextPhone, territoryId: "territory-9" };
+}
+
+test("a territory member filling an empty phone saves, and an overwrite posts the assignment notice", async () => {
+  const empty = territoryPin("");
+  const territories = ["territory-9"];
+  assert.equal(sendInfoMayWriteContact(true, empty, sawyer.id, "setter", {
+    patch: { phone },
+    territoryIds: territories,
+  }), true);
+  assert.equal(sendInfoMayWriteContact(true, { ...empty, phone: undefined }, sawyer.id, "setter", {
+    patch: { phone },
+    territoryIds: territories,
+  }), true);
+  assert.equal(sendInfoMayWriteContact(true, { ...empty, phone: "555" }, sawyer.id, "setter", {
+    patch: { email: "a@b.co" },
+    territoryIds: territories,
+  }), true);
+  assert.equal(sendInfoMayWriteContact(true, empty, sawyer.id, "setter", {
+    patch: { phone },
+    territoryIds: ["other-territory"],
+  }), false);
+  assert.equal(sendInfoMayWriteContact(true, empty, sawyer.id, "setter", {
+    patch: { phone, name: "Other" },
+    territoryIds: territories,
+  }), false);
+  assert.equal(sendInfoMayWriteContact(true, empty, sawyer.id, "setter", {
+    patch: { phone: "1".repeat(41) },
+    territoryIds: territories,
+  }), false);
+  const queued: PendingMutation[] = [];
+  const gated = patchWithoutLockedContact(true, { phone });
+  assert.equal(gated.contactSkipped, false);
+  await enqueueDirectSave({
+    lead: empty,
+    patch: gated.patch || {},
+    actor: sawyer,
+    createdAt: at,
+    ids: { contact: "fill-contact", notes: "fill-notes" },
+    enqueue: async (draft) => { queued.push(draft); },
+  });
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].kind, "contact");
+  assert.deepEqual(queued[0].direct?.patch, { phone });
+  let posts = 0;
+  const sent = await finishSendInfo({
+    online: true,
+    canWriteContact: true,
+    confirm: async () => {},
+    post: async () => { posts += 1; },
+  });
+  assert.equal(posts, 1);
+  assert.equal(sent.posted, 1);
+  assert.equal(sent.notice, null);
+
+  const taken = territoryPin("5550001111");
+  assert.equal(sendInfoMayWriteContact(true, taken, sawyer.id, "setter", {
+    patch: { phone },
+    territoryIds: territories,
+  }), false);
+  assert.equal(sendInfoMayWriteContact(true, taken, admin.id, "admin", { patch: { phone } }), true);
+  const overwrite = patchWithoutLockedContact(false, { phone });
+  assert.equal(overwrite.contactSkipped, true);
+  assert.equal(overwrite.patch, null);
+  let overwritePosts = 0;
+  const denied = await finishSendInfo({
+    online: true,
+    canWriteContact: false,
+    confirm: async () => {},
+    post: async () => { overwritePosts += 1; },
+  });
+  assert.equal(overwritePosts, 1);
+  assert.equal(denied.posted, 1);
+  assert.equal(denied.notice, CONTACT_NOT_ON_PIN_NOTICE);
+  assert.match(denied.notice || "", /isn't assigned to you/);
+});
+
+test("a manager filling an empty phone or email saves", async () => {
+  const pin = territoryPin("");
+  const manager = { id: "morgan", name: "Morgan", role: "manager" } as User;
+  assert.equal(sendInfoMayWriteContact(true, pin, manager.id, "manager", { patch: { phone } }), true);
+  assert.equal(sendInfoMayWriteContact(true, pin, manager.id, "manager", { patch: { email: "a@b.co" } }), true);
+  assert.equal(sendInfoMayWriteContact(true, { ...pin, email: "kept@b.co" }, manager.id, "manager", {
+    patch: { email: "new@b.co" },
+  }), false);
+  assert.equal(sendInfoMayWriteContact(true, pin, manager.id, "manager"), false);
+  const queued: PendingMutation[] = [];
+  await enqueueDirectSave({
+    lead: pin,
+    patch: { phone },
+    actor: manager,
+    createdAt: at,
+    ids: { contact: "mgr-contact", notes: "mgr-notes" },
+    enqueue: async (draft) => { queued.push(draft); },
+  });
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].kind, "contact");
+  assert.equal(queued[0].direct?.patch.phone, phone);
+  let posts = 0;
+  const sent = await finishSendInfo({
+    online: true,
+    canWriteContact: true,
+    confirm: async () => {},
+    post: async () => { posts += 1; },
+  });
+  assert.equal(posts, 1);
+  assert.equal(sent.posted, 1);
+  assert.equal(sent.notice, null);
 });
 
 test("an offline non-owner does not post", async () => {
