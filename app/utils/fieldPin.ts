@@ -98,17 +98,46 @@ export function fieldPinZoomTier(zoom: number): number {
 
 // Signal R is inline vector geometry: no per-pin asset requests or bitmap decoding.
 const signalR = '<g fill="white"><path d="M0 78Q0 64 24 64H48V234H0Z"/><path d="M103 195Q125 192 139 177L173 211Q186 223 189 234H140Z"/></g><g fill="#F0BC18"><path d="M84 0A126 126 0 0 1 193.12 189L155.01 167A82 82 0 0 0 84 44Z"/><path d="M84 54A72 72 0 0 1 146.35 162L115.18 144A36 36 0 0 0 84 90H80Q64 90 64 72Q64 54 80 54Z"/><circle cx="84" cy="126" r="20"/></g>';
+/** Orange-red halo. Distinct from the selected ring #F4C84A. At least 3:1 on a light tile. */
+export const HOT_RING_COLOR = "#E8590C";
+const hotFlame = '<path fill="white" d="M9.2 2.2c.4 2.4-1.5 3.2-1.5 5.6a3.3 3.3 0 1 0 6.6 0c0-1.7-.9-2.6-.9-4.2 1.7 1.6 2.6 3.3 2.6 5a5.1 5.1 0 1 1-10.2 0c0-2.6 1.7-4.3 3.4-6.4z"/>';
+
+function decorateHotSvg(svg: string, small: boolean, warm: boolean): string {
+  if (small) {
+    return svg.replace(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">',
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><g data-hot-lead="true"><circle cx="10" cy="10" r="9.15" fill="none" stroke="${HOT_RING_COLOR}" stroke-width="1.35"/></g>`,
+    );
+  }
+  let next = svg.replace(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 56">',
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 56"><g data-hot-lead="true"><rect x="1.2" y="1.2" width="45.6" height="53.6" rx="16" fill="none" stroke="${HOT_RING_COLOR}" stroke-width="2.4"/></g>`,
+  );
+  next = next.replace('x="29" y="0" width="19" height="18"', 'x="29" y="36" width="19" height="18"');
+  next = next.replace('x="38.5" y="13"', 'x="38.5" y="49"');
+  const flame = `<g data-hot-lead="true" transform="translate(${warm ? 20 : 0} 0)"><rect width="18" height="19" rx="5" fill="${HOT_RING_COLOR}" stroke="white" stroke-width="1.3"/>${hotFlame}</g>`;
+  return next.replace("</svg>", `${flame}</svg>`);
+}
+
+/** Legacy divIcon pins. Same orange-red ring and a flame, including the compact dot. */
+export function withLegacyHotPin(html: string): string {
+  return `<div data-hot-lead="true" style="position:relative;box-shadow:0 0 0 3px ${HOT_RING_COLOR};border-radius:9999px;">${html}<span aria-hidden="true" style="position:absolute;top:-8px;left:-4px;font-size:12px;line-height:1;">🔥</span></div>`;
+}
+
 export function fieldPinArtwork(
   lead: Lead,
   disposition: Disposition | undefined,
   zoom: number,
   selected = false,
+  hot = false,
 ) {
   const style = fieldPinStyle(lead, disposition);
   const tier = fieldPinZoomTier(zoom);
   // Tap targets stay 44px in LeadMap; these are visual dimensions only.
-  const compact = zoom < (style.kind === 'fresh' ? 19 : 17);
-  const size = (style.kind === 'fresh' ? [6, 7, 7, 13.5, 21, 30] : [12, 14, 14, 44, 48, 60])[tier] + (selected && compact ? 6 : 0);
+  // An unworked hot pin uses the worked size so it stays findable.
+  const fresh = style.kind === "fresh" && !hot;
+  const compact = zoom < (fresh ? 19 : 17);
+  const size = (fresh ? [6, 7, 7, 13.5, 21, 30] : [12, 14, 14, 44, 48, 60])[tier] + (selected && compact ? 6 : 0);
   const warm = isSolarWarmLead(lead);
   const key = [
     size,
@@ -120,6 +149,7 @@ export function fieldPinArtwork(
     style.outcome?.color,
     selected,
     warm,
+    hot,
   ].join(":");
   let url = cache.get(key);
   if (!url) {
@@ -131,11 +161,12 @@ export function fieldPinArtwork(
       // Keep the main disposition glyph and the opposite-side GHL outcome badge.
       svg = svg.replace('</svg>', `<g data-warm-lead="true"><rect x="0" y="0" width="18" height="19" rx="5" fill="#587E98" stroke="white" stroke-width="1.3"/><g transform="translate(3.5 3) scale(.053)">${signalR}</g></g></svg>`);
     }
+    if (hot) svg = decorateHotSvg(svg, small, warm);
     url = "data:image/svg+xml," + encodeURIComponent(svg);
     if (cache.size > 256) cache.clear();
     cache.set(key, url);
   }
-  const label = `${style.label}${warm ? ' · Raydar solar-rated warm lead' : ''}${style.outcome ? ` · GHL ${style.outcome.label}` : ""}${lead.solarCategory ? ` · ${lead.solarCategory} roof` : ""}`;
+  const label = `${hot ? "Hot lead · " : ""}${style.label}${warm ? ' · Raydar solar-rated warm lead' : ''}${style.outcome ? ` · GHL ${style.outcome.label}` : ""}${lead.solarCategory ? ` · ${lead.solarCategory} roof` : ""}`;
   const height = compact ? size : Math.round((size * 56) / 48);
   return { url, size, height, anchorY: compact ? height / 2 : height * 53 / 56, label, style };
 }

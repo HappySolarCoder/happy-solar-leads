@@ -170,7 +170,11 @@ export type FieldMutation = {
    * queued before this build; those still sort by createdAt. Never sent.
    */
   queueSeq?: number;
-  kind: "knock" | "notes" | "handoff" | "contact";
+  kind: "knock" | "notes" | "handoff" | "contact" | "claim";
+  /** Hot-lead route only. Absent on a leads draft, which stays byte-for-byte. */
+  collection?: "hotLeads";
+  /** Hot-lead claim route only. Never sent on a knock or notes body. */
+  claimAction?: "claim" | "release";
   baseStatus: string;
   baseNotes?: string;
   /**
@@ -226,7 +230,7 @@ export type PendingMutation = FieldMutation & {
   parkedReason?: ParkedReason;
   lastError?: string;
   /** Set when /api/field/dispo is not deployed. The draft stays queued for a slow retry. */
-  routeHold?: "field-dispo";
+  routeHold?: "field-dispo" | "hot-leads";
 };
 export type FieldEvent = {
   id: string;

@@ -10,6 +10,7 @@ import { deliberateNotesClear, NOTES_MAX_CHARS, NOTES_TOO_LONG_MESSAGE, notesTex
 import { clearAfterConflict, NOTES_CLEAR_KEPT_NOTICE, planNotesWrite, sameNotes } from './notesRebase';
 import { SYNC_REASON } from './syncReasons';
 import { gpsFlagOf, type GpsFlag } from '@/app/utils/gpsRule';
+import { isHotLeadDraft } from '@/app/hotLeads/save';
 
 /** The history entry stores the true verdict. Top-level out_of_area may be mapped to too_far. */
 export function historyGpsFlag(patch: Partial<Lead> | undefined): GpsFlag | undefined {
@@ -142,6 +143,9 @@ async function rememberNotesPlan(draft: PendingMutation, io?: DirectCommitIo): P
 }
 
 export async function commitDirectMutation(m: PendingMutation, user: User, io?: DirectCommitIo) {
+  if (isHotLeadDraft(m)) {
+    throw Object.assign(Error('Hot leads are saved through the disposition route.'), { status: 400, code: 'hot-lead-direct' });
+  }
   const database = io?.db ?? db;
   const session = io?.auth ?? auth;
   const docOf = io?.doc ?? doc;

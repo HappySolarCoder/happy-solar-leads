@@ -11,6 +11,7 @@ import { deliberateNotesClear, NOTES_CLEAR_UNAVAILABLE_MESSAGE, NOTES_MAX_CHARS,
 import { recordSyncEvent, reportInBackground, reportParked } from "./syncDiagnostics";
 import { ACTION_AT_FUTURE_MS, ACTION_AT_SERVER_LAG_MS, FIELD_DISPO_UNAVAILABLE, NOTES_ACTION_AT_RETRY_MESSAGE, PHONE_CLOCK_NOTICE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
+import { HOT_CLAIM_PATH, HOT_LEAD_OLD_SERVER_NOTICE, HOT_LEAD_OWNED_MESSAGE, hotClaimBody, isHotLeadDraft } from "@/app/hotLeads/save";
 
 export { rebaseNotes } from "./notesRebase";
 
@@ -137,7 +138,7 @@ export function splitCombinedDraft(
 
 export function releaseFieldDispoHolds(drafts: PendingMutation[]): PendingMutation[] {
   return drafts.map((m) =>
-    m.routeHold === "field-dispo" && m.syncState === "queued"
+    (m.routeHold === "field-dispo" || m.routeHold === "hot-leads") && m.syncState === "queued"
       ? { ...m, nextAttemptAt: undefined }
       : m,
   );
@@ -168,6 +169,8 @@ export type FieldDispoBody = {
   goBack?: { scheduledDate: string; scheduledTime?: string; notes?: string };
   objection?: { type: string; notes?: string } | null;
   homeownerId?: string;
+  /** Present only for a hot lead. Absent, the body is a leads write. */
+  collection?: "hotLeads";
 };
 
 function isoString(value: unknown): string | undefined {
@@ -210,6 +213,11 @@ function nestedGoBack(source: Record<string, unknown>): FieldDispoBody["goBack"]
   return goBack;
 }
 
+function asDispoBody(m: PendingMutation, body: FieldDispoBody): FieldDispoBody {
+  if (m.collection !== "hotLeads") return body;
+  return { ...body, collection: "hotLeads" };
+}
+
 function nestedObjection(source: Record<string, unknown>): FieldDispoBody["objection"] | undefined {
   if (typeof source.objectionType !== "string" || !source.objectionType) return undefined;
   const objection: NonNullable<FieldDispoBody["objection"]> = { type: source.objectionType };
@@ -240,22 +248,22 @@ export function fieldDispoBody(
     const baseNotes = typeof m.baseNotes === "string" ? m.baseNotes : null;
     if (!notes.trim()) {
       if (!deliberateNotesClear(m)) throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
-      return notesRouteBody({
+      return asDispoBody(m, notesRouteBody({
         leadId,
         draftId: m.id,
         actionAt,
         notes: "",
         baseNotes,
         clearNotes: true,
-      });
+      }));
     }
-    return notesRouteBody({
+    return asDispoBody(m, notesRouteBody({
       leadId,
       draftId: m.id,
       actionAt,
       notes,
       baseNotes,
-    });
+    }));
   }
   if (m.kind !== "knock") throw invalid("Contact edits are not sent to the disposition route.");
   const source = sourcePatch as Record<string, unknown>;
@@ -287,7 +295,7 @@ export function fieldDispoBody(
   }
   if (m.direct?.gpsPointSource === "homeowner_corrected" && m.direct.homeownerId && !m.direct.homeownerId.includes("/"))
     body.homeownerId = m.direct.homeownerId;
-  return body;
+  return asDispoBody(m, body);
 }
 
 export function patchCarriesGpsFlags(m: PendingMutation): boolean {
@@ -654,6 +662,11 @@ export async function postFieldDispo(
     const data = await readJson(response);
     const field = typeof data?.field === "string" ? data.field : "";
     const reason = typeof data?.reasonCode === "string" ? data.reasonCode : "";
+    if (draft.collection === "hotLeads") {
+      const notesField = field === "actionAt" || field === "notes" || field === "baseNotes" || field === "clearNotes"
+        || reason === SYNC_REASON.notesEmpty || reason === SYNC_REASON.notesClearMismatch;
+      if (!notesField) fail(routeError(HOT_LEAD_OLD_SERVER_NOTICE, 400, SYNC_REASON.invalidPayload));
+    }
     if (draft.kind === "notes" && field === "actionAt") {
       const message = stamped.stale ? NOTES_ACTION_AT_RETRY_MESSAGE : PHONE_CLOCK_NOTICE;
       fail(routeError(message, 400, SYNC_REASON.notesRejected));
@@ -936,6 +949,95 @@ function writesContactDirect(m: PendingMutation): boolean {
   return hasContactFields(m);
 }
 
+function hotHold(status: number): Error {
+  return Object.assign(Error("Hot lead route is not ready. This save stays queued."), {
+    status,
+    code: "hot-leads-hold",
+  });
+}
+
+function ownedHotMessage(name: unknown): string {
+  return typeof name === "string" && name.trim()
+    ? `${HOT_LEAD_OWNED_MESSAGE} (${name.trim()})`
+    : HOT_LEAD_OWNED_MESSAGE;
+}
+
+/** Claim, knock and notes for a hot lead. Never a direct leads, contact or photo write. */
+async function deliverHotLead(
+  m: PendingMutation,
+  user: User,
+  deps: FieldDispoDeps,
+): Promise<{ replayed: boolean; lead?: Lead; notice?: string }> {
+  if (m.kind === "claim") return postHotClaim(m, user, deps);
+  if (m.kind !== "knock" && m.kind !== "notes") {
+    throw routeError(HOT_LEAD_OLD_SERVER_NOTICE, 400, SYNC_REASON.invalidPayload);
+  }
+  try {
+    return await postFieldDispo(m, user, deps);
+  } catch (error) {
+    const failure = error as Error & { status?: number; code?: string };
+    const status = failure.status || 0;
+    if (failure.code === "hot-leads-hold") throw failure;
+    if (status === 404 || status === 405 || status >= 500 || failure.code === FIELD_DISPO_UNAVAILABLE) {
+      throw hotHold(status || 404);
+    }
+    throw failure;
+  }
+}
+
+async function postHotClaim(
+  m: PendingMutation,
+  user: User,
+  deps: FieldDispoDeps,
+): Promise<{ replayed: boolean }> {
+  const post = deps.post ?? apiFetch;
+  const getToken = deps.getToken ?? (async (forceRefresh = false) => {
+    const current = auth?.currentUser;
+    if (!current) return "";
+    return current.getIdToken(forceRefresh);
+  });
+  const body = hotClaimBody(m);
+  if (utf8Bytes(JSON.stringify(body)) > 2048) {
+    throw routeError(HOT_LEAD_OLD_SERVER_NOTICE, 400, SYNC_REASON.invalidPayload);
+  }
+  let token = await getToken(false);
+  if (!token) throw Object.assign(Error("Sign in again to sync your work."), { status: 401 });
+  const send = (bearer: string) => post(HOT_CLAIM_PATH, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let response = await send(token);
+  if (response.status === 401) {
+    token = await getToken(true);
+    if (!token) throw Object.assign(Error("Sign in again to sync your work."), { status: 401 });
+    response = await send(token);
+  }
+  if (response.status === 200 || response.status === 201) {
+    const data = await readJson(response);
+    return { replayed: data?.duplicate === true };
+  }
+  if (response.status === 404 || response.status === 405 || response.status >= 500) throw hotHold(response.status);
+  if (response.status === 400) throw routeError(HOT_LEAD_OLD_SERVER_NOTICE, 400, SYNC_REASON.invalidPayload);
+  const data = await readJson(response);
+  if (response.status === 409 || data?.reasonCode === SYNC_REASON.ownedByOther) {
+    throw routeError(ownedHotMessage((data as { claimedByName?: unknown } | null)?.claimedByName), response.status || 409, SYNC_REASON.ownedByOther);
+  }
+  if (response.status === 403) {
+    const reason = knownReason(data?.reasonCode) || SYNC_REASON.other;
+    throw routeError(
+      reason === SYNC_REASON.ownedByOther ? ownedHotMessage((data as { claimedByName?: unknown } | null)?.claimedByName) : "The hot lead route denied this save.",
+      403,
+      reason,
+    );
+  }
+  if (response.status === 401) throw Object.assign(Error("Sign in again to sync your work."), { status: 401 });
+  if (response.status === 429) {
+    throw Object.assign(Error("Hot lead route asked us to wait."), { status: 429 });
+  }
+  throw hotHold(response.status || 503);
+}
+
 /** Firestore first for pins the client can write. Notes keep the baseNotes check there. Handoffs never use this route. */
 export async function deliverFieldDispo(
   m: PendingMutation,
@@ -951,6 +1053,7 @@ export async function deliverFieldDispo(
   const preparedNotes = prepared.kind === "notes" ? notesTextOf(prepared) : undefined;
   if (typeof preparedNotes === "string" && !preparedNotes.trim() && !deliberateNotesClear(prepared))
     throw routeError("Notes were rejected.", 400, SYNC_REASON.notesRejected);
+  if (isHotLeadDraft(prepared)) return deliverHotLead(prepared, user, deps);
   if (prepared.kind === "handoff") return commit(prepared, user);
   if (writesContactDirect(prepared)) return commitContactWrite(prepared, user, commit);
   if (prepared.kind === "notes") return postFieldDispo(prepared, user, deps);

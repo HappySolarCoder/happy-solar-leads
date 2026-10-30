@@ -36,6 +36,10 @@ import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/u
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import { useViewportLeads } from "@/app/hooks/useViewportLeads";
+import { useHotLeads } from "@/app/hooks/useHotLeads";
+import { hotLeadFilterVisible, HOT_LEAD_LEGEND, type HotPinFilter } from "@/app/hotLeads/filter";
+import { hotLeadParkNotice } from "@/app/hotLeads/save";
+import { HOT_RING_COLOR } from "@/app/utils/fieldPin";
 import { inPinScope } from "../_lib/pinScope";
 import type { View } from "@/app/homeowners/model";
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
@@ -95,6 +99,7 @@ export default function KnockingPage() {
   const [areaNotice, setAreaNotice] = useState('');
   const deviceNow = useDeviceNow();
   const [mapZoom, setMapZoom] = useState(15);
+  const [hotFilter, setHotFilter] = useState<HotPinFilter>('all');
   const [knockPeriod, setKnockPeriod] = useState<KnockPeriod>('all');
   const [dispositionFilter, setDispositionFilter] = useState<string[]>([]);
   const [setterFilter, setSetterFilter] = useState<string>('all');
@@ -135,6 +140,8 @@ export default function KnockingPage() {
   const [viewport, setViewport] = useState<View | null>(null);
   const pinPolygons = useMemo(() => currentUser && ['admin','manager'].includes(currentUser.role) ? undefined : overlayTerritories.filter(t => t.userId === currentUser?.id).map(t => t.polygon), [currentUser?.id, currentUser?.role, overlayTerritories]);
   const viewportPins = useViewportLeads(currentUser, viewport, pinPolygons, areasReady);
+  const hotLeads = useHotLeads(currentUser, viewport);
+  const showHotFilter = hotLeadFilterVisible(currentUser);
   const mapSource = useMemo(() => {
     return mergeLeadSnapshots(viewportPins.leads, leads).filter(l => inPinScope(l.lat,l.lng,pinPolygons));
   }, [viewportPins.leads,leads,pinPolygons]);
@@ -336,7 +343,13 @@ export default function KnockingPage() {
 
   // Resolve the last visit before filters, so an older matching disposition
   // cannot resurrect a second pin or hide a newer result at the same house.
-  const roleFilteredLeads = useMemo(() => groupHouseLeads(mapSource).pins.map(l => latestKnockDisplay(l,dispositions)), [mapSource,dispositions]);
+  const houseGroups = useMemo(() => groupHouseLeads(mapSource), [mapSource]);
+  const roleFilteredLeads = useMemo(() => houseGroups.pins.map(l => latestKnockDisplay(l,dispositions)), [houseGroups,dispositions]);
+  const hotHousePins = useMemo(() => {
+    const index = new Map<string, string>();
+    for (const [id, group] of houseGroups.byLead) if (group[0]) index.set(id, group[0].id);
+    return index;
+  }, [houseGroups]);
 
   // Generate route when button is clicked
   const handleGenerateRoute = useCallback(() => {
@@ -709,7 +722,17 @@ export default function KnockingPage() {
               <button aria-pressed={!dispositionFilter.length} onClick={()=>setDispositionFilter([])}>All dispositions</button>
               {dispositions.map(d=><button key={d.id} aria-pressed={dispositionFilter.includes(d.id)} onClick={()=>setDispositionFilter(prev=>prev.includes(d.id)?prev.filter(id=>id!==d.id):[...prev,d.id])}>{d.name}</button>)}
             </div></fieldset>
-            <button className="w-full mt-3 py-3 text-sm text-[#476E88]" onClick={() => { setKnockPeriod('all'); setDispositionFilter([]); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); }}>Reset all filters</button>
+            {showHotFilter && <fieldset className="rm-map-filter-group"><legend>Hot leads</legend><div className="rm-filter-options">
+              <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 14, height: 14, borderRadius: 99, boxShadow: `0 0 0 3px ${HOT_RING_COLOR}` }} />
+                <span>🔥</span>
+              </span>
+              <span>{HOT_LEAD_LEGEND}</span>
+              <button type="button" aria-pressed={hotFilter === 'all'} onClick={() => setHotFilter('all')}>All pins</button>
+              <button type="button" aria-pressed={hotFilter === 'only'} onClick={() => setHotFilter('only')}>Hot leads only</button>
+              <button type="button" aria-pressed={hotFilter === 'hide'} onClick={() => setHotFilter('hide')}>Hide hot leads</button>
+            </div></fieldset>}
+            <button className="w-full mt-3 py-3 text-sm text-[#476E88]" onClick={() => { setKnockPeriod('all'); setDispositionFilter([]); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); setHotFilter('all'); }}>Reset all filters</button>
             <details className="rm-pin-key"><summary>Map display</summary>
               <div className="rm-map-summary"><button aria-pressed={showHomeowners} onClick={()=>setHomePreference(showHomeowners?'off':'on')}>Homeowner pins{showHomeowners?' ✓':''}</button><button aria-pressed={showHeat} onClick={()=>setShowHeat(!showHeat)}>Heat map{showHeat?' ✓':''}</button></div>
               <p>Date and disposition filters hide unworked homeowner pins.</p>
@@ -853,6 +876,9 @@ export default function KnockingPage() {
             onHomeownerClick={handleHomeownerSelect}
             dispositionOptions={dispositions}
             currentUser={currentUser}
+            hotLeads={hotLeads.pins}
+            hotFilter={showHotFilter ? hotFilter : 'all'}
+            hotHousePins={hotHousePins}
             users={coloredUsers}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
@@ -880,6 +906,7 @@ export default function KnockingPage() {
           {currentUser && !isRefreshing && !dataUnavailable && !showLeadDetail && <ReturnVisitReminder key={`reminder:${currentUser.id}`} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
           {viewportPins.loading && <div className="rm-map-loading" role="status">Loading nearby pins…</div>}
           {viewportPins.error && <div className="rm-map-loading" role="status">{viewportPins.error} <button onClick={viewportPins.retry}>Retry pins</button></div>}
+          {hotLeadParkNotice(field.drafts) && <div className="rm-map-loading" role="status">{hotLeadParkNotice(field.drafts)}</div>}
           {viewportPins.partial && !viewportPins.loading && !viewportPins.error && <div className="rm-map-loading" role="status">More knock records are available here. <button onClick={viewportPins.loadMore}>Load more pins</button> or zoom closer.</div>}
           <button type="button" className={`rm-map-locate${gpsError ? ' is-warning' : ''}`} aria-label="Center map on my location"
             title={gpsError ? 'Location unavailable — enable location access' : 'Center map on my location'}
