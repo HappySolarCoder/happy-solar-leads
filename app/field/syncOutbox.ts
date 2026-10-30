@@ -360,6 +360,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           )
         ) {
           // The home's create is still queued. Parking this 410 would drop the note. Retry on the next flush.
+          await recordSyncEvent(eventFor({ ...current, lastError: error.message }, "retry"));
           continue;
         }
         if (outcome.kind === "denial") {

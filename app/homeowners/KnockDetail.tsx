@@ -7,7 +7,7 @@ import type { HomeownerVisit } from './visit';
 
 export default function HomeownerKnockDetail({ visit, currentUser, dispositions, loading, onClose, onUpdate }: {
   visit: HomeownerVisit; currentUser: User; dispositions: Disposition[]; loading: boolean;
-  onClose: () => void; onUpdate: (updatedLead?: Lead) => void;
+  onClose: (message?: string) => void; onUpdate: (updatedLead?: Lead) => void;
 }) {
   const [lead, setLead] = useState(visit.lead);
   return <LeadDetail lead={lead} homeowner={lead.homeowner} currentUser={currentUser}

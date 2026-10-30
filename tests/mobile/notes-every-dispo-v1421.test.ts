@@ -9,7 +9,8 @@ import { knockPatch } from "../../app/field/knockPatch";
 import { syncOutbox } from "../../app/field/syncOutbox";
 import type { PendingMutation } from "../../app/field/types";
 import type { Lead, User } from "../../app/types";
-import { decideDirtyNotes, NOTES_SAVED_MESSAGE, NOTES_SAVED_ON_PHONE_MESSAGE } from "../../app/field/dirtyNotes";
+import { decideDirtyNotes, NOTES_SAVED_MESSAGE, NOTES_SAVED_ON_PHONE_MESSAGE, NOTES_SAVED_TOAST_MS, planCloseWithNotes, planUnmountNotesFlush } from "../../app/field/dirtyNotes";
+import { dismissMobileOverlay } from "../../app/utils/dismissMobileOverlay";
 import { acceptDisposition, resetQueueSeqForTests } from "../../app/field/draftQueue";
 import { directPatch, rejectCombinedKnockAndNotes } from "../../app/field/directWrites";
 import { enqueueDirectSave } from "../../app/field/enqueueDirectSave";
@@ -390,4 +391,163 @@ test("a GPS-held knock on a lead that already exists does not hold that lead's n
     active: () => ++loops < 20,
   });
   assert.deepEqual(sent, ["n1"]);
+});
+
+const knockingPage = readFileSync(path.join(root, "app/mobile/knocking/page.tsx"), "utf8");
+
+async function draftsForClose(input: { typed: string; saved?: string; summaryOnly?: boolean; flushed?: string | null }) {
+  resetQueueSeqForTests();
+  const lead = door(input.saved ?? "");
+  const plan = planCloseWithNotes({
+    summaryOnly: input.summaryOnly,
+    currentNotes: lead.notes || "",
+    typedNotes: input.typed,
+    leadId: lead.id,
+    flushedNotes: input.flushed ?? null,
+  });
+  const drafts: PendingMutation[] = [];
+  if (plan.action === "close" && plan.queued) {
+    await enqueueDirectSave({
+      lead,
+      patch: { notes: plan.notes },
+      actor,
+      createdAt: at.toISOString(),
+      ids: { contact: "c-close", notes: "n-close" },
+      enqueue: async (draft) => { drafts.push(acceptDisposition(drafts, draft)); },
+    });
+  }
+  return { plan, drafts };
+}
+
+test("X close with dirty notes queues one notes draft and closes", async () => {
+  assert.equal((detail.match(/data-raydar-back-close onClick=\{closeWithNotes\}/g) || []).length, 2);
+  assert.match(body("closeWithNotes"), /planCloseWithNotes\(/);
+  assert.match(body("closeWithNotes"), /saveDirtyNotes\(at\)/);
+  const { plan, drafts } = await draftsForClose({ typed: "gate code 1234" });
+  assert.equal(plan.action, "close");
+  assert.equal(plan.queued, true);
+  assert.equal(drafts.filter((row) => row.kind === "notes").length, 1);
+  assert.equal(drafts[0]?.notes, "gate code 1234");
+  assert.equal(drafts[0]?.userId, actor.id);
+});
+
+test("Android Back clicks the same close button and queues one notes draft", async () => {
+  const overlay = readFileSync(path.join(root, "app/utils/dismissMobileOverlay.ts"), "utf8");
+  assert.match(overlay, /\[data-raydar-back-close\]/);
+  const queued: string[] = [];
+  const button = {
+    disabled: false,
+    getClientRects: () => [{ width: 1, height: 1 }],
+    click: () => {
+      const plan = planCloseWithNotes({
+        summaryOnly: false,
+        currentNotes: "",
+        typedNotes: "gate code 1234",
+        leadId: "l1",
+        flushedNotes: null,
+      });
+      if (plan.action === "close" && plan.queued) queued.push(plan.notes);
+    },
+  };
+  const rootDoc = {
+    querySelectorAll(selector: string) {
+      if (selector === "dialog[open]") return [];
+      return [button];
+    },
+  };
+  assert.equal(dismissMobileOverlay(rootDoc as unknown as Document), true);
+  assert.deepEqual(queued, ["gate code 1234"]);
+});
+
+test("a clean close queues no notes draft", async () => {
+  const { plan, drafts } = await draftsForClose({ typed: "old", saved: "old" });
+  assert.equal(plan.action, "close");
+  assert.equal(plan.queued, false);
+  assert.equal(drafts.length, 0);
+});
+
+test("whitespace or too-long notes keep the panel open and queue no draft", () => {
+  for (const typed of ["   ", "x".repeat(NOTES_MAX_CHARS + 1)]) {
+    const plan = planCloseWithNotes({
+      summaryOnly: false,
+      currentNotes: "old",
+      typedNotes: typed,
+      leadId: "l1",
+      flushedNotes: null,
+    });
+    assert.equal(plan.action, "stay");
+    assert.ok(plan.action === "stay" && (plan.notice === NOTES_BLANK_MESSAGE || plan.notice === NOTES_TOO_LONG_MESSAGE));
+  }
+  assert.match(body("closeWithNotes"), /if \(plan\.action === 'stay'\)/);
+  assert.match(body("closeWithNotes"), /setFieldMessage\(plan\.notice\)/);
+  assert.doesNotMatch(body("closeWithNotes").slice(0, body("closeWithNotes").indexOf("if (plan.queued)")), /onClose\(/);
+});
+
+test("unmount with dirty notes queues one draft, and a close then unmount does not queue a second", async () => {
+  const lead = door("");
+  const dirty = {
+    summaryOnly: false,
+    currentNotes: "",
+    typedNotes: "gate code 1234",
+    leadId: lead.id,
+    flushedNotes: null as string | null,
+  };
+  const first = planUnmountNotesFlush(dirty);
+  assert.ok(first);
+  const drafts: PendingMutation[] = [];
+  await enqueueDirectSave({
+    lead,
+    patch: { notes: first?.notes || "" },
+    actor,
+    createdAt: at.toISOString(),
+    ids: { contact: "c-unmount", notes: "n-unmount" },
+    enqueue: async (draft) => { drafts.push(acceptDisposition([], draft)); },
+  });
+  assert.equal(drafts.filter((row) => row.kind === "notes").length, 1);
+  assert.equal(planUnmountNotesFlush({ ...dirty, flushedNotes: first?.flushedNotes || null }), null);
+
+  const closed = planCloseWithNotes(dirty);
+  assert.equal(closed.action, "close");
+  assert.equal(closed.queued, true);
+  assert.equal(planUnmountNotesFlush({ ...dirty, flushedNotes: closed.flushedNotes }), null);
+  const cleanup = detail.slice(detail.indexOf("planUnmountNotesFlush("), detail.indexOf("flushUnsentNotesRef.current(plan.notes, at)"));
+  assert.match(detail, /enqueueDirect\(currentLead, \{ notes: text \}, undefined, false, point, at\)/);
+  assert.doesNotMatch(cleanup, /await |homeownerKnockGps/);
+});
+
+test("a summary pin closes without a notes draft", async () => {
+  const { plan, drafts } = await draftsForClose({ typed: "gate code 1234", summaryOnly: true });
+  assert.equal(plan.action, "close");
+  assert.equal(plan.queued, false);
+  assert.equal(drafts.length, 0);
+  assert.equal(planUnmountNotesFlush({
+    summaryOnly: true,
+    currentNotes: "",
+    typedNotes: "gate code 1234",
+    leadId: "l1",
+    flushedNotes: null,
+  }), null);
+});
+
+test("the map keeps the notes confirmation after the panel closes", () => {
+  assert.equal(NOTES_SAVED_TOAST_MS, 4_000);
+  assert.match(knockingPage, /const closeLeadDetail = \(message\?: string\) => \{/);
+  assert.match(knockingPage, /if \(message\) setNotesSavedNotice\(message\)/);
+  assert.match(knockingPage, /setTimeout\(\(\) => setNotesSavedNotice\(''\), NOTES_SAVED_TOAST_MS\)/);
+  assert.match(knockingPage, /\{notesSavedNotice \? <MobileNotice>\{notesSavedNotice\}<\/MobileNotice> : null\}/);
+  const noticeAt = knockingPage.indexOf("{notesSavedNotice ? <MobileNotice>");
+  const panelAt = knockingPage.indexOf("{selectedLead && showLeadDetail && (");
+  assert.ok(noticeAt >= 0 && panelAt > noticeAt, "the banner stays mounted after the lead panel unmounts");
+  assert.match(detail, /onClose\(NOTES_SAVED_ON_PHONE_MESSAGE\)/);
+  assert.equal(NOTES_SAVED_ON_PHONE_MESSAGE, "Notes saved on this phone. They'll sync when you're online.");
+});
+
+test("unclaim queues notes and syncs them before unclaimLead, and a denial still unclaims", () => {
+  const src = body("handleStatusChange");
+  const save = src.indexOf("if (newStatus === 'unclaimed') notesHold = await saveDirtyNotes(knockedAt)");
+  const sync = src.indexOf("field?.ensureLeadSynced(lead.id)");
+  const unclaim = src.indexOf("await unclaimLead(lead.id)");
+  const holdReturn = src.indexOf("if (notesHold) return");
+  assert.ok(save >= 0 && save < sync && sync < unclaim && unclaim < holdReturn);
+  assert.doesNotMatch(src.slice(save, unclaim), /if \(notesHold\) return/);
 });
