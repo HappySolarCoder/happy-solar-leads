@@ -449,6 +449,19 @@ describe('hot lead dispo', () => {
     assert.equal(retiredDoc.hotStatus, 'worked');
     assert.equal(retiredDoc.status, 'not-home');
     assert.equal((retiredDoc.dispositionHistory as unknown[]).length, 1);
+
+    const appointed = harness({
+      dispositions: [{ id: 'field-42', name: 'Appointment Set' }],
+      lead: { lat: 43.1, lng: -77.6, hotStatus: 'retired', dispositionHistory: [] },
+    });
+    const set = await appointed.run(knock({
+      draftId: 'draft-retired-appt',
+      status: 'field-42',
+      disposition: 'Appointment Set',
+    }));
+    assert.equal(set.status, 200, JSON.stringify(set.body));
+    assert.equal(appointed.db.docs.get('hotLeads/ghl_opp1')?.hotStatus, 'converted');
+    assert.equal(appointed.db.docs.get('hotLeads/ghl_opp1')?.status, 'field-42');
   });
 
   it('hides a testData hot lead from a real account', async () => {

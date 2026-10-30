@@ -9,6 +9,7 @@
  * with no address are still skipped.
  */
 import { createHash } from 'node:crypto';
+import { chmod, writeFile } from 'node:fs/promises';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { createRequire } from 'node:module';
 
@@ -40,8 +41,15 @@ export const CENSUS_BENCHMARK = 'Public_AR_Current';
 export const CENSUS_MIN_INTERVAL_MS = 500;
 export const CENSUS_BATCH_SIZE = 100;
 export const HOMEOWNER_RADIUS_M = 50;
-export const HOMEOWNER_QUERY_LIMIT = 8;
+/** Page size inside one geohash cell. 8 was truncating dense blocks. */
+export const HOMEOWNER_QUERY_LIMIT = 40;
 export const HOMEOWNER_QUERY_CAP = 4;
+/** Hard stop per geohash cell after paging. */
+export const HOMEOWNER_BOUND_CAP = 200;
+/** About ±55 m. Leads have no geohash, so this is a latitude band, not a geohash. */
+export const LEAD_LAT_DELTA = 0.0005;
+export const LEAD_PAGE = 100;
+export const LEAD_HOUSE_CAP = 500;
 export const LINK_DISTANCE_M = 75;
 export const HOT_LIST_PAGE = 200;
 export const HOT_LIST_PAGES = 20;
@@ -403,9 +411,47 @@ export function homeownerReadPlan(lat, lng) {
   };
 }
 
-/** Same bounded geohash fan-out as a homeowner lookup. A lat band of limit 20 crosses every longitude. */
+/**
+ * Narrow latitude band, about ±0.0005° (±55 m). Longitude is filtered in memory
+ * over the same ground distance. Callers page with startAfter until the band
+ * ends or LEAD_HOUSE_CAP docs have been read.
+ */
 export function leadReadPlan(lat, lng) {
-  return homeownerReadPlan(lat, lng);
+  const cos = Math.cos((Number(lat) * Math.PI) / 180);
+  const lngDelta = LEAD_LAT_DELTA / Math.max(Math.abs(cos), 0.2);
+  return {
+    orderBy: 'lat',
+    start: lat - LEAD_LAT_DELTA,
+    end: lat + LEAD_LAT_DELTA,
+    west: lng - lngDelta,
+    east: lng + lngDelta,
+    pageSize: LEAD_PAGE,
+    cap: LEAD_HOUSE_CAP,
+  };
+}
+
+export async function collectLeadBand(pageFn, plan) {
+  const kept = [];
+  let scanned = 0;
+  let after = null;
+  let capped = false;
+  while (scanned < plan.cap) {
+    const limit = Math.min(plan.pageSize, plan.cap - scanned);
+    const page = await pageFn({ start: plan.start, end: plan.end, limit, after });
+    if (!Array.isArray(page) || page.length === 0) break;
+    scanned += page.length;
+    for (const doc of page) {
+      const longitude = doc?.data?.lng;
+      if (typeof longitude === 'number' && longitude >= plan.west && longitude <= plan.east) kept.push(doc);
+    }
+    if (page.length < limit) break;
+    const last = page[page.length - 1];
+    const nextLat = last?.data?.lat;
+    if (typeof nextLat !== 'number' || !last?.id) break;
+    after = { lat: nextLat, id: String(last.id) };
+    if (scanned >= plan.cap) capped = true;
+  }
+  return { docs: kept, capped, scanned };
 }
 
 export function toTimestamp(value) {
@@ -584,14 +630,13 @@ export async function linkHouse(house, db) {
     house.homeownerId = ownerId;
   }
   const leadPlan = leadReadPlan(house.lat, house.lng);
-  if (
-    !Array.isArray(leadPlan.queries)
-    || leadPlan.queries.length > HOMEOWNER_QUERY_CAP
-    || leadPlan.queries.some((query) => query.orderBy !== 'geohash' || query.limit > HOMEOWNER_QUERY_LIMIT)
-  ) throw new Error('lead_read_unbounded');
-  const leads = await db.leadsNear(leadPlan);
-  house.linkedLeadId = pickLink(house, leads);
-  return { homeownerReads, leadReads: 1 };
+  if (leadPlan.orderBy !== 'lat' || leadPlan.cap > LEAD_HOUSE_CAP || leadPlan.pageSize > LEAD_PAGE) {
+    throw new Error('lead_read_unbounded');
+  }
+  if (typeof db.leadPage !== 'function') throw new Error('lead_read_unbounded');
+  const band = await collectLeadBand((page) => db.leadPage(page), leadPlan);
+  house.linkedLeadId = pickLink(house, band.docs);
+  return { homeownerReads, leadCapped: band.capped, leadPages: Math.ceil(band.scanned / LEAD_PAGE) || (band.scanned ? 1 : 0) };
 }
 
 export function emptyReport(extra = {}) {
@@ -608,6 +653,7 @@ export function emptyReport(extra = {}) {
     geocodeUnmatched: 0,
     homeownerLinks: 0,
     existingLeadLinks: 0,
+    leadCapHits: 0,
     withinSheetMerges: 0,
     writes: 0,
     dryRun: true,
@@ -641,6 +687,7 @@ export async function runImport(input) {
   let geocodeUnmatched = 0;
   let homeownerLinks = 0;
   let existingLeadLinks = 0;
+  let leadCapHits = 0;
   let created = 0;
   let updated = 0;
   let unchanged = 0;
@@ -663,7 +710,7 @@ export async function runImport(input) {
       const links = await linkHouse(house, input.db);
       if (house.homeownerId) homeownerLinks += 1;
       if (house.linkedLeadId) existingLeadLinks += 1;
-      if (links.leadReads !== 1) throw new Error('lead_read');
+      if (links.leadCapped) leadCapHits += 1;
     }
     plannedIds.add(house.id);
     const existing = input.db ? await input.db.get(house.id) : null;
@@ -724,6 +771,7 @@ export async function runImport(input) {
     geocodeUnmatched,
     homeownerLinks,
     existingLeadLinks,
+    leadCapHits,
     withinSheetMerges: grouped.withinSheetMerges,
     dncImported: classified.dncImported,
     writes,
@@ -976,6 +1024,12 @@ export function parseXlsx(buffer) {
     });
     return out;
   });
+}
+
+/** Geocode cache and the review file are owner-read/write only. */
+export async function writeOwnerOnly(file, text) {
+  await writeFile(file, text, { encoding: 'utf8', mode: 0o600 });
+  await chmod(file, 0o600);
 }
 
 export function sidecarPaths(inputPath) {
