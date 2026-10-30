@@ -281,6 +281,23 @@ describe('hot lead dispo', () => {
     assert.equal(mismatch.body.field, 'collection');
     assert.equal(test.db.docs.get('hotLeads/ghl_opp1')?.status, 'not-home');
 
+    const otherLead = await test.run(knock({ leadId: 'ghl_other' }));
+    assert.equal(otherLead.status, 409, JSON.stringify(otherLead.body));
+    assert.equal(otherLead.body.field, 'leadId');
+    assert.equal(test.db.patches.length, updates);
+    const otherKind = await test.run({
+      draftId: 'draft-1',
+      leadId: 'ghl_opp1',
+      kind: 'notes',
+      actionAt: ACTION,
+      collection: 'hotLeads',
+      notes: 'a note',
+      baseNotes: '',
+    });
+    assert.equal(otherKind.status, 409, JSON.stringify(otherKind.body));
+    assert.equal(otherKind.body.field, 'kind');
+    assert.equal(test.db.patches.length, updates);
+
     const unknown = harness();
     const bad = await unknown.run(knock({ collection: 'pins' }));
     assert.equal(bad.status, 400);
@@ -370,7 +387,7 @@ describe('hot lead dispo', () => {
     assert.equal(gps.gpsUnverifiedReason, 'too_far');
     const flaggedDoc = far.db.docs.get('hotLeads/ghl_opp1') ?? {};
     assert.equal(flaggedDoc.gpsVerified, false);
-    assert.equal(flaggedDoc.hotStatus, 'worked');
+    assert.equal(flaggedDoc.hotStatus, 'converted');
     assert.equal(flaggedDoc.appointmentOutcome, 'sold');
     assert.equal(flaggedDoc.notes, 'keep me');
 
@@ -400,8 +417,38 @@ describe('hot lead dispo', () => {
       disposition: 'Not Home',
     }));
     assert.equal(away.status, 200, JSON.stringify(away.body));
-    assert.equal(legacy.db.docs.get('hotLeads/ghl_opp1')?.hotStatus, 'worked');
-    assert.equal(legacy.db.docs.get('hotLeads/ghl_opp1')?.status, 'not-home');
+    const awayDoc = legacy.db.docs.get('hotLeads/ghl_opp1') ?? {};
+    assert.equal(awayDoc.hotStatus, 'converted');
+    assert.equal(awayDoc.status, 'not-home');
+    assert.equal((awayDoc.dispositionHistory as unknown[]).length, 2);
+  });
+
+  it('keeps a converted hot lead converted and brings a retired one back to worked', async () => {
+    const converted = harness({
+      lead: {
+        lat: 43.1,
+        lng: -77.6,
+        hotStatus: 'converted',
+        status: 'sold',
+        dispositionHistory: [{ disposition: 'Sold', timestamp: { toMillis: () => NOW - 60_000 }, userId: 'uid-closer', userName: 'Jane Rep' }],
+      },
+    });
+    const later = await converted.run(knock({ draftId: 'draft-later', status: 'not-home', disposition: 'Not Home' }));
+    assert.equal(later.status, 200, JSON.stringify(later.body));
+    const convertedDoc = converted.db.docs.get('hotLeads/ghl_opp1') ?? {};
+    assert.equal(convertedDoc.hotStatus, 'converted');
+    assert.equal(convertedDoc.status, 'not-home');
+    assert.equal((convertedDoc.dispositionHistory as unknown[]).length, 2);
+
+    const retired = harness({
+      lead: { lat: 43.1, lng: -77.6, hotStatus: 'retired', dispositionHistory: [] },
+    });
+    const revived = await retired.run(knock({ draftId: 'draft-retired', status: 'not-home', disposition: 'Not Home' }));
+    assert.equal(revived.status, 200, JSON.stringify(revived.body));
+    const retiredDoc = retired.db.docs.get('hotLeads/ghl_opp1') ?? {};
+    assert.equal(retiredDoc.hotStatus, 'worked');
+    assert.equal(retiredDoc.status, 'not-home');
+    assert.equal((retiredDoc.dispositionHistory as unknown[]).length, 1);
   });
 
   it('hides a testData hot lead from a real account', async () => {

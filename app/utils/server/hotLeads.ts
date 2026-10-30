@@ -451,13 +451,16 @@ export async function handleHotLeadClaim(input: {
         const response = isPlain(data.response) ? data.response : null;
         if (!response) throw new Error('Claim receipt is unreadable');
         const storedCollection = data.collection == null ? 'leads' : data.collection;
-        if (storedCollection !== 'hotLeads') {
+        const conflict = storedCollection !== 'hotLeads'
+          ? 'collection'
+          : data.leadId !== hotLeadId
+            ? 'leadId'
+            : data.kind !== 'claim'
+              ? 'kind'
+              : null;
+        if (conflict) {
           console.log('[hot-leads] duplicate_mismatch 1');
-          return finish(409, { ok: false, error: 'conflict', reasonCode: 'invalid_payload', field: 'collection' });
-        }
-        if (data.leadId !== hotLeadId || data.kind !== 'claim') {
-          console.log('[hot-leads] duplicate_mismatch 1');
-          return finish(200, { ...response, duplicate: true });
+          return finish(409, { ok: false, error: 'conflict', reasonCode: 'invalid_payload', field: conflict });
         }
         return finish(200, { ...response, duplicate: true });
       }

@@ -1,16 +1,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 
 function filesUnder(dir: string): string[] {
+  if (!existsSync(dir)) return [];
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) out.push(...filesUnder(path));
-    else if (path.endsWith('.ts') || path.endsWith('.tsx')) out.push(path);
+    else if (/\.(ts|tsx|js|mjs)$/.test(path)) out.push(path);
   }
   return out;
 }
@@ -24,7 +25,7 @@ const ALLOWED = new Set([
 
 describe('hot lead isolation', () => {
   it('only the hot-lead server files and field dispo name the collection', () => {
-    const roots = [join(ROOT, 'app/api'), join(ROOT, 'app/utils/server')];
+    const roots = [join(ROOT, 'app/api'), join(ROOT, 'app/utils/server'), join(ROOT, 'functions')];
     const leaks: string[] = [];
     for (const root of roots) {
       for (const path of filesUnder(root)) {

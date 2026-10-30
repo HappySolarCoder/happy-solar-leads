@@ -210,5 +210,29 @@ describe('POST /api/hot-leads/claim', () => {
     assert.equal(result.status, 409);
     assert.equal(result.body.field, 'collection');
     assert.equal(test.db.docs.get('hotLeads/ghl_opp1')?.claimedBy, undefined);
+
+    const kind = harness();
+    kind.db.put('fieldDispoReceipts/uid-closer_draft-1', {
+      leadId: 'ghl_opp1',
+      kind: 'knock',
+      collection: 'hotLeads',
+      response: { ok: true, draftId: 'draft-1', result: 'applied', duplicate: false },
+    });
+    const kindResult = await kind.run(claim());
+    assert.equal(kindResult.status, 409);
+    assert.equal(kindResult.body.field, 'kind');
+    assert.equal(kind.db.patches.length, 0);
+
+    const other = harness();
+    other.db.put('fieldDispoReceipts/uid-closer_draft-1', {
+      leadId: 'ghl_other',
+      kind: 'claim',
+      collection: 'hotLeads',
+      response: { ok: true, draftId: 'draft-1', result: 'applied', duplicate: false, claimedBy: 'uid-closer' },
+    });
+    const otherResult = await other.run(claim());
+    assert.equal(otherResult.status, 409);
+    assert.equal(otherResult.body.field, 'leadId');
+    assert.equal(other.db.patches.length, 0);
   });
 });

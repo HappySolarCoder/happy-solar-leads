@@ -790,17 +790,19 @@ function serverNotes(lead: Record<string, unknown>): string {
   return typeof lead.notes === 'string' ? lead.notes : '';
 }
 
-function storedResponse(
-  snap: DispoSnap,
-  draft: ParsedDraft,
-): { body: Record<string, unknown>; mismatch: boolean; collectionMismatch: boolean } | null {
+function storedResponse(snap: DispoSnap): { body: Record<string, unknown> } | null {
   const data = snap.data() ?? {};
   if (!isPlainObject(data.response)) return null;
-  // Receipts written before collection existed are leads drafts.
+  return { body: { ...data.response, duplicate: true } };
+}
+
+/** A replay that names a different collection, lead, or kind is not the stored draft. */
+function receiptConflict(data: Record<string, unknown>, draft: ParsedDraft): 'collection' | 'leadId' | 'kind' | null {
   const storedCollection = data.collection == null ? 'leads' : data.collection;
-  const collectionMismatch = storedCollection !== draft.collection;
-  const mismatch = data.leadId !== draft.leadId || data.kind !== draft.kind || collectionMismatch;
-  return { body: { ...data.response, duplicate: true }, mismatch, collectionMismatch };
+  if (storedCollection !== draft.collection) return 'collection';
+  if (data.leadId !== draft.leadId) return 'leadId';
+  if (data.kind !== draft.kind) return 'kind';
+  return null;
 }
 
 function receiptBody(draft: ParsedDraft, result: string, extra: Record<string, unknown>): Record<string, unknown> {
@@ -908,16 +910,17 @@ async function applyDraft(input: {
   const receiptRef = input.db.collection('fieldDispoReceipts').doc(receiptId);
   const receiptSnap = await input.tx.get(receiptRef);
   if (receiptSnap.exists) {
-    const stored = storedResponse(receiptSnap, input.draft);
+    const stored = storedResponse(receiptSnap);
     if (!stored) throw new Error('Dispo receipt is unreadable');
-    if (stored.collectionMismatch) {
+    const conflict = receiptConflict(receiptSnap.data() ?? {}, input.draft);
+    if (conflict) {
       return {
         status: 409,
-        body: { ok: false, error: 'conflict', reasonCode: 'invalid_payload', field: 'collection' },
+        body: { ok: false, error: 'conflict', reasonCode: 'invalid_payload', field: conflict },
         mismatch: true,
       };
     }
-    return { status: 200, body: stored.body, mismatch: stored.mismatch };
+    return { status: 200, body: stored.body, mismatch: false };
   }
 
   if (!DISPO_COLLECTION_NAMES.has(input.draft.collection)) {
@@ -1186,6 +1189,16 @@ async function loadHotDispositions(
   });
 }
 
+/**
+ * Converted stays converted. A later knock is still history, and it does not
+ * move the lead back to worked. A knock on a retired lead brings it back to worked.
+ */
+function nextHotStatus(previous: unknown, outcome: 'worked' | 'converted'): 'worked' | 'converted' {
+  if (previous === 'converted') return 'converted';
+  if (previous === 'retired') return 'worked';
+  return outcome;
+}
+
 function assertHotKnockPatch(patch: Record<string, unknown>): void {
   assert.ok(
     Object.keys(patch).every((key) => HOT_KNOCK_KEYS.has(key)),
@@ -1234,10 +1247,10 @@ async function applyHotKnock(
     patch.gpsVerified = decision.gpsVerified;
     patch.gpsUnverifiedReason = decision.gpsUnverifiedReason ?? clear();
     patch.gpsDistanceM = decision.gpsDistanceM ?? clear();
-    patch.hotStatus = hotStatusAfterKnock(
+    patch.hotStatus = nextHotStatus(lead.hotStatus, hotStatusAfterKnock(
       { status: draft.status, disposition: draft.disposition },
       dispositions,
-    );
+    ));
     patch.updatedAt = input.deps.serverTimestamp();
   }
   assertHotKnockPatch(patch);
