@@ -9,12 +9,13 @@
  * with no address are still skipped.
  */
 import { createHash } from 'node:crypto';
-import { inflateRawSync } from 'node:zlib';
+import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const Papa = require('papaparse');
 const { geohashForLocation, geohashQueryBounds, distanceBetween } = require('geofire-common');
+const { Timestamp } = require('firebase-admin/firestore');
 
 const STREET_SUFFIXES = {
   street: 'st', st: 'st', str: 'st',
@@ -41,8 +42,6 @@ export const CENSUS_BATCH_SIZE = 100;
 export const HOMEOWNER_RADIUS_M = 50;
 export const HOMEOWNER_QUERY_LIMIT = 8;
 export const HOMEOWNER_QUERY_CAP = 4;
-export const LEAD_READ_LIMIT = 20;
-export const LEAD_LAT_DELTA = 0.0008;
 export const LINK_DISTANCE_M = 75;
 export const HOT_LIST_PAGE = 200;
 export const HOT_LIST_PAGES = 20;
@@ -404,18 +403,34 @@ export function homeownerReadPlan(lat, lng) {
   };
 }
 
+/** Same bounded geohash fan-out as a homeowner lookup. A lat band of limit 20 crosses every longitude. */
 export function leadReadPlan(lat, lng) {
-  return {
-    where: [
-      { field: 'lat', op: '>=', value: lat - LEAD_LAT_DELTA },
-      { field: 'lat', op: '<=', value: lat + LEAD_LAT_DELTA },
-    ],
-    orderBy: 'lat',
-    limit: LEAD_READ_LIMIT,
-    equality: [],
-    west: lng - LEAD_LAT_DELTA,
-    east: lng + LEAD_LAT_DELTA,
-  };
+  return homeownerReadPlan(lat, lng);
+}
+
+export function toTimestamp(value) {
+  if (value == null || value === '') return undefined;
+  if (typeof value === 'object' && typeof value.toMillis === 'function' && typeof value.toDate === 'function') {
+    return value;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return Timestamp.fromDate(date);
+}
+
+function stampedGhl(ghl, stamp) {
+  const out = { ...(ghl || {}) };
+  if (out.createdOn) {
+    const stamped = stamp(out.createdOn);
+    if (stamped) out.createdOn = stamped;
+    else delete out.createdOn;
+  }
+  if (out.updatedOn) {
+    const stamped = stamp(out.updatedOn);
+    if (stamped) out.updatedOn = stamped;
+    else delete out.updatedOn;
+  }
+  return out;
 }
 
 function nearEnough(lat, lng, doc) {
@@ -433,24 +448,24 @@ export function pickLink(house, docs) {
   return null;
 }
 
-export function reimportPatch(existing, next) {
+export function reimportPatch(existing, next, stamp = toTimestamp) {
   const prev = existing?.import && typeof existing.import === 'object' ? existing.import : {};
   const history = Array.isArray(prev.history) ? prev.history.slice(-19) : [];
-  history.push({ batchId: next.batchId, at: next.at, rowHash: next.rowHash });
+  history.push({ batchId: next.batchId, at: stamp(next.at), rowHash: next.rowHash });
   return {
-    ghl: next.ghl,
+    ghl: stampedGhl(next.ghl, stamp),
     import: {
       batchId: next.batchId,
-      importedAt: next.at,
+      importedAt: stamp(next.at),
       rowHash: next.rowHash,
       history,
     },
-    updatedAt: next.at,
+    updatedAt: stamp(next.at),
     doNotCall: next.doNotCall === true,
   };
 }
 
-export function createDoc(house, at, batchId) {
+export function createDoc(house, at, batchId, stamp = toTimestamp) {
   return {
     address: house.address,
     ...(house.city ? { city: house.city } : {}),
@@ -464,21 +479,21 @@ export function createDoc(house, at, batchId) {
     homeownerId: house.homeownerId ?? null,
     linkedLeadId: house.linkedLeadId ?? null,
     contacts: house.contacts,
-    ghl: house.ghl,
+    ghl: stampedGhl(house.ghl, stamp),
     import: {
       batchId,
-      importedAt: at,
+      importedAt: stamp(at),
       rowHash: house.rowHash,
-      history: [{ batchId, at, rowHash: house.rowHash }],
+      history: [{ batchId, at: stamp(at), rowHash: house.rowHash }],
     },
     hotStatus: 'active',
-    updatedAt: at,
+    updatedAt: stamp(at),
     ...(house.doNotCall ? { doNotCall: true } : {}),
   };
 }
 
-export function retirePatch(at) {
-  return { hotStatus: 'retired', updatedAt: at };
+export function retirePatch(at, stamp = toTimestamp) {
+  return { hotStatus: 'retired', updatedAt: stamp(at) };
 }
 
 function cacheHit(value) {
@@ -488,6 +503,12 @@ function cacheHit(value) {
     return { matched: true, lat: value.lat, lng: value.lng, quality: value.quality || 'Exact' };
   }
   return null;
+}
+
+export function isCensusCsv(text) {
+  const body = String(text ?? '').replace(/^\uFEFF/, '').trim();
+  if (!body || body.startsWith('<') || /<html/i.test(body) || /request rejected/i.test(body)) return false;
+  return body.split(/\r?\n/, 1)[0].includes(',');
 }
 
 export async function geocodeHouses(houses, deps) {
@@ -515,6 +536,7 @@ export async function geocodeHouses(houses, deps) {
       requests += 1;
       try {
         const text = await deps.fetchBatch(csv);
+        if (!isCensusCsv(text)) throw new Error('geocode_not_csv');
         const rows = parseCensusBatch(text);
         if (!rows.length) throw new Error('geocode_empty');
         parsed = rows;
@@ -562,7 +584,11 @@ export async function linkHouse(house, db) {
     house.homeownerId = ownerId;
   }
   const leadPlan = leadReadPlan(house.lat, house.lng);
-  if (leadPlan.equality.length || leadPlan.limit > LEAD_READ_LIMIT) throw new Error('lead_read_unbounded');
+  if (
+    !Array.isArray(leadPlan.queries)
+    || leadPlan.queries.length > HOMEOWNER_QUERY_CAP
+    || leadPlan.queries.some((query) => query.orderBy !== 'geohash' || query.limit > HOMEOWNER_QUERY_LIMIT)
+  ) throw new Error('lead_read_unbounded');
   const leads = await db.leadsNear(leadPlan);
   house.linkedLeadId = pickLink(house, leads);
   return { homeownerReads, leadReads: 1 };
@@ -596,6 +622,7 @@ export async function runImport(input) {
     return { ok: false, code: 2, writes: 0, output: { error: 'confirm_required', writes: 0 } };
   }
   const rows = input.rows || [];
+  const stamp = input.stamp || toTimestamp;
   const classified = classifyRows(rows, input);
   const grouped = groupHouses(classified.kept);
   const cache = input.cache || new Map();
@@ -652,7 +679,7 @@ export async function runImport(input) {
         at,
         rowHash: house.rowHash,
         doNotCall: house.doNotCall,
-      });
+      }, stamp);
       if (Object.keys(patch).some((key) => !REIMPORT_KEYS.includes(key))) throw new Error('reimport_keys');
       if (commit) {
         await input.db.merge(house.id, patch);
@@ -662,7 +689,7 @@ export async function runImport(input) {
     }
     created += 1;
     if (commit) {
-      await input.db.create(house.id, createDoc(house, at, batchId));
+      await input.db.create(house.id, createDoc(house, at, batchId, stamp));
       writes += 1;
     }
   }
@@ -676,7 +703,7 @@ export async function runImport(input) {
         if (!item?.id || plannedIds.has(item.id) || item.hotStatus === 'retired') continue;
         retired += 1;
         if (commit) {
-          await input.db.retire(item.id, retirePatch(at));
+          await input.db.retire(item.id, retirePatch(at, stamp));
           writes += 1;
         }
       }
@@ -785,27 +812,108 @@ export function zipStore(files) {
   return Buffer.concat([...locals, centralDir, eocd]);
 }
 
+function findEocd(src) {
+  const min = Math.max(0, src.length - 22 - 65535);
+  for (let offset = src.length - 22; offset >= min; offset -= 1) {
+    if (src.readUInt32LE(offset) === 0x06054b50) return offset;
+  }
+  throw new Error('zip_eocd');
+}
+
+/**
+ * Reads sizes from the central directory. Google Sheets sets the data-descriptor
+ * bit and leaves the local header sizes at 0, which makes inflateRaw throw
+ * Z_BUF_ERROR if those zeros are trusted.
+ */
 export function unzip(buffer) {
-  const files = new Map();
-  let offset = 0;
   const src = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
-  while (offset + 30 <= src.length) {
-    if (src.readUInt32LE(offset) !== 0x04034b50) break;
-    const method = src.readUInt16LE(offset + 8);
-    const compSize = src.readUInt32LE(offset + 18);
-    const nameLen = src.readUInt16LE(offset + 26);
-    const extraLen = src.readUInt16LE(offset + 28);
-    const name = src.toString('utf8', offset + 30, offset + 30 + nameLen);
-    const start = offset + 30 + nameLen + extraLen;
+  const eocd = findEocd(src);
+  const count = src.readUInt16LE(eocd + 10);
+  let cursor = src.readUInt32LE(eocd + 16);
+  const files = new Map();
+  for (let n = 0; n < count; n += 1) {
+    if (cursor + 46 > src.length || src.readUInt32LE(cursor) !== 0x02014b50) throw new Error('zip_central');
+    const method = src.readUInt16LE(cursor + 10);
+    const compSize = src.readUInt32LE(cursor + 20);
+    const nameLen = src.readUInt16LE(cursor + 28);
+    const extraLen = src.readUInt16LE(cursor + 30);
+    const commentLen = src.readUInt16LE(cursor + 32);
+    const localOffset = src.readUInt32LE(cursor + 42);
+    if (compSize === 0xffffffff || localOffset === 0xffffffff) throw new Error('zip64');
+    const name = src.toString('utf8', cursor + 46, cursor + 46 + nameLen);
+    if (localOffset + 30 > src.length || src.readUInt32LE(localOffset) !== 0x04034b50) throw new Error('zip_local');
+    const localNameLen = src.readUInt16LE(localOffset + 26);
+    const localExtraLen = src.readUInt16LE(localOffset + 28);
+    const start = localOffset + 30 + localNameLen + localExtraLen;
     const compressed = src.subarray(start, start + compSize);
-    let data;
-    if (method === 0) data = compressed;
-    else if (method === 8) data = inflateRawSync(compressed);
-    else throw new Error('zip_method');
+    let data = Buffer.alloc(0);
+    if (!name.endsWith('/')) {
+      if (method === 0) data = Buffer.from(compressed);
+      else if (method === 8) data = inflateRawSync(compressed);
+      else throw new Error('zip_method');
+    }
     files.set(name, data);
-    offset = start + compSize;
+    cursor += 46 + nameLen + extraLen + commentLen;
   }
   return files;
+}
+
+/** Deflate plus a data descriptor, which is how Google Sheets writes xlsx parts. */
+export function zipSheets(files) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  const names = Object.keys(files);
+  for (const name of names) {
+    const data = Buffer.isBuffer(files[name]) ? files[name] : Buffer.from(files[name]);
+    const compressed = deflateRawSync(data);
+    const nameBuf = Buffer.from(name);
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0008, 6);
+    local.writeUInt16LE(8, 8);
+    local.writeUInt16LE(nameBuf.length, 26);
+    const descriptor = Buffer.alloc(16);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(crc, 4);
+    descriptor.writeUInt32LE(compressed.length, 8);
+    descriptor.writeUInt32LE(data.length, 12);
+    const chunk = Buffer.concat([local, nameBuf, compressed, descriptor]);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0008, 8);
+    central.writeUInt16LE(8, 10);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(compressed.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBuf.length, 28);
+    central.writeUInt32LE(offset, 42);
+    locals.push(chunk);
+    centrals.push(Buffer.concat([central, nameBuf]));
+    offset += chunk.length;
+  }
+  const centralDir = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(names.length, 8);
+  eocd.writeUInt16LE(names.length, 10);
+  eocd.writeUInt32LE(centralDir.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, centralDir, eocd]);
+}
+
+export function columnIndex(letters) {
+  let index = 0;
+  for (const char of String(letters || '')) {
+    const code = char.charCodeAt(0);
+    if (code < 65 || code > 90) return null;
+    index = index * 26 + (code - 64);
+  }
+  return index === 0 ? null : index - 1;
 }
 
 function decodeXml(text) {
@@ -843,8 +951,9 @@ export function parseXlsx(buffer) {
     const cells = [];
     const matches = rowXml.match(/<c\b[^>]*(?:\/>|>[\s\S]*?<\/c>)/g) || [];
     for (const cellXml of matches) {
-      const ref = / r="([A-Z]+)\d+"/.exec(cellXml);
-      const column = ref ? ref[1].charCodeAt(0) - 65 : cells.length;
+      const ref = / r="([A-Z]+)(\d+)"/.exec(cellXml);
+      const column = ref ? columnIndex(ref[1]) : cells.length;
+      if (column == null) continue;
       let value = '';
       if (/t="inlineStr"/.test(cellXml)) {
         value = decodeXml((/<t\b[^>]*>([\s\S]*?)<\/t>/.exec(cellXml) || [])[1] || '');

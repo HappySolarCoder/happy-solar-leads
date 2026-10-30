@@ -10,13 +10,15 @@ import {
   homeownerReadPlan,
   houseStreet,
   isDoNotContact,
+  geocodeHouses,
+  isCensusCsv,
   leadReadPlan,
-  LEAD_READ_LIMIT,
   HOMEOWNER_QUERY_LIMIT,
   parseAddressLine,
   parseTable,
   parseXlsx,
   reimportPatch,
+  zipSheets,
   REIMPORT_KEYS,
   reviewCsv,
   runImport,
@@ -71,10 +73,14 @@ function fakeDb(seed: Record<string, Record<string, unknown>> = {}) {
         data: { address: '10 Main Street', city: 'Buffalo', state: 'NY', zip: '14201', lat: 43.1002, lng: -77.6101 },
       }];
     },
-    async leadsNear(plan: { limit: number; equality: unknown[] }) {
+    async leadsNear(plan: { queries: Array<{ orderBy: string; limit: number }> }) {
       plans.push(plan);
-      assert.equal(plan.limit, LEAD_READ_LIMIT);
-      assert.deepEqual(plan.equality, []);
+      assert.ok(plan.queries.length > 0);
+      assert.ok(plan.queries.length <= 4);
+      for (const query of plan.queries) {
+        assert.equal(query.orderBy, 'geohash');
+        assert.ok(query.limit <= HOMEOWNER_QUERY_LIMIT);
+      }
       return [{
         id: 'lead-1',
         data: { address: '10 Main Street Buffalo NY 14201', lat: 43.1001, lng: -77.6100 },
@@ -184,9 +190,11 @@ describe('hot lead import', () => {
     assert.ok(ownerPlan.queries.length <= 4);
     assert.equal(ownerPlan.queries[0].limit, HOMEOWNER_QUERY_LIMIT);
     const leads = leadReadPlan(43.1, -77.61);
-    assert.deepEqual(leads.equality, []);
-    assert.equal(leads.limit, LEAD_READ_LIMIT);
-    assert.ok(leads.where.every((filter: { field: string; op: string }) => filter.field === 'lat' && filter.op !== '=='));
+    assert.ok(leads.queries.length > 0);
+    assert.ok(leads.queries.length <= 4);
+    assert.equal(leads.queries[0].orderBy, 'geohash');
+    assert.equal(leads.queries[0].limit, HOMEOWNER_QUERY_LIMIT);
+    assert.equal('where' in leads, false);
   });
 
   it('refuses commit without the confirm env and limits a confirmed reimport', async () => {
@@ -229,7 +237,9 @@ describe('hot lead import', () => {
     assert.equal(db.docs.get('ghl_opp-a')?.claimedBy, 'rep-1');
     assert.equal((db.docs.get('ghl_opp-a')?.dispositionHistory as unknown[]).length, 1);
     const retire = db.writes.find((write) => write.op === 'retire');
-    assert.deepEqual(retire?.data, { hotStatus: 'retired', updatedAt: '2026-10-30T00:00:00.000Z' });
+    assert.equal(retire?.data.hotStatus, 'retired');
+    assert.equal(retire?.data.updatedAt.toMillis(), Date.parse('2026-10-30T00:00:00.000Z'));
+    assert.equal(typeof retire?.data.updatedAt.toDate, 'function');
     assert.equal(db.docs.get('ghl_left')?.notes, 'stay');
     assert.equal(merge.data.doNotCall, false);
     const dncWrite = db.writes.find((write) => write.op === 'create' && write.id === 'ghl_opp-c');
@@ -237,6 +247,13 @@ describe('hot lead import', () => {
     assert.equal(dncWrite.data.doNotCall, true);
     assert.equal(dncWrite.data.hotStatus, 'active');
     assert.equal(Object.prototype.hasOwnProperty.call(dncWrite.data, 'notes'), false);
+    const at = Date.parse('2026-10-30T00:00:00.000Z');
+    assert.equal(dncWrite.data.updatedAt.toMillis(), at);
+    assert.equal(dncWrite.data.import.importedAt.toMillis(), at);
+    assert.equal(dncWrite.data.import.history[0].at.toMillis(), at);
+    assert.equal(dncWrite.data.ghl.createdOn.toMillis(), Date.parse('2026-01-01'));
+    assert.equal(dncWrite.data.ghl.updatedOn.toMillis(), Date.parse('2026-01-01'));
+    assert.equal(typeof dncWrite.data.updatedAt.toDate, 'function');
     const patch = reimportPatch(
       { import: { history: [] } },
       { ghl: { stage: 'New' }, batchId: 'b', at: 't', rowHash: 'h' },
@@ -262,8 +279,37 @@ describe('hot lead import', () => {
     const json = serializeCache(cache);
     assert.equal(json.includes('Test'), false);
     assert.equal(json.includes('address'), false);
+    const sheetsXml = `<?xml version="1.0"?><worksheet><sheetData>
+      <row r="1"><c r="A1" t="inlineStr"><is><t>Opportunity ID</t></is></c><c r="B1" t="inlineStr"><is><t>noise</t></is></c><c r="AA1" t="inlineStr"><is><t>status</t></is></c><c r="AB1" t="inlineStr"><is><t>Address</t></is></c></row>
+      <row r="2"><c r="A2" t="inlineStr"><is><t>opp-z</t></is></c><c r="B2" t="inlineStr"><is><t>not-lost</t></is></c><c r="AA2" t="inlineStr"><is><t>lost</t></is></c><c r="AB2" t="inlineStr"><is><t>8 Test Street Buffalo NY 14201</t></is></c></row>
+    </sheetData></worksheet>`;
+    const sheetsRows = parseXlsx(zipSheets({ 'xl/worksheets/sheet1.xml': sheetsXml })) as Array<Record<string, string>>;
+    assert.equal(sheetsRows[0]['Opportunity ID'], 'opp-z');
+    assert.equal(sheetsRows[0].status, 'lost');
+    assert.equal(sheetsRows[0].Address, '8 Test Street Buffalo NY 14201');
+    assert.equal(sheetsRows[0].noise, 'not-lost');
     const review = reviewCsv([{ opportunityId: 'opp-9', reason: 'geocode_unmatched', address: '8 Test Street' }]);
     assert.equal(review.includes('Test Street'), false);
     assert.match(review, /^opportunityId,reason\nopp-9,geocode_unmatched\n$/);
+  });
+
+  it('does not cache a Census HTML rejection', async () => {
+    assert.equal(isCensusCsv('<html>Request Rejected</html>'), false);
+    assert.equal(isCensusCsv('Request Rejected'), false);
+    const cache = new Map();
+    await assert.rejects(() => geocodeHouses([{
+      addressNorm: '10 main st',
+      city: 'Buffalo',
+      state: 'NY',
+      zip: '14201',
+    }], {
+      cache,
+      fetchBatch: async () => '<html>Request Rejected</html>',
+      throttle: async () => {},
+    }));
+    assert.equal(cache.size, 0);
+    const cli = readFileSync(new URL('../scripts/hot-leads/import.mjs', import.meta.url), 'utf8');
+    assert.match(cli, /form\.set\('benchmark', 'Public_AR_Current'\)/);
+    assert.equal(cli.includes('addressbatch?benchmark'), false);
   });
 });

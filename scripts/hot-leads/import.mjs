@@ -8,16 +8,18 @@
  */
 import { pathToFileURL } from 'node:url';
 import { readFile, writeFile } from 'node:fs/promises';
-import { executeCli, HOMEOWNER_QUERY_LIMIT, LEAD_READ_LIMIT } from './logic.mjs';
+import { executeCli, HOMEOWNER_QUERY_LIMIT, isCensusCsv } from './logic.mjs';
 
-const CENSUS_URL = 'https://geocoding.geo.census.gov/geocoder/locations/addressbatch?benchmark=Public_AR_Current';
+const CENSUS_URL = 'https://geocoding.geo.census.gov/geocoder/locations/addressbatch';
 
 async function fetchBatch(csv) {
   const form = new FormData();
+  form.set('benchmark', 'Public_AR_Current');
   form.set('addressFile', new Blob([csv], { type: 'text/csv' }), 'batch.csv');
   const response = await fetch(CENSUS_URL, { method: 'POST', body: form });
-  if (!response.ok) throw new Error('geocode_failed');
-  return response.text();
+  const text = await response.text();
+  if (!response.ok || !isCensusCsv(text)) throw new Error('geocode_failed');
+  return text;
 }
 
 async function throttle() {
@@ -66,17 +68,13 @@ async function openAdmin(projectId) {
       return docs;
     },
     async leadsNear(plan) {
-      if (plan.equality?.length || plan.limit > LEAD_READ_LIMIT) throw new Error('lead_read_unbounded');
-      let query = db.collection('leads');
-      for (const filter of plan.where) {
-        if (filter.field !== 'lat' || filter.op === '==') throw new Error('lead_read_unbounded');
-        query = query.where(filter.field, filter.op, filter.value);
+      const docs = [];
+      for (const query of plan.queries.slice(0, 4)) {
+        if (query.orderBy !== 'geohash' || query.limit > HOMEOWNER_QUERY_LIMIT) throw new Error('lead_read_unbounded');
+        const snap = await db.collection('leads').orderBy('geohash').startAt(query.start).endAt(query.end).limit(query.limit).get();
+        docs.push(...snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })));
       }
-      const snap = await query.orderBy('lat').limit(Math.min(plan.limit, LEAD_READ_LIMIT)).get();
-      return snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })).filter((doc) => {
-        const longitude = doc.data?.lng;
-        return typeof longitude !== 'number' || (longitude >= plan.west && longitude <= plan.east);
-      });
+      return docs;
     },
     async listHotLeads({ limit, afterId }) {
       const page = Math.min(limit, 200);
