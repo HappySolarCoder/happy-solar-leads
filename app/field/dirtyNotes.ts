@@ -76,6 +76,24 @@ export function planCloseWithNotes(input: CloseNotesInput): CloseNotesPlan {
   };
 }
 
+/**
+ * Which writer an unmount may use. Same priority as saveReportingPatch on native:
+ * a provided saveLeadPatch (it creates an unvisited home) before enqueueDirect.
+ * Web does not write on unmount. A raw lead update is never chosen.
+ */
+export type UnmountNotesWriter = "saveLeadPatch" | "enqueue" | "none";
+
+export function unmountNotesWriter(input: {
+  direct: boolean;
+  hasSaveLeadPatch: boolean;
+  hasEnqueue: boolean;
+}): UnmountNotesWriter {
+  if (!input.direct) return "none";
+  if (input.hasSaveLeadPatch) return "saveLeadPatch";
+  if (input.hasEnqueue) return "enqueue";
+  return "none";
+}
+
 /** Parent unmount or a key change. Null means the draft was already queued, or the text is not a note. */
 export function planUnmountNotesFlush(input: CloseNotesInput): { notes: string; flushedNotes: string } | null {
   if (alreadyFlushed(input)) return null;

@@ -9,7 +9,8 @@ import { knockPatch } from "../../app/field/knockPatch";
 import { syncOutbox } from "../../app/field/syncOutbox";
 import type { PendingMutation } from "../../app/field/types";
 import type { Lead, User } from "../../app/types";
-import { decideDirtyNotes, NOTES_SAVED_MESSAGE, NOTES_SAVED_ON_PHONE_MESSAGE, NOTES_SAVED_TOAST_MS, planCloseWithNotes, planUnmountNotesFlush } from "../../app/field/dirtyNotes";
+import { decideDirtyNotes, NOTES_SAVED_MESSAGE, NOTES_SAVED_ON_PHONE_MESSAGE, NOTES_SAVED_TOAST_MS, planCloseWithNotes, planUnmountNotesFlush, unmountNotesWriter } from "../../app/field/dirtyNotes";
+import { readSyncLog, resetSyncLogForTests } from "../../app/field/syncDiagnostics";
 import { dismissMobileOverlay } from "../../app/utils/dismissMobileOverlay";
 import { acceptDisposition, resetQueueSeqForTests } from "../../app/field/draftQueue";
 import { directPatch, rejectCombinedKnockAndNotes } from "../../app/field/directWrites";
@@ -327,6 +328,7 @@ test("a GPS-held create plus notes waits, then sends create then notes, and a re
 });
 
 test("a notes 410 while the home's create is still queued retries instead of parking", async () => {
+  resetSyncLogForTests();
   const atIso = "2026-10-30T19:00:00.000Z";
   const create = { id: "home-2", status: "not-home", notes: "", claimedBy: "rep-a" } as unknown as Lead;
   let created = false;
@@ -361,6 +363,9 @@ test("a notes 410 while the home's create is still queued retries instead of par
   assert.equal(note?.syncState, "queued");
   assert.equal(note?.parkedReason, undefined);
   assert.deepEqual(sent, ["k1"]);
+  const waiting = (await readSyncLog("rep-a")).filter((event) => event.draftId === "n1" && event.state === "retry");
+  assert.equal(waiting.length, 1);
+  assert.match(waiting[0]?.lastError || "", /missing/i);
   loops = 0;
   await run();
   assert.deepEqual(sent, ["k1", "n1"]);
@@ -550,4 +555,45 @@ test("unclaim queues notes and syncs them before unclaimLead, and a denial still
   const holdReturn = src.indexOf("if (notesHold) return");
   assert.ok(save >= 0 && save < sync && sync < unclaim && unclaim < holdReturn);
   assert.doesNotMatch(src.slice(save, unclaim), /if \(notesHold\) return/);
+});
+
+function unmountFlushSource(): string {
+  const start = detail.indexOf("flushUnsentNotesRef.current = (text, at) => {");
+  const end = detail.indexOf("useEffect(() => {\n    return () => {", start);
+  assert.ok(start >= 0 && end > start, "unmount flush not found");
+  return detail.slice(start, end);
+}
+
+test("unmountNotesWriter follows saveReportingPatch on native and writes nothing on web", () => {
+  assert.equal(unmountNotesWriter({ direct: true, hasSaveLeadPatch: true, hasEnqueue: true }), "saveLeadPatch");
+  assert.equal(unmountNotesWriter({ direct: true, hasSaveLeadPatch: true, hasEnqueue: false }), "saveLeadPatch");
+  assert.equal(unmountNotesWriter({ direct: true, hasSaveLeadPatch: false, hasEnqueue: true }), "enqueue");
+  assert.equal(unmountNotesWriter({ direct: true, hasSaveLeadPatch: false, hasEnqueue: false }), "none");
+  for (const hasSaveLeadPatch of [true, false]) {
+    for (const hasEnqueue of [true, false]) {
+      assert.equal(unmountNotesWriter({ direct: false, hasSaveLeadPatch, hasEnqueue }), "none");
+    }
+  }
+});
+
+test("the unmount cleanup uses unmountNotesWriter, catches the write, and never calls updateLeadAsync", () => {
+  const flush = unmountFlushSource();
+  assert.match(flush, /unmountNotesWriter\(/);
+  assert.match(flush, /\.catch\(\(error\) => reportSilent\(error\)\)/);
+  assert.doesNotMatch(flush, /updateLeadAsync/);
+  const effect = detail.slice(detail.indexOf("return () => {\n      const typed = notesRef.current"));
+  assert.doesNotMatch(effect.slice(0, effect.indexOf("}, []);")), /updateLeadAsync/);
+});
+
+test("a native unmount of an unvisited homeowner pin uses saveLeadPatch, not a bare notes enqueue", () => {
+  assert.equal(unmountNotesWriter({ direct: true, hasSaveLeadPatch: true, hasEnqueue: true }), "saveLeadPatch");
+  const knock = readFileSync(path.join(root, "app/homeowners/KnockDetail.tsx"), "utf8");
+  assert.match(knock, /fieldMemory/);
+  assert.match(knock, /unvisitedHome=\{!visit\.saved\}/);
+  assert.match(knock, /saveLeadPatch=/);
+  const flush = unmountFlushSource();
+  const patchCall = flush.indexOf("saveLeadPatch({ notes: text })");
+  const enqueueCall = flush.indexOf("field.enqueueDirect(currentLead, { notes: text }");
+  assert.ok(patchCall >= 0 && enqueueCall > patchCall);
+  assert.doesNotMatch(flush.slice(patchCall, enqueueCall), /enqueueDirect\(/);
 });

@@ -8,7 +8,7 @@ import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap, knownPolygonsSync } from '
 import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
 import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
-import { decideDirtyNotes, NOTES_SAVED_MESSAGE, NOTES_SAVED_ON_PHONE_MESSAGE, planCloseWithNotes, planUnmountNotesFlush } from '@/app/field/dirtyNotes';
+import { decideDirtyNotes, NOTES_SAVED_MESSAGE, NOTES_SAVED_ON_PHONE_MESSAGE, planCloseWithNotes, planUnmountNotesFlush, unmountNotesWriter } from '@/app/field/dirtyNotes';
 import { NOTES_BLANK_MESSAGE, NOTES_TOO_LONG_MESSAGE, NOTES_UNSAVED_MESSAGE, notesEditTooLong, notesQueuedBody, parkedNotesNotice, phoneClockNotice, saveNotesFromEditor, whitespaceNotesChange } from '@/app/field/notesLimits';
 import { recordSyncEvent } from '@/app/field/syncDiagnostics';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
@@ -263,15 +263,18 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   flushUnsentNotesRef.current = (text, at) => {
     const currentLead = leadRef.current;
     const point = displayedKnockPoint(currentLead, homeowner || currentLead.homeowner);
-    if (field?.enqueueDirect) {
-      void field.enqueueDirect(currentLead, { notes: text }, undefined, false, point, at);
+    const writer = unmountNotesWriter({
+      direct: DIRECT_MOBILE_WRITES,
+      hasSaveLeadPatch: !!saveLeadPatch,
+      hasEnqueue: !!field?.enqueueDirect,
+    });
+    if (writer === 'saveLeadPatch' && saveLeadPatch) {
+      void saveLeadPatch({ notes: text }).catch((error) => reportSilent(error));
       return;
     }
-    if (saveLeadPatch) {
-      void saveLeadPatch({ notes: text });
-      return;
+    if (writer === 'enqueue' && field?.enqueueDirect) {
+      void field.enqueueDirect(currentLead, { notes: text }, undefined, false, point, at).catch((error) => reportSilent(error));
     }
-    void import('@/app/utils/storage').then(({ updateLeadAsync }) => updateLeadAsync(currentLead.id, { notes: text }));
   };
   useEffect(() => {
     return () => {
