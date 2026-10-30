@@ -8,7 +8,8 @@ import { AREA_BLOCK_MESSAGE, assertAssignedAreaAtTap, knownPolygonsSync } from '
 import { useProximityPrompt } from '@/app/field/ProximityWarningDialog';
 import { isProximityWarningCancelled, proximityVerdictAtTap, saveWithProximityWarning } from '@/app/field/proximityWarning';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
-import { NOTES_BLANK_MESSAGE, NOTES_TOO_LONG_MESSAGE, notesEditTooLong, notesQueuedBody, parkedNotesNotice, phoneClockNotice, saveNotesFromEditor, whitespaceNotesChange } from '@/app/field/notesLimits';
+import { decideDirtyNotes, NOTES_SAVED_MESSAGE, NOTES_SAVED_ON_PHONE_MESSAGE, planCloseWithNotes, planUnmountNotesFlush, unmountNotesWriter } from '@/app/field/dirtyNotes';
+import { NOTES_BLANK_MESSAGE, NOTES_TOO_LONG_MESSAGE, NOTES_UNSAVED_MESSAGE, notesEditTooLong, notesQueuedBody, parkedNotesNotice, phoneClockNotice, saveNotesFromEditor, whitespaceNotesChange } from '@/app/field/notesLimits';
 import { recordSyncEvent } from '@/app/field/syncDiagnostics';
 import { displayedKnockPoint } from '@/app/field/knockPoint';
 import { beginWarmGps, bestFixInWindow } from '@/app/field/warmGps';
@@ -69,7 +70,7 @@ interface LeadDetailProps {
   dispositionsLoading?: boolean;
   lead: Lead;
   currentUser: User | null;
-  onClose: () => void;
+  onClose: (message?: string) => void;
   onUpdate: (updatedLead?: Lead) => void;
 }
 
@@ -145,13 +146,13 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const hasPendingFieldWork = !!field?.drafts.some(d => d.leadId === lead.id);
   const pausedWithDrafts = !DIRECT_MOBILE_WRITES && hasPendingFieldWork && !field?.flags.capture;
   const capture = !DIRECT_MOBILE_WRITES && !!field?.flags.capture;
-  async function saveReportingPatch(patch: Partial<Lead>, deferGps = false) {
+  async function saveReportingPatch(patch: Partial<Lead>, deferGps = false, recordedAt?: Date) {
     const point = displayedKnockPoint(lead, homeowner || lead.homeowner);
     const write = async () => {
       if (saveLeadPatch) await saveLeadPatch(patch, deferGps);
       else if (DIRECT_MOBILE_WRITES) {
         if (!field) throw Error('Open the mobile Knock screen to save this action safely.');
-        await field.enqueueDirect(lead, patch, undefined, deferGps, point);
+        await field.enqueueDirect(lead, patch, undefined, deferGps, point, recordedAt);
       }
       else { const { updateLeadAsync } = await import('@/app/utils/storage'); await updateLeadAsync(lead.id, patch); }
       if (DIRECT_MOBILE_WRITES) setFieldMessage('');
@@ -247,6 +248,53 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const [isUpdating, setIsUpdating] = useState(false);
   const [notes, setNotes] = useState(lead.notes || '');
   const savedNotes = useRef(lead.notes || '');
+  const notesRef = useRef(notes);
+  const leadRef = useRef(lead);
+  const actorRef = useRef(currentUser);
+  const summaryRef = useRef(summaryOnly);
+  const draftsRef = useRef(field?.drafts);
+  const flushedNotesRef = useRef<string | null>(null);
+  const flushUnsentNotesRef = useRef<(text: string, at: Date) => void>(() => {});
+  notesRef.current = notes;
+  leadRef.current = lead;
+  actorRef.current = currentUser;
+  summaryRef.current = summaryOnly;
+  draftsRef.current = field?.drafts;
+  flushUnsentNotesRef.current = (text, at) => {
+    const currentLead = leadRef.current;
+    const point = displayedKnockPoint(currentLead, homeowner || currentLead.homeowner);
+    const writer = unmountNotesWriter({
+      direct: DIRECT_MOBILE_WRITES,
+      hasSaveLeadPatch: !!saveLeadPatch,
+      hasEnqueue: !!field?.enqueueDirect,
+    });
+    if (writer === 'saveLeadPatch' && saveLeadPatch) {
+      void saveLeadPatch({ notes: text }).catch((error) => reportSilent(error));
+      return;
+    }
+    if (writer === 'enqueue' && field?.enqueueDirect) {
+      void field.enqueueDirect(currentLead, { notes: text }, undefined, false, point, at).catch((error) => reportSilent(error));
+    }
+  };
+  useEffect(() => {
+    return () => {
+      const typed = notesRef.current;
+      const currentLead = leadRef.current;
+      if (!actorRef.current) return;
+      const at = new Date();
+      const plan = planUnmountNotesFlush({
+        summaryOnly: summaryRef.current,
+        currentNotes: currentLead.notes || '',
+        typedNotes: typed,
+        leadId: currentLead.id,
+        flushedNotes: flushedNotesRef.current,
+        parkedNotes: draftsRef.current,
+      });
+      if (!plan) return;
+      flushedNotesRef.current = plan.flushedNotes;
+      flushUnsentNotesRef.current(plan.notes, at);
+    };
+  }, []);
   useEffect(() => {
     const previous = savedNotes.current, next = lead.notes || '';
     setNotes(draft => draft === previous ? next : draft);
@@ -329,9 +377,68 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     d => d.id !== 'unclaimed' && d.id !== 'claimed' && d.countsAsDoorKnock
   );
 
+  // Notes stay a separate draft from the knock. A guard notice keeps the text and never undoes the disposition.
+  const saveDirtyNotes = async (at?: Date): Promise<boolean> => {
+    const decision = decideDirtyNotes({
+      summaryOnly,
+      currentNotes: lead.notes || '',
+      typedNotes: notes,
+      leadId: lead.id,
+      parkedNotes: field?.drafts,
+    });
+    if (decision.kind === 'clean') return false;
+    if (decision.kind === 'notice') {
+      setFieldMessage(decision.message);
+      return true;
+    }
+    try {
+      if (capture) await recordField('notes', { notes: decision.notes });
+      else await saveReportingPatch({ notes: decision.notes }, false, at);
+      flushedNotesRef.current = decision.notes;
+      setFieldMessage(DIRECT_MOBILE_WRITES ? NOTES_SAVED_ON_PHONE_MESSAGE : NOTES_SAVED_MESSAGE);
+      return false;
+    } catch (error) {
+      if (isProximityWarningCancelled(error)) return true;
+      const parked = parkedNotesNotice(field?.drafts, lead.id);
+      const message = error instanceof Error ? error.message : String(error);
+      setFieldMessage(parked || message || NOTES_UNSAVED_MESSAGE);
+      if (DIRECT_MOBILE_WRITES && !isFieldValidation(error)) reportSilent(error);
+      return true;
+    }
+  };
+
+  const notesQueuedForClose = () =>
+    flushedNotesRef.current != null && flushedNotesRef.current === notes && flushedNotesRef.current !== (lead.notes || '');
+
+  const closeWithNotes = async () => {
+    const at = new Date();
+    const plan = planCloseWithNotes({
+      summaryOnly,
+      currentNotes: lead.notes || '',
+      typedNotes: notes,
+      leadId: lead.id,
+      flushedNotes: flushedNotesRef.current,
+      parkedNotes: field?.drafts,
+    });
+    if (plan.action === 'stay') {
+      setFieldMessage(plan.notice);
+      return;
+    }
+    if (plan.queued) {
+      const held = await saveDirtyNotes(at);
+      if (held) return;
+      flushedNotesRef.current = plan.flushedNotes;
+      onClose(NOTES_SAVED_ON_PHONE_MESSAGE);
+      return;
+    }
+    onClose();
+  };
+
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser || actionsLoading) return;
     const knockedAt = new Date();
+    const actor = currentUser;
+    const signedInUid = auth?.currentUser?.uid;
     if (pausedWithDrafts) { setFieldMessage('Field capture is paused. Sync or review this pin’s pending drafts in Field tools before changing it.'); return; }
     
     // Check for special behavior dispositions
@@ -358,7 +465,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     
     if (capture && !['claimed','unclaimed'].includes(newStatus)) {
       setIsUpdating(true);
-      try { await recordField('knock', { status: newStatus }); }
+      try {
+        await recordField('knock', { status: newStatus });
+        await saveDirtyNotes(knockedAt);
+      }
       catch (e) { setFieldMessage((e as Error).message); }
       finally { setIsUpdating(false); }
       return;
@@ -367,8 +477,11 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     
     try {
       const disposition = dispositions.find(d => d.id === newStatus);
+      // Queue notes while this rep still owns the lead. A notice does not stop the unclaim.
+      let notesHold = false;
+      if (newStatus === 'unclaimed') notesHold = await saveDirtyNotes(knockedAt);
       const gpsData = disposition?.countsAsDoorKnock && !DIRECT_MOBILE_WRITES
-        ? await homeownerKnockGps(lead, currentUser) : {};
+        ? await homeownerKnockGps(lead, actor) : {};
 
       if (DIRECT_MOBILE_WRITES && ['claimed', 'unclaimed'].includes(newStatus)) {
         if (!isDeviceOnline()) throw Error('Connect before claiming or unclaiming a lead. Your offline knocks remain saved.');
@@ -376,25 +489,36 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
       }
       if (newStatus === 'claimed') {
         // Handle claim
-        const updated = await claimLead(lead.id, currentUser.id);
-        if (mobile) acknowledgeMobileLead(currentUser, updated);
+        const updated = await claimLead(lead.id, actor.id);
+        if (mobile) acknowledgeMobileLead(actor, updated);
         onUpdate(updated);
       } else if (newStatus === 'unclaimed') {
         // Handle unclaim
         if (!isClaimedByMe) throw Error('Only the rep who claimed this lead can unclaim it.');
         const updated = await unclaimLead(lead.id);
-        if (mobile) acknowledgeMobileLead(currentUser, updated);
+        if (mobile) acknowledgeMobileLead(actor, updated);
         onUpdate(updated);
-        onClose();
+        if (notesHold) return;
+        if (notesQueuedForClose()) onClose(NOTES_SAVED_ON_PHONE_MESSAGE);
+        else onClose();
         return;
       } else {
         // Handle status change with GPS data
         // IMPORTANT: use partial update so we don't accidentally send ownership fields that could trip rules.
         if (!disposition) throw Error('Reload your dispositions before saving.');
-        await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, knockedAt, gpsData), disposition.countsAsDoorKnock);
+        await saveReportingPatch(knockPatch(lead, actor, signedInUid, disposition, knockedAt, gpsData), disposition.countsAsDoorKnock);
+        if (await saveDirtyNotes(knockedAt)) {
+          onUpdate();
+          return;
+        }
       }
 
-      if (DIRECT_MOBILE_WRITES) { onUpdate(); onClose(); return; }
+      if (DIRECT_MOBILE_WRITES) {
+        onUpdate();
+        if (notesQueuedForClose()) onClose(NOTES_SAVED_ON_PHONE_MESSAGE);
+        else onClose();
+        return;
+      }
       
       // Check for Easter Egg win!
       try {
@@ -486,7 +610,8 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
         if (DIRECT_MOBILE_WRITES) await saveReportingPatch({ notes });
         else if (saveLeadPatch) await saveLeadPatch({ notes });
         else await saveLeadAsync(updatedLead);
-        if (!DIRECT_MOBILE_WRITES) setFieldMessage('Notes saved.');
+        setFieldMessage(DIRECT_MOBILE_WRITES ? NOTES_SAVED_ON_PHONE_MESSAGE : NOTES_SAVED_MESSAGE);
+        flushedNotesRef.current = notes;
         if (onUpdate) onUpdate();
       }, {
         leadId: lead.id,
@@ -495,10 +620,14 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
         parkedNotes: field?.drafts,
       });
     } catch (error) {
-      if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) return;
-      if (capture) setFieldMessage((error as Error).message);
-      else if (DIRECT_MOBILE_WRITES) reportSilent(error);
-      else setFieldMessage((error as Error).message || 'Notes could not be saved. Please retry.');
+      if ((error as Error).message === NOTES_TOO_LONG_MESSAGE) {
+        setFieldMessage(NOTES_TOO_LONG_MESSAGE);
+        return;
+      }
+      const parked = parkedNotesNotice(field?.drafts, lead.id);
+      const message = (error as Error).message || NOTES_UNSAVED_MESSAGE;
+      setFieldMessage(parked || message);
+      if (!capture && DIRECT_MOBILE_WRITES && !isFieldValidation(error)) reportSilent(error);
     } finally {
       setNotesSaving(false);
     }
@@ -534,16 +663,28 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const handleObjectionSave = async (objectionType: ObjectionType, objectionNotes: string) => {
     if (!currentUser) return;
     const at = new Date();
+    const actor = currentUser;
+    const signedInUid = auth?.currentUser?.uid;
     setIsUpdating(true);
     try {
-      if (capture) { await recordField('knock', { status: 'not-interested', objectionType, objectionNotes }); setShowObjectionTracker(false); return; }
+      if (capture) {
+        await recordField('knock', { status: 'not-interested', objectionType, objectionNotes });
+        await saveDirtyNotes(at);
+        setShowObjectionTracker(false);
+        return;
+      }
       const disposition = dispositions.find(d => d.id === 'not-interested');
       if (!disposition) throw Error('Reload your dispositions before saving.');
-      const gps = disposition.countsAsDoorKnock && !DIRECT_MOBILE_WRITES ? await homeownerKnockGps(lead, currentUser) : {};
-      await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, at, {
-        objectionType, objectionNotes, objectionRecordedAt: at, objectionRecordedBy: currentUser.id, ...gps,
+      const gps = disposition.countsAsDoorKnock && !DIRECT_MOBILE_WRITES ? await homeownerKnockGps(lead, actor) : {};
+      await saveReportingPatch(knockPatch(lead, actor, signedInUid, disposition, at, {
+        objectionType, objectionNotes, objectionRecordedAt: at, objectionRecordedBy: actor.id, ...gps,
       }), disposition.countsAsDoorKnock);
-      setShowObjectionTracker(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
+      const holdNotes = await saveDirtyNotes(at);
+      setShowObjectionTracker(false); onUpdate(); if (holdNotes) return;
+      if (DIRECT_MOBILE_WRITES) {
+        if (notesQueuedForClose()) onClose(NOTES_SAVED_ON_PHONE_MESSAGE);
+        else onClose();
+      }
     } catch (e) {
       if (isProximityWarningCancelled(e)) return;
       if (DIRECT_MOBILE_WRITES && !isFieldValidation(e)) { reportSilent(e); return; }
@@ -555,18 +696,30 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const handleGoBackSave = async (scheduleData: GoBackScheduleData) => {
     if (!currentUser) return;
     const at = new Date();
+    const actor = currentUser;
+    const signedInUid = auth?.currentUser?.uid;
     setIsUpdating(true);
     try {
-      if (capture) { await recordField('knock', { status: pendingGoBackStatus || 'go-back', goBackScheduledDate: new Date(scheduleData.date).toISOString(), goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes }); setShowGoBackSchedule(false); return; }
+      if (capture) {
+        await recordField('knock', { status: pendingGoBackStatus || 'go-back', goBackScheduledDate: new Date(scheduleData.date).toISOString(), goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes });
+        await saveDirtyNotes(at);
+        setShowGoBackSchedule(false);
+        return;
+      }
       const disposition = dispositions.find(d => d.id === pendingGoBackStatus);
       if (!disposition) throw Error('Reload your dispositions before saving.');
-      const gps = disposition.countsAsDoorKnock && !DIRECT_MOBILE_WRITES ? await homeownerKnockGps(lead, currentUser) : {};
-      await saveReportingPatch(knockPatch(lead, currentUser, auth?.currentUser?.uid, disposition, at, {
+      const gps = disposition.countsAsDoorKnock && !DIRECT_MOBILE_WRITES ? await homeownerKnockGps(lead, actor) : {};
+      await saveReportingPatch(knockPatch(lead, actor, signedInUid, disposition, at, {
         disposition: disposition.name, goBackScheduledDate: scheduleData.date,
         goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes,
-        goBackScheduledBy: currentUser.id, ...gps,
+        goBackScheduledBy: actor.id, ...gps,
       }), disposition.countsAsDoorKnock);
-      setShowGoBackSchedule(false); onUpdate(); if (DIRECT_MOBILE_WRITES) onClose();
+      const holdNotes = await saveDirtyNotes(at);
+      setShowGoBackSchedule(false); onUpdate(); if (holdNotes) return;
+      if (DIRECT_MOBILE_WRITES) {
+        if (notesQueuedForClose()) onClose(NOTES_SAVED_ON_PHONE_MESSAGE);
+        else onClose();
+      }
     } catch (e) {
       if (isProximityWarningCancelled(e)) return;
       if (DIRECT_MOBILE_WRITES && !isFieldValidation(e)) { reportSilent(e); return; }
@@ -602,7 +755,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
               <span className="text-lg">🙂</span>
               <span className="font-semibold text-[#2D3748]">Customer</span>
             </div>
-            <button data-raydar-back-close onClick={onClose} aria-label="Close lead details" className="p-2 hover:bg-white rounded-lg transition-colors">
+            <button data-raydar-back-close onClick={closeWithNotes} aria-label="Close lead details" className="p-2 hover:bg-white rounded-lg transition-colors">
               <X className="w-5 h-5 text-[#718096]" />
             </button>
           </div>
@@ -694,7 +847,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             </span>
           </div>
           <button
-            data-raydar-back-close onClick={onClose}
+            data-raydar-back-close onClick={closeWithNotes}
             aria-label="Close lead details"
             className="p-2 hover:bg-white rounded-lg transition-colors"
           >
@@ -1088,8 +1241,11 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           lead={lead}
           onClose={() => setShowLeadEditor(false)}
           onSave={() => {
-            setShowLeadEditor(false);
-            onUpdate();
+            void (async () => {
+              await saveDirtyNotes();
+              setShowLeadEditor(false);
+              onUpdate();
+            })();
           }}
         />
       )}
@@ -1156,7 +1312,7 @@ export default function LeadDetail(props: LeadDetailProps) {
     return()=>{active=false;};
   },[id,uid,summary,attempt]);
   if(summary && (!full || full.id!==id) && !error && isDeviceOnline())return <MobileDialog title="Door details" onClose={props.onClose}>
-    <p role="status">{error || 'Loading door details…'}</p><button className="rm-secondary" onClick={props.onClose}>Close door details</button>
+    <p role="status">{error || 'Loading door details…'}</p><button className="rm-secondary" onClick={() => props.onClose()}>Close door details</button>
     {error && <button className="rm-primary" onClick={()=>setAttempt(v=>v+1)}>Retry</button>}
   </MobileDialog>;
   return <LeadDetailContent {...props} lead={summary && full?.id===id ? full : props.lead} />;

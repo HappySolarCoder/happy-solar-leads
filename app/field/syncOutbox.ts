@@ -83,6 +83,12 @@ function keepClearConversion(m: PendingMutation, rebased?: PendingMutation): Pen
   return withRebasedNotes(m, rebased);
 }
 
+/** A GPS-held create has not landed yet. Later drafts for that lead wait. A parked create does not hold them. */
+function gpsHeldCreate(m: PendingMutation): boolean {
+  const state = effectiveSyncState(m);
+  return !!m.direct?.create && state !== "parked" && (!!m.direct?.gps || state === "gps");
+}
+
 function eventFor(m: PendingMutation, state: PendingMutation["syncState"] | "accepted") {
   return {
     id: crypto.randomUUID(),
@@ -144,7 +150,9 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       return due && (state === "retry" || (state === "queued" && m.routeHold === "field-dispo"));
     };
     const deferred = new Set<string>();
+    const acceptedIds = new Set<string>();
     for (const m of all) if (holding(m)) deferred.add(m.leadId);
+    for (const m of all) if (gpsHeldCreate(m)) deferred.add(m.leadId);
     const ids = new Set(all.map((row) => row.id));
     let flushed = false;
     for (const row of fresh) {
@@ -174,7 +182,10 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       if (seen.has(m.id)) continue;
       seen.add(m.id);
       const state = effectiveSyncState(m);
-      if (m.direct?.gps || state === "gps" || state === "parked") continue;
+      if (m.direct?.gps || state === "gps" || state === "parked") {
+        if (gpsHeldCreate(m)) deferred.add(m.leadId);
+        continue;
+      }
       if (notesTooLongRow(m) && (m.nextAttemptAt ?? 0) > now()) continue;
       if (deps.heldNotesPending?.has(m.id)) {
         deferred.add(m.leadId);
@@ -284,6 +295,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       try {
         await deps.send(current);
         await deps.remove(current.id);
+        acceptedIds.add(current.id);
         await dropAbsorbed();
         accepted += 1;
         await recordSyncEvent(eventFor(current, "accepted"));
@@ -326,12 +338,29 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           try {
             await deps.send(current);
             await deps.remove(current.id);
+            acceptedIds.add(current.id);
             await dropAbsorbed();
             accepted += 1;
             await recordSyncEvent(eventFor(current, "accepted"));
           } catch (again) {
             await fail(current, again as Error, "retry");
           }
+          continue;
+        }
+        if (
+          outcome.kind === "denial"
+          && outcome.parkedReason === SYNC_REASON.notFound
+          && current.kind === "notes"
+          && all.some((row) =>
+            row.leadId === current.leadId
+            && row.id !== current.id
+            && !!row.direct?.create
+            && effectiveSyncState(row) !== "parked"
+            && !acceptedIds.has(row.id)
+          )
+        ) {
+          // The home's create is still queued. Parking this 410 would drop the note. Retry on the next flush.
+          await recordSyncEvent(eventFor({ ...current, lastError: error.message }, "retry"));
           continue;
         }
         if (outcome.kind === "denial") {

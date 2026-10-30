@@ -5,6 +5,7 @@ import { groupHouseLeads, latestKnockDisplay, mergeLeadSnapshots } from '@/app/h
 import { auth, db } from '@/app/utils/firebase';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
+import { NOTES_SAVED_TOAST_MS } from '@/app/field/dirtyNotes';
 import type { Homeowner } from '@/app/homeowners/model';
 import { KNOCK_PERIODS, matchesMapFilters, type KnockPeriod } from '../_lib/mapFilters';
 import { useDeviceNow } from '../_components/useDeviceNow';
@@ -73,6 +74,18 @@ export default function KnockingPage() {
   const [selectedHouseLeads, setSelectedHouseLeads] = useState<Lead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
+  const [notesSavedNotice, setNotesSavedNotice] = useState('');
+  useEffect(() => {
+    if (!notesSavedNotice) return;
+    const timer = window.setTimeout(() => setNotesSavedNotice(''), NOTES_SAVED_TOAST_MS);
+    return () => window.clearTimeout(timer);
+  }, [notesSavedNotice]);
+  const closeLeadDetail = (message?: string) => {
+    setShowLeadDetail(false);
+    setSelectedLeadId(undefined);
+    setSelectedHomeowner(undefined);
+    if (message) setNotesSavedNotice(message);
+  };
   const [viewMode] = useState<'map' | 'list'>('map');
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const centeredActivation = useRef('');
@@ -622,6 +635,7 @@ export default function KnockingPage() {
         {areasError && showTeamAreas && <MobileNotice>{areasError}<button className="ml-2 underline" onClick={retryAreas}>Retry areas</button></MobileNotice>}
         {areaNotice && <MobileNotice>{areaNotice}</MobileNotice>}
         {live?.error && <MobileNotice>{live.error}<button className="ml-2 underline font-semibold" onClick={() => void refresh()}>Retry data</button></MobileNotice>}
+        {notesSavedNotice ? <MobileNotice>{notesSavedNotice}</MobileNotice> : null}
         {/* Search Sheet */}
         {showSearchSheet && (
           <div className="fixed inset-0 z-50">
@@ -937,7 +951,7 @@ export default function KnockingPage() {
       {selectedHomeVisit && currentUser && !selectedLeadId && showLeadDetail && <HomeownerKnockDetail
         key={selectedHomeVisit.lead.id} visit={selectedHomeVisit} currentUser={currentUser}
         dispositions={dispositions} loading={dispositionsLoading}
-        onClose={() => { setSelectedHomeowner(undefined); setShowLeadDetail(false); }}
+        onClose={closeLeadDetail}
         onUpdate={(updatedLead) => {
           if (updatedLead) { void refreshLeads(updatedLead); return; }
           if (selectedHomeVisit.saved) setSavedHomeVisits(previous => [...previous.filter(l => l.id !== selectedHomeVisit.lead.id), selectedHomeVisit.lead]);
@@ -954,11 +968,7 @@ export default function KnockingPage() {
           homeowner={selectedHomeowner}
           relatedLeads={selectedHouseLeads}
           currentUser={currentUser}
-          onClose={() => {
-            setShowLeadDetail(false);
-            setSelectedLeadId(undefined);
-            setSelectedHomeowner(undefined);
-          }}
+          onClose={closeLeadDetail}
           onUpdate={refreshLeads}
         />
       )}
