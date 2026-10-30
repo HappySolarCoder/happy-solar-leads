@@ -366,14 +366,14 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     },
     [uid, reloadDrafts],
   );
-  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead, deferGps = false, point?: KnockPoint | null) => {
+  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead, deferGps = false, point?: KnockPoint | null, recordedAt?: Date) => {
     const actor = latest.current.user;
     if (!DIRECT_MOBILE_WRITES || !actor || actor.id !== uid || auth?.currentUser?.uid !== uid)
       throw Error('Sign in with the rep who is recording this action.');
-    const recordedAt = new Date();
+    const stamped = recordedAt ?? new Date();
     rejectCombinedKnockAndNotes(patch);
     const clean = directPatch(patch), entry = clean.dispositionHistory?.[0];
-    const tappedAt = entry?.timestamp ? new Date(entry.timestamp) : recordedAt;
+    const tappedAt = entry?.timestamp ? new Date(entry.timestamp) : stamped;
     if (entry) clean.dispositionHistory = [entry];
     if (entry && (entry.userId !== uid || entry.userName !== actor.name))
       throw Error('The knock identity does not match the signed-in rep.');
