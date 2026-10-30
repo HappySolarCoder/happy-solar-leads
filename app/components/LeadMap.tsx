@@ -96,8 +96,6 @@ interface LeadMapProps {
   /** Undefined: this map loads hot leads. An array: the parent already loaded them. */
   hotLeads?: HotLeadPin[];
   hotFilter?: HotPinFilter;
-  /** Any lead id in a house group to the winning pin id. */
-  hotHousePins?: ReadonlyMap<string, string>;
 }
 
 const DEFAULT_CENTER: [number, number] = [43.1566, -77.6088];
@@ -165,7 +163,6 @@ export default function LeadMap({
   onToggleTeamAreas,
   hotLeads,
   hotFilter = 'all',
-  hotHousePins,
 }: LeadMapProps) {
   const [homeownerMap, setHomeownerMap] = useState<L.Map | null>(null);
   const [mapView, setMapView] = useState<View | null>(null);
@@ -329,10 +326,12 @@ export default function LeadMap({
       publishHotLeadIndex(new Map());
       return mapped;
     }
-    const merged = mergeHotLeads(mapped, pins, hotHousePins);
+    const winners = new Map<string, string>();
+    for (const [id, group] of houseIndex.grouped.byLead) if (group[0]) winners.set(id, group[0].id);
+    const merged = mergeHotLeads(mapped, pins, winners);
     publishHotLeadIndex(filter === 'hide' ? new Map() : merged.index);
     return applyHotFilter(merged.leads, filter);
-  }, [leadsProp, houseIndex, homeMerge, houseAnchors, hotLeads, fetchedHot.pins, hotFilter, hotHousePins, currentUser]);
+  }, [leadsProp, houseIndex, homeMerge, houseAnchors, hotLeads, fetchedHot.pins, hotFilter, currentUser]);
 
   const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
 
@@ -833,7 +832,10 @@ export default function LeadMap({
               showPersistentPopup(map, current);
               if (current.historicalTerritoryPin) return;
             } else if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
-            if (isHotOnlyLead(current) && current.hotPin) openHotRef.current(current.hotPin);
+            if (isHotOnlyLead(current) && current.hotPin) {
+              openHotRef.current(current.hotPin);
+              return;
+            }
             clickRef.current(current, homeMergeRef.current.byLead.get(current.id) || current.homeowner, homeMergeRef.current.groupedByLead.get(current.id));
           });
           entry.marker.on('keydown', (event: L.LeafletKeyboardEvent) => {
@@ -1673,7 +1675,7 @@ export default function LeadMap({
   return (
     <div className="relative w-full h-full">
       {proximity.dialog}
-      {openHot && currentUser ? <HotLeadDetail pin={openHot} user={currentUser} onClose={() => setOpenHot(null)} /> : null}
+      {openHot && currentUser ? <HotLeadDetail pin={openHot} user={currentUser} dispositions={dispositions} onClose={() => setOpenHot(null)} /> : null}
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       
       {showHomeowners && <HomeownerStatus state={homeState} onSelect={selectListedHome} />}

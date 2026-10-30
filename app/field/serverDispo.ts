@@ -11,7 +11,7 @@ import { deliberateNotesClear, NOTES_CLEAR_UNAVAILABLE_MESSAGE, NOTES_MAX_CHARS,
 import { recordSyncEvent, reportInBackground, reportParked } from "./syncDiagnostics";
 import { ACTION_AT_FUTURE_MS, ACTION_AT_SERVER_LAG_MS, FIELD_DISPO_UNAVAILABLE, NOTES_ACTION_AT_RETRY_MESSAGE, PHONE_CLOCK_NOTICE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
-import { HOT_CLAIM_PATH, HOT_LEAD_OLD_SERVER_NOTICE, HOT_LEAD_OWNED_MESSAGE, hotClaimBody, isHotLeadDraft } from "@/app/hotLeads/save";
+import { HOT_CLAIM_PATH, HOT_LEAD_MISSING_NOTICE, HOT_LEAD_OLD_SERVER_NOTICE, HOT_LEAD_OWNED_MESSAGE, hotClaimBody, isHotLeadDraft } from "@/app/hotLeads/save";
 
 export { rebaseNotes } from "./notesRebase";
 
@@ -978,9 +978,10 @@ async function deliverHotLead(
     const failure = error as Error & { status?: number; code?: string };
     const status = failure.status || 0;
     if (failure.code === "hot-leads-hold") throw failure;
-    if (status === 404 || status === 405 || status >= 500 || failure.code === FIELD_DISPO_UNAVAILABLE) {
-      throw hotHold(status || 404);
+    if (status === 404 || failure.code === FIELD_DISPO_UNAVAILABLE) {
+      throw routeError(HOT_LEAD_MISSING_NOTICE, 404, SYNC_REASON.notFound);
     }
+    if (status === 405 || status >= 500) throw hotHold(status || 405);
     throw failure;
   }
 }
@@ -1017,11 +1018,16 @@ async function postHotClaim(
     const data = await readJson(response);
     return { replayed: data?.duplicate === true };
   }
-  if (response.status === 404 || response.status === 405 || response.status >= 500) throw hotHold(response.status);
+  if (response.status === 404) throw routeError(HOT_LEAD_MISSING_NOTICE, 404, SYNC_REASON.notFound);
+  if (response.status === 405 || response.status >= 500) throw hotHold(response.status);
   if (response.status === 400) throw routeError(HOT_LEAD_OLD_SERVER_NOTICE, 400, SYNC_REASON.invalidPayload);
   const data = await readJson(response);
-  if (response.status === 409 || data?.reasonCode === SYNC_REASON.ownedByOther) {
-    throw routeError(ownedHotMessage((data as { claimedByName?: unknown } | null)?.claimedByName), response.status || 409, SYNC_REASON.ownedByOther);
+  if (response.status === 409) {
+    const reason = knownReason(data?.reasonCode);
+    if (reason === SYNC_REASON.ownedByOther) {
+      throw routeError(ownedHotMessage((data as { claimedByName?: unknown } | null)?.claimedByName), 409, SYNC_REASON.ownedByOther);
+    }
+    throw routeError("This hot lead could not be saved.", 409, reason || SYNC_REASON.other);
   }
   if (response.status === 403) {
     const reason = knownReason(data?.reasonCode) || SYNC_REASON.other;

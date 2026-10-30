@@ -23,7 +23,9 @@ import {
   hotLeadCallAllowed,
   isHotLead,
   mergeHotLeads,
+  publishHotLeadIndex,
   resetHotLeadStore,
+  suppressLeadCall,
   toHotDisplayLead,
   type HotLeadPin,
 } from "../../app/hotLeads/model";
@@ -31,12 +33,12 @@ import {
   HOT_CLAIM_PATH,
   HOT_LEAD_AREA_GATE,
   HOT_LEAD_DIRECT_WRITE,
+  HOT_LEAD_MISSING_NOTICE,
   HOT_LEAD_OLD_SERVER_NOTICE,
   HOT_LEAD_OWNED_MESSAGE,
   HOT_LEAD_PROXIMITY_WARNING,
   HOT_LEAD_ROUTE_SUPPORTS_CONTACT,
   HOT_LEAD_ROUTE_SUPPORTS_PHOTO,
-  captureHotKnock,
   hotClaimBody,
   hotLeadEditors,
   hotLeadParkNotice,
@@ -45,6 +47,8 @@ import {
   queueHotKnock,
   queueHotNotes,
 } from "../../app/hotLeads/save";
+import { GPS_WINDOW_AFTER_MS } from "../../app/field/gpsPolicy";
+import { stageHotKnock } from "../../app/hotLeads/gps";
 import { fieldPinArtwork, fieldPinZoomTier, HOT_RING_COLOR, withLegacyHotPin } from "../../app/utils/fieldPin";
 import type { Lead, User, UserRole } from "../../app/types";
 import type { PendingMutation } from "../../app/field/types";
@@ -369,8 +373,7 @@ test("pin art keeps a non-hot pin unchanged and marks a hot pin at every zoom", 
 test("knock, notes and claim drafts use the hot route and keep the tap time", async () => {
   const user = person("closer");
   const hot = pin();
-  let gpsStarted = 0;
-  const draft = await captureHotKnock({
+  const queued = queueHotKnock({
     enabled: true,
     user,
     pin: hot,
@@ -378,21 +381,20 @@ test("knock, notes and claim drafts use the hot route and keep the tap time", as
     tappedAt: tapped,
     status: "not-home",
     disposition: "Not Home",
-    readGps: async () => {
-      gpsStarted = Date.now();
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      return { lat: 43.2, lng: -77.7, accuracyM: 8, capturedAt: "2026-10-30T15:04:05.000Z" };
-    },
   });
-  assert.ok(draft);
-  assert.equal(draft?.createdAt, tapped.toISOString());
-  assert.ok(gpsStarted >= tapped.getTime());
-  assert.equal(draft?.collection, "hotLeads");
-  assert.equal(draft?.leadId, hot.id);
+  assert.ok(queued);
+  const draft = stageHotKnock(queued, tapped.getTime());
+  assert.equal(draft.createdAt, tapped.toISOString());
+  assert.equal(draft.syncState, "gps");
+  assert.equal(draft.direct?.gps?.tappedAt, tapped.getTime());
+  assert.equal(draft.direct?.gps?.deadline, tapped.getTime() + GPS_WINDOW_AFTER_MS);
+  assert.equal(draft.direct?.gps?.required, false);
+  assert.equal(draft.collection, "hotLeads");
+  assert.equal(draft.leadId, hot.id);
   assert.equal(HOT_LEAD_AREA_GATE, false);
   assert.equal(HOT_LEAD_PROXIMITY_WARNING, false);
   assert.equal(HOT_LEAD_DIRECT_WRITE, false);
-  const body = fieldDispoBody(draft as PendingMutation, user);
+  const body = fieldDispoBody({ ...draft, direct: { ...draft.direct, patch: draft.direct?.patch || {}, gps: undefined } } as PendingMutation, user);
   assert.equal(body.collection, "hotLeads");
   assert.equal(body.leadId, "ghl_opp_example_1");
   assert.equal(body.actionAt, tapped.toISOString());
@@ -400,8 +402,7 @@ test("knock, notes and claim drafts use the hot route and keep the tap time", as
   assert.equal(JSON.stringify(body).includes("ghlStage"), false);
   assert.equal(JSON.stringify(body).includes("opportunity"), false);
   assert.equal(JSON.stringify(body).includes("555-0100"), false);
-  assert.equal((draft?.direct?.patch as { gpsUnverifiedReason?: string }).gpsUnverifiedReason, undefined);
-  assert.equal(body.gps?.lat, 43.2);
+  assert.notEqual(draft.direct?.patch?.gpsUnverifiedReason, "out_of_area");
   const notes = queueHotNotes({
     enabled: true, user, pin: hot, draftId: "draft-notes-1", tappedAt: tapped, notes: "Left a card", baseNotes: "",
   });
@@ -462,6 +463,8 @@ test("hot saves never use a direct write, and a 400 parks with a notice", async 
   }).catch((error: Error) => error);
   assert.equal(commits, 0);
   assert.equal((contactError as Error).message, HOT_LEAD_OLD_SERVER_NOTICE);
+  if (knock.direct) delete knock.direct.gps;
+  knock.syncState = "queued";
   let stored: PendingMutation | undefined;
   const removed: string[] = [];
   await syncOutbox({
@@ -485,7 +488,7 @@ test("404, 405 and 5xx stay queued on the hot-leads slow retry and are not rewri
   const hot = queueHotNotes({
     enabled: true, user, pin: pin(), draftId: "draft-hold-1", tappedAt: tapped, notes: "Card", baseNotes: "",
   }) as PendingMutation;
-  for (const status of [404, 405, 500, 502]) {
+  for (const status of [405, 500, 502]) {
     let stored: PendingMutation | undefined;
     const removed: string[] = [];
     await syncOutbox({
@@ -508,9 +511,13 @@ test("404, 405 and 5xx stay queued on the hot-leads slow retry and are not rewri
 
 test("offline replay keeps the draft id, treats a duplicate as success, and sends in queueSeq order", async () => {
   const user = person("closer");
-  const first = queueHotKnock({
-    enabled: true, user, pin: pin({ id: "ghl_first" }), draftId: "draft-a", tappedAt: tapped, status: "not-home", disposition: "Not Home",
-  }) as PendingMutation;
+  const first = {
+    ...queueHotKnock({
+      enabled: true, user, pin: pin({ id: "ghl_first" }), draftId: "draft-a", tappedAt: tapped, status: "not-home", disposition: "Not Home",
+    })!,
+    syncState: "queued" as const,
+  };
+  if (first.direct) delete first.direct.gps;
   const second = queueHotClaim({
     enabled: true, user, pin: pin({ id: "ghl_second" }), draftId: "draft-b", tappedAt: tapped, action: "release",
   }) as PendingMutation;
@@ -565,6 +572,34 @@ test("offline replay keeps the draft id, treats a duplicate as success, and send
   assert.match((owned as Error).message, /someone else/i);
   assert.match((owned as Error).message, /Someone Else/);
   assert.equal(HOT_LEAD_OWNED_MESSAGE.includes("someone else"), true);
+  const other = await deliverFieldDispo(second, user, {
+    getToken: async () => "token",
+    commit: async () => { throw Error("direct"); },
+    post: async () => json(409, { ok: false, error: "conflict", reasonCode: "notes_conflict" }),
+  }).catch((error: Error) => error);
+  assert.equal((other as Error).message.toLowerCase().includes("someone else"), false);
+  const missing = await deliverFieldDispo(second, user, {
+    getToken: async () => "token",
+    commit: async () => { throw Error("direct"); },
+    post: async () => json(404, { error: "not_found" }),
+  }).catch((error: Error & { reasonCode?: string }) => error);
+  assert.ok(missing instanceof Error);
+  assert.equal(missing.message, HOT_LEAD_MISSING_NOTICE);
+  assert.equal((missing as { reasonCode?: string }).reasonCode, "not_found");
+  let parked: PendingMutation | undefined;
+  const removed404: string[] = [];
+  await syncOutbox({
+    read: async () => [second],
+    send: async () => { throw missing; },
+    remove: async (id) => { removed404.push(id); },
+    update: async (row) => { parked = row; },
+    active: () => true,
+    now: () => 9_000,
+    random: () => 0.5,
+  });
+  assert.deepEqual(removed404, []);
+  assert.equal(parked?.syncState, "parked");
+  assert.equal(parked?.routeHold, undefined);
 });
 
 test("a hot pin stays hot after a dispo and is still absent for a setter", async () => {
@@ -588,6 +623,25 @@ test("a hot pin stays hot after a dispo and is still absent for a setter", async
   const seen = await fetchHotLeadMap({ user: person("closer"), view: view(), token: "tok", fetcher, enabled: true });
   assert.equal(isHotLead(toHotDisplayLead(seen.pins[0])), true);
   assert.equal(isHotLeadDraft({ collection: "hotLeads", kind: "knock" }), true);
+});
+
+test("two hot leads at one house stay one pin, and a merged doNotCall house hides Call", () => {
+  resetHotLeadStore();
+  const house = lead("house-1", { phone: "555-0101", address: "100 Example Ave", city: "Rochester", state: "NY", lat: 43.16, lng: -77.61 });
+  const hidden = lead("older-visit", { address: "100 Example Ave", city: "Rochester", state: "NY", lat: 43.1601, lng: -77.6101 });
+  const winners = new Map<string, string>([["older-visit", "house-1"], ["house-1", "house-1"]]);
+  const first = pin({ id: "ghl_house_a", linkedLeadId: "older-visit", doNotCall: true, address: "100 Example Ave", city: "Rochester", lat: 43.16, lng: -77.61 });
+  const second = pin({ id: "ghl_house_b", linkedLeadId: "house-1", address: "100 Example Ave", city: "Rochester", lat: 43.1602, lng: -77.6102 });
+  const merged = mergeHotLeads([house, hidden].filter((row) => row.id === "house-1"), [first, second], winners);
+  assert.equal(merged.leads.length, 1);
+  assert.equal(merged.leads[0].id, "house-1");
+  assert.equal(isHotLead(merged.leads[0]), true);
+  publishHotLeadIndex(merged.index);
+  assert.equal(suppressLeadCall(house), true);
+  assert.equal(suppressLeadCall(lead("plain-house")), false);
+  const loneA = pin({ id: "ghl_same_a", linkedLeadId: null, address: "50 Example Ave", city: "Rochester", state: "NY", lat: 43.2, lng: -77.7 });
+  const loneB = pin({ id: "ghl_same_b", linkedLeadId: null, address: "50 Example Ave", city: "Rochester", state: "NY", lat: 43.2001, lng: -77.7001 });
+  assert.equal(mergeHotLeads([], [loneA, loneB]).leads.length, 1);
 });
 
 test("doNotCall hides the call control, warns, and still allows a knock", () => {
@@ -623,6 +677,19 @@ test("doNotCall hides the call control, warns, and still allows a knock", () => 
   assert.match(detail, /role="alert"/);
   assert.match(detail, /tel:/);
   assert.match(detail, /!noCall \? <a href=\{`tel:/);
+  assert.match(detail, /canWrite/);
+  assert.match(detail, /stageHotKnock/);
+  assert.match(detail, /getDispositionsAsync/);
+  assert.doesNotMatch(detail, /getLocation/);
+  assert.doesNotMatch(detail, /captureHotKnock/);
+  assert.match(detail, /if \(saved\)/);
+  const map = readFileSync(new URL("../../app/components/LeadMap.tsx", import.meta.url), "utf8");
+  const click = map.slice(map.indexOf("isHotOnlyLead(current)"), map.indexOf("clickRef.current(current"));
+  assert.match(map, /houseIndex\.grouped\.byLead/);
+  assert.match(click, /return;/);
+  const leadDetail = readFileSync(new URL("../../app/components/LeadDetail.tsx", import.meta.url), "utf8");
+  assert.match(leadDetail, /suppressLeadCall\(lead\)/);
+  assert.match(leadDetail, /Call Scheduling Manager/);
 });
 
 test("the map filter copy and the hot hook stay out of the lead sign-in path", () => {

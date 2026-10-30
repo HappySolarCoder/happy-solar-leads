@@ -1,4 +1,5 @@
 import type { Lead, User } from "@/app/types";
+import { GPS_WINDOW_AFTER_MS } from "@/app/field/gpsPolicy";
 import type { FieldMutation, PendingMutation } from "@/app/field/types";
 import { canSeeHotLeads, type HotLeadProfile } from "./access";
 import { HOT_LEADS_ENABLED } from "./flag";
@@ -8,6 +9,8 @@ export const HOT_CLAIM_PATH = "/api/hot-leads/claim";
 export const HOT_LEAD_COLLECTION = "hotLeads" as const;
 /** Parked where the rep can see it. The draft is not deleted. */
 export const HOT_LEAD_OLD_SERVER_NOTICE = "This hot lead is saved on this phone. The server does not accept it yet.";
+/** A 404 for this hot lead parks. It is not retried forever. */
+export const HOT_LEAD_MISSING_NOTICE = "This hot lead is no longer available.";
 export const HOT_LEAD_OWNED_MESSAGE = "This hot lead belongs to someone else.";
 /** Hot saves never ask the area gate or the proximity warning. */
 export const HOT_LEAD_AREA_GATE = false;
@@ -73,27 +76,17 @@ export function queueHotKnock(input: SaveInput & {
     baseNotes: input.pin.notes || "",
     status: input.status,
     disposition: input.disposition,
-    direct: { patch },
+    direct: {
+      patch,
+      gps: {
+        lat: input.pin.lat,
+        lng: input.pin.lng,
+        tappedAt: input.tappedAt.getTime(),
+        deadline: input.tappedAt.getTime() + GPS_WINDOW_AFTER_MS,
+        required: false,
+      },
+    },
   };
-}
-
-/**
- * Tap time is frozen before GPS. Area and proximity are not consulted.
- * A missing fix still queues. The server flags 35 m and never blocks.
- */
-export async function captureHotKnock(input: SaveInput & {
-  status: string;
-  disposition: string;
-  readGps: () => Promise<{ lat: number; lng: number; accuracyM: number; capturedAt: string } | null>;
-}): Promise<FieldMutation | null> {
-  const tappedAt = new Date(input.tappedAt.getTime());
-  let gps: { lat: number; lng: number; accuracyM: number; capturedAt: string } | null = null;
-  try {
-    gps = await input.readGps();
-  } catch {
-    gps = null;
-  }
-  return queueHotKnock({ ...input, tappedAt, gps });
 }
 
 export function queueHotNotes(input: SaveInput & {

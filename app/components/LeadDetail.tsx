@@ -59,7 +59,7 @@ import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 import { HotLeadDetail } from '@/app/hotLeads/HotLeadDetail';
-import { hotPinForLead, isHotOnlyLead } from '@/app/hotLeads/model';
+import { hotPinForLead, isHotOnlyLead, suppressLeadCall } from '@/app/hotLeads/model';
 
 interface LeadDetailProps {
   relatedLeads?: Lead[];
@@ -908,9 +908,13 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
               {lead.phone && (
                 <div className="flex items-center gap-3 p-3 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg">
                   <Phone className="w-4 h-4 text-[#718096]" />
-                  <a href={`tel:${lead.phone}`} className="text-[#2D3748] hover:text-[#FF5F5A] transition-colors">
-                    {lead.phone}
-                  </a>
+                  {suppressLeadCall(lead) ? (
+                    <span className="text-[#2D3748]">{lead.phone}</span>
+                  ) : (
+                    <a href={`tel:${lead.phone}`} className="text-[#2D3748] hover:text-[#FF5F5A] transition-colors">
+                      {lead.phone}
+                    </a>
+                  )}
                 </div>
               )}
               {lead.email && (
@@ -959,7 +963,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             </div>
           )}
 
-          {hotPinForLead(lead.id) && currentUser ? <HotLeadDetail variant="section" pin={hotPinForLead(lead.id)!} user={currentUser} /> : null}
+          {hotPinForLead(lead.id) && currentUser ? <HotLeadDetail variant="section" pin={hotPinForLead(lead.id)!} user={currentUser} dispositions={dispositions} /> : null}
           {/* Quick Actions */}
           <div className="mb-6">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Quick Actions</h3>

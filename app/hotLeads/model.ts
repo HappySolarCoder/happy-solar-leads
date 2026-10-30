@@ -1,3 +1,4 @@
+import { sameHouse } from "@/app/homeowners/houseIdentity";
 import type { Lead } from "@/app/types";
 
 export const HOT_LEAD_ID = /^ghl_[A-Za-z0-9_-]{1,120}$/;
@@ -131,12 +132,20 @@ export function mergeHotLeads(
   const byId = new Map(leads.map((lead) => [lead.id, lead]));
   const attached = new Map<string, HotLeadPin>();
   const consumed = new Set<string>();
+  const extras = new Map<string, string>();
   for (const hot of hotLeads) {
     if (!HOT_LEAD_ID.test(hot.id) || !Number.isFinite(hot.lat) || !Number.isFinite(hot.lng)) continue;
     const linked = hot.linkedLeadId;
     const winner = linked ? (pinIdForLead?.get(linked) || linked) : "";
     const target = winner && byId.has(winner) ? winner : linked && byId.has(linked) ? linked : "";
-    if (!target || attached.has(target)) continue;
+    if (!target) continue;
+    const previous = attached.get(target);
+    if (previous) {
+      consumed.add(hot.id);
+      extras.set(hot.id, target);
+      if (hot.doNotCall === true && previous.doNotCall !== true) attached.set(target, { ...previous, doNotCall: true });
+      continue;
+    }
     attached.set(target, hot);
     consumed.add(hot.id);
   }
@@ -155,8 +164,28 @@ export function mergeHotLeads(
     if (!Number.isFinite(hot.lat) || !Number.isFinite(hot.lng)) continue;
     if (byId.has(hot.id)) continue;
     const display = toHotDisplayLead(hot);
+    const mateIndex = merged.findIndex((lead) => isHotLead(lead) && sameHouse(display, lead));
+    if (mateIndex >= 0) {
+      const mate = merged[mateIndex] as HotDisplayLead;
+      const current = mate.hotPin;
+      const doNotCall = hot.doNotCall === true || current?.doNotCall === true;
+      const hotPin: HotLeadPin = current
+        ? { ...current, ...(doNotCall ? { doNotCall: true as const } : {}) }
+        : hot;
+      const next: HotDisplayLead = { ...mate, hotLead: true, hotLeadId: mate.hotLeadId || hot.id, hotPin };
+      if (!mate.hotOnly) delete next.hotOnly;
+      merged[mateIndex] = next;
+      index.set(mate.id, hotPin);
+      index.set(hot.id, hotPin);
+      if (current) index.set(current.id, hotPin);
+      continue;
+    }
     merged.push(display);
     index.set(hot.id, hot);
+  }
+  for (const [hotId, target] of extras) {
+    const pin = index.get(target);
+    if (pin) index.set(hotId, pin);
   }
   return { leads: merged, index };
 }
@@ -175,6 +204,13 @@ export function publishHotCapabilities(next: HotCapabilities): void {
 
 export function hotPinForLead(leadId: string): HotLeadPin | null {
   return hotIndex.get(leadId) ?? null;
+}
+
+/** Display only. A merged house hides Call when its hot lead is doNotCall. */
+export function suppressLeadCall(lead: { id: string; hotPin?: HotLeadPin | null } | null | undefined): boolean {
+  if (!lead) return false;
+  const pin = lead.hotPin ?? hotPinForLead(lead.id);
+  return !!pin && !hotLeadCallAllowed(pin);
 }
 
 export function hotCapabilities(): HotCapabilities {

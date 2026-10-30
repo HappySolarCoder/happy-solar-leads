@@ -345,11 +345,6 @@ export default function KnockingPage() {
   // cannot resurrect a second pin or hide a newer result at the same house.
   const houseGroups = useMemo(() => groupHouseLeads(mapSource), [mapSource]);
   const roleFilteredLeads = useMemo(() => houseGroups.pins.map(l => latestKnockDisplay(l,dispositions)), [houseGroups,dispositions]);
-  const hotHousePins = useMemo(() => {
-    const index = new Map<string, string>();
-    for (const [id, group] of houseGroups.byLead) if (group[0]) index.set(id, group[0].id);
-    return index;
-  }, [houseGroups]);
 
   // Generate route when button is clicked
   const handleGenerateRoute = useCallback(() => {
@@ -878,7 +873,6 @@ export default function KnockingPage() {
             currentUser={currentUser}
             hotLeads={hotLeads.pins}
             hotFilter={showHotFilter ? hotFilter : 'all'}
-            hotHousePins={hotHousePins}
             users={coloredUsers}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
