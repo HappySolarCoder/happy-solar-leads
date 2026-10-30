@@ -370,6 +370,32 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
     await db.collection('easterEggs').doc('egg-win').set({ active: true });
     await db.collection('disposition_history').doc('hist-seed').set({ userId: 'admin' });
     await db.collection('userGoals').doc('goal-setter').set({ uid: 'realSetter' });
+
+    await db.collection('territories').doc('setterHotTerritory').set({
+      userId: 'realSetter',
+      polygon: [
+        { lat: 43.0, lng: -77.7 },
+        { lat: 43.0, lng: -77.5 },
+        { lat: 43.2, lng: -77.5 },
+        { lat: 43.2, lng: -77.7 },
+      ],
+    });
+    await db.collection('hotLeads').doc('ghl_real').set({
+      address: '1 Test St',
+      state: 'NY',
+      lat: 43.1,
+      lng: -77.6,
+      hotStatus: 'active',
+      testData: false,
+    });
+    await db.collection('hotLeads').doc('ghl_testdata').set({
+      address: '2 Test St',
+      state: 'NY',
+      lat: 43.1,
+      lng: -77.6,
+      hotStatus: 'active',
+      testData: true,
+    });
   });
 }
 
@@ -716,6 +742,21 @@ function cases(): RuleCase[] {
     { id: 'setter fieldDispoReceipts create', uid: 'realSetter', run: (db) => db.collection('fieldDispoReceipts').doc('x').set({ uid: 'realSetter' }), expectTight: 'deny' },
     { id: 'admin fieldDispoReceipts get', uid: 'admin', run: (db) => db.collection('fieldDispoReceipts').doc('x').get(), expectTight: 'deny' },
     { id: 'admin fieldDispoReceipts create', uid: 'admin', run: (db) => db.collection('fieldDispoReceipts').doc('x').set({ uid: 'admin' }), expectTight: 'deny' },
+
+    // hotLeads has no match block. The catch-all denies every client read and write.
+    ...['realSetter', 'closer', 'manager', 'admin', 'demo'].flatMap((uid) => {
+      const who = uid === 'realSetter' ? 'setter' : uid === 'demo' ? 'test account' : uid;
+      return [
+        { id: `${who} hotLeads get`, uid, run: (db: Firestore) => db.collection('hotLeads').doc('ghl_real').get(), expectTight: 'deny' as const },
+        { id: `${who} hotLeads list`, uid, run: (db: Firestore) => db.collection('hotLeads').limit(5).get(), expectTight: 'deny' as const },
+        { id: `${who} hotLeads create`, uid, run: (db: Firestore) => db.collection('hotLeads').doc('ghl_client').set({ address: '1 Test St' }), expectTight: 'deny' as const },
+        { id: `${who} hotLeads update`, uid, run: (db: Firestore) => db.collection('hotLeads').doc('ghl_real').update({ notes: 'x' }), expectTight: 'deny' as const },
+        { id: `${who} hotLeads delete`, uid, run: (db: Firestore) => db.collection('hotLeads').doc('ghl_real').delete(), expectTight: 'deny' as const },
+      ];
+    }),
+    { id: 'setter territory hotLeads get', uid: 'realSetter', run: (db) => db.collection('hotLeads').doc('ghl_real').get(), expectTight: 'deny' },
+    { id: 'test account hotLeads get testData', uid: 'demo', run: (db) => db.collection('hotLeads').doc('ghl_testdata').get(), expectTight: 'deny' },
+    { id: 'closer hotLeads get testData', uid: 'closer', run: (db) => db.collection('hotLeads').doc('ghl_testdata').get(), expectTight: 'deny' },
   ];
 }
 

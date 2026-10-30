@@ -16,6 +16,8 @@ import {
 } from '@/app/utils/gpsRule';
 import { isTestAccount } from './discordNotification';
 import { FIELD_REASON_CODES, type FieldReasonCode } from './fieldReasonCodes';
+import { isHotLeadId, isHotLeadRole } from './hotLeadContract';
+import { HOT_LEAD_DISPOSITION_READ_LIMIT, hotStatusAfterKnock } from './hotLeadStatus';
 
 const KNOWN_REASONS: ReadonlySet<string> = new Set(FIELD_REASON_CODES);
 import {
@@ -73,6 +75,7 @@ const TOP_KEYS = new Set([
   'notes',
   'baseNotes',
   'clearNotes',
+  'collection',
 ]);
 const KNOCK_KEYS = new Set([
   'draftId',
@@ -89,8 +92,23 @@ const KNOCK_KEYS = new Set([
   'homeownerId',
   'goBack',
   'objection',
+  'collection',
 ]);
-const NOTES_KEYS = new Set(['draftId', 'leadId', 'kind', 'actionAt', 'notes', 'baseNotes', 'clearNotes']);
+const NOTES_KEYS = new Set(['draftId', 'leadId', 'kind', 'actionAt', 'notes', 'baseNotes', 'clearNotes', 'collection']);
+const DISPO_COLLECTION_NAMES = new Set(['leads', 'hotLeads']);
+const HOT_KNOCK_KEYS = new Set([
+  'status',
+  'disposition',
+  'dispositionedAt',
+  'dispositionedBy',
+  'dispositionHistory',
+  'gpsVerified',
+  'gpsUnverifiedReason',
+  'gpsDistanceM',
+  'hotStatus',
+  'updatedAt',
+]);
+const HOT_NOTE_TOUCH = new Set(['updatedAt']);
 /**
  * notes_empty and notes_clear_mismatch are in FIELD_REASON_CODES so
  * sync-report and Raydar Mobile share them. payload_too_large is a
@@ -162,6 +180,8 @@ export type DispoCollection = {
   name: string;
   doc: (id: string) => DispoDocRef;
   where: (field: string, op: string, value: string) => DispoQuery;
+  /** Capped collection scan. No equality filter. Hot-lead knocks use it for dispositions. */
+  cappedGet?: (limit: number) => DispoQuery;
 };
 
 export type DispoTransaction = {
@@ -209,11 +229,14 @@ type ObjectionInput = {
   notes: string;
 };
 
+type DispoCollectionName = 'leads' | 'hotLeads';
+
 type ParsedKnock = {
   kind: 'knock';
   draftId: string;
   leadId: string;
   actionAtMs: number;
+  collection: DispoCollectionName;
   status: string;
   disposition: string;
   userName: string;
@@ -229,6 +252,7 @@ type ParsedNotes = {
   draftId: string;
   leadId: string;
   actionAtMs: number;
+  collection: DispoCollectionName;
   notes: string;
   baseNotes: string;
 };
@@ -323,7 +347,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * nested truthy testData or isTestAccount flag. Those accounts can still
  * pass a direct rules write. team == 'TEST' is denied here and by the rules.
  */
-function isBlockedTestAccount(uid: string, user: UserProfile): boolean {
+export function isBlockedTestAccount(uid: string, user: UserProfile): boolean {
   if (isTestAccount(uid, user)) return true;
   return user.team === 'TEST';
 }
@@ -455,6 +479,14 @@ function parseObjection(value: unknown): { ok: true; objection: ObjectionInput }
   return { ok: true, objection: { type: value.type, notes } };
 }
 
+function parseCollection(body: Record<string, unknown>): { ok: true; collection: DispoCollectionName } | { ok: false; field: 'collection' } {
+  if (!Object.prototype.hasOwnProperty.call(body, 'collection')) return { ok: true, collection: 'leads' };
+  if (body.collection === 'leads' || body.collection === 'hotLeads') {
+    return { ok: true, collection: body.collection };
+  }
+  return { ok: false, field: 'collection' };
+}
+
 function parseDraft(
   body: unknown,
   now: number,
@@ -472,6 +504,9 @@ function parseDraft(
   const allowed = body.kind === 'knock' ? KNOCK_KEYS : NOTES_KEYS;
   const kindUnknown = firstUnknown(body, allowed);
   if (kindUnknown) return { ok: false, field: kindUnknown };
+  const collection = parseCollection(body);
+  if (!collection.ok) return collection;
+  if (collection.collection === 'hotLeads' && !isHotLeadId(body.leadId)) return { ok: false, field: 'leadId' };
 
   if (body.kind === 'notes') {
     const notes = boundedString(body.notes, NOTES_TEXT_MAX, true);
@@ -492,7 +527,18 @@ function parseDraft(
     // applyNotes then still requires baseNotes to match the server copy.
     if (clearNotes && notes !== '') return { ok: false, field: 'notes', reasonCode: NOTES_CLEAR_MISMATCH_REASON };
     if (!clearNotes && notes.trim() === '') return { ok: false, field: 'notes', reasonCode: NOTES_EMPTY_REASON };
-    return { ok: true, draft: { kind: 'notes', draftId: body.draftId, leadId: body.leadId, actionAtMs, notes, baseNotes } };
+    return {
+      ok: true,
+      draft: {
+        kind: 'notes',
+        draftId: body.draftId,
+        leadId: body.leadId,
+        actionAtMs,
+        collection: collection.collection,
+        notes,
+        baseNotes,
+      },
+    };
   }
 
   const status = boundedString(body.status, 64, false);
@@ -538,6 +584,7 @@ function parseDraft(
       draftId: body.draftId,
       leadId: body.leadId,
       actionAtMs,
+      collection: collection.collection,
       status,
       disposition,
       userName,
@@ -743,11 +790,17 @@ function serverNotes(lead: Record<string, unknown>): string {
   return typeof lead.notes === 'string' ? lead.notes : '';
 }
 
-function storedResponse(snap: DispoSnap, draft: ParsedDraft): { body: Record<string, unknown>; mismatch: boolean } | null {
+function storedResponse(
+  snap: DispoSnap,
+  draft: ParsedDraft,
+): { body: Record<string, unknown>; mismatch: boolean; collectionMismatch: boolean } | null {
   const data = snap.data() ?? {};
   if (!isPlainObject(data.response)) return null;
-  const mismatch = data.leadId !== draft.leadId || data.kind !== draft.kind;
-  return { body: { ...data.response, duplicate: true }, mismatch };
+  // Receipts written before collection existed are leads drafts.
+  const storedCollection = data.collection == null ? 'leads' : data.collection;
+  const collectionMismatch = storedCollection !== draft.collection;
+  const mismatch = data.leadId !== draft.leadId || data.kind !== draft.kind || collectionMismatch;
+  return { body: { ...data.response, duplicate: true }, mismatch, collectionMismatch };
 }
 
 function receiptBody(draft: ParsedDraft, result: string, extra: Record<string, unknown>): Record<string, unknown> {
@@ -816,6 +869,7 @@ export async function handleFieldDispo(input: {
   if (!parsed.ok) return parsed.reasonCode ? rejectNotes(parsed.reasonCode) : invalid(parsed.field);
 
   const draft = parsed.draft;
+  if (draft.collection === 'hotLeads' && !isHotLeadRole(approved.role)) return forbidden('permission_denied');
   const outcome = await input.deps.db.runTransaction((tx) => applyDraft({
     tx,
     db: input.deps.db,
@@ -856,10 +910,23 @@ async function applyDraft(input: {
   if (receiptSnap.exists) {
     const stored = storedResponse(receiptSnap, input.draft);
     if (!stored) throw new Error('Dispo receipt is unreadable');
+    if (stored.collectionMismatch) {
+      return {
+        status: 409,
+        body: { ok: false, error: 'conflict', reasonCode: 'invalid_payload', field: 'collection' },
+        mismatch: true,
+      };
+    }
     return { status: 200, body: stored.body, mismatch: stored.mismatch };
   }
 
-  const leadRef = input.db.collection('leads').doc(input.draft.leadId);
+  if (!DISPO_COLLECTION_NAMES.has(input.draft.collection)) {
+    throw new Error('Dispo collection left the allowlist');
+  }
+  const leadRef = input.db.collection(input.draft.collection).doc(input.draft.leadId);
+  if (input.draft.collection === 'hotLeads') {
+    return applyHotLead(input, leadRef, receiptRef);
+  }
   const leadSnap = await input.tx.get(leadRef);
   if (!leadSnap.exists) {
     return { status: 410, body: { ok: false, error: 'not_found', reasonCode: 'not_found' } };
@@ -936,6 +1003,7 @@ function writeReceipt(
     draftId: draft.draftId,
     leadId: draft.leadId,
     kind: draft.kind,
+    collection: draft.collection,
     result,
     response: { ...body },
     createdAt: deps.serverTimestamp(),
@@ -952,6 +1020,7 @@ function applyNotes(
   leadRef: DispoDocRef,
   receiptRef: DispoDocRef,
   lead: Record<string, unknown>,
+  touch?: Record<string, unknown>,
 ): TxOutcome {
   const draft = input.draft;
   if (draft.kind !== 'notes') throw new Error('Dispo notes draft missing');
@@ -970,8 +1039,14 @@ function applyNotes(
   }
   const body = receiptBody(draft, 'applied', {});
   if (current !== draft.notes) {
-    const patch = { notes: draft.notes };
+    const patch: Record<string, unknown> = { notes: draft.notes };
     assertAllowedPatch(patch);
+    if (touch) {
+      if (!Object.keys(touch).every((key) => HOT_NOTE_TOUCH.has(key))) {
+        throw new Error('Hot note touch left the allowlist');
+      }
+      Object.assign(patch, touch);
+    }
     input.tx.update(leadRef, patch);
   }
   writeReceipt(input.tx, receiptRef, input.deps, input.uid, draft, 'applied', body);
@@ -1051,6 +1126,122 @@ function applyKnock(
   assertAllowedPatch(patch);
   if (Object.keys(patch).length > 0) input.tx.update(leadRef, patch);
 
+  const body = stale
+    ? receiptBody(draft, 'stale_history_only', {
+      reasonCode: 'stale_tap',
+      serverDispositionedAt: new Date(serverMs as number).toISOString(),
+    })
+    : receiptBody(draft, 'applied', { gps: gpsResponse(decision) });
+  writeReceipt(input.tx, receiptRef, input.deps, input.uid, draft, stale ? 'stale_history_only' : 'applied', body);
+  return { status: 200, body, historyDropped: history.dropped };
+}
+
+/**
+ * Hot leads have their own gate: closer, manager, or admin. There is no
+ * territory check and no claim check. GPS is a flag, never a block.
+ * Writes stay off ghl, contacts, coordinates, geo, import, and the link ids.
+ */
+async function applyHotLead(
+  input: {
+    tx: DispoTransaction;
+    db: DispoDb;
+    deps: FieldDispoDeps;
+    uid: string;
+    role: string;
+    draft: ParsedDraft;
+  },
+  leadRef: DispoDocRef,
+  receiptRef: DispoDocRef,
+): Promise<TxOutcome> {
+  if (!isHotLeadRole(input.role)) {
+    return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: 'permission_denied' } };
+  }
+  const leadSnap = await input.tx.get(leadRef);
+  if (!leadSnap.exists) {
+    return { status: 404, body: { ok: false, error: 'not_found', reasonCode: 'not_found' } };
+  }
+  const lead = leadSnap.data() ?? {};
+  if (lead.testData === true) {
+    return { status: 404, body: { ok: false, error: 'not_found', reasonCode: 'not_found' } };
+  }
+  if (input.draft.kind === 'notes') {
+    return applyNotes(input, leadRef, receiptRef, lead, { updatedAt: input.deps.serverTimestamp() });
+  }
+  return applyHotKnock(input, input.draft, leadRef, receiptRef, lead);
+}
+
+async function loadHotDispositions(
+  db: DispoDb,
+  tx: DispoTransaction,
+): Promise<Array<{ id: string; name: string | null }>> {
+  const collection = db.collection('dispositions');
+  if (!collection.cappedGet) throw new Error('Dispositions read is not capped');
+  const snap = await tx.getQuery(collection.cappedGet(HOT_LEAD_DISPOSITION_READ_LIMIT));
+  if (snap.docs.length >= HOT_LEAD_DISPOSITION_READ_LIMIT) {
+    console.log('[field/dispo] dispositions_capped 1');
+  }
+  return snap.docs.map((doc) => {
+    const data = doc.data() ?? {};
+    return { id: doc.id, name: typeof data.name === 'string' ? data.name : null };
+  });
+}
+
+function assertHotKnockPatch(patch: Record<string, unknown>): void {
+  assert.ok(
+    Object.keys(patch).every((key) => HOT_KNOCK_KEYS.has(key)),
+    'Hot lead patch left the allowlist',
+  );
+}
+
+async function applyHotKnock(
+  input: {
+    tx: DispoTransaction;
+    db: DispoDb;
+    deps: FieldDispoDeps;
+    uid: string;
+    role: string;
+  },
+  draft: ParsedKnock,
+  leadRef: DispoDocRef,
+  receiptRef: DispoDocRef,
+  lead: Record<string, unknown>,
+): Promise<TxOutcome> {
+  const decision = decideKnockGps({
+    fix: draft.gps,
+    actionAtMs: draft.actionAtMs,
+    reference: finitePoint(lead.lat, lead.lng),
+    role: input.role,
+  });
+  const serverMs = millisOf(lead.dispositionedAt);
+  const stale = serverMs != null && draft.actionAtMs <= serverMs;
+  const entry = {
+    disposition: draft.disposition,
+    timestamp: input.deps.Timestamp.fromMillis(draft.actionAtMs),
+    userId: input.uid,
+    userName: draft.userName,
+    gpsFlag: gpsFlagOf(decision),
+  };
+  const history = mergeHistory(lead.dispositionHistory, entry, input.uid, draft.disposition, draft.actionAtMs);
+  const patch: Record<string, unknown> = {};
+  if (history.changed) patch.dispositionHistory = history.history;
+  if (!stale) {
+    const clear = () => input.deps.deleteField();
+    const dispositions = await loadHotDispositions(input.db, input.tx);
+    patch.status = draft.status;
+    patch.disposition = draft.disposition;
+    patch.dispositionedAt = input.deps.Timestamp.fromMillis(draft.actionAtMs);
+    patch.dispositionedBy = input.uid;
+    patch.gpsVerified = decision.gpsVerified;
+    patch.gpsUnverifiedReason = decision.gpsUnverifiedReason ?? clear();
+    patch.gpsDistanceM = decision.gpsDistanceM ?? clear();
+    patch.hotStatus = hotStatusAfterKnock(
+      { status: draft.status, disposition: draft.disposition },
+      dispositions,
+    );
+    patch.updatedAt = input.deps.serverTimestamp();
+  }
+  assertHotKnockPatch(patch);
+  if (Object.keys(patch).length > 0) input.tx.update(leadRef, patch);
   const body = stale
     ? receiptBody(draft, 'stale_history_only', {
       reasonCode: 'stale_tap',
