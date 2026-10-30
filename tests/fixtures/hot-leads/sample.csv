@@ -1,0 +1,9 @@
+Opportunity ID,Contact ID,First Name,Last Name,Contact Name,phone,email,Address,Contact Address,pipeline,Pipeline ID,stage,Pipeline Stage ID,status,source,Created on,Updated on
+opp-a,c-1,Test,Person,Test Person,5550101,test.person@example.com,10 Main Street Buffalo NY 14201,,Inbound,pipe-1,New,stage-1,open,web,2026-01-01,2026-01-02
+opp-b,c-2,Test,Two,Test Two,5550102,test.two@example.com,10 Main Street Buffalo NY 14201,,Inbound,pipe-1,Qualified,stage-2,open,web,2026-01-03,2026-01-04
+opp-c,c-3,Skip,Dnc,Skip Dnc,5550103,skip.dnc@example.com,11 Oak Avenue Rochester NY 14604,,Inbound,pipe-1,Dead/Do not Contact,stage-9,open,web,2026-01-01,2026-01-01
+opp-d,c-4,Skip,Lost,Skip Lost,5550104,skip.lost@example.com,12 Elm Drive Albany NY 12207,,Inbound,pipe-1,New,stage-1,lost,web,2026-01-01,2026-01-01
+opp-e,c-5,No,Addr,No Addr,5550105,no.addr@example.com,,,Inbound,pipe-1,New,stage-1,open,web,2026-01-01,2026-01-01
+opp-a,c-9,Dup,Person,Dup Person,5550109,dup.person@example.com,99 Other Road Syracuse NY 13202,,Inbound,pipe-1,New,stage-1,open,web,2026-01-05,2026-01-05
+opp-f,c-6,Test,Three,Test Three,5550106,test.three@example.com,,15 Oak Avenue Rochester NY 14604,Inbound,pipe-1,New,stage-1,open,web,2026-02-01,2026-02-02
+opp-g,c-7,Test,Four,Test Four,5550107,test.four@example.com,20 Elm Drive Albany NY,,Inbound,pipe-1,New,stage-1,open,web,2026-02-03,2026-02-03

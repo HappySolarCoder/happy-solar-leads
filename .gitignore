@@ -40,4 +40,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Hot-lead import sidecars. Addresses must not be committed.
+*.geocode-cache.json
+*.needs-review.csv
+
 .vercel
