@@ -1,5 +1,7 @@
 import { sameHouse } from "@/app/homeowners/houseIdentity";
 import type { Lead } from "@/app/types";
+import { DEFAULT_DISPOSITIONS } from "@/app/types/disposition";
+import { collectHistoricalStatusIds, isAppointmentSetOrSoldLead } from "@/app/utils/historicalTerritoryPins";
 
 export const HOT_LEAD_ID = /^ghl_[A-Za-z0-9_-]{1,120}$/;
 export const HOT_PAGE_SIZE = 200;
@@ -72,22 +74,22 @@ export function isHotOnlyLead(lead: Lead | null | undefined): lead is HotDisplay
   return !!row && row.hotOnly === true && !!row.hotPin && HOT_LEAD_ID.test(row.hotPin.id);
 }
 
-const CONVERTED_STATUS = new Set(["appointment", "sale", "sold"]);
-
-/** A knock receipt keeps the pin hot. Appointment and Sold become converted. */
-export function hotLeadAfterDispo(pin: HotLeadPin, status: string, disposition: string): HotLeadPin {
-  const statusKey = status.trim().toLowerCase();
-  const nameKey = disposition.trim().toLowerCase();
-  const converted = CONVERTED_STATUS.has(statusKey)
-    || nameKey === "appointment set"
-    || nameKey === "sale!"
-    || nameKey === "sold";
-  return {
-    ...pin,
-    status,
-    disposition,
-    hotStatus: converted ? "converted" : "worked",
-  };
+/**
+ * Instant hotStatus after a knock. Matches the server:
+ * converted stays converted; Appointment/Sale (from the dispositions list,
+ * including a custom id with that name) becomes converted; anything else,
+ * including a retired lead, becomes worked.
+ */
+export function hotLeadAfterDispo(
+  pin: HotLeadPin,
+  status: string,
+  disposition: string,
+  dispositions: Array<{ id?: string | null; name?: string | null }> = DEFAULT_DISPOSITIONS,
+): HotLeadPin {
+  const extra = new Set(collectHistoricalStatusIds(dispositions));
+  const matched = isAppointmentSetOrSoldLead({ status, disposition }, extra);
+  const hotStatus: HotLeadPin["hotStatus"] = pin.hotStatus === "converted" || matched ? "converted" : "worked";
+  return { ...pin, status, disposition, hotStatus };
 }
 
 export function toHotDisplayLead(pin: HotLeadPin): HotDisplayLead {

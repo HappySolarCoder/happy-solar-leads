@@ -115,7 +115,7 @@ export function HotLeadDetail({
       const draft = queueHotKnock({ user: user!, pin, draftId: crypto.randomUUID(), tappedAt, status, disposition });
       return draft ? stageHotKnock(draft, tappedAt.getTime()) : null;
     }, () => {
-      setPin(hotLeadAfterDispo(pin, status, disposition));
+      setPin(hotLeadAfterDispo(pin, status, disposition, dispositions ?? loadedDispositions));
       noteHotDispo(pin.id, status, disposition);
     });
   }

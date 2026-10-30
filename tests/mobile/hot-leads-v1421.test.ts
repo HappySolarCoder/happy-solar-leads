@@ -488,7 +488,7 @@ test("404, 405 and 5xx stay queued on the hot-leads slow retry and are not rewri
   const hot = queueHotNotes({
     enabled: true, user, pin: pin(), draftId: "draft-hold-1", tappedAt: tapped, notes: "Card", baseNotes: "",
   }) as PendingMutation;
-  for (const status of [405, 500, 502]) {
+  for (const status of [404, 405, 500, 502]) {
     let stored: PendingMutation | undefined;
     const removed: string[] = [];
     await syncOutbox({
@@ -600,6 +600,31 @@ test("offline replay keeps the draft id, treats a duplicate as success, and send
   assert.deepEqual(removed404, []);
   assert.equal(parked?.syncState, "parked");
   assert.equal(parked?.routeHold, undefined);
+  const bare = await deliverFieldDispo(second, user, {
+    getToken: async () => "token",
+    commit: async () => { throw Error("direct"); },
+    post: async () => json(404, {}),
+  }).catch((error: Error & { code?: string; reasonCode?: string }) => error);
+  assert.ok(bare instanceof Error);
+  assert.equal(bare.code, "hot-leads-hold");
+  assert.notEqual(bare.reasonCode, "not_found");
+  const note = queueHotNotes({
+    enabled: true, user, pin: pin(), draftId: "draft-missing-note", tappedAt: tapped, notes: "Card", baseNotes: "",
+  }) as PendingMutation;
+  const routeMissing = await deliverFieldDispo(note, user, {
+    getToken: async () => "token",
+    commit: async () => { throw Error("direct"); },
+    post: async () => json(404, {}),
+  }).catch((error: Error & { code?: string; reasonCode?: string }) => error);
+  assert.ok(routeMissing instanceof Error);
+  assert.equal(routeMissing.code, "hot-leads-hold");
+  const named = await deliverFieldDispo(second, user, {
+    getToken: async () => "token",
+    commit: async () => { throw Error("direct"); },
+    post: async () => json(404, { reasonCode: "not_found" }),
+  }).catch((error: Error & { reasonCode?: string }) => error);
+  assert.ok(named instanceof Error);
+  assert.equal(named.reasonCode, "not_found");
 });
 
 test("a hot pin stays hot after a dispo and is still absent for a setter", async () => {
@@ -611,6 +636,12 @@ test("a hot pin stays hot after a dispo and is still absent for a setter", async
   assert.equal(worked.hotStatus, "worked");
   assert.equal(converted.hotStatus, "converted");
   assert.equal(sold.hotStatus, "converted");
+  assert.equal(hotLeadAfterDispo(converted, "not-home", "Not Home").hotStatus, "converted");
+  assert.equal(hotLeadAfterDispo({ ...hot, hotStatus: "retired" }, "not-home", "Not Home").hotStatus, "worked");
+  assert.equal(hotLeadAfterDispo({ ...hot, hotStatus: "retired" }, "appointment", "Appointment Set").hotStatus, "converted");
+  const custom = [{ id: "custom-set", name: "Appointment Set" }, { id: "custom-pass", name: "Not Home" }];
+  assert.equal(hotLeadAfterDispo(hot, "custom-set", "Appointment Set", custom).hotStatus, "converted");
+  assert.equal(hotLeadAfterDispo(hot, "custom-pass", "Not Home", custom).hotStatus, "worked");
   assert.equal(isHotLead(toHotDisplayLead(worked)), true);
   assert.equal(isHotLead(toHotDisplayLead(converted)), true);
   assert.equal(canSeeHotLeads(person("setter")), false);

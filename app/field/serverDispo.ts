@@ -435,6 +435,7 @@ export type FieldDispoDeps = {
 async function readJson(response: Response): Promise<{
   currentNotes?: unknown;
   reasonCode?: unknown;
+  error?: unknown;
   field?: unknown;
   duplicate?: unknown;
   lead?: Lead;
@@ -445,6 +446,7 @@ async function readJson(response: Response): Promise<{
     return (await response.json()) as {
       currentNotes?: unknown;
       reasonCode?: unknown;
+      error?: unknown;
       field?: unknown;
       duplicate?: unknown;
       lead?: Lead;
@@ -454,6 +456,11 @@ async function readJson(response: Response): Promise<{
   } catch {
     return null;
   }
+}
+
+/** #180 uses this body for a missing hot lead. Any other 404 is the route not being live. */
+function hotLeadMissingBody(data: { error?: unknown; reasonCode?: unknown } | null): boolean {
+  return data?.error === "not_found" || data?.reasonCode === "not_found";
 }
 
 /** Retry-After seconds or HTTP-date. Capped at the 15 minute backoff ceiling. */
@@ -647,7 +654,13 @@ export async function postFieldDispo(
     if (rebasedDraft) (error as Error & { rebasedDraft?: PendingMutation }).rebasedDraft = rebasedDraft;
     throw error;
   };
-  if (response.status === 404) fail(unavailable());
+  if (response.status === 404) {
+    if (draft.collection === "hotLeads") {
+      const data = await readJson(response);
+      if (hotLeadMissingBody(data)) fail(routeError(HOT_LEAD_MISSING_NOTICE, 404, SYNC_REASON.notFound));
+    }
+    fail(unavailable());
+  }
   if (response.status === 401)
     fail(Object.assign(Error("Sign in again to sync your work."), { status: 401 }));
   if (response.status === 410)
@@ -978,10 +991,10 @@ async function deliverHotLead(
     const failure = error as Error & { status?: number; code?: string };
     const status = failure.status || 0;
     if (failure.code === "hot-leads-hold") throw failure;
-    if (status === 404 || failure.code === FIELD_DISPO_UNAVAILABLE) {
-      throw routeError(HOT_LEAD_MISSING_NOTICE, 404, SYNC_REASON.notFound);
+    if (status === 404 && (failure as { reasonCode?: string }).reasonCode === SYNC_REASON.notFound) throw failure;
+    if (status === 404 || failure.code === FIELD_DISPO_UNAVAILABLE || status === 405 || status >= 500) {
+      throw hotHold(status >= 500 ? status : status === 405 ? 405 : 404);
     }
-    if (status === 405 || status >= 500) throw hotHold(status || 405);
     throw failure;
   }
 }
@@ -1018,7 +1031,11 @@ async function postHotClaim(
     const data = await readJson(response);
     return { replayed: data?.duplicate === true };
   }
-  if (response.status === 404) throw routeError(HOT_LEAD_MISSING_NOTICE, 404, SYNC_REASON.notFound);
+  if (response.status === 404) {
+    const missingBody = await readJson(response);
+    if (hotLeadMissingBody(missingBody)) throw routeError(HOT_LEAD_MISSING_NOTICE, 404, SYNC_REASON.notFound);
+    throw hotHold(404);
+  }
   if (response.status === 405 || response.status >= 500) throw hotHold(response.status);
   if (response.status === 400) throw routeError(HOT_LEAD_OLD_SERVER_NOTICE, 400, SYNC_REASON.invalidPayload);
   const data = await readJson(response);
