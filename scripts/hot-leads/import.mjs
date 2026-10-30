@@ -1,0 +1,121 @@
+/**
+ * Dry-run by default.
+ * node scripts/hot-leads/import.mjs <file.xlsx|csv> [--commit] [--retire-missing]
+ *   [--include-lost] [--project <id>]
+ * Do Not Contact / DNC rows are imported with doNotCall: true. --include-dnc is accepted and ignored.
+ * --commit also requires HOT_LEADS_IMPORT_CONFIRM=yes.
+ * A dry run never opens Firestore. Do not pass --commit in this environment.
+ */
+import { pathToFileURL } from 'node:url';
+import { readFile, writeFile } from 'node:fs/promises';
+import { executeCli, HOMEOWNER_QUERY_LIMIT, LEAD_READ_LIMIT } from './logic.mjs';
+
+const CENSUS_URL = 'https://geocoding.geo.census.gov/geocoder/locations/addressbatch?benchmark=Public_AR_Current';
+
+async function fetchBatch(csv) {
+  const form = new FormData();
+  form.set('addressFile', new Blob([csv], { type: 'text/csv' }), 'batch.csv');
+  const response = await fetch(CENSUS_URL, { method: 'POST', body: form });
+  if (!response.ok) throw new Error('geocode_failed');
+  return response.text();
+}
+
+async function throttle() {
+  await new Promise((resolve) => setTimeout(resolve, 500));
+}
+
+async function openAdmin(projectId) {
+  const { initializeApp, cert, getApp } = await import('firebase-admin/app');
+  const { FieldPath, getFirestore } = await import('firebase-admin/firestore');
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!raw) throw new Error('missing_credentials');
+  const parsed = JSON.parse(raw);
+  if (parsed.private_key) parsed.private_key = String(parsed.private_key).replace(/\\n/g, '\n');
+  const name = 'hot-leads-import';
+  let app;
+  try {
+    app = getApp(name);
+  } catch {
+    app = initializeApp({
+      credential: cert(parsed),
+      projectId: projectId || parsed.project_id,
+    }, name);
+  }
+  const db = getFirestore(app);
+  return {
+    async get(id) {
+      const snap = await db.collection('hotLeads').doc(id).get();
+      return snap.exists ? snap.data() : null;
+    },
+    async merge(id, patch) {
+      await db.collection('hotLeads').doc(id).set(patch, { merge: true });
+    },
+    async create(id, doc) {
+      await db.collection('hotLeads').doc(id).set(doc, { merge: true });
+    },
+    async retire(id, patch) {
+      await db.collection('hotLeads').doc(id).set(patch, { merge: true });
+    },
+    async homeownersNear(plan) {
+      const docs = [];
+      for (const query of plan.queries.slice(0, 4)) {
+        const limit = Math.min(query.limit, HOMEOWNER_QUERY_LIMIT);
+        const snap = await db.collection('homeowners').orderBy('geohash').startAt(query.start).endAt(query.end).limit(limit).get();
+        docs.push(...snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })));
+      }
+      return docs;
+    },
+    async leadsNear(plan) {
+      if (plan.equality?.length || plan.limit > LEAD_READ_LIMIT) throw new Error('lead_read_unbounded');
+      let query = db.collection('leads');
+      for (const filter of plan.where) {
+        if (filter.field !== 'lat' || filter.op === '==') throw new Error('lead_read_unbounded');
+        query = query.where(filter.field, filter.op, filter.value);
+      }
+      const snap = await query.orderBy('lat').limit(Math.min(plan.limit, LEAD_READ_LIMIT)).get();
+      return snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })).filter((doc) => {
+        const longitude = doc.data?.lng;
+        return typeof longitude !== 'number' || (longitude >= plan.west && longitude <= plan.east);
+      });
+    },
+    async listHotLeads({ limit, afterId }) {
+      const page = Math.min(limit, 200);
+      let query = db.collection('hotLeads').orderBy(FieldPath.documentId()).select('hotStatus').limit(page);
+      if (afterId) query = query.startAfter(afterId);
+      const snap = await query.get();
+      return snap.docs.map((doc) => ({ id: doc.id, hotStatus: doc.get('hotStatus') ?? null }));
+    },
+  };
+}
+
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isDirectRun()) {
+  const commit = process.argv.includes('--commit');
+  const confirmed = process.env.HOT_LEADS_IMPORT_CONFIRM === 'yes';
+  executeCli(process.argv.slice(2), {
+    env: process.env,
+    readFile: (file) => readFile(file),
+    readOptional: async (file) => {
+      try {
+        return await readFile(file, 'utf8');
+      } catch {
+        return null;
+      }
+    },
+    writeFile: (file, text) => writeFile(file, text),
+    fetchBatch,
+    throttle,
+    connect: commit && confirmed ? openAdmin : null,
+  }).then((result) => {
+    process.stdout.write(`${JSON.stringify(result.output)}\n`);
+    process.exitCode = result.code;
+  }).catch(() => {
+    process.stdout.write(`${JSON.stringify({ error: 'import_failed', writes: 0 })}\n`);
+    process.exitCode = 1;
+  });
+}
