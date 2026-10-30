@@ -1191,11 +1191,11 @@ async function loadHotDispositions(
 
 /**
  * Converted stays converted. A later knock is still history, and it does not
- * move the lead back to worked. A knock on a retired lead brings it back to worked.
+ * move the lead back to worked. A knock on a retired lead becomes converted
+ * when the status matches Appointment/Sale, and worked otherwise.
  */
 function nextHotStatus(previous: unknown, outcome: 'worked' | 'converted'): 'worked' | 'converted' {
   if (previous === 'converted') return 'converted';
-  if (previous === 'retired') return 'worked';
   return outcome;
 }
 

@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { normalizeStreet } from '../app/homeowners/model';
 import {
   addressCacheKey,
@@ -10,11 +12,16 @@ import {
   homeownerReadPlan,
   houseStreet,
   isDoNotContact,
+  collectLeadBand,
   geocodeHouses,
   isCensusCsv,
   leadReadPlan,
+  LEAD_HOUSE_CAP,
+  LEAD_LAT_DELTA,
   HOMEOWNER_QUERY_LIMIT,
+  writeOwnerOnly,
   parseAddressLine,
+  pickLink,
   parseTable,
   parseXlsx,
   reimportPatch,
@@ -42,9 +49,20 @@ function census(csv: string, unmatchedNeedle: string) {
   }).join('\n');
 }
 
+type Stamp = { toMillis: () => number; toDate: () => Date };
+type WrittenDoc = {
+  hotStatus?: string;
+  notes?: string;
+  doNotCall?: boolean;
+  updatedAt?: Stamp;
+  import?: { importedAt?: Stamp; history?: Array<{ at?: Stamp }> };
+  ghl?: { createdOn?: Stamp; updatedOn?: Stamp; stage?: string };
+};
+type ImportWrite = { op: string; id: string; data: WrittenDoc };
+
 function fakeDb(seed: Record<string, Record<string, unknown>> = {}) {
   const docs = new Map(Object.entries(seed));
-  const writes: Array<{ op: string; id: string; data: Record<string, unknown> }> = [];
+  const writes: ImportWrite[] = [];
   const plans: unknown[] = [];
   return {
     docs,
@@ -54,15 +72,15 @@ function fakeDb(seed: Record<string, Record<string, unknown>> = {}) {
       return docs.get(id) ?? null;
     },
     async merge(id: string, patch: Record<string, unknown>) {
-      writes.push({ op: 'merge', id, data: patch });
+      writes.push({ op: 'merge', id, data: patch as WrittenDoc });
       docs.set(id, { ...(docs.get(id) ?? {}), ...patch });
     },
     async create(id: string, data: Record<string, unknown>) {
-      writes.push({ op: 'create', id, data });
+      writes.push({ op: 'create', id, data: data as WrittenDoc });
       docs.set(id, data);
     },
     async retire(id: string, patch: Record<string, unknown>) {
-      writes.push({ op: 'retire', id, data: patch });
+      writes.push({ op: 'retire', id, data: patch as WrittenDoc });
       docs.set(id, { ...(docs.get(id) ?? {}), ...patch });
     },
     async homeownersNear(plan: { queries: Array<{ limit: number }> }) {
@@ -73,18 +91,16 @@ function fakeDb(seed: Record<string, Record<string, unknown>> = {}) {
         data: { address: '10 Main Street', city: 'Buffalo', state: 'NY', zip: '14201', lat: 43.1002, lng: -77.6101 },
       }];
     },
-    async leadsNear(plan: { queries: Array<{ orderBy: string; limit: number }> }) {
-      plans.push(plan);
-      assert.ok(plan.queries.length > 0);
-      assert.ok(plan.queries.length <= 4);
-      for (const query of plan.queries) {
-        assert.equal(query.orderBy, 'geohash');
-        assert.ok(query.limit <= HOMEOWNER_QUERY_LIMIT);
-      }
-      return [{
+    async leadPage(page: { start: number; end: number; limit: number; after: { lat: number; id: string } | null }) {
+      plans.push(page);
+      const lead = {
         id: 'lead-1',
         data: { address: '10 Main Street Buffalo NY 14201', lat: 43.1001, lng: -77.6100 },
-      }];
+      };
+      assert.equal(Object.prototype.hasOwnProperty.call(lead.data, 'geohash'), false);
+      if (page.after) return [];
+      if (lead.data.lat < page.start || lead.data.lat > page.end) return [];
+      return [lead];
     },
     async listHotLeads() {
       return [...docs.entries()].map(([id, data]) => ({ id, hotStatus: data.hotStatus }));
@@ -190,11 +206,10 @@ describe('hot lead import', () => {
     assert.ok(ownerPlan.queries.length <= 4);
     assert.equal(ownerPlan.queries[0].limit, HOMEOWNER_QUERY_LIMIT);
     const leads = leadReadPlan(43.1, -77.61);
-    assert.ok(leads.queries.length > 0);
-    assert.ok(leads.queries.length <= 4);
-    assert.equal(leads.queries[0].orderBy, 'geohash');
-    assert.equal(leads.queries[0].limit, HOMEOWNER_QUERY_LIMIT);
-    assert.equal('where' in leads, false);
+    assert.equal(leads.orderBy, 'lat');
+    assert.ok(Math.abs((leads.end - leads.start) - (2 * LEAD_LAT_DELTA)) < 1e-9);
+    assert.equal(leads.cap, LEAD_HOUSE_CAP);
+    assert.equal('queries' in leads, false);
   });
 
   it('refuses commit without the confirm env and limits a confirmed reimport', async () => {
@@ -237,9 +252,12 @@ describe('hot lead import', () => {
     assert.equal(db.docs.get('ghl_opp-a')?.claimedBy, 'rep-1');
     assert.equal((db.docs.get('ghl_opp-a')?.dispositionHistory as unknown[]).length, 1);
     const retire = db.writes.find((write) => write.op === 'retire');
-    assert.equal(retire?.data.hotStatus, 'retired');
-    assert.equal(retire?.data.updatedAt.toMillis(), Date.parse('2026-10-30T00:00:00.000Z'));
-    assert.equal(typeof retire?.data.updatedAt.toDate, 'function');
+    assert.ok(retire);
+    assert.equal(retire.data.hotStatus, 'retired');
+    const retiredAt = retire.data.updatedAt;
+    assert.ok(retiredAt);
+    assert.equal(retiredAt.toMillis(), Date.parse('2026-10-30T00:00:00.000Z'));
+    assert.equal(typeof retiredAt.toDate, 'function');
     assert.equal(db.docs.get('ghl_left')?.notes, 'stay');
     assert.equal(merge.data.doNotCall, false);
     const dncWrite = db.writes.find((write) => write.op === 'create' && write.id === 'ghl_opp-c');
@@ -248,12 +266,18 @@ describe('hot lead import', () => {
     assert.equal(dncWrite.data.hotStatus, 'active');
     assert.equal(Object.prototype.hasOwnProperty.call(dncWrite.data, 'notes'), false);
     const at = Date.parse('2026-10-30T00:00:00.000Z');
-    assert.equal(dncWrite.data.updatedAt.toMillis(), at);
-    assert.equal(dncWrite.data.import.importedAt.toMillis(), at);
-    assert.equal(dncWrite.data.import.history[0].at.toMillis(), at);
-    assert.equal(dncWrite.data.ghl.createdOn.toMillis(), Date.parse('2026-01-01'));
-    assert.equal(dncWrite.data.ghl.updatedOn.toMillis(), Date.parse('2026-01-01'));
-    assert.equal(typeof dncWrite.data.updatedAt.toDate, 'function');
+    const writtenAt = dncWrite.data.updatedAt;
+    const importedAt = dncWrite.data.import?.importedAt;
+    const historyAt = dncWrite.data.import?.history?.[0]?.at;
+    const createdOn = dncWrite.data.ghl?.createdOn;
+    const updatedOn = dncWrite.data.ghl?.updatedOn;
+    assert.ok(writtenAt && importedAt && historyAt && createdOn && updatedOn);
+    assert.equal(writtenAt.toMillis(), at);
+    assert.equal(importedAt.toMillis(), at);
+    assert.equal(historyAt.toMillis(), at);
+    assert.equal(createdOn.toMillis(), Date.parse('2026-01-01'));
+    assert.equal(updatedOn.toMillis(), Date.parse('2026-01-01'));
+    assert.equal(typeof writtenAt.toDate, 'function');
     const patch = reimportPatch(
       { import: { history: [] } },
       { ghl: { stage: 'New' }, batchId: 'b', at: 't', rowHash: 'h' },
@@ -311,5 +335,55 @@ describe('hot lead import', () => {
     const cli = readFileSync(new URL('../scripts/hot-leads/import.mjs', import.meta.url), 'utf8');
     assert.match(cli, /form\.set\('benchmark', 'Public_AR_Current'\)/);
     assert.equal(cli.includes('addressbatch?benchmark'), false);
+  });
+
+  it('links a lead that has latitude and no geohash, and counts a capped band', async () => {
+    const lead = {
+      id: 'lead-no-geo',
+      data: { address: '10 Main Street Buffalo NY 14201', lat: 43.1, lng: -77.61 },
+    };
+    assert.equal(Object.prototype.hasOwnProperty.call(lead.data, 'geohash'), false);
+    const plan = leadReadPlan(43.1, -77.61);
+    const linked = await collectLeadBand(async (page: { start: number; end: number; limit: number; after: { lat: number; id: string } | null }) => {
+      if (page.after) return [];
+      assert.equal(lead.data.lat >= page.start && lead.data.lat <= page.end, true);
+      return [lead];
+    }, plan);
+    assert.equal(linked.capped, false);
+    const house = {
+      lat: 43.1,
+      lng: -77.61,
+      addressNorm: '10 main st',
+      state: 'NY',
+      zip: '14201',
+    };
+    assert.equal(pickLink(house, linked.docs), 'lead-no-geo');
+
+    let produced = 0;
+    const capped = await collectLeadBand(async (page: { start: number; limit: number }) => {
+      const batch = [];
+      for (let n = 0; n < page.limit; n += 1) {
+        produced += 1;
+        batch.push({
+          id: `far-${produced}`,
+          data: { lat: page.start, lng: 0, address: '1 Other Street Buffalo NY 14201' },
+        });
+      }
+      return batch;
+    }, plan);
+    assert.equal(capped.capped, true);
+    assert.equal(capped.scanned, LEAD_HOUSE_CAP);
+    assert.equal(capped.docs.length, 0);
+  });
+
+  it('writes the geocode cache and review file as owner-only', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hot-leads-'));
+    const file = join(dir, 'sample.csv.geocode-cache.json');
+    try {
+      await writeOwnerOnly(file, '{}\n');
+      assert.equal(statSync(file).mode & 0o777, 0o600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

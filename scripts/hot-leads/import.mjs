@@ -7,8 +7,15 @@
  * A dry run never opens Firestore. Do not pass --commit in this environment.
  */
 import { pathToFileURL } from 'node:url';
-import { readFile, writeFile } from 'node:fs/promises';
-import { executeCli, HOMEOWNER_QUERY_LIMIT, isCensusCsv } from './logic.mjs';
+import { readFile } from 'node:fs/promises';
+import {
+  executeCli,
+  HOMEOWNER_BOUND_CAP,
+  HOMEOWNER_QUERY_CAP,
+  HOMEOWNER_QUERY_LIMIT,
+  isCensusCsv,
+  writeOwnerOnly,
+} from './logic.mjs';
 
 const CENSUS_URL = 'https://geocoding.geo.census.gov/geocoder/locations/addressbatch';
 
@@ -60,21 +67,39 @@ async function openAdmin(projectId) {
     },
     async homeownersNear(plan) {
       const docs = [];
-      for (const query of plan.queries.slice(0, 4)) {
-        const limit = Math.min(query.limit, HOMEOWNER_QUERY_LIMIT);
-        const snap = await db.collection('homeowners').orderBy('geohash').startAt(query.start).endAt(query.end).limit(limit).get();
-        docs.push(...snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })));
+      for (const query of plan.queries.slice(0, HOMEOWNER_QUERY_CAP)) {
+        const pageSize = Math.min(query.limit, HOMEOWNER_QUERY_LIMIT);
+        let after = null;
+        let read = 0;
+        while (read < HOMEOWNER_BOUND_CAP) {
+          const limit = Math.min(pageSize, HOMEOWNER_BOUND_CAP - read);
+          let geohashQuery = db.collection('homeowners')
+            .where('geohash', '>=', query.start)
+            .where('geohash', '<=', query.end)
+            .orderBy('geohash')
+            .orderBy(FieldPath.documentId())
+            .limit(limit);
+          if (after) geohashQuery = geohashQuery.startAfter(after.geohash, after.id);
+          const snap = await geohashQuery.get();
+          docs.push(...snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })));
+          read += snap.size;
+          if (snap.size < limit) break;
+          const last = snap.docs.at(-1);
+          after = { geohash: last.get('geohash'), id: last.id };
+        }
       }
       return docs;
     },
-    async leadsNear(plan) {
-      const docs = [];
-      for (const query of plan.queries.slice(0, 4)) {
-        if (query.orderBy !== 'geohash' || query.limit > HOMEOWNER_QUERY_LIMIT) throw new Error('lead_read_unbounded');
-        const snap = await db.collection('leads').orderBy('geohash').startAt(query.start).endAt(query.end).limit(query.limit).get();
-        docs.push(...snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })));
-      }
-      return docs;
+    async leadPage({ start, end, limit, after }) {
+      let leadQuery = db.collection('leads')
+        .where('lat', '>=', start)
+        .where('lat', '<=', end)
+        .orderBy('lat')
+        .orderBy(FieldPath.documentId())
+        .limit(limit);
+      if (after) leadQuery = leadQuery.startAfter(after.lat, after.id);
+      const snap = await leadQuery.get();
+      return snap.docs.map((doc) => ({ id: doc.id, data: doc.data() }));
     },
     async listHotLeads({ limit, afterId }) {
       const page = Math.min(limit, 200);
@@ -105,7 +130,7 @@ if (isDirectRun()) {
         return null;
       }
     },
-    writeFile: (file, text) => writeFile(file, text),
+    writeFile: (file, text) => writeOwnerOnly(file, text),
     fetchBatch,
     throttle,
     connect: commit && confirmed ? openAdmin : null,
