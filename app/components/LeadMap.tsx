@@ -12,7 +12,11 @@ import { EMPTY_HOMES } from '@/app/homeowners/loader';
 
 import { observeMapSize } from '@/app/utils/observeMapSize';
 
-import { fieldPinArtwork, fieldPinZoomTier } from '@/app/utils/fieldPin';
+import { fieldPinArtwork, fieldPinZoomTier, withLegacyHotPin } from '@/app/utils/fieldPin';
+import { isHotLead, isHotOnlyLead, mergeHotLeads, publishHotLeadIndex, type HotLeadPin } from '@/app/hotLeads/model';
+import { applyHotFilter, hotLeadFilterVisible, type HotPinFilter } from '@/app/hotLeads/filter';
+import { useHotLeads } from '@/app/hooks/useHotLeads';
+import { HotLeadDetail } from '@/app/hotLeads/HotLeadDetail';
 import { buildLeadViewportIndex, queryLeadViewport } from '@/app/utils/mapViewport';
 import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { getLocation } from '@/app/utils/geolocation';
@@ -89,6 +93,9 @@ interface LeadMapProps {
   showTeamAreas?: boolean; // User toggle: overlay FMA territories + teammate pins
   teamMembers?: TeamAreaMember[];
   onToggleTeamAreas?: (next: boolean) => void;
+  /** Undefined: this map loads hot leads. An array: the parent already loaded them. */
+  hotLeads?: HotLeadPin[];
+  hotFilter?: HotPinFilter;
 }
 
 const DEFAULT_CENTER: [number, number] = [43.1566, -77.6088];
@@ -97,6 +104,13 @@ const EMPTY_IDS: string[] = [];
 const EMPTY_ROUTES: UserRoute[] = [];
 type PinEntry = { marker: L.Marker; lead: Lead; styleKey: string; users: User[]; disposition?: Disposition };
 
+function pinStackOffset(lead: Lead, selected: boolean): number {
+  if (lead.historicalTerritoryPin) return -300;
+  if (selected) return 500;
+  if (isHotLead(lead)) return 200;
+  return 0;
+}
+
 function markPinSelected(entry: PinEntry, selected: boolean) {
   const icon = entry.marker.options.icon;
   if (icon) {
@@ -104,7 +118,7 @@ function markPinSelected(entry: PinEntry, selected: boolean) {
     icon.options.className = `${base}${selected ? ' is-selected' : ''}`;
   }
   entry.marker.getElement()?.classList.toggle('is-selected', selected);
-  entry.marker.setZIndexOffset(entry.lead.historicalTerritoryPin ? -300 : selected ? 500 : 0);
+  entry.marker.setZIndexOffset(pinStackOffset(entry.lead, selected));
 }
 
 export default function LeadMap({ 
@@ -147,12 +161,24 @@ export default function LeadMap({
   showTeamAreas = false,
   teamMembers = [],
   onToggleTeamAreas,
+  hotLeads,
+  hotFilter = 'all',
 }: LeadMapProps) {
   const [homeownerMap, setHomeownerMap] = useState<L.Map | null>(null);
+  const [mapView, setMapView] = useState<View | null>(null);
+  const [openHot, setOpenHot] = useState<HotLeadPin | null>(null);
+  const openHotRef = useRef(setOpenHot);
+  useEffect(() => { openHotRef.current = setOpenHot; }, []);
+  const fetchedHot = useHotLeads(currentUser, mapView, hotLeads === undefined);
   const viewportCallback = useRef(onViewportChange); viewportCallback.current = onViewportChange;
   useEffect(() => {
     if (!homeownerMap) return;
-    const report = () => { const b = homeownerMap.getBounds().pad(.05); viewportCallback.current?.({south:b.getSouth(),north:b.getNorth(),west:b.getWest(),east:b.getEast(),zoom:homeownerMap.getZoom()}); };
+    const report = () => {
+      const b = homeownerMap.getBounds().pad(.05);
+      const view = { south: b.getSouth(), north: b.getNorth(), west: b.getWest(), east: b.getEast(), zoom: homeownerMap.getZoom() };
+      viewportCallback.current?.(view);
+      setMapView((prev) => prev && prev.south === view.south && prev.north === view.north && prev.west === view.west && prev.east === view.east && prev.zoom === view.zoom ? prev : view);
+    };
     homeownerMap.on('moveend', report); report();
     return () => { homeownerMap.off('moveend', report); };
   }, [homeownerMap]);
@@ -285,7 +311,7 @@ export default function LeadMap({
   // For large datasets, we only render what's passed in
   const leads = useMemo(() => {
     const visible = new Set(leadsProp.map(l=>l.id));
-    return houseIndex.leads.filter(l=>visible.has(l.id) && !homeMerge.hiddenLeadIds.has(l.id)).map(l=>{
+    const mapped = houseIndex.leads.filter(l=>visible.has(l.id) && !homeMerge.hiddenLeadIds.has(l.id)).map(l=>{
       const matched=homeMerge.byLead.get(l.id) || l.homeowner;
       if(matched){houseAnchors.delete(l.id);houseAnchors.set(l.id,matched);}
       const home=matched || houseAnchors.get(l.id);
@@ -294,7 +320,18 @@ export default function LeadMap({
       const point = displayedKnockPoint(l, home);
       return point?.source === 'homeowner_corrected' ? {...l, lat: point.lat, lng: point.lng} : l;
     });
-  }, [leadsProp, houseIndex, homeMerge, houseAnchors]);
+    const pins = hotLeads ?? fetchedHot.pins;
+    const filter = hotLeadFilterVisible(currentUser) ? hotFilter : 'all';
+    if (!pins.length && filter === 'all') {
+      publishHotLeadIndex(new Map());
+      return mapped;
+    }
+    const winners = new Map<string, string>();
+    for (const [id, group] of houseIndex.grouped.byLead) if (group[0]) winners.set(id, group[0].id);
+    const merged = mergeHotLeads(mapped, pins, winners);
+    publishHotLeadIndex(filter === 'hide' ? new Map() : merged.index);
+    return applyHotFilter(merged.leads, filter);
+  }, [leadsProp, houseIndex, homeMerge, houseAnchors, hotLeads, fetchedHot.pins, hotFilter, currentUser]);
 
   const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
 
@@ -758,14 +795,14 @@ export default function LeadMap({
         const selected = selectedForAssignment;
         const displayLead = latestKnockDisplay(lead,dispositions);
         const disposition = byId.get(displayLead.status) || byName.get(String(displayLead.disposition || '').toLowerCase());
-        const styleKey = `${fieldPinZoomTier(currentZoom)}:${viewMode}:${selected}:${isClaimedByMe}:${canClaim}:${selectedForAssignment}`;
+        const styleKey = `${fieldPinZoomTier(currentZoom)}:${viewMode}:${selected}:${isClaimedByMe}:${canClaim}:${selectedForAssignment}:${isHotLead(displayLead) ? 1 : 0}`;
         let entry = entries.get(lead.id);
         if (entry && entry.lead === lead && entry.styleKey === styleKey && entry.users === users && entry.disposition === disposition) continue;
         const icon = createCustomIcon(displayLead, users, viewMode, lead.solarCategory, displayLead.status, selected,
           isClaimedByMe, canClaim, !!lead.claimedBy, selectedForAssignment, disposition, currentZoom, lead.tags);
-        const title = `${lead.address} · ${fieldPinArtwork(displayLead, disposition, currentZoom).label}`;
+        const title = `${lead.address} · ${fieldPinArtwork(displayLead, disposition, currentZoom, false, isHotLead(displayLead)).label}`;
         if (!entry) {
-          entry = { marker: L.marker([lead.lat!, lead.lng!], {icon, title, alt: title, zIndexOffset: lead.historicalTerritoryPin ? -300 : 0}), lead, styleKey, users, disposition };
+          entry = { marker: L.marker([lead.lat!, lead.lng!], {icon, title, alt: title, zIndexOffset: pinStackOffset(lead, false)}), lead, styleKey, users, disposition };
           const liveEntry = entry;
           // Popup markup is only produced when opened, not for every pin during load.
           entry.marker.bindPopup(() => createPopupContent(liveEntry.lead), { maxWidth: 300, autoPan: false });
@@ -795,6 +832,10 @@ export default function LeadMap({
               showPersistentPopup(map, current);
               if (current.historicalTerritoryPin) return;
             } else if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
+            if (isHotOnlyLead(current) && current.hotPin) {
+              openHotRef.current(current.hotPin);
+              return;
+            }
             clickRef.current(current, homeMergeRef.current.byLead.get(current.id) || current.homeowner, homeMergeRef.current.groupedByLead.get(current.id));
           });
           entry.marker.on('keydown', (event: L.LeafletKeyboardEvent) => {
@@ -815,7 +856,7 @@ export default function LeadMap({
             added.push(entry.marker);
           }
           if((entry.marker.options.icon as L.DivIcon)?.options.html !== icon.options.html) entry.marker.setIcon(icon);
-          entry.marker.setZIndexOffset(lead.historicalTerritoryPin ? -300 : selected ? 500 : 0);
+          entry.marker.setZIndexOffset(pinStackOffset(lead, selected));
           const element = entry.marker.getElement();
           element?.setAttribute('title', title);
           element?.setAttribute('aria-label', title);
@@ -1634,6 +1675,7 @@ export default function LeadMap({
   return (
     <div className="relative w-full h-full">
       {proximity.dialog}
+      {openHot && currentUser ? <HotLeadDetail pin={openHot} user={currentUser} dispositions={dispositions} onClose={() => setOpenHot(null)} /> : null}
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       
       {showHomeowners && <HomeownerStatus state={homeState} onSelect={selectListedHome} />}
@@ -1889,7 +1931,7 @@ function createCustomIcon(
   }
 
   if (viewMode === 'map') {
-    const pin = fieldPinArtwork(lead, disposition, zoom, isSelected);
+    const pin = fieldPinArtwork(lead, disposition, zoom, isSelected, isHotLead(lead));
     const hitSize = Math.max(44, pin.height);
     const left = (hitSize - pin.size) / 2;
     const top = hitSize - pin.height;
@@ -1953,7 +1995,7 @@ function createCustomIcon(
         <span style="font-size:${Math.round(customerSize * 0.55)}px;line-height:1;">🙂</span>
       </div>
     `;
-    return L.divIcon({ html, className: 'custom-marker', iconSize: [customerSize, customerSize], iconAnchor: [customerSize / 2, customerSize / 2], popupAnchor: [0, -customerSize / 2] });
+    return L.divIcon({ html: isHotLead(lead) ? withLegacyHotPin(html) : html, className: 'custom-marker', iconSize: [customerSize, customerSize], iconAnchor: [customerSize / 2, customerSize / 2], popupAnchor: [0, -customerSize / 2] });
   }
   
   const solarColors: Record<string, string> = {
@@ -2038,7 +2080,7 @@ function createCustomIcon(
     const html = `
       <div style="width:${size}px;height:${size}px;background:${color};border:${border};border-radius:50%;opacity:${opacity};box-shadow:0 2px 4px rgba(0,0,0,0.2);"></div>
     `;
-    return L.divIcon({ html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
+    return L.divIcon({ html: isHotLead(lead) ? withLegacyHotPin(html) : html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
   }
   
   // Teardrop pin for zoomed in
@@ -2051,7 +2093,7 @@ function createCustomIcon(
     </div>
   `;
 
-  return L.divIcon({ html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size], popupAnchor: [0, -size] });
+  return L.divIcon({ html: isHotLead(lead) ? withLegacyHotPin(html) : html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size], popupAnchor: [0, -size] });
 }
 
 function isPersistentPinPopup(lead: Lead): boolean {

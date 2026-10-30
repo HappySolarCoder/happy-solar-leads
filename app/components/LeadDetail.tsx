@@ -58,6 +58,8 @@ import EasterEggWinModal from './EasterEggWinModal';
 import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
+import { HotLeadDetail } from '@/app/hotLeads/HotLeadDetail';
+import { hotPinForLead, isHotOnlyLead, suppressLeadCall } from '@/app/hotLeads/model';
 
 interface LeadDetailProps {
   relatedLeads?: Lead[];
@@ -453,6 +455,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     
     // If scheduling manager (other types), show lead editor instead
     if (disposition?.specialBehavior === 'scheduling-manager') {
+      if (isHotOnlyLead(lead)) return;
       setShowLeadEditor(true);
       return;
     }
@@ -898,16 +901,20 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             <span>{fieldMessage}</span>
             {fieldMessage === AREA_BLOCK_MESSAGE && <button type="button" className="rf-plain" onClick={() => setFieldMessage('')}>Dismiss</button>}
           </p>}
-          {fieldMemory && !summaryOnly && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
+          {fieldMemory && !summaryOnly && !isHotOnlyLead(lead) && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
           {/* Contact Info */}
           {(lead.phone || lead.email) && (
             <div className="mb-4 space-y-2">
               {lead.phone && (
                 <div className="flex items-center gap-3 p-3 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg">
                   <Phone className="w-4 h-4 text-[#718096]" />
-                  <a href={`tel:${lead.phone}`} className="text-[#2D3748] hover:text-[#FF5F5A] transition-colors">
-                    {lead.phone}
-                  </a>
+                  {suppressLeadCall(lead) ? (
+                    <span className="text-[#2D3748]">{lead.phone}</span>
+                  ) : (
+                    <a href={`tel:${lead.phone}`} className="text-[#2D3748] hover:text-[#FF5F5A] transition-colors">
+                      {lead.phone}
+                    </a>
+                  )}
                 </div>
               )}
               {lead.email && (
@@ -956,6 +963,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             </div>
           )}
 
+          {hotPinForLead(lead.id) && currentUser ? <HotLeadDetail variant="section" pin={hotPinForLead(lead.id)!} user={currentUser} dispositions={dispositions} /> : null}
           {/* Quick Actions */}
           <div className="mb-6">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Quick Actions</h3>
@@ -973,10 +981,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
                   <Icon size={18} />{QUICK_ACTION_LABELS[id]}
                 </button>;
               })}
-              <button type="button" aria-label="CSM — Call Scheduling Manager" title="Call Scheduling Manager"
+              {!isHotOnlyLead(lead) && <button type="button" aria-label="CSM — Call Scheduling Manager" title="Call Scheduling Manager"
                 onClick={() => setShowLeadEditor(true)} disabled={summaryOnly || isUpdating || actionsLoading}>
                 <Phone size={18} />CSM
-              </button>
+              </button>}
             </div>}
             
             {/* Admin: Assign to user dropdown */}
@@ -1157,7 +1165,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           </div>
 
           {/* Photos Section */}
-          {!summaryOnly && <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
+          {!summaryOnly && !isHotOnlyLead(lead) && <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Photos</h3>
             {photos && photos.length > 0 && (
               <div className="grid grid-cols-3 gap-2 mb-3">

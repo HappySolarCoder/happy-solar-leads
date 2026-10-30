@@ -62,7 +62,7 @@ export function classifySyncFailure(
   const message = error.message || "";
   if (/GPS verification is still pending/i.test(message))
     return { kind: "gps-pending" };
-  if (code === FIELD_DISPO_UNAVAILABLE)
+  if (code === FIELD_DISPO_UNAVAILABLE || code === "hot-leads-hold")
     return { kind: "slow" };
   if (status === 401 || status === 408 || status === 429 || status >= 500)
     return { kind: "transient" };
