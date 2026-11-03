@@ -7,13 +7,14 @@ import {
   GPS_MAX_VERIFIED_ACCURACY_M,
   RADIUS_M,
 } from '@/app/utils/gpsRule';
+import type { Lead } from '@/app/types';
 import type { Disposition } from '@/app/types/disposition';
-import { isCountedKnock, normalizeDispoKey } from '@/app/utils/knockCount';
+import { collectKnockEvents, isCountedKnock, normalizeDispoKey } from '@/app/utils/knockCount';
 
 export const TOO_FAR_ALERT_TO = 'evan@happyslr.com';
 export const LEAD_PAGE = 250;
 export const LEAD_PAGE_CAP = 40;
-/** Same user, lead, and disposition inside this gap is one knock. */
+/** A raw hit this close to a counted tap can mark that tap far. It does not change the total. */
 const DUP_KNOCK_MS = 30_000;
 const NY = 'America/New_York';
 const ENV_KEYS = ['CRON_SECRET', 'RESEND_API_KEY', 'RESEND_FROM'] as const;
@@ -263,34 +264,17 @@ export function entryIsFar(entry: Record<string, unknown>): boolean {
 type KnockHit = { at: number; far: boolean };
 
 /**
- * One counted knock per cluster. A later hit within 30s of the cluster's
- * kept timestamp joins it. Any far hit makes the whole knock far.
+ * The counted knock is the helper's kept tap. A raw hit within 30s of that
+ * tap can mark it far. That window never adds or removes a knock.
  */
-function collapseKnocks(hits: KnockHit[]): { total: number; tooFar: number } {
-  const ordered = [...hits].sort((a, b) => a.at - b.at);
-  let total = 0;
-  let tooFar = 0;
-  let keptAt = 0;
-  let clusterFar = false;
-  let open = false;
-  const close = () => {
-    if (!open) return;
-    total += 1;
-    if (clusterFar) tooFar += 1;
-    open = false;
-  };
-  for (const hit of ordered) {
-    if (!open || hit.at - keptAt > DUP_KNOCK_MS) {
-      close();
-      open = true;
-      keptAt = hit.at;
-      clusterFar = hit.far;
-    } else if (hit.far) {
-      clusterFar = true;
-    }
+function keptTapIsFar(keptAt: number, hits: KnockHit[] | undefined): boolean {
+  if (!hits) return false;
+  const limit = keptAt + DUP_KNOCK_MS;
+  for (const hit of hits) {
+    if (hit.at < keptAt || hit.at > limit) continue;
+    if (hit.far) return true;
   }
-  close();
-  return { total, tooFar };
+  return false;
 }
 
 export function tallyKnocks(
@@ -300,35 +284,44 @@ export function tallyKnocks(
   dispositions: DispositionDef[] = [],
 ): Map<string, Tally> {
   const rows = dispositionRows(dispositions);
-  const groups = new Map<string, KnockHit[]>();
   const names = new Map<string, string>();
+  const rawHits = new Map<string, KnockHit[]>();
+  const countable: Lead[] = [];
   for (const lead of leads) {
     if (isExcludedTestLead(lead.id, lead.data)) continue;
-    for (const entry of historyEntries(lead.data.dispositionHistory)) {
-      const at = millisOf(entry.timestamp);
-      if (at == null || at < startMs || at >= endMs) continue;
+    const history = historyEntries(lead.data.dispositionHistory);
+    countable.push({ id: lead.id, dispositionHistory: history } as unknown as Lead);
+    for (const entry of history) {
       const userId = entry.userId;
       if (typeof userId !== 'string' || !userId) continue;
+      const at = millisOf(entry.timestamp);
+      if (at == null) continue;
       const dispositionId = normalizeDispoKey(entry.disposition, rows);
       if (!isCountedKnock(dispositionId)) continue;
-      const key = `${userId}\u0000${lead.id}\u0000${dispositionId}`;
-      const hits = groups.get(key);
+      if (typeof entry.userName === 'string' && entry.userName.trim()) {
+        names.set(userId, entry.userName.trim());
+      }
+      const key = `${lead.id}\u0000${userId}\u0000${dispositionId}`;
       const hit = { at, far: entryIsFar(entry) };
-      if (hits) hits.push(hit);
-      else groups.set(key, [hit]);
-      if (typeof entry.userName === 'string' && entry.userName.trim()) names.set(userId, entry.userName.trim());
+      const list = rawHits.get(key);
+      if (list) list.push(hit);
+      else rawHits.set(key, [hit]);
     }
   }
+  const events = collectKnockEvents(countable, rows, {
+    start: new Date(startMs),
+    end: new Date(endMs),
+  });
   const tallies = new Map<string, Tally>();
-  for (const [key, hits] of groups) {
-    const userId = key.slice(0, key.indexOf('\u0000'));
-    const collapsed = collapseKnocks(hits);
-    const named = names.get(userId);
-    const current = tallies.get(userId) ?? { tooFar: 0, total: 0, rep: named ?? userId };
-    current.total += collapsed.total;
-    current.tooFar += collapsed.tooFar;
+  for (const event of events) {
+    const key = `${event.leadId}\u0000${event.userId}\u0000${event.dispositionId}`;
+    const far = keptTapIsFar(event.at, rawHits.get(key));
+    const named = names.get(event.userId);
+    const current = tallies.get(event.userId) ?? { tooFar: 0, total: 0, rep: named ?? event.userId };
+    current.total += 1;
+    if (far) current.tooFar += 1;
     if (named) current.rep = named;
-    tallies.set(userId, current);
+    tallies.set(event.userId, current);
   }
   return tallies;
 }

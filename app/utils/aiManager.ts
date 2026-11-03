@@ -2,7 +2,7 @@
 import { Lead, User } from '@/app/types';
 import type { Disposition } from '@/app/types/disposition';
 import { knockIndex } from '@/app/utils/webKnockCounts';
-import { phoenixDayKey, phoenixHourDecimal } from '@/app/utils/phoenixDay';
+import { phoenixDayWindow } from '@/app/utils/phoenixDay';
 
 export interface DailyMetrics {
   date: string;
@@ -57,8 +57,8 @@ export function calculateDailyMetrics(
   date: Date = new Date(),
   dispositions: readonly Disposition[] = [],
 ): DailyMetrics {
-  const utcDateStr = date.toISOString().split('T')[0];
-  const dateStr = phoenixDayKey(date.getTime());
+  const day = phoenixDayWindow(date);
+  const dateStr = day.key;
   
   // Debug: Check how many leads belong to this setter
   const setterLeads = leads.filter(l => l.claimedBy === setterId);
@@ -112,10 +112,9 @@ export function calculateDailyMetrics(
       }
       
       // Check if date is valid
-      if (isNaN(knockDateObj.getTime())) return false;
-      
-      const knockDate = knockDateObj.toISOString().split('T')[0];
-      return knockDate === utcDateStr;
+      const at = knockDateObj.getTime();
+      if (isNaN(at)) return false;
+      return at >= day.startMs && at < day.endMs;
     } catch (error) {
       // Invalid date, skip this lead
       return false;
@@ -124,9 +123,9 @@ export function calculateDailyMetrics(
 
   console.log(`[calculateDailyMetrics] ${setterName}: Found ${todayLeads.length} leads for ${dateStr}`);
 
-  // Phoenix calendar day. The event list is built once per leads array.
+  // Same Phoenix day as appointments. Compare instants; do not format each event.
   const knockEvents = (knockIndex(leads, dispositions).byUser.get(setterId) ?? []).filter(
-    (event) => phoenixDayKey(event.at) === dateStr,
+    (event) => event.at >= day.startMs && event.at < day.endMs,
   );
   const doorsKnocked = knockEvents.length;
   const appointments = todayLeads.filter(l => 
@@ -160,7 +159,7 @@ export function calculateDailyMetrics(
   const primeTimeEnd = 20.5; // 8:30pm
   
   const primeTimeKnocks = knockEvents.filter(event => {
-    const hourDecimal = phoenixHourDecimal(event.at);
+    const hourDecimal = (event.at - day.startMs) / 3_600_000;
     return hourDecimal >= primeTimeStart && hourDecimal <= primeTimeEnd;
   }).length;
 

@@ -301,7 +301,7 @@ describe('#173 dry-run perRep', () => {
           entry(s + 31_000, 'over', flag('too_far')),
           entry(s + 62_000, 'over'),
           entry(s, 'exact', flag('too_far')),
-          ...Array.from({ length: 19 }, (_, i) => entry(s + (i + 1) * 31_000, 'exact')),
+          ...Array.from({ length: 19 }, (_, i) => entry(s + (i + 1) * 121_000, 'exact')),
           entry(s + 40_000, 'quiet'),
           entry(s + 50_000, 'user-test-qa', flag('too_far')),
           entry(s + 51_000, 'user-test-qa', flag('too_far')),
@@ -323,7 +323,7 @@ describe('#173 dry-run perRep', () => {
     const computed = tallyKnocks(leads, day.startMs, day.endMs, []);
     assert.deepEqual(perRep.map((rep) => [rep.userId, rep.name, rep.tooFar, rep.total]), [
       ['exact', 'Bea Exact', 1, 20],
-      ['over', 'Ada Over', 2, 3],
+      ['over', 'Ada Over', 1, 1],
       ['quiet', 'Cal Quiet', 0, 1],
     ]);
     for (const rep of perRep) {
@@ -336,8 +336,8 @@ describe('#173 dry-run perRep', () => {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].userId, 'over');
     assert.equal(rows[0].rep, 'Ada Over');
-    assert.equal(rows[0].tooFar, 2);
-    assert.equal(rows[0].total, 3);
+    assert.equal(rows[0].tooFar, 1);
+    assert.equal(rows[0].total, 1);
     assert.equal(rows[0].percent, perRep.find((rep) => rep.userId === 'over')!.pct);
     const preview = dry.body.email as AlertEmail;
     assert.match(preview.html, /<td>Ada Over<\/td>/);
@@ -379,9 +379,21 @@ describe('#173 double-tap collapse', () => {
     assert.deepEqual([split.get('u')?.total, split.get('v')?.total], [1, 1]);
   });
 
-  it('31s apart counts twice, measured from the kept entry', () => {
-    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 31_000, 'u')])]), [0, 2]);
-    assert.deepEqual(counts([door([entry(s + 20_000, 'u'), entry(s, 'u'), entry(s + 31_000, 'u')])]), [0, 2]);
+  it('0s and 60s count once, and 121s counts again', () => {
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 60_000, 'u')])]), [0, 1]);
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 121_000, 'u')])]), [0, 2]);
+    assert.deepEqual(counts([door([entry(s + 60_000, 'u'), entry(s, 'u'), entry(s + 121_000, 'u')])]), [0, 2]);
+  });
+
+  it('a far hit inside 30s marks the counted knock far without adding one', () => {
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 10_000, 'u', flag('too_far'))])]), [1, 1]);
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 60_000, 'u', flag('too_far'))])]), [0, 1]);
+  });
+
+  it('the same eventId counts once', () => {
+    const first = { ...entry(s, 'u'), field: { eventId: 'evt-1' } };
+    const replay = { ...entry(s + 60_000, 'u'), field: { eventId: 'evt-1' } };
+    assert.deepEqual(counts([door([first, replay])]), [0, 1]);
   });
 
   it('a different disposition counts twice', () => {
@@ -400,10 +412,10 @@ describe('#173 double-tap collapse', () => {
     const dry = await t.run({ dryRun: '1' });
     const perRep = dry.body.perRep as Array<{ userId: string; name: string; tooFar: number; total: number; pct: string }>;
     const rows = dry.body.rows as Array<{ tooFar: number; total: number; percent: string }>;
-    assert.deepEqual(perRep, [{ userId: 'u', name: 'Ada', tooFar: 1, total: 2, pct: percentLabel(1, 2) }]);
+    assert.deepEqual(perRep, [{ userId: 'u', name: 'Ada', tooFar: 1, total: 1, pct: percentLabel(1, 1) }]);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].tooFar, 1);
-    assert.equal(rows[0].total, 2);
+    assert.equal(rows[0].total, 1);
     assert.equal(rows[0].percent, perRep[0].pct);
     const computed = tally(leads).get('u');
     assert.equal(perRep[0].tooFar, computed?.tooFar);

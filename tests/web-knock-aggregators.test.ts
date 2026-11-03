@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { Lead } from '../app/types/index.ts';
 import type { Disposition } from '../app/types/disposition.ts';
 import { calculateDailyMetrics } from '../app/utils/aiManager.ts';
+import { phoenixDayWindow } from '../app/utils/phoenixDay.ts';
 import {
   activityKnocksByUser,
   countDashboardKnocks,
@@ -327,8 +328,18 @@ describe('knock index benchmark', () => {
     const index = knockIndex(leads, DISPOSITIONS);
     let total = 0;
     for (const id of users) total += index.byUser.get(id)?.length ?? 0;
-    const elapsed = performance.now() - started;
+    const indexMs = performance.now() - started;
+    const day = phoenixDayWindow(new Date(base));
+    const aiStarted = performance.now();
+    let doors = 0;
+    for (const id of users) {
+      doors += calculateDailyMetrics(id, id, leads, new Date(day.startMs + 12 * 60 * 60 * 1000), DISPOSITIONS).doorsKnocked;
+    }
+    const aiMs = performance.now() - aiStarted;
+    console.log(`benchmark index ${indexMs.toFixed(1)}ms aiManager ${aiMs.toFixed(1)}ms`);
     assert.equal(total, 150000);
-    assert.ok(elapsed < 300, `elapsed ${elapsed.toFixed(1)}ms`);
+    assert.equal(doors, 150000);
+    assert.ok(indexMs < 300, `index ${indexMs.toFixed(1)}ms`);
+    assert.ok(aiMs < 1000, `aiManager ${aiMs.toFixed(1)}ms`);
   });
 });

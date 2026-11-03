@@ -164,7 +164,7 @@ export default function AIManagerPage() {
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                max={new Date().toISOString().split('T')[0]}
+                max={phoenixDayKey(Date.now())}
                 className="px-3 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
             </div>
