@@ -18,7 +18,9 @@ import { acceptDisposition, collapseLegacyNotesQueue, supersededNotesIds } from 
 import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
 import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
+import { HOT_LEADS_ENABLED } from '@/app/hotLeads/flag';
 import { isHotLeadDraft } from '@/app/hotLeads/save';
+import { rememberAcknowledgedKnocks } from '@/app/mobile/_lib/knockLedger';
 import { enqueueDirectSave } from './enqueueDirectSave';
 import { CONTACT_NOT_SENT_MESSAGE, assertContactReadyForSend, contactDraftBlocksSendInfo, parkContactDeniedDrafts, sendInfoMayWriteContact } from './sendInfoGate';
 import { cachedTerritoryIds } from '@/app/hooks/useTeamAreasOverlay';
@@ -193,10 +195,16 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
           const actor = latest.current.user;
           if (!actor || actor.id !== uid) throw Error('Sign in again to sync your work.');
           if (isHotLeadDraft(m)) {
-            return deliverFieldDispo(m, actor, {
+            const result = await deliverFieldDispo(m, actor, {
               getToken: async () => (await auth?.currentUser?.getIdToken()) || '',
               persistDraft: putDraft,
             });
+            if (HOT_LEADS_ENABLED && m.collection === 'hotLeads' && m.kind === 'knock' && active.current === uid) {
+              const source = result.lead?.dispositionHistory?.length ? result.lead : { id: m.leadId, ...m.direct?.patch };
+              // Keep the hot pin id. Promotion dedupes later through linkedLeadId.
+              await rememberAcknowledgedKnocks(uid, { ...source, id: m.leadId } as Lead).catch(() => {});
+            }
+            return result;
           }
           const result = DIRECT_MOBILE_WRITES
             ? await deliverFieldDispo(m, actor, {

@@ -15,7 +15,10 @@ import { FieldToolbar, MobileNav, MobileNotice, MobileLoading } from '../_compon
 import DoorCoach from '../_components/DoorCoach';
 import ReturnVisitReminder from '../_components/ReturnVisitReminder';
 import FieldCompass from '../_components/FieldCompass';
+import { assembleKnockLeads } from '../_lib/knockSources';
 import { summarizeActivity } from '../_lib/metrics';
+import { countKnocks } from '@/app/utils/knockCount';
+import { HOT_LEADS_ENABLED } from '@/app/hotLeads/flag';
 import { countWorkdaysElapsedAndRemaining } from '@/app/utils/goals';
 import { fieldPinArtwork } from '@/app/utils/fieldPin';
 import MobileDialog from '../_components/MobileDialog';
@@ -63,7 +66,7 @@ const EMPTY_LEADS: Lead[] = [];
 export default function KnockingPage() {
   const router = useRouter();
 
-  const { user: currentUser, field, live, leads: liveLeads, dispositions, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dispositionsLoading, dataUnavailable, error: sessionError, refresh } = useMobileData();
+  const { user: currentUser, field, live, leads: liveLeads, dispositions, knockLedger, hotTick, loading: isLoading, leadsLoading: isRefreshing, dataLoading, dispositionsLoading, dataUnavailable, error: sessionError, refresh } = useMobileData();
   const directSave = useRef(field.enqueueDirect); directSave.current = field.enqueueDirect;
   const homeVisits = useRef(new Map<string, HomeownerVisit>());
   const [savedHomeVisits, setSavedHomeVisits] = useState<Lead[]>([]);
@@ -577,32 +580,35 @@ export default function KnockingPage() {
     return picked;
   }, [showHeat, leads, currentUser]);
 
-  // Stats: Today's Knocks (must match canonical rule from /setter-stats)
-  // Only count dispositions where disposition.countsAsDoorKnock === true.
+  // Every recorded knock counts. Shade DQ and Has Solar do not.
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-  const doorKnockStatusIds = dispositions
-    .filter((d: any) => d.countsAsDoorKnock)
-    .map((d: any) => String(d.id).toLowerCase());
-
-  const todaysKnocks = leads.filter(l => {
-    if (!l.dispositionedAt || new Date(l.dispositionedAt) < todayStart) return false;
-
-    // Count by actor (who actually dispositioned), fallback to claimedBy for legacy rows.
-    const lastHistoryUserId = (l.dispositionHistory && l.dispositionHistory[0]?.userId) ? String(l.dispositionHistory[0].userId) : null;
-    const actedByMe = (lastHistoryUserId || l.claimedBy || l.assignedTo) === currentUser?.id;
-    if (!actedByMe) return false;
-
-    const disp = String(l.status || l.disposition || '').toLowerCase();
-    return doorKnockStatusIds.includes(disp);
-  }).length;
+  const todayEnd = new Date(todayStart);
+  todayEnd.setDate(todayEnd.getDate() + 1);
+  const knockSet = useMemo(() => assembleKnockLeads({
+    leads: liveLeads,
+    extras: [...savedHomeVisits, ...viewportPins.leads],
+    hotPins: HOT_LEADS_ENABLED ? hotLeads.pins : [],
+    hotDrafts: HOT_LEADS_ENABLED ? field.drafts : [],
+  }), [liveLeads, savedHomeVisits, viewportPins.leads, hotLeads.pins, field.drafts, hotTick]);
+  const todaysKnocks = currentUser ? countKnocks(knockSet.leads, dispositions, {
+    userId: currentUser.id,
+    start: todayStart,
+    end: todayEnd,
+    ledger: knockLedger,
+    leadAliases: knockSet.aliases,
+  }) : 0;
 
   // Goals (v1) — deterministic goal read via API
   const [monthlyGoal, setMonthlyGoal] = useState<number | null>(null);
   const monthNow = new Date();
   const goalYear = monthNow.getFullYear();
   const goalMonth = monthNow.getMonth();
-  const monthlyKnocks = useMemo(() => currentUser ? summarizeActivity(leads, currentUser.id, dispositions, new Date(goalYear, goalMonth, 1), new Date(goalYear, goalMonth+1, 1)).knocks : 0, [leads, currentUser, dispositions, goalYear, goalMonth]);
+  const monthlyKnocks = useMemo(() => currentUser ? summarizeActivity(leads, currentUser.id, dispositions, new Date(goalYear, goalMonth, 1), new Date(goalYear, goalMonth+1, 1), {
+    ledger: knockLedger,
+    knockSources: knockSet.leads,
+    leadAliases: knockSet.aliases,
+  }).knocks : 0, [leads, currentUser, dispositions, goalYear, goalMonth, knockLedger, knockSet]);
   const dailyTarget = monthlyGoal === null || !live ? null : Math.ceil(Math.max(0, monthlyGoal - monthlyKnocks) / Math.max(1, countWorkdaysElapsedAndRemaining(monthNow).remaining));
 
   useEffect(() => {
@@ -630,7 +636,7 @@ export default function KnockingPage() {
   return (
     <LocationPermissionGuard requireLocation={false}>
       <div className="rm-field-shell">
-      {showGoalsModal && <MobileDialog title="Daily pace" onClose={() => setShowGoalsModal(false)}><div className="rm-coach-panel"><div className="rm-panel-heading"><h2>Daily pace</h2><button onClick={() => setShowGoalsModal(false)} aria-label="Close daily pace"><X size={22}/></button></div><p>{monthlyKnocks} of {monthlyGoal} monthly knocks completed.</p><h2>{dailyTarget ?? '—'} knocks per remaining workday</h2><p>Based on your company goal and the latest recorded disposition per door.</p></div></MobileDialog>}
+      {showGoalsModal && <MobileDialog title="Daily pace" onClose={() => setShowGoalsModal(false)}><div className="rm-coach-panel"><div className="rm-panel-heading"><h2>Daily pace</h2><button onClick={() => setShowGoalsModal(false)} aria-label="Close daily pace"><X size={22}/></button></div><p>{monthlyKnocks} of {monthlyGoal} monthly knocks completed.</p><h2>{dailyTarget ?? '—'} knocks per remaining workday</h2><p>Every knock you record counts. Shade DQ and Has Solar don't.</p></div></MobileDialog>}
 
       <header className={`relative flex-shrink-0 ${showSearchSheet ? 'z-[70]' : 'z-50'}`}>
         <FieldToolbar showTeamAreas={showTeamAreas} onToggleTeamAreas={() => setAreaMode(v=>v==='off'?'mine':'off')}

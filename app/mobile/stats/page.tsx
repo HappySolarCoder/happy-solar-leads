@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   MobileHeader,
@@ -10,7 +11,10 @@ import {
 import { ProgressView } from "../_components/MobileViews";
 import { useDeviceNow } from "../_components/useDeviceNow";
 import { useMobileData } from "../_components/useMobileData";
+import { assembleKnockLeads } from "../_lib/knockSources";
 import { dayStart, summarizeActivity } from "../_lib/metrics";
+import { HOT_LEADS_ENABLED } from "@/app/hotLeads/flag";
+import { loadedHotPins } from "@/app/hotLeads/model";
 
 export default function MobileStatsPage() {
   const router = useRouter();
@@ -18,12 +22,24 @@ export default function MobileStatsPage() {
   const {
     user,
     leads,
+    field,
     dispositions,
+    knockLedger,
+    hotTick,
     loading,
     dataLoading,
     dataUnavailable,
     error,
   } = useMobileData();
+  const knockSet = useMemo(
+    () =>
+      assembleKnockLeads({
+        leads,
+        hotPins: HOT_LEADS_ENABLED ? loadedHotPins() : [],
+        hotDrafts: HOT_LEADS_ENABLED ? field.drafts : [],
+      }),
+    [leads, field.drafts, hotTick],
+  );
   if (loading) return <MobileLoading />;
   if (!user)
     return (
@@ -34,7 +50,11 @@ export default function MobileStatsPage() {
   const monday = new Date(today);
   monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
   const summarize = (from: Date, until = end) =>
-    summarizeActivity(leads, user.id, dispositions, from, until);
+    summarizeActivity(leads, user.id, dispositions, from, until, {
+      ledger: knockLedger,
+      knockSources: knockSet.leads,
+      leadAliases: knockSet.aliases,
+    });
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(today);
     date.setDate(date.getDate() - 6 + index);

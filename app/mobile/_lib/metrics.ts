@@ -1,12 +1,24 @@
 import type { Lead } from "@/app/types";
 import type { Disposition } from "@/app/types/disposition";
+import {
+  countKnocks,
+  type KnockCountOptions,
+  type KnockEvent,
+} from "@/app/utils/knockCount";
 
-// Match the existing latest-disposition model; ownership is not activity attribution.
+// Latest actor is still used for appointments and sales. Knocks use visit history.
 export function activityActor(lead: Lead): string | undefined {
   return (
     lead.dispositionHistory?.[0]?.userId || lead.claimedBy || lead.assignedTo
   );
 }
+
+export type ActivityCountOptions = {
+  ledger?: readonly KnockEvent[];
+  /** Snapshots and hot leads. Knocks union these; appointments stay on `leads`. */
+  knockSources?: readonly Lead[];
+  leadAliases?: KnockCountOptions["leadAliases"];
+};
 
 export function summarizeActivity(
   leads: Lead[],
@@ -14,13 +26,20 @@ export function summarizeActivity(
   dispositions: Disposition[],
   from: Date,
   until: Date,
+  options?: ActivityCountOptions,
 ) {
-  const knockIds = new Set(
-    dispositions
-      .filter((d) => d.countsAsDoorKnock)
-      .map((d) => d.id.toLowerCase()),
-  );
-  const result = { knocks: 0, conversations: 0, appointments: 0, sales: 0 };
+  const result = {
+    knocks: countKnocks(options?.knockSources ?? leads, dispositions, {
+      userId,
+      start: from,
+      end: until,
+      ledger: options?.ledger,
+      leadAliases: options?.leadAliases,
+    }),
+    conversations: 0,
+    appointments: 0,
+    sales: 0,
+  };
   for (const lead of leads) {
     if (activityActor(lead) !== userId || !lead.dispositionedAt) continue;
     const time = new Date(lead.dispositionedAt).getTime();
@@ -31,7 +50,7 @@ export function summarizeActivity(
     )
       continue;
     const status = String(lead.status || lead.disposition || "").toLowerCase();
-    if (knockIds.has(status)) result.knocks++;
+    // Appointments and sales still follow the latest status. That is unchanged.
     if (["interested", "appointment", "sale"].includes(status))
       result.conversations++;
     if (["appointment", "sale"].includes(status)) result.appointments++;
