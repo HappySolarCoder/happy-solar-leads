@@ -95,7 +95,10 @@ describe('all-leads stats access', () => {
       ]);
       assert.equal(lead.status, 'appointment');
       assert.equal(lead.dispositionedAt, '2026-10-01T00:00:00.000Z');
-      assert.deepEqual(lead.dispositionHistory, [{ userId: 'rep-1' }]);
+      assert.deepEqual(lead.dispositionHistory, [
+        { userId: 'rep-1' },
+        { userId: 'someone-else' },
+      ]);
       assert.deepEqual(Object.keys(lead.dispositionHistory[0]), ['userId']);
       const serialized = JSON.stringify(result.body);
       for (const field of ['Hidden Homeowner', '123 Secret St', '555-0100', 'hidden@example.com', 'private note', 'full history note', 'older note']) {
@@ -267,5 +270,68 @@ describe('test lead exclusion', () => {
       'id',
       'status',
     ]);
+  });
+});
+
+describe('stats history allow-list', () => {
+  it('keeps every visit actor, disposition, time, and event id, and drops names, notes, and GPS', async () => {
+    const visited = {
+      id: 'lead-visits',
+      data: {
+        status: 'shade-dq',
+        dispositionedAt: { toDate: () => new Date('2026-10-02T00:00:00.000Z') },
+        claimedBy: 'rep-2',
+        dispositionHistory: [
+          {
+            userId: 'rep-2',
+            userName: 'Hidden Homeowner',
+            notes: 'full history note',
+            phone: '555-0100',
+            disposition: 'Shade DQ',
+            timestamp: { toDate: () => new Date('2026-10-02T15:00:00.000Z') },
+            field: { eventId: 'evt-2', gps: { lat: 33.4, lng: -112.1 } },
+          },
+          {
+            disposition: 'Not Home',
+            dispositionId: 'not-home',
+            timestamp: { seconds: 1759000000, nanoseconds: 0 },
+            userId: 'rep-1',
+            userName: 'Second',
+            field: { eventId: 'evt-1' },
+          },
+        ],
+      },
+    };
+    const result = await handleAllLeadsStats({
+      authorization: 'Bearer token',
+      sinceParam: null,
+      deps: {
+        ...authDeps('manager'),
+        now: () => NOW,
+        loadLeads: async () => [visited],
+      },
+    });
+    assert.equal(result.status, 200);
+    assert.ok('leads' in result.body);
+    const history = result.body.leads[0].dispositionHistory;
+    assert.deepEqual(history, [
+      {
+        userId: 'rep-2',
+        disposition: 'Shade DQ',
+        timestamp: '2026-10-02T15:00:00.000Z',
+        field: { eventId: 'evt-2' },
+      },
+      {
+        userId: 'rep-1',
+        disposition: 'Not Home',
+        dispositionId: 'not-home',
+        timestamp: new Date(1759000000 * 1000).toISOString(),
+        field: { eventId: 'evt-1' },
+      },
+    ]);
+    const serialized = JSON.stringify(result.body);
+    for (const secret of ['Hidden Homeowner', 'full history note', '555-0100', 'Second', '33.4', 'gps']) {
+      assert.equal(serialized.includes(secret), false, secret);
+    }
   });
 });

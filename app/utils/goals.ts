@@ -1,9 +1,10 @@
 import { auth, db } from '@/app/utils/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { startOfMonth, endOfMonth, format, isAfter, isBefore } from 'date-fns';
+import { startOfMonth, endOfMonth, format, isBefore } from 'date-fns';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
-import { Lead, User } from '@/app/types';
+import { countMonthlyKnocks } from '@/app/utils/webKnockCounts';
+import { User } from '@/app/types';
 
 export type MonthId = `${number}-${string}`; // e.g. 2026-03
 
@@ -65,35 +66,7 @@ export function countWorkdaysElapsedAndRemaining(monthDate: Date, now = new Date
 
 export async function getMyMonthlyKnocksAsync(monthDate: Date, currentUser: User) {
   const [leads, dispositions] = await Promise.all([getLeadsAsync(), getDispositionsAsync()]);
-
-  const start = startOfMonth(monthDate);
-  const end = endOfMonth(monthDate);
-
-  const doorKnockStatusIds = dispositions
-    .filter(d => d.countsAsDoorKnock)
-    .map(d => d.id.toLowerCase());
-
-  const knocks = leads.filter((lead: Lead) => {
-    if (!lead.dispositionedAt) return false;
-
-    // Count by actor (who dispositioned), fallback to claimedBy for legacy rows.
-    const lastHistoryUserId = (lead.dispositionHistory && lead.dispositionHistory[0]?.userId)
-      ? String(lead.dispositionHistory[0].userId)
-      : null;
-    const actedByMe = lastHistoryUserId === currentUser.id || lead.claimedBy === currentUser.id;
-    if (!actedByMe) return false;
-
-    const disp = (lead.status || lead.disposition || '').toLowerCase();
-    if (!doorKnockStatusIds.includes(disp)) return false;
-
-    const dt = new Date(lead.dispositionedAt);
-    // within month (local)
-    if (isBefore(dt, start) || isAfter(dt, end)) return false;
-
-    return true;
-  }).length;
-
-  return knocks;
+  return countMonthlyKnocks(leads, dispositions, currentUser.id, monthDate);
 }
 
 export async function getMyGoalAsync(month: string, uidOverride?: string): Promise<UserGoal | null> {

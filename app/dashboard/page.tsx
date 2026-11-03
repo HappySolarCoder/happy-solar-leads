@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { countDashboardKnocks } from '@/app/utils/webKnockCounts';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { Disposition } from '@/app/types/disposition';
@@ -69,15 +70,6 @@ export default function DashboardPage() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Get statuses that count as door knocks from dispositions
-  const doorKnockStatuses = dispositions
-    .filter(d => d.countsAsDoorKnock)
-    .flatMap(d => [
-      d.id.toLowerCase(),
-      d.name.toLowerCase(),
-      d.name.toLowerCase().replace(/\s+/g, '-'),
-    ]);
-
   // Calculate daily stats
   const todayLeads = visibleLeads.filter(l => {
     if (!l.dispositionedAt) return false;
@@ -86,13 +78,10 @@ export default function DashboardPage() {
     return dispDate.getTime() === today.getTime();
   });
 
-  // Count by disposition for today - using dynamic door knock statuses
-  const todayKnocks = todayLeads.filter(l => {
-    if (!l.status) return false;
-    const status = l.status.toLowerCase();
-    const disposition = String(l.disposition || '').toLowerCase();
-    return doorKnockStatuses.includes(status) || doorKnockStatuses.includes(disposition);
-  }).length;
+  // Every counted visit today. Shade DQ and Has Solar never add, and a later
+  // disposition does not remove an earlier knock. KNOCK_STATUS_IDS stays as-is
+  // for map visibility; this counter does not use it.
+  const todayKnocks = countDashboardKnocks(visibleLeads, dispositions, today);
 
   // Conversations = all dispositions (not unclaimed/claimed)
   const todayConversations = todayLeads.filter(l => {

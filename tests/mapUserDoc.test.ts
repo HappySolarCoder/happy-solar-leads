@@ -110,7 +110,7 @@ describe('mapUserDoc', () => {
   it('the old getAllUsers call throws on string createdAt (cause verified)', () => {
     const data = { createdAt: '2026-06-01T00:00:00.000Z' };
     assert.throws(
-      () => data.createdAt?.toDate() || new Date(),
+      () => (data.createdAt as unknown as { toDate: () => Date }).toDate() || new Date(),
       (err: unknown) => err instanceof TypeError && /toDate is not a function/.test(String(err)),
     );
   });

@@ -5,8 +5,11 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Calendar, Users, MapPin, Clock } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { getCurrentAuthUser } from '@/app/utils/auth';
+import { activityKnocksByUser } from '@/app/utils/webKnockCounts';
 import { Lead, User } from '@/app/types';
+import { Disposition } from '@/app/types/disposition';
 import { ensureUserColors } from '@/app/utils/userColors';
 import { formatTimeEST, formatDateEST } from '@/app/utils/timezone';
 
@@ -40,6 +43,7 @@ export default function ActivityMapPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [allLeads, setAllLeads] = useState<Lead[]>([]);
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const getLocalDateInputValue = () => {
     const now = new Date();
     const y = now.getFullYear();
@@ -72,11 +76,15 @@ export default function ActivityMapPage() {
         }
 
         setCurrentUser(user);
-        const loadedLeads = await getLeadsAsync();
-        const loadedUsers = await getUsersAsync();
+        const [loadedLeads, loadedUsers, loadedDispositions] = await Promise.all([
+          getLeadsAsync(),
+          getUsersAsync(),
+          getDispositionsAsync(),
+        ]);
 
         setAllLeads(loadedLeads);
         setUsers(ensureUserColors(loadedUsers));
+        setDispositions(loadedDispositions);
         setIsLoading(false);
       } catch (error) {
         console.error('Error loading activity data:', error);
@@ -105,56 +113,16 @@ export default function ActivityMapPage() {
   useEffect(() => {
     if (!selectedDate) return;
 
-    // Parse selected date in LOCAL time (avoid UTC date-only shift)
-    const [y, m, d] = selectedDate.split('-').map(Number);
-    const dateStart = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
-    const dateEnd = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
-
-    // Filter leads knocked on selected date
-    const knockedLeads = allLeads.filter(lead => {
-      if (!lead.dispositionedAt) return false;
-      
-      const knockDate = new Date(lead.dispositionedAt);
-      return knockDate >= dateStart && knockDate <= dateEnd;
-    });
-
-    // Group by user (using disposition history to find who knocked the door)
-    const activitiesByUser = new Map<string, Lead[]>();
-    
-    knockedLeads.forEach(lead => {
-      // Get the most recent disposition from history to find who knocked this door
-      let userId: string | undefined;
-      
-      if (lead.dispositionHistory && lead.dispositionHistory.length > 0) {
-        // Most-recent-first convention
-        const latestEntry = lead.dispositionHistory[0];
-        userId = latestEntry.userId;
-      } else {
-        // Fallback to claimedBy if no disposition history
-        userId = lead.claimedBy;
-      }
-      
-      if (!userId) return;
-      
-      if (!activitiesByUser.has(userId)) {
-        activitiesByUser.set(userId, []);
-      }
-      activitiesByUser.get(userId)!.push(lead);
-    });
+    // One row per counted visit on the selected local day. The visit time is
+    // copied onto dispositionedAt so pace and the timeline stay on that event.
+    const activitiesByUser = activityKnocksByUser(allLeads, dispositions, selectedDate);
 
     // Build user activity objects
     const activities: UserActivity[] = [];
     
-    activitiesByUser.forEach((knocks, userId) => {
+    activitiesByUser.forEach((sortedKnocks, userId) => {
       const user = users.find(u => u.id === userId);
       if (!user) return;
-
-      // Sort knocks by time
-      const sortedKnocks = knocks.sort((a, b) => {
-        const timeA = a.dispositionedAt ? new Date(a.dispositionedAt).getTime() : 0;
-        const timeB = b.dispositionedAt ? new Date(b.dispositionedAt).getTime() : 0;
-        return timeA - timeB;
-      });
 
       const firstDispositionedAt = sortedKnocks[0].dispositionedAt;
       const lastDispositionedAt = sortedKnocks[sortedKnocks.length - 1].dispositionedAt;
@@ -216,7 +184,7 @@ export default function ActivityMapPage() {
     activities.sort((a, b) => b.totalKnocks - a.totalKnocks);
 
     setUserActivities(activities);
-  }, [selectedDate, allLeads, users]);
+  }, [selectedDate, allLeads, users, dispositions]);
 
   // Get filtered activities based on selected user
   const filteredActivities = selectedUserId === 'all' 
@@ -436,7 +404,7 @@ export default function ActivityMapPage() {
               <div className="space-y-3">
                 {focusedActivity.knocks.map((knock, index) => (
                   <div
-                    key={knock.id}
+                    key={`${knock.id}-${index}`}
                     className="border border-[#E2E8F0] rounded-lg p-3 hover:shadow-md transition-shadow"
                   >
                     <div className="flex items-start gap-3">

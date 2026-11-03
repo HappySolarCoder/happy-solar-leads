@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import { Brain, TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Clock, Target, MapPin, Zap } from 'lucide-react';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { User, Lead } from '@/app/types';
+import { Disposition } from '@/app/types/disposition';
 import { canSeeAllLeads } from '@/app/types';
 import {
   calculateDailyMetrics,
@@ -23,6 +25,7 @@ export default function AIManagerPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [analyses, setAnalyses] = useState<AIAnalysis[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(true);
@@ -46,13 +49,15 @@ export default function AIManagerPage() {
 
       setCurrentUser(user);
       
-      const [loadedUsers, loadedLeads] = await Promise.all([
+      const [loadedUsers, loadedLeads, loadedDispositions] = await Promise.all([
         getUsersAsync(),
         getLeadsAsync(),
+        getDispositionsAsync(),
       ]);
 
       setUsers(loadedUsers.filter(u => u.role === 'setter' || u.role === 'closer'));
       setLeads(loadedLeads);
+      setDispositions(loadedDispositions);
       setLoading(false);
     }
     loadData();
@@ -81,7 +86,7 @@ export default function AIManagerPage() {
 
       if (daysSinceStart < 0) continue; // Skip if date is before user created
 
-      const metrics = calculateDailyMetrics(user.id, user.name, leads, date);
+      const metrics = calculateDailyMetrics(user.id, user.name, leads, date, dispositions);
       
       console.log(`[AI Manager] ${user.name}: ${metrics.doorsKnocked} doors knocked on ${selectedDate}`);
       

@@ -6,9 +6,10 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/app/utils/firebase';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync } from '@/app/utils/storage';
-import { isKnockStatus } from '@/app/types/disposition';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { Disposition } from '@/app/types/disposition';
+import { teamMapStats, type TeamMapTimeFilter } from '@/app/utils/webKnockCounts';
 import Image from 'next/image';
-import { startOfToday, startOfWeek, startOfMonth, isAfter, format } from 'date-fns';
 
 const LeafletMap = dynamic(() => import('@/app/components/TeamMapView'), {
   ssr: false,
@@ -25,7 +26,7 @@ const LeafletMap = dynamic(() => import('@/app/components/TeamMapView'), {
   ),
 });
 
-type TimeFilter = 'today' | 'yesterday' | 'last7days' | 'thisweek' | 'lastweek' | 'thismonth' | 'lastmonth' | 'all';
+type TimeFilter = TeamMapTimeFilter;
 
 interface TeamMember {
   id: string;
@@ -45,6 +46,7 @@ export default function TeamMapPage() {
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
   const [showBottomSheet, setShowBottomSheet] = useState(true);
   const [leads, setLeads] = useState<any[]>([]);
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
 
   useEffect(() => {
@@ -54,69 +56,19 @@ export default function TeamMapPage() {
   // Load leads for stats calculation
   useEffect(() => {
     async function loadLeads() {
-      const loadedLeads = await getLeadsAsync();
+      const [loadedLeads, loadedDispositions] = await Promise.all([
+        getLeadsAsync(),
+        getDispositionsAsync(),
+      ]);
       setLeads(loadedLeads);
+      setDispositions(loadedDispositions);
     }
     loadLeads();
   }, []);
 
   // Calculate stats for each user based on time filter
   const getUserStats = (userId: string, filter: TimeFilter) => {
-    // Get cutoff date based on filter
-    let cutoffDate: Date;
-    let endDate: Date | undefined;
-    
-    switch (filter) {
-      case 'today':
-        cutoffDate = startOfToday();
-        break;
-      case 'yesterday':
-        cutoffDate = new Date(startOfToday().getTime() - 86400000);
-        endDate = startOfToday();
-        break;
-      case 'last7days':
-        cutoffDate = new Date(Date.now() - 7 * 86400000);
-        break;
-      case 'thisweek':
-        cutoffDate = startOfWeek(new Date());
-        break;
-      case 'lastweek':
-        cutoffDate = new Date(startOfWeek(new Date()).getTime() - 7 * 86400000);
-        break;
-      case 'thismonth':
-        cutoffDate = startOfMonth(new Date());
-        break;
-      case 'lastmonth':
-        cutoffDate = new Date(startOfMonth(new Date()).getTime() - 30 * 86400000);
-        break;
-      case 'all':
-      default:
-        cutoffDate = new Date(0);
-        break;
-    }
-    
-    // Get leads claimed by this user with disposition
-    const userLeads = leads.filter(l => l.claimedBy === userId && l.dispositionedAt);
-    
-    // Filter to selected time period
-    const filteredLeads = userLeads.filter(l => {
-      const leadDate = new Date(l.dispositionedAt);
-      if (!isAfter(leadDate, cutoffDate)) return false;
-      if (endDate && !isAfter(endDate, leadDate)) return false;
-      return true;
-    });
-    
-    // Count doors (any disposition that counts as knock)
-    const doorsKnocked = filteredLeads.filter(l => 
-      isKnockStatus(l.status)
-    ).length;
-    
-    // Count appointments
-    const appointments = filteredLeads.filter(l => 
-      l.status === 'appointment' || l.status === 'sale'
-    ).length;
-    
-    return { doors: doorsKnocked, appointments };
+    return teamMapStats(leads, dispositions, userId, filter, new Date());
   };
 
   useEffect(() => {
