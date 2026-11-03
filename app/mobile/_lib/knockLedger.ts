@@ -6,7 +6,9 @@ import {
 } from "@/app/utils/knockCount";
 
 export const KNOCK_LEDGER_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
+export const KNOCK_LEDGER_MAX_ROWS = 20_000;
 export const KNOCK_LEDGER_EVENT = "raydar-knock-ledger";
+const LAST_ACCOUNT_KEY = "raydar-knock-ledger-uid";
 
 type LedgerRow = {
   key: string;
@@ -26,7 +28,33 @@ type LedgerStore = {
 
 const memory = new Map<string, Map<string, LedgerRow>>();
 let activeAccount: string | null = null;
+/** Survives an in-memory restart in tests. The browser copy is localStorage. */
+let persistedUid: string | null = null;
 let dispositions: readonly Disposition[] = DEFAULT_DISPOSITIONS;
+
+function readPersistedUid(): string | null {
+  if (persistedUid) return persistedUid;
+  try {
+    if (typeof localStorage !== "undefined") {
+      const saved = localStorage.getItem(LAST_ACCOUNT_KEY);
+      if (saved) return saved;
+    }
+  } catch {
+    /* Private mode still keeps the in-memory copy for this process. */
+  }
+  return null;
+}
+
+function writePersistedUid(uid: string | null): void {
+  persistedUid = uid;
+  try {
+    if (typeof localStorage === "undefined") return;
+    if (uid) localStorage.setItem(LAST_ACCOUNT_KEY, uid);
+    else localStorage.removeItem(LAST_ACCOUNT_KEY);
+  } catch {
+    /* The module copy still tracks the account until the process ends. */
+  }
+}
 
 export function knockLedgerDatabaseName(uid: string): string {
   return `raydar-knock-ledger:${uid}`;
@@ -148,8 +176,44 @@ export function setKnockLedgerDispositions(next: readonly Disposition[]): void {
 export function resetKnockLedgerForTests(): void {
   memory.clear();
   activeAccount = null;
+  writePersistedUid(null);
   dispositions = DEFAULT_DISPOSITIONS;
   connections.clear();
+}
+
+/** Drop the process memory, the way an app restart does. The saved uid stays. */
+export function restartKnockLedgerSessionForTests(): void {
+  activeAccount = null;
+  persistedUid = null;
+}
+
+function freshRows(rows: LedgerRow[], now: number): { keep: LedgerRow[]; drop: string[] } {
+  const cutoff = now - KNOCK_LEDGER_RETENTION_MS;
+  const expired: string[] = [];
+  const fresh: LedgerRow[] = [];
+  for (const row of rows) {
+    if (row.at >= cutoff) fresh.push(row);
+    else expired.push(row.key);
+  }
+  fresh.sort((a, b) => a.at - b.at || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const overflow = Math.max(0, fresh.length - KNOCK_LEDGER_MAX_ROWS);
+  return {
+    keep: fresh.slice(overflow),
+    drop: expired.concat(fresh.slice(0, overflow).map((row) => row.key)),
+  };
+}
+
+async function trimLedger(uid: string, now: number): Promise<LedgerRow[]> {
+  const rows = await store().read(uid);
+  const trimmed = freshRows(rows, now);
+  if (trimmed.drop.length) {
+    try {
+      await store().remove(uid, trimmed.drop);
+    } catch {
+      /* Counting uses the trimmed list even if the delete does not land. */
+    }
+  }
+  return trimmed.keep;
 }
 
 function rowsFor(uid: string, lead: Lead, now: number): LedgerRow[] {
@@ -171,7 +235,7 @@ function notify(uid: string): void {
   window.dispatchEvent(new CustomEvent(KNOCK_LEDGER_EVENT, { detail: { uid } }));
 }
 
-/** Append this rep's counted knocks. Excluded dispositions are not stored, and nothing is removed. */
+/** Append this rep's counted knocks. Excluded dispositions are not stored. */
 export async function rememberAcknowledgedKnocks(
   uid: string,
   lead: Lead,
@@ -181,6 +245,11 @@ export async function rememberAcknowledgedKnocks(
   const rows = rowsFor(uid, lead, now);
   if (!rows.length) return;
   await store().put(uid, rows);
+  try {
+    await trimLedger(uid, now);
+  } catch {
+    /* The next read trims retention and the row cap. */
+  }
   notify(uid);
 }
 
@@ -190,24 +259,14 @@ export async function readKnockLedger(
   now = Date.now(),
 ): Promise<KnockEvent[]> {
   if (!uid) return [];
-  const cutoff = now - KNOCK_LEDGER_RETENTION_MS;
   let rows: LedgerRow[] = [];
   try {
-    rows = await store().read(uid);
+    rows = await trimLedger(uid, now);
   } catch {
     return [];
   }
-  const expired = rows.filter((row) => !(row.at >= cutoff)).map((row) => row.key);
-  if (expired.length) {
-    try {
-      await store().remove(uid, expired);
-    } catch {
-      /* A failed prune keeps the row until the next read. Counting still ignores it. */
-    }
-  }
   const events: KnockEvent[] = [];
   for (const row of rows) {
-    if (!(row.at >= cutoff)) continue;
     const [event] = knockEvents(
       {
         id: row.leadId,
@@ -230,17 +289,20 @@ export async function readKnockLedger(
 
 /**
  * Sign-out keeps the store so the same account still has its knocks.
- * Switching to a different account deletes the previous account's database.
- * A reload starts with no in-memory account, so it does not delete anything.
+ * The last uid is stored on the device. After a restart, signing in as
+ * someone else still deletes the previous account's database.
  */
 export async function syncKnockLedgerAccount(nextUid: string | null): Promise<void> {
   if (!nextUid) return;
-  const previous = activeAccount;
+  const previous = readPersistedUid() || activeAccount;
   activeAccount = nextUid;
-  if (!previous || previous === nextUid) return;
-  try {
-    await store().wipe(previous);
-  } catch {
-    /* The next account still reads only its own database. */
+  if (previous && previous !== nextUid) {
+    try {
+      await store().wipe(previous);
+    } catch {
+      /* Leave the saved uid so the next sign-in tries the wipe again. */
+      return;
+    }
   }
+  writePersistedUid(nextUid);
 }
