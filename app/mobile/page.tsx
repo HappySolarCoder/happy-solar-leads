@@ -13,8 +13,11 @@ import { TodayView } from "./_components/MobileViews";
 import { useDeviceNow } from "./_components/useDeviceNow";
 import { useMobileData } from "./_components/useMobileData";
 import { personalOutcomeLeads } from "./_lib/fieldUpdates";
+import { assembleKnockLeads } from "./_lib/knockSources";
 import { dayStart, summarizeActivity } from "./_lib/metrics";
 import { countWorkdaysElapsedAndRemaining } from '@/app/utils/goals';
+import { HOT_LEADS_ENABLED } from '@/app/hotLeads/flag';
+import { loadedHotPins } from '@/app/hotLeads/model';
 
 const LeadDetail = dynamic(() => import("@/app/components/LeadDetail"), {
   ssr: false,
@@ -25,7 +28,10 @@ export default function MobilePage() {
   const {
     user,
     leads,
+    field,
     dispositions,
+    knockLedger,
+    hotTick,
     followUps,
     loading,
     dataLoading,
@@ -69,16 +75,30 @@ export default function MobilePage() {
       active = false;
     };
   }, [user, localDay]);
+  const knockSet = useMemo(
+    () =>
+      assembleKnockLeads({
+        leads,
+        hotPins: HOT_LEADS_ENABLED ? loadedHotPins() : [],
+        hotDrafts: HOT_LEADS_ENABLED ? field.drafts : [],
+      }),
+    [leads, field.drafts, hotTick],
+  );
+  const knockOptions = {
+    ledger: knockLedger,
+    knockSources: knockSet.leads,
+    leadAliases: knockSet.aliases,
+  };
   // Reuse the live feed. A second getLeadsAsync() fetched the whole collection
   // for admins and reloaded the profile before this screen could show its goal.
   const dailyTarget = useMemo(() => {
     if (!user || !goal.target) return null;
     const month = new Date(now.getFullYear(), now.getMonth(), 1);
     const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const knocks = summarizeActivity(leads, user.id, dispositions, month, nextMonth).knocks;
+    const knocks = summarizeActivity(leads, user.id, dispositions, month, nextMonth, knockOptions).knocks;
     const remaining = Math.max(1, countWorkdaysElapsedAndRemaining(now).remaining);
     return Math.ceil(Math.max(0, goal.target - knocks) / remaining);
-  }, [user, leads, dispositions, goal.target, now]);
+  }, [user, leads, dispositions, goal.target, now, knockLedger, knockSet]);
   if (loading) return <MobileLoading />;
   if (!user)
     return (
@@ -106,7 +126,8 @@ export default function MobilePage() {
           user.id,
           dispositions,
           dayStart(now),
-          end
+          end,
+          knockOptions
         )}
         followUps={followUps}
         outcomeLeads={personalOutcomeLeads(leads, user.id)}

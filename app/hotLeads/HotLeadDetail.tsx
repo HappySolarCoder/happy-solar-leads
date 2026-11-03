@@ -5,6 +5,7 @@ import { DEFAULT_DISPOSITIONS, type Disposition } from "@/app/types/disposition"
 import type { User } from "@/app/types";
 import { getDispositionsAsync } from "@/app/utils/dispositions";
 import { useOptionalMobileData } from "@/app/mobile/_components/MobileDataProvider";
+import { rememberHotLeadHistory } from "@/app/mobile/_lib/knockSources";
 import { hotLeadDetailState } from "./detailState";
 import { DO_NOT_CALL_WARNING, hotCapabilities, hotLeadAfterDispo, hotLeadCallAllowed, noteHotDispo, noteHotLocal, rememberServerHotPin, rememberServerHotPinIfAbsent, subscribeHotLeadDetail, type HotLeadPin } from "./model";
 import { stageHotKnock } from "./gps";
@@ -98,6 +99,7 @@ export function HotLeadDetail({
       rememberServerHotPin(result.hotLead);
       setPin(result.hotLead);
       setHistory(result.hotLead.dispositionHistory || []);
+      rememberHotLeadHistory(result.hotLead);
     })();
     return () => { alive = false; };
   }, [initial.id, user]);

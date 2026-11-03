@@ -22,6 +22,8 @@ export type HotHistoryEntry = {
   userId?: string;
   userName?: string;
   notes?: string;
+  /** Present when the route already stored the knock's event id. Not a new field. */
+  field?: { eventId?: string };
 };
 
 export type HotLeadPin = {
@@ -338,6 +340,15 @@ export function publishHotCapabilities(next: HotCapabilities): void {
 
 export function hotPinForLead(leadId: string): HotLeadPin | null {
   return hotIndex.get(leadId) ?? null;
+}
+
+/** Pins already on the map. The same pin can be indexed under more than one key. */
+export function loadedHotPins(): HotLeadPin[] {
+  const byId = new Map<string, HotLeadPin>();
+  for (const pin of hotIndex.values()) {
+    if (!byId.has(pin.id)) byId.set(pin.id, pin);
+  }
+  return [...byId.values()];
 }
 
 /** Display only. A merged house hides Call when its 3PL lead is doNotCall. */

@@ -36,6 +36,14 @@ import { useFieldData } from '@/app/field/useFieldData';
 import { readArea } from '@/app/field/deviceStore';
 import { FeedbackSync } from "./VoiceFeedback";
 import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
+import { HOT_LEADS_ENABLED } from '@/app/hotLeads/flag';
+import {
+  KNOCK_LEDGER_EVENT,
+  readKnockLedger,
+  setKnockLedgerDispositions,
+  syncKnockLedgerAccount,
+} from '../_lib/knockLedger';
+import type { KnockEvent } from '@/app/utils/knockCount';
 
 const EMPTY_LEADS: Lead[] = [];
 export const MobileDataContext = createContext<ReturnType<
@@ -92,6 +100,8 @@ function useSharedMobileData() {
   }, [session, router]);
   const user = session.user?.approvalStatus === "pending" ? null : session.user;
   const scope = user ? `${user.id}:${user.role}` : "";
+  const [knockLedger, setKnockLedger] = useState<KnockEvent[]>([]);
+  const [hotTick, setHotTick] = useState(0);
   useEffect(() => {
     if (!scope) return;
     let active = true;
@@ -106,6 +116,50 @@ function useSharedMobileData() {
       active = false;
     };
   }, [scope]);
+  const dispositions =
+    settings?.scope === scope ? settings.dispositions : DEFAULT_DISPOSITIONS;
+  useEffect(() => {
+    setKnockLedgerDispositions(dispositions);
+  }, [dispositions]);
+  useEffect(() => {
+    void syncKnockLedgerAccount(user?.id ?? null);
+  }, [user?.id]);
+  useEffect(() => {
+    if (!HOT_LEADS_ENABLED || typeof window === "undefined") return;
+    const bump = () => setHotTick((value) => value + 1);
+    window.addEventListener("raydar-hot-history", bump);
+    return () => window.removeEventListener("raydar-hot-history", bump);
+  }, []);
+  useEffect(() => {
+    const uid = user?.id;
+    if (!uid) {
+      setKnockLedger([]);
+      return;
+    }
+    let alive = true;
+    const load = () => {
+      void readKnockLedger(uid, dispositions)
+        .then((events) => {
+          if (alive) setKnockLedger(events);
+        })
+        .catch(() => {});
+    };
+    load();
+    if (typeof window === "undefined") {
+      return () => {
+        alive = false;
+      };
+    }
+    const onLedger = (event: Event) => {
+      const detail = (event as CustomEvent<{ uid?: string }>).detail;
+      if (detail?.uid === uid) load();
+    };
+    window.addEventListener(KNOCK_LEDGER_EVENT, onLedger);
+    return () => {
+      alive = false;
+      window.removeEventListener(KNOCK_LEDGER_EVENT, onLedger);
+    };
+  }, [user?.id, dispositions]);
   const live = useLiveLeads(user, dataAttempt);
   const field = useFieldData(user, live?.leads || EMPTY_LEADS);
   const leads = field.leads;
@@ -137,8 +191,9 @@ function useSharedMobileData() {
     live,
     refresh,
     retry,
-    dispositions:
-      settings?.scope === scope ? settings.dispositions : DEFAULT_DISPOSITIONS,
+    dispositions,
+    knockLedger,
+    hotTick,
     loading: session.loading,
     leadsLoading: !!user && !live && !preparedOffline,
     dispositionsLoading: !!user && settings?.scope !== scope,
