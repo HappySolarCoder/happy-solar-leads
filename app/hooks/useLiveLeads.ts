@@ -6,6 +6,7 @@ import { mapLeadDoc } from '@/app/utils/firestore';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import type { Lead, User } from '@/app/types';
 import { startupEvent } from '@/app/mobile/_lib/startupDiagnostics';
+import { rememberAcknowledgedKnocks } from '@/app/mobile/_lib/knockLedger';
 import { mergeLeadSnapshots } from '@/app/homeowners/houseIdentity';
 
 type Result = { userId:string; leads:Lead[]; error:string; cached:boolean; complete:boolean };
@@ -23,6 +24,7 @@ export function acknowledgeMobileLead(user: Pick<User, 'id' | 'role'>, lead: Lea
   updates?.set(lead.id,upsert(previous?[previous]:[],lead)[0]);
   cache.set(key, saved ? {...saved, result: {...saved.result, leads: upsert(saved.result.leads, lead)}}
     : {at:0, result:{userId:user.id, leads:[lead], error:'', cached:true, complete:false}});
+  void rememberAcknowledgedKnocks(user.id, lead).catch(() => {});
   window.dispatchEvent(new CustomEvent('raydar-lead-acknowledged', {detail: {key, lead}}));
 }
 function readPersonal(uid:string,role:string) {

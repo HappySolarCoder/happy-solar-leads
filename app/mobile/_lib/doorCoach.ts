@@ -1,5 +1,6 @@
 import type { Lead } from "@/app/types";
 import { calculateDistance } from "@/app/hooks/useGeolocation";
+import { isCountedKnock, knockEvents } from "@/app/utils/knockCount";
 import { activityActor, dayStart } from "./metrics";
 
 export type DoorSuggestion = {
@@ -124,7 +125,7 @@ export function sessionAppointments(
   }).length;
 }
 
-/** Unique doors with a configured knock event by this rep during the session. */
+/** Unique doors with a configured knock by this rep during the session. */
 export function sessionDoors(
   leads: Lead[],
   userId: string,
@@ -133,28 +134,20 @@ export function sessionDoors(
 ): number {
   const start = new Date(startedAt).getTime();
   if (!Number.isFinite(start)) return 0;
-  const normalize = (value: string) => value.trim().toLowerCase();
-  const knockStatuses = new Set(
-    dispositions
-      .filter((d) => d.countsAsDoorKnock)
-      .flatMap((d) => [normalize(d.id), normalize(d.name)])
+  const configured = new Set(
+    dispositions.filter((row) => row.countsAsDoorKnock).map((row) => row.id),
   );
   const ids = new Set<string>();
   for (const lead of leads) {
     if (lead.historicalTerritoryPin) continue;
-    const recorded = lead.dispositionHistory?.some(
+    const counted = knockEvents(lead, dispositions).some(
       (event) =>
         event.userId === userId &&
-        knockStatuses.has(normalize(String(event.disposition))) &&
-        new Date(event.timestamp).getTime() >= start
+        event.at >= start &&
+        configured.has(event.dispositionId) &&
+        isCountedKnock(event.dispositionId),
     );
-    const legacy =
-      !lead.dispositionHistory?.length &&
-      activityActor(lead) === userId &&
-      knockStatuses.has(normalize(lead.status || "")) &&
-      lead.dispositionedAt &&
-      new Date(lead.dispositionedAt).getTime() >= start;
-    if (recorded || legacy) ids.add(lead.id);
+    if (counted) ids.add(lead.id);
   }
   return ids.size;
 }

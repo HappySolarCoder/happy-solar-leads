@@ -139,7 +139,28 @@ export function parseHotLeadPin(value: unknown): HotLeadPin | null {
   if (typeof row.gpsUnverifiedReason === "string") pin.gpsUnverifiedReason = row.gpsUnverifiedReason;
   if (row.testData === true) pin.testData = true;
   if (row.doNotCall === true) pin.doNotCall = true;
+  const dispositionHistory = mapHotHistory(row.dispositionHistory);
+  if (dispositionHistory) pin.dispositionHistory = dispositionHistory;
   return pin;
+}
+
+export function mapHotHistoryEntry(entry: unknown): HotHistoryEntry {
+  const row = entry as HotHistoryEntry & { eventId?: unknown; field?: { eventId?: unknown } };
+  const eventId = text(row?.field?.eventId) || text(row?.eventId);
+  const mapped: HotHistoryEntry = {
+    disposition: text(row?.disposition),
+    timestamp: text(row?.timestamp),
+    userId: text(row?.userId),
+    userName: text(row?.userName),
+    notes: text(row?.notes),
+  };
+  if (eventId) mapped.field = { eventId };
+  return mapped;
+}
+
+function mapHotHistory(value: unknown): HotHistoryEntry[] | undefined {
+  if (!Array.isArray(value) || !value.length) return undefined;
+  return value.slice(0, 50).map(mapHotHistoryEntry);
 }
 
 function readCaps(data: { capabilities?: { dispo?: unknown; claim?: unknown } } | null): HotCapabilities {
@@ -251,19 +272,7 @@ export async function fetchHotLeadDetail(input: {
     const data = await response.json() as { hotLead?: unknown; dispositionHistory?: unknown };
     const pin = parseHotLeadPin(data.hotLead);
     if (!pin || pin.testData === true) return { hotLead: null, error: "" };
-    const history = Array.isArray((data.hotLead as { dispositionHistory?: unknown })?.dispositionHistory)
-      ? ((data.hotLead as { dispositionHistory: unknown[] }).dispositionHistory)
-      : [];
-    const dispositionHistory: HotHistoryEntry[] = history.slice(0, 50).map((entry) => {
-      const row = entry as HotHistoryEntry;
-      return {
-        disposition: text(row?.disposition),
-        timestamp: text(row?.timestamp),
-        userId: text(row?.userId),
-        userName: text(row?.userName),
-        notes: text(row?.notes),
-      };
-    });
+    const dispositionHistory = mapHotHistory((data.hotLead as { dispositionHistory?: unknown })?.dispositionHistory) || [];
     return { hotLead: { ...pin, dispositionHistory }, error: "" };
   } catch {
     return { hotLead: null, error: "" };
