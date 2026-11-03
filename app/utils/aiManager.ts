@@ -1,5 +1,8 @@
 // Virtual Manager AI - Performance Analysis & Coaching
 import { Lead, User } from '@/app/types';
+import type { Disposition } from '@/app/types/disposition';
+import { knockIndex } from '@/app/utils/webKnockCounts';
+import { phoenixDayWindow } from '@/app/utils/phoenixDay';
 
 export interface DailyMetrics {
   date: string;
@@ -51,9 +54,11 @@ export function calculateDailyMetrics(
   setterId: string,
   setterName: string,
   leads: Lead[],
-  date: Date = new Date()
+  date: Date = new Date(),
+  dispositions: readonly Disposition[] = [],
 ): DailyMetrics {
-  const dateStr = date.toISOString().split('T')[0];
+  const day = phoenixDayWindow(date);
+  const dateStr = day.key;
   
   // Debug: Check how many leads belong to this setter
   const setterLeads = leads.filter(l => l.claimedBy === setterId);
@@ -107,10 +112,9 @@ export function calculateDailyMetrics(
       }
       
       // Check if date is valid
-      if (isNaN(knockDateObj.getTime())) return false;
-      
-      const knockDate = knockDateObj.toISOString().split('T')[0];
-      return knockDate === dateStr;
+      const at = knockDateObj.getTime();
+      if (isNaN(at)) return false;
+      return at >= day.startMs && at < day.endMs;
     } catch (error) {
       // Invalid date, skip this lead
       return false;
@@ -119,7 +123,11 @@ export function calculateDailyMetrics(
 
   console.log(`[calculateDailyMetrics] ${setterName}: Found ${todayLeads.length} leads for ${dateStr}`);
 
-  const doorsKnocked = todayLeads.length;
+  // Same Phoenix day as appointments. Compare instants; do not format each event.
+  const knockEvents = (knockIndex(leads, dispositions).byUser.get(setterId) ?? []).filter(
+    (event) => event.at >= day.startMs && event.at < day.endMs,
+  );
+  const doorsKnocked = knockEvents.length;
   const appointments = todayLeads.filter(l => 
     l.disposition?.toLowerCase().includes('appointment') ||
     l.disposition?.toLowerCase().includes('callback')
@@ -131,37 +139,9 @@ export function calculateDailyMetrics(
 
   const conversionRate = doorsKnocked > 0 ? (appointments / doorsKnocked) * 100 : 0;
 
-  // Calculate pace (doors per hour)
-  const timestamps = todayLeads
-    .filter(l => {
-      if (!l.knockGpsTimestamp) return false;
-      try {
-        const timestamp = l.knockGpsTimestamp;
-        let d: Date;
-        
-        if (timestamp && typeof timestamp === 'object' && 'toDate' in timestamp) {
-          d = (timestamp as any).toDate();
-        } else {
-          d = new Date(timestamp);
-        }
-        
-        return !isNaN(d.getTime());
-      } catch {
-        return false;
-      }
-    })
-    .map(l => {
-      const timestamp = l.knockGpsTimestamp!;
-      let d: Date;
-      
-      if (timestamp && typeof timestamp === 'object' && 'toDate' in timestamp) {
-        d = (timestamp as any).toDate();
-      } else {
-        d = new Date(timestamp);
-      }
-      
-      return d.getTime();
-    })
+  // Pace uses the same visits as doorsKnocked.
+  const timestamps = knockEvents
+    .map(event => event.at)
     .filter(t => !isNaN(t))
     .sort((a, b) => a - b);
   
@@ -178,26 +158,9 @@ export function calculateDailyMetrics(
   const primeTimeStart = 16.5; // 4:30pm in decimal hours
   const primeTimeEnd = 20.5; // 8:30pm
   
-  const primeTimeKnocks = todayLeads.filter(l => {
-    if (!l.knockGpsTimestamp) return false;
-    try {
-      const timestamp = l.knockGpsTimestamp;
-      let knockTime: Date;
-      
-      // Handle Firestore Timestamp objects
-      if (timestamp && typeof timestamp === 'object' && 'toDate' in timestamp) {
-        knockTime = (timestamp as any).toDate();
-      } else {
-        knockTime = new Date(timestamp);
-      }
-      
-      if (isNaN(knockTime.getTime())) return false;
-      
-      const hourDecimal = knockTime.getHours() + (knockTime.getMinutes() / 60);
-      return hourDecimal >= primeTimeStart && hourDecimal <= primeTimeEnd;
-    } catch (error) {
-      return false;
-    }
+  const primeTimeKnocks = knockEvents.filter(event => {
+    const hourDecimal = (event.at - day.startMs) / 3_600_000;
+    return hourDecimal >= primeTimeStart && hourDecimal <= primeTimeEnd;
   }).length;
 
   const primeTimePercentage = doorsKnocked > 0 ? (primeTimeKnocks / doorsKnocked) * 100 : 0;

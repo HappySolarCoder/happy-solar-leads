@@ -1,11 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { isCountedKnock, normalizeDispoKey } from '../app/utils/knockCount.ts';
 import {
   LEAD_PAGE,
   LEAD_SELECT_FIELDS,
   alertSubject,
-  doorKnockKeys,
   entryIsFar,
   handleTooFarKnockAlert,
   nyDayWindow,
@@ -65,8 +65,8 @@ const flag = (reason?: string, extra: Record<string, unknown> = {}) => ({ gpsFla
 const entry = (at: number, userId: string, more: Record<string, unknown> = {}) => ({ disposition: 'Not Home', timestamp: at, userId, ...more });
 const day = nyDayWindow(EDT_2330);
 const s = day.startMs + 15 * H;
-const tally = (leads: Lead[], keys?: Set<string>) => tallyKnocks(leads, day.startMs, day.endMs, keys);
-const counts = (leads: Lead[], uid = 'u', keys?: Set<string>) => { const t = tally(leads, keys).get(uid); return t ? [t.tooFar, t.total] : [0, 0]; };
+const tally = (leads: Lead[], dispositions: DispositionDef[] = []) => tallyKnocks(leads, day.startMs, day.endMs, dispositions);
+const counts = (leads: Lead[], uid = 'u', dispositions: DispositionDef[] = []) => { const t = tally(leads, dispositions).get(uid); return t ? [t.tooFar, t.total] : [0, 0]; };
 
 describe('#173 fixes: entry-only counting (no top-level fallback)', () => {
   it('top-level too_far + entry out_of_area inside the threshold is not far', () => {
@@ -124,11 +124,13 @@ describe('#173 fix 5: out_of_area on the entry', () => {
   });
 });
 
-describe('#173 fix 4: countsAsDoorKnock', () => {
-  it('defaults: Not Home counts, My Targets / Available do not; id and hyphen forms match', () => {
-    const keys = doorKnockKeys([]);
-    assert.equal(keys.has('not home'), true); assert.equal(keys.has('not-home'), true);
-    assert.equal(keys.has('my targets'), false); assert.equal(keys.has('available'), false); assert.equal(keys.has('claimed'), false);
+describe('#173 fix 4: knock gate uses the shared helper', () => {
+  it('Not Home counts; My Targets, Available, and claimed do not', () => {
+    assert.equal(isCountedKnock(normalizeDispoKey('Not Home', [])), true);
+    assert.equal(isCountedKnock(normalizeDispoKey('not-home', [])), true);
+    assert.equal(isCountedKnock(normalizeDispoKey('My Targets', [])), false);
+    assert.equal(isCountedKnock(normalizeDispoKey('Available', [])), false);
+    assert.equal(isCountedKnock('claimed'), false);
   });
   it('filters both the total and too_far', () => {
     const tf = flag('too_far');
@@ -136,12 +138,17 @@ describe('#173 fix 4: countsAsDoorKnock', () => {
       entry(s, 'u', tf), { ...entry(s + 1, 'u', tf), disposition: 'My Targets' }, { ...entry(s + 2, 'u', tf), disposition: 'Available' },
       { ...entry(s + 3, 'u', tf), disposition: 'Mystery' }, { ...entry(s + 4, 'u', tf), disposition: undefined }, { ...entry(s + 5, 'u'), disposition: 'not-home' },
     ] } };
-    assert.deepEqual(counts([lead]), [1, 2]);
+    // Not Home and not-home are one disposition, 5ms apart, so they are one knock.
+    assert.deepEqual(counts([lead]), [2, 2]);
   });
-  it('a stored disposition overrides its default; custom knock dispositions count', () => {
-    const keys = doorKnockKeys([{ id: 'not-home', name: 'Not Home', countsAsDoorKnock: false }, { id: 'c1', name: 'Left Flyer', countsAsDoorKnock: true }, { id: 'c2', name: 'Drive By', countsAsDoorKnock: 'yes' }]);
+  it('counts Not Home even when countsAsDoorKnock is false, and counts unknown dispositions', () => {
+    const dispositions: DispositionDef[] = [
+      { id: 'not-home', name: 'Not Home', countsAsDoorKnock: false },
+      { id: 'c1', name: 'Left Flyer', countsAsDoorKnock: true },
+      { id: 'c2', name: 'Drive By', countsAsDoorKnock: 'yes' },
+    ];
     const lead = { id: 'a', data: { dispositionHistory: [entry(s, 'u', flag('too_far')), { ...entry(s + 1, 'u', flag('too_far')), disposition: 'Left Flyer' }, { ...entry(s + 2, 'u'), disposition: 'Drive By' }, { ...entry(s + 3, 'u'), disposition: 'Interested' }] } };
-    assert.deepEqual(counts([lead], 'u', keys), [1, 2]);
+    assert.deepEqual(counts([lead], 'u', dispositions), [2, 4]);
   });
   it('handler reads dispositions once, and not at all when no leads', async () => {
     const empty = rig({ leads: [] });
@@ -150,7 +157,7 @@ describe('#173 fix 4: countsAsDoorKnock', () => {
     const one = rig({ leads: [{ id: 'a', data: { dispositionHistory: [entry(s, 'u', flag('too_far'))] } }], dispositions: [{ id: 'not-home', name: 'Not Home', countsAsDoorKnock: false }] });
     const r = await one.run({ dryRun: '1' });
     assert.equal(one.log.dispositions, 1);
-    assert.deepEqual(r.body.rows, []);
+    assert.equal(Array.isArray(r.body.rows) && r.body.rows.length, 1);
   });
 });
 
@@ -294,7 +301,7 @@ describe('#173 dry-run perRep', () => {
           entry(s + 31_000, 'over', flag('too_far')),
           entry(s + 62_000, 'over'),
           entry(s, 'exact', flag('too_far')),
-          ...Array.from({ length: 19 }, (_, i) => entry(s + (i + 1) * 31_000, 'exact')),
+          ...Array.from({ length: 19 }, (_, i) => entry(s + (i + 1) * 121_000, 'exact')),
           entry(s + 40_000, 'quiet'),
           entry(s + 50_000, 'user-test-qa', flag('too_far')),
           entry(s + 51_000, 'user-test-qa', flag('too_far')),
@@ -313,10 +320,10 @@ describe('#173 dry-run perRep', () => {
     const dry = await t.run({ dryRun: '1' });
     const perRep = dry.body.perRep as Array<{ userId: string; name: string; tooFar: number; total: number; pct: string }>;
     const rows = dry.body.rows as Array<{ userId: string; rep: string; tooFar: number; total: number; percent: string }>;
-    const computed = tallyKnocks(leads, day.startMs, day.endMs, doorKnockKeys([]));
+    const computed = tallyKnocks(leads, day.startMs, day.endMs, []);
     assert.deepEqual(perRep.map((rep) => [rep.userId, rep.name, rep.tooFar, rep.total]), [
       ['exact', 'Bea Exact', 1, 20],
-      ['over', 'Ada Over', 2, 3],
+      ['over', 'Ada Over', 1, 1],
       ['quiet', 'Cal Quiet', 0, 1],
     ]);
     for (const rep of perRep) {
@@ -329,8 +336,8 @@ describe('#173 dry-run perRep', () => {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].userId, 'over');
     assert.equal(rows[0].rep, 'Ada Over');
-    assert.equal(rows[0].tooFar, 2);
-    assert.equal(rows[0].total, 3);
+    assert.equal(rows[0].tooFar, 1);
+    assert.equal(rows[0].total, 1);
     assert.equal(rows[0].percent, perRep.find((rep) => rep.userId === 'over')!.pct);
     const preview = dry.body.email as AlertEmail;
     assert.match(preview.html, /<td>Ada Over<\/td>/);
@@ -372,9 +379,48 @@ describe('#173 double-tap collapse', () => {
     assert.deepEqual([split.get('u')?.total, split.get('v')?.total], [1, 1]);
   });
 
-  it('31s apart counts twice, measured from the kept entry', () => {
-    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 31_000, 'u')])]), [0, 2]);
-    assert.deepEqual(counts([door([entry(s + 20_000, 'u'), entry(s, 'u'), entry(s + 31_000, 'u')])]), [0, 2]);
+  it('0s and 60s count once, and 121s counts again', () => {
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 60_000, 'u')])]), [0, 1]);
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 121_000, 'u')])]), [0, 2]);
+    assert.deepEqual(counts([door([entry(s + 60_000, 'u'), entry(s, 'u'), entry(s + 121_000, 'u')])]), [0, 2]);
+  });
+
+  it('a far tap merged inside 120s flags the counted knock without adding one', () => {
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 45_000, 'u', flag('too_far'))])]), [1, 1]);
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 10_000, 'u', flag('too_far'))])]), [1, 1]);
+  });
+
+  it('today counts only today when history also has other days', () => {
+    const threeDaysAgo = s - 3 * 86_400_000;
+    const yesterday = s - 86_400_000;
+    const after = day.endMs + 60_000;
+    const history = [
+      entry(threeDaysAgo, 'u', flag('too_far')),
+      entry(yesterday, 'u'),
+      entry(s, 'u'),
+      entry(after, 'u', flag('too_far')),
+    ];
+    assert.deepEqual(counts([door(history)]), [0, 1]);
+  });
+
+  it('a far tap outside the day does not flag today', () => {
+    const near = day.endMs - 10_000;
+    const far = day.endMs + 45_000;
+    assert.deepEqual(counts([door([entry(near, 'u'), entry(far, 'u', flag('too_far'))])]), [0, 1]);
+  });
+
+  it('trims the user id before matching a far tap to the counted knock', () => {
+    const history = [
+      entry(s, ' u '),
+      entry(s + 45_000, 'u', flag('too_far')),
+    ];
+    assert.deepEqual(counts([door(history)]), [1, 1]);
+  });
+
+  it('the same eventId counts once', () => {
+    const first = { ...entry(s, 'u'), field: { eventId: 'evt-1' } };
+    const replay = { ...entry(s + 60_000, 'u'), field: { eventId: 'evt-1' } };
+    assert.deepEqual(counts([door([first, replay])]), [0, 1]);
   });
 
   it('a different disposition counts twice', () => {
@@ -393,10 +439,10 @@ describe('#173 double-tap collapse', () => {
     const dry = await t.run({ dryRun: '1' });
     const perRep = dry.body.perRep as Array<{ userId: string; name: string; tooFar: number; total: number; pct: string }>;
     const rows = dry.body.rows as Array<{ tooFar: number; total: number; percent: string }>;
-    assert.deepEqual(perRep, [{ userId: 'u', name: 'Ada', tooFar: 1, total: 2, pct: percentLabel(1, 2) }]);
+    assert.deepEqual(perRep, [{ userId: 'u', name: 'Ada', tooFar: 1, total: 1, pct: percentLabel(1, 1) }]);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].tooFar, 1);
-    assert.equal(rows[0].total, 2);
+    assert.equal(rows[0].total, 1);
     assert.equal(rows[0].percent, perRep[0].pct);
     const computed = tally(leads).get('u');
     assert.equal(perRep[0].tooFar, computed?.tooFar);

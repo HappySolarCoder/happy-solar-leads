@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   TrendingUp, DoorClosed, Calendar, DollarSign, Target,
@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { dashboardTodayKnocks } from '@/app/utils/webKnockCounts';
+import { PHOENIX_TIME_ZONE, phoenixDayWindow } from '@/app/utils/phoenixDay';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User, canSeeAllLeads } from '@/app/types';
 import { Disposition } from '@/app/types/disposition';
@@ -43,6 +45,21 @@ export default function DashboardPage() {
     loadData();
   }, [router]);
 
+  const visibleLeads = useMemo(() => {
+    if (!currentUser || canSeeAllLeads(currentUser.role)) return leads;
+    return leads.filter(l =>
+      l.status === 'unclaimed' ||
+      l.claimedBy === currentUser.id ||
+      l.assignedTo === currentUser.id
+    );
+  }, [leads, currentUser]);
+
+  const phoenixToday = phoenixDayWindow(new Date());
+  const knockSummary = useMemo(() => {
+    const viewerId = currentUser && !canSeeAllLeads(currentUser.role) ? currentUser.id : undefined;
+    return dashboardTodayKnocks(visibleLeads, dispositions, new Date(phoenixToday.startMs + 12 * 60 * 60 * 1000), viewerId);
+  }, [visibleLeads, dispositions, phoenixToday.startMs, currentUser]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
@@ -56,43 +73,14 @@ export default function DashboardPage() {
 
   if (!currentUser) return null;
 
-  // Filter leads based on user role
-  const visibleLeads = canSeeAllLeads(currentUser.role)
-    ? leads
-    : leads.filter(l => 
-        l.status === 'unclaimed' || 
-        l.claimedBy === currentUser.id || 
-        l.assignedTo === currentUser.id
-      );
-
-  // Get today's date (start of day)
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // Get statuses that count as door knocks from dispositions
-  const doorKnockStatuses = dispositions
-    .filter(d => d.countsAsDoorKnock)
-    .flatMap(d => [
-      d.id.toLowerCase(),
-      d.name.toLowerCase(),
-      d.name.toLowerCase().replace(/\s+/g, '-'),
-    ]);
-
-  // Calculate daily stats
   const todayLeads = visibleLeads.filter(l => {
     if (!l.dispositionedAt) return false;
-    const dispDate = new Date(l.dispositionedAt);
-    dispDate.setHours(0, 0, 0, 0);
-    return dispDate.getTime() === today.getTime();
+    const at = new Date(l.dispositionedAt).getTime();
+    return at >= phoenixToday.startMs && at < phoenixToday.endMs;
   });
 
-  // Count by disposition for today - using dynamic door knock statuses
-  const todayKnocks = todayLeads.filter(l => {
-    if (!l.status) return false;
-    const status = l.status.toLowerCase();
-    const disposition = String(l.disposition || '').toLowerCase();
-    return doorKnockStatuses.includes(status) || doorKnockStatuses.includes(disposition);
-  }).length;
+  // A setter's total is only their own visits. A manager total is every counted visit.
+  const todayKnocks = knockSummary.total;
 
   // Conversations = all dispositions (not unclaimed/claimed)
   const todayConversations = todayLeads.filter(l => {
@@ -117,11 +105,7 @@ export default function DashboardPage() {
   const totalAppointments = visibleLeads.filter(l => l.status === 'appointment').length;
   const totalSales = visibleLeads.filter(l => l.status === 'sale').length;
 
-  // Active setters (leads claimed today)
-  const activeSetterIds = new Set(
-    todayLeads.map(l => l.claimedBy).filter(Boolean)
-  );
-  const activeSetters = users.filter(u => activeSetterIds.has(u.id));
+  const activeSetters = users.filter(u => (knockSummary.byUser.get(u.id) ?? 0) > 0);
 
   return (
     <div className="min-h-screen bg-white">
@@ -138,7 +122,7 @@ export default function DashboardPage() {
             <div>
               <h1 className="text-2xl font-bold text-[#2D3748]">Daily Dashboard</h1>
               <p className="text-sm text-[#718096]">
-                {today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                {new Date(phoenixToday.startMs + 12 * 60 * 60 * 1000).toLocaleDateString('en-US', { timeZone: PHOENIX_TIME_ZONE, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
               </p>
             </div>
           </div>
@@ -290,7 +274,7 @@ export default function DashboardPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {activeSetters.map(setter => {
                 const setterLeads = todayLeads.filter(l => l.claimedBy === setter.id);
-                const setterKnocks = setterLeads.length;
+                const setterKnocks = knockSummary.byUser.get(setter.id) ?? 0;
                 const setterAppts = setterLeads.filter(l => l.status === 'appointment').length;
                 const setterSales = setterLeads.filter(l => l.status === 'sale').length;
 

@@ -254,8 +254,8 @@ describe('toPublicHistoricalPin', () => {
     assert.equal(missing.historicalSetByName, undefined);
     assert.equal(missing.disposition, undefined);
     const lines = pastPinPopupLines(missing);
-    assert.deepEqual(lines, []);
     assert.equal(lines.some((line) => line.includes('Invalid')), false);
+    assert.deepEqual(lines, []);
 
     const blankName = pastPinPopupLines({
       disposition: 'Appointment Set',

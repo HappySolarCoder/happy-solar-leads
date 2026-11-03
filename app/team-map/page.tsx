@@ -1,14 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/app/utils/firebase';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync } from '@/app/utils/storage';
-import { isKnockStatus } from '@/app/types/disposition';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { Disposition } from '@/app/types/disposition';
+import { teamMapBoard, type TeamMapTimeFilter } from '@/app/utils/webKnockCounts';
 import Image from 'next/image';
-import { startOfToday, startOfWeek, startOfMonth, isAfter, format } from 'date-fns';
 
 const LeafletMap = dynamic(() => import('@/app/components/TeamMapView'), {
   ssr: false,
@@ -25,7 +26,7 @@ const LeafletMap = dynamic(() => import('@/app/components/TeamMapView'), {
   ),
 });
 
-type TimeFilter = 'today' | 'yesterday' | 'last7days' | 'thisweek' | 'lastweek' | 'thismonth' | 'lastmonth' | 'all';
+type TimeFilter = TeamMapTimeFilter;
 
 interface TeamMember {
   id: string;
@@ -45,6 +46,7 @@ export default function TeamMapPage() {
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
   const [showBottomSheet, setShowBottomSheet] = useState(true);
   const [leads, setLeads] = useState<any[]>([]);
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
 
   useEffect(() => {
@@ -54,70 +56,23 @@ export default function TeamMapPage() {
   // Load leads for stats calculation
   useEffect(() => {
     async function loadLeads() {
-      const loadedLeads = await getLeadsAsync();
+      const [loadedLeads, loadedDispositions] = await Promise.all([
+        getLeadsAsync(),
+        getDispositionsAsync(),
+      ]);
       setLeads(loadedLeads);
+      setDispositions(loadedDispositions);
     }
     loadLeads();
   }, []);
 
-  // Calculate stats for each user based on time filter
-  const getUserStats = (userId: string, filter: TimeFilter) => {
-    // Get cutoff date based on filter
-    let cutoffDate: Date;
-    let endDate: Date | undefined;
-    
-    switch (filter) {
-      case 'today':
-        cutoffDate = startOfToday();
-        break;
-      case 'yesterday':
-        cutoffDate = new Date(startOfToday().getTime() - 86400000);
-        endDate = startOfToday();
-        break;
-      case 'last7days':
-        cutoffDate = new Date(Date.now() - 7 * 86400000);
-        break;
-      case 'thisweek':
-        cutoffDate = startOfWeek(new Date());
-        break;
-      case 'lastweek':
-        cutoffDate = new Date(startOfWeek(new Date()).getTime() - 7 * 86400000);
-        break;
-      case 'thismonth':
-        cutoffDate = startOfMonth(new Date());
-        break;
-      case 'lastmonth':
-        cutoffDate = new Date(startOfMonth(new Date()).getTime() - 30 * 86400000);
-        break;
-      case 'all':
-      default:
-        cutoffDate = new Date(0);
-        break;
-    }
-    
-    // Get leads claimed by this user with disposition
-    const userLeads = leads.filter(l => l.claimedBy === userId && l.dispositionedAt);
-    
-    // Filter to selected time period
-    const filteredLeads = userLeads.filter(l => {
-      const leadDate = new Date(l.dispositionedAt);
-      if (!isAfter(leadDate, cutoffDate)) return false;
-      if (endDate && !isAfter(endDate, leadDate)) return false;
-      return true;
-    });
-    
-    // Count doors (any disposition that counts as knock)
-    const doorsKnocked = filteredLeads.filter(l => 
-      isKnockStatus(l.status)
-    ).length;
-    
-    // Count appointments
-    const appointments = filteredLeads.filter(l => 
-      l.status === 'appointment' || l.status === 'sale'
-    ).length;
-    
-    return { doors: doorsKnocked, appointments };
-  };
+  const statsBoard = useMemo(
+    () => teamMapBoard(leads, dispositions, timeFilter, new Date()),
+    [leads, dispositions, timeFilter],
+  );
+  const selectedStats = selectedMember
+    ? (statsBoard.get(selectedMember.id) ?? { doors: 0, appointments: 0 })
+    : { doors: 0, appointments: 0 };
 
   useEffect(() => {
     if (!currentUser || !db) return;
@@ -283,11 +238,11 @@ export default function TeamMapPage() {
                 {/* Stats cards */}
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div className="bg-gradient-to-br from-[#FF5F5A] to-[#F27141] rounded-2xl p-4 text-white">
-                    <div className="text-3xl font-bold">{getUserStats(selectedMember.id, timeFilter).doors}</div>
+                    <div className="text-3xl font-bold">{selectedStats.doors}</div>
                     <div className="text-white/80 text-sm mt-1">Doors {timeFilter === 'today' ? 'Today' : timeFilter === 'yesterday' ? 'Yesterday' : ''}</div>
                   </div>
                   <div className="bg-gradient-to-br from-[#48BB78] to-[#38A169] rounded-2xl p-4 text-white">
-                    <div className="text-3xl font-bold">{getUserStats(selectedMember.id, timeFilter).appointments}</div>
+                    <div className="text-3xl font-bold">{selectedStats.appointments}</div>
                     <div className="text-white/80 text-sm mt-1">Appointments</div>
                   </div>
                 </div>
@@ -312,7 +267,9 @@ export default function TeamMapPage() {
                   </div>
                 ) : (
                   <div className="space-y-2 pb-4">
-                    {teamMembers.map((member) => (
+                    {teamMembers.map((member) => {
+                      const memberStats = statsBoard.get(member.id) ?? { doors: 0, appointments: 0 };
+                      return (
                       <button
                         key={member.id}
                         onClick={() => setSelectedMember(member)}
@@ -326,7 +283,7 @@ export default function TeamMapPage() {
                         </div>
                         <div className="flex-1 text-left min-w-0">
                           <div className="font-semibold text-[#2D3748] text-base">{member.name}</div>
-                          <div className="text-sm text-[#718096] mt-0.5">{getUserStats(member.id, timeFilter).doors} doors • {getUserStats(member.id, timeFilter).appointments} appts</div>
+                          <div className="text-sm text-[#718096] mt-0.5">{memberStats.doors} doors • {memberStats.appointments} appts</div>
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="w-2.5 h-2.5 bg-[#48BB78] rounded-full animate-pulse"></div>
@@ -335,7 +292,8 @@ export default function TeamMapPage() {
                           </svg>
                         </div>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </>

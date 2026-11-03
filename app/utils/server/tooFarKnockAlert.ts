@@ -7,13 +7,13 @@ import {
   GPS_MAX_VERIFIED_ACCURACY_M,
   RADIUS_M,
 } from '@/app/utils/gpsRule';
-import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
+import type { Lead } from '@/app/types';
+import type { Disposition } from '@/app/types/disposition';
+import { collectKnockEvents, isCountedKnock, KNOCK_REPEAT_MS, normalizeDispoKey } from '@/app/utils/knockCount';
 
 export const TOO_FAR_ALERT_TO = 'evan@happyslr.com';
 export const LEAD_PAGE = 250;
 export const LEAD_PAGE_CAP = 40;
-/** Same user, lead, and disposition inside this gap is one knock. */
-const DUP_KNOCK_MS = 30_000;
 const NY = 'America/New_York';
 const ENV_KEYS = ['CRON_SECRET', 'RESEND_API_KEY', 'RESEND_FROM'] as const;
 const SEND_ENV_KEYS = ['RESEND_API_KEY', 'RESEND_FROM'] as const;
@@ -214,35 +214,23 @@ function historyEntries(value: unknown): Array<Record<string, unknown>> {
   return value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object');
 }
 
-function dispositionKeys(value: { id?: unknown; name?: unknown }): string[] {
-  const keys: string[] = [];
-  if (typeof value.id === 'string' && value.id.trim()) keys.push(value.id.trim().toLowerCase());
-  if (typeof value.name === 'string' && value.name.trim()) {
-    const name = value.name.trim().toLowerCase();
-    keys.push(name, name.replace(/\s+/g, '-'));
-  }
-  return keys;
-}
-
-/**
- * Lower-cased ids and names (plus hyphenated names) of dispositions with
- * countsAsDoorKnock === true. Same matching as the dashboard. A stored
- * disposition overrides the default with the same id or name.
- */
-export function doorKnockKeys(custom: DispositionDef[]): Set<string> {
-  const knock = new Set<string>();
-  const seen = new Set<string>();
+function dispositionRows(custom: DispositionDef[]): Disposition[] {
+  const rows: Disposition[] = [];
   for (const def of custom) {
-    const keys = dispositionKeys(def);
-    keys.forEach((key) => seen.add(key));
-    if (def.countsAsDoorKnock === true) keys.forEach((key) => knock.add(key));
+    if (typeof def.id !== 'string' || !def.id.trim()) continue;
+    rows.push({
+      id: def.id,
+      name: typeof def.name === 'string' ? def.name : def.id,
+      color: '',
+      icon: '',
+      countsAsDoorKnock: def.countsAsDoorKnock === true,
+      order: rows.length,
+      isDefault: false,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
   }
-  for (const def of DEFAULT_DISPOSITIONS) {
-    const keys = dispositionKeys(def);
-    if (keys.some((key) => seen.has(key))) continue;
-    if (def.countsAsDoorKnock) keys.forEach((key) => knock.add(key));
-  }
-  return knock;
+  return rows;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -274,71 +262,71 @@ export function entryIsFar(entry: Record<string, unknown>): boolean {
 type KnockHit = { at: number; far: boolean };
 
 /**
- * One counted knock per cluster. A later hit within 30s of the cluster's
- * kept timestamp joins it. Any far hit makes the whole knock far.
+ * A counted knock is far when any in-window tap merged into it by the 120s
+ * rule was far. Taps outside the day do not flag it, and they do not add a knock.
  */
-function collapseKnocks(hits: KnockHit[]): { total: number; tooFar: number } {
-  const ordered = [...hits].sort((a, b) => a.at - b.at);
-  let total = 0;
-  let tooFar = 0;
-  let keptAt = 0;
-  let clusterFar = false;
-  let open = false;
-  const close = () => {
-    if (!open) return;
-    total += 1;
-    if (clusterFar) tooFar += 1;
-    open = false;
-  };
-  for (const hit of ordered) {
-    if (!open || hit.at - keptAt > DUP_KNOCK_MS) {
-      close();
-      open = true;
-      keptAt = hit.at;
-      clusterFar = hit.far;
-    } else if (hit.far) {
-      clusterFar = true;
-    }
+function countedKnockIsFar(
+  keptAt: number,
+  hits: KnockHit[] | undefined,
+  startMs: number,
+  endMs: number,
+): boolean {
+  if (!hits) return false;
+  const limit = keptAt + KNOCK_REPEAT_MS;
+  for (const hit of hits) {
+    if (hit.at < startMs || hit.at >= endMs) continue;
+    if (hit.at < keptAt || hit.at > limit) continue;
+    if (hit.far) return true;
   }
-  close();
-  return { total, tooFar };
+  return false;
 }
 
 export function tallyKnocks(
   leads: Array<{ id: string; data: Record<string, unknown> }>,
   startMs: number,
   endMs: number,
-  knockKeys: Set<string> = doorKnockKeys([]),
+  dispositions: DispositionDef[] = [],
 ): Map<string, Tally> {
-  const groups = new Map<string, KnockHit[]>();
+  const rows = dispositionRows(dispositions);
   const names = new Map<string, string>();
+  const rawHits = new Map<string, KnockHit[]>();
+  const countable: Lead[] = [];
   for (const lead of leads) {
     if (isExcludedTestLead(lead.id, lead.data)) continue;
-    for (const entry of historyEntries(lead.data.dispositionHistory)) {
+    const history = historyEntries(lead.data.dispositionHistory);
+    countable.push({ id: lead.id, dispositionHistory: history } as unknown as Lead);
+    for (const entry of history) {
+      const userId = typeof entry.userId === 'string' ? entry.userId.trim() : '';
+      if (!userId) continue;
       const at = millisOf(entry.timestamp);
-      if (at == null || at < startMs || at >= endMs) continue;
-      const userId = entry.userId;
-      if (typeof userId !== 'string' || !userId) continue;
-      const disposition = typeof entry.disposition === 'string' ? entry.disposition.trim().toLowerCase() : '';
-      if (!disposition || !knockKeys.has(disposition)) continue;
-      const key = `${userId}\u0000${lead.id}\u0000${disposition}`;
-      const hits = groups.get(key);
+      if (at == null) continue;
+      const dispositionId = normalizeDispoKey(entry.disposition, rows);
+      if (!isCountedKnock(dispositionId)) continue;
+      if (typeof entry.userName === 'string' && entry.userName.trim()) {
+        names.set(userId, entry.userName.trim());
+      }
+      const key = `${lead.id}\u0000${userId}\u0000${dispositionId}`;
       const hit = { at, far: entryIsFar(entry) };
-      if (hits) hits.push(hit);
-      else groups.set(key, [hit]);
-      if (typeof entry.userName === 'string' && entry.userName.trim()) names.set(userId, entry.userName.trim());
+      const list = rawHits.get(key);
+      if (list) list.push(hit);
+      else rawHits.set(key, [hit]);
     }
   }
+  // collectKnockEvents ignores start/end. Collapse still sees every day, then
+  // the day window keeps the counted taps.
+  const events = collectKnockEvents(countable, rows).filter(
+    (event) => event.at >= startMs && event.at < endMs,
+  );
   const tallies = new Map<string, Tally>();
-  for (const [key, hits] of groups) {
-    const userId = key.slice(0, key.indexOf('\u0000'));
-    const collapsed = collapseKnocks(hits);
-    const named = names.get(userId);
-    const current = tallies.get(userId) ?? { tooFar: 0, total: 0, rep: named ?? userId };
-    current.total += collapsed.total;
-    current.tooFar += collapsed.tooFar;
+  for (const event of events) {
+    const key = `${event.leadId}\u0000${event.userId}\u0000${event.dispositionId}`;
+    const far = countedKnockIsFar(event.at, rawHits.get(key), startMs, endMs);
+    const named = names.get(event.userId);
+    const current = tallies.get(event.userId) ?? { tooFar: 0, total: 0, rep: named ?? event.userId };
+    current.total += 1;
+    if (far) current.tooFar += 1;
     if (named) current.rep = named;
-    tallies.set(userId, current);
+    tallies.set(event.userId, current);
   }
   return tallies;
 }
@@ -465,8 +453,8 @@ export async function handleTooFarKnockAlert(
     console.error(`[too-far-alert] truncated ${day.key}; not sending a partial email`);
     return { status: 503, body: { ok: false, sent: false, truncated: true, date: day.key } };
   }
-  const knockKeys = loaded.leads.length ? doorKnockKeys(await deps.getDispositions()) : new Set<string>();
-  const tallies = tallyKnocks(loaded.leads, day.startMs, day.endMs, knockKeys);
+  const dispositions = loaded.leads.length ? await deps.getDispositions() : [];
+  const tallies = tallyKnocks(loaded.leads, day.startMs, day.endMs, dispositions);
   const users = tallies.size ? await deps.getUsers([...tallies.keys()]) : new Map<string, Record<string, unknown> | null>();
   const rows = rowsFromTallies(tallies, users);
   const email = rows.length

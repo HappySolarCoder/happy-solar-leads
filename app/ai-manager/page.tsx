@@ -5,7 +5,10 @@ import { useRouter } from 'next/navigation';
 import { Brain, TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Clock, Target, MapPin, Zap } from 'lucide-react';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
+import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { phoenixDayKey } from '@/app/utils/phoenixDay';
 import { User, Lead } from '@/app/types';
+import { Disposition } from '@/app/types/disposition';
 import { canSeeAllLeads } from '@/app/types';
 import {
   calculateDailyMetrics,
@@ -23,8 +26,9 @@ export default function AIManagerPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [analyses, setAnalyses] = useState<AIAnalysis[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState<string>(() => phoenixDayKey(Date.now()));
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
 
@@ -46,13 +50,15 @@ export default function AIManagerPage() {
 
       setCurrentUser(user);
       
-      const [loadedUsers, loadedLeads] = await Promise.all([
+      const [loadedUsers, loadedLeads, loadedDispositions] = await Promise.all([
         getUsersAsync(),
         getLeadsAsync(),
+        getDispositionsAsync(),
       ]);
 
       setUsers(loadedUsers.filter(u => u.role === 'setter' || u.role === 'closer'));
       setLeads(loadedLeads);
+      setDispositions(loadedDispositions);
       setLoading(false);
     }
     loadData();
@@ -65,7 +71,8 @@ export default function AIManagerPage() {
     console.log('[AI Manager] Total leads:', leads.length);
     
     setGenerating(true);
-    const date = new Date(selectedDate);
+    const [year, month, day] = selectedDate.split('-').map(Number);
+    const date = new Date(Date.UTC(year, (month || 1) - 1, day || 1, 19, 0, 0));
     const newAnalyses: AIAnalysis[] = [];
 
     for (const user of users) {
@@ -81,7 +88,7 @@ export default function AIManagerPage() {
 
       if (daysSinceStart < 0) continue; // Skip if date is before user created
 
-      const metrics = calculateDailyMetrics(user.id, user.name, leads, date);
+      const metrics = calculateDailyMetrics(user.id, user.name, leads, date, dispositions);
       
       console.log(`[AI Manager] ${user.name}: ${metrics.doorsKnocked} doors knocked on ${selectedDate}`);
       
@@ -157,7 +164,7 @@ export default function AIManagerPage() {
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                max={new Date().toISOString().split('T')[0]}
+                max={phoenixDayKey(Date.now())}
                 className="px-3 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
             </div>

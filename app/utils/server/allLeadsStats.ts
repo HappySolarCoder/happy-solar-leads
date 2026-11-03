@@ -24,6 +24,15 @@ export const STATS_WINDOW_MS = 62 * 24 * 60 * 60 * 1000;
 
 const TEAM_STATS_ROLES = new Set(['manager', 'admin']);
 
+/** Fields a knock counter needs from one history visit. Names, notes, and GPS stay off. */
+export type StatsHistoryEntry = {
+  userId: string;
+  disposition?: string;
+  dispositionId?: string;
+  timestamp?: string;
+  field?: { eventId: string };
+};
+
 export type StatsLead = {
   id: string;
   status: unknown;
@@ -31,7 +40,7 @@ export type StatsLead = {
   claimedBy: unknown;
   assignedTo: unknown;
   goBackScheduledBy: unknown;
-  dispositionHistory: { userId: string }[];
+  dispositionHistory: StatsHistoryEntry[];
 };
 
 export function defaultStatsSince(now: Date): Date {
@@ -128,18 +137,55 @@ function serializeStatsValue(value: unknown): unknown {
   return value;
 }
 
+function historyTimestamp(value: unknown): string | undefined {
+  if (value == null || value === '') return undefined;
+  const serialized = serializeStatsValue(value);
+  if (typeof serialized === 'string') {
+    const time = Date.parse(serialized);
+    return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
+  }
+  if (typeof serialized === 'number' && Number.isFinite(serialized)) {
+    return new Date(serialized).toISOString();
+  }
+  if (serialized && typeof serialized === 'object') {
+    const stamp = serialized as { seconds?: unknown; _seconds?: unknown; nanoseconds?: unknown };
+    const seconds = typeof stamp.seconds === 'number' ? stamp.seconds : stamp._seconds;
+    if (typeof seconds === 'number' && Number.isFinite(seconds)) {
+      const nanos = typeof stamp.nanoseconds === 'number' && Number.isFinite(stamp.nanoseconds) ? stamp.nanoseconds : 0;
+      return new Date(seconds * 1000 + nanos / 1e6).toISOString();
+    }
+  }
+  return undefined;
+}
+
+function projectHistoryEntry(entry: unknown): StatsHistoryEntry | null {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const row = entry as Record<string, unknown>;
+  const projected: StatsHistoryEntry = {
+    userId: row.userId == null ? '' : String(row.userId),
+  };
+  if (typeof row.disposition === 'string' && row.disposition) projected.disposition = row.disposition;
+  if (typeof row.dispositionId === 'string' && row.dispositionId) projected.dispositionId = row.dispositionId;
+  const timestamp = historyTimestamp(row.timestamp);
+  if (timestamp) projected.timestamp = timestamp;
+  const field = row.field;
+  if (field && typeof field === 'object' && !Array.isArray(field)) {
+    const eventId = (field as { eventId?: unknown }).eventId;
+    if (typeof eventId === 'string' && eventId) projected.field = { eventId };
+  }
+  return projected;
+}
+
 /**
- * Response allow-list. dispositionHistory is selected only so the first
- * entry's userId can be copied; every other history field is dropped.
+ * Response allow-list. dispositionHistory keeps every visit's actor, disposition,
+ * time, and event id so knock totals can count history. Names, notes, and GPS
+ * on those entries are still dropped.
  */
 export function projectStatsLead(id: string, data: Record<string, unknown>): StatsLead {
   const history = Array.isArray(data.dispositionHistory) ? data.dispositionHistory : [];
-  const first = history[0];
-  let dispositionHistory: { userId: string }[] = [];
-  if (first && typeof first === 'object') {
-    const userId = 'userId' in first ? String((first as { userId?: unknown }).userId ?? '') : '';
-    dispositionHistory = [{ userId }];
-  }
+  const dispositionHistory = history
+    .map((entry) => projectHistoryEntry(entry))
+    .filter((entry): entry is StatsHistoryEntry => entry !== null);
 
   return {
     id,

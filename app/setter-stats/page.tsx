@@ -8,7 +8,12 @@ import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { Lead, User } from '@/app/types';
 import { Disposition } from '@/app/types/disposition';
-import { startOfToday, startOfWeek, startOfMonth, isAfter, format } from 'date-fns';
+import {
+  countSetterKnocks,
+  instantInWindow,
+  mergeSetterKnockCounts,
+  setterStatsWindow,
+} from '@/app/utils/webKnockCounts';
 import { auth } from '@/app/utils/firebase';
 
 interface SetterMetrics {
@@ -124,54 +129,15 @@ export default function DataDashboard() {
   const calculateSetterMetrics = (): SetterMetrics[] => {
     const setterMap = new Map<string, SetterMetrics>();
 
-    // Get time filter cutoff
-    let cutoffDate: Date;
-    let endDate: Date | undefined;
+    const now = new Date();
+    const range = setterStatsWindow(timeFilter, now);
 
-    switch (timeFilter) {
-      case 'today':
-        cutoffDate = startOfToday();
-        endDate = undefined;
-        break;
-      case 'yesterday':
-        // Yesterday: from start of yesterday to start of today
-        cutoffDate = new Date(startOfToday().getTime() - 86400000); // Start of yesterday
-        endDate = startOfToday(); // Start of today (exclusive)
-        break;
-      case 'last7days':
-        cutoffDate = new Date(Date.now() - 7 * 86400000);
-        break;
-      case 'thisweek':
-        cutoffDate = startOfWeek(new Date());
-        break;
-      case 'lastweek':
-        cutoffDate = new Date(startOfWeek(new Date()).getTime() - 7 * 86400000);
-        break;
-      case 'thismonth':
-        cutoffDate = startOfMonth(new Date());
-        break;
-      case 'lastmonth': {
-        const thisMonth = startOfMonth(new Date());
-        cutoffDate = startOfMonth(new Date(thisMonth.getFullYear(), thisMonth.getMonth() - 1, 1));
-        endDate = thisMonth;
-        break;
-      }
-      default:
-        cutoffDate = new Date(0); // All time
-        endDate = undefined;
-    }
-
-    // For this dashboard, "knocks" means all dispositioned leads in range.
-
-    // Filter leads by time
+    // Other outcomes still follow the latest disposition in this same window.
+    // Knocks are applied afterwards from visit history.
     const filteredLeads = leads.filter(lead => {
       if (!lead.dispositionedAt) return false;
-      const leadDate = new Date(lead.dispositionedAt);
-      // Must be after cutoff date
-      if (!isAfter(leadDate, cutoffDate)) return false;
-      // If endDate is set, must be before end date (for yesterday filter)
-      if (endDate && !isAfter(endDate, leadDate)) return false;
-      return true;
+      const at = new Date(lead.dispositionedAt).getTime();
+      return Number.isFinite(at) && instantInWindow(at, range);
     });
 
     // Process leads
@@ -198,10 +164,6 @@ export default function DataDashboard() {
       }
 
       const metrics = setterMap.get(userId)!;
-      const leadStatus = lead.status?.toLowerCase() || '';
-
-      // Count knocks (all dispositioned leads in selected range)
-      metrics.knocks++;
 
       // Count specific dispositions
       switch (lead.status) {
@@ -235,6 +197,26 @@ export default function DataDashboard() {
         }
       }
     });
+
+    mergeSetterKnockCounts(
+      setterMap,
+      countSetterKnocks(leads, dispositions, timeFilter, now),
+      (userId) => {
+        const user = users.find(u => u.id === userId);
+        return {
+          userId,
+          userName: user?.name || 'Unknown',
+          knocks: 0,
+          conversations: 0,
+          appointments: 0,
+          sales: 0,
+          notHome: 0,
+          notInterested: 0,
+          goBacksScheduled: 0,
+          goBacksConverted: 0,
+        };
+      },
+    );
 
     // Convert to array and sort
     const metricsArray = Array.from(setterMap.values());

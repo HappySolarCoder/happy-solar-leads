@@ -148,7 +148,7 @@ describe('too-far knock alert', () => {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].rep, 'Ada Setter');
     assert.equal(rows[0].tooFar, 2);
-    assert.equal(rows[0].total, 3);
+    assert.equal(rows[0].total, 2);
     assert.equal(test.queries[0].startMs, day.startMs);
     assert.equal(test.queries[0].endMs, day.endMs);
     assert.equal(test.queries[0].limit, LEAD_PAGE);
@@ -161,7 +161,7 @@ describe('too-far knock alert', () => {
   it('sends nothing when nobody is over 5 percent', async () => {
     const day = nyDayWindow(OCT25_1130_EDT);
     const entries: Entry[] = [{ at: day.startMs, userId: 'rep', reason: 'too_far' }];
-    for (let i = 0; i < 19; i += 1) entries.push({ at: day.startMs + (i + 1) * 31_000, userId: 'rep' });
+    for (let i = 0; i < 19; i += 1) entries.push({ at: day.startMs + (i + 1) * 121_000, userId: 'rep' });
     const test = harness({
       leads: [lead('door', day.startMs, entries)],
       users: {
