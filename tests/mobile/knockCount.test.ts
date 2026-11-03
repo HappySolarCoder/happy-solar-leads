@@ -8,11 +8,13 @@ import { followUpCleanupPatch } from "../../app/mobile/_lib/followUps.ts";
 import { summarizeActivity } from "../../app/mobile/_lib/metrics.ts";
 import { assembleKnockLeads, resetHotKnockSourcesForTests } from "../../app/mobile/_lib/knockSources.ts";
 import {
+  KNOCK_LEDGER_MAX_ROWS,
   KNOCK_LEDGER_RETENTION_MS,
   knockLedgerDatabaseName,
   readKnockLedger,
   rememberAcknowledgedKnocks,
   resetKnockLedgerForTests,
+  restartKnockLedgerSessionForTests,
   syncKnockLedgerAccount,
 } from "../../app/mobile/_lib/knockLedger.ts";
 import {
@@ -456,6 +458,95 @@ test("case 16: timestamp shapes parse and invalid ones are skipped", () => {
   assert.equal(knocks(rows), 6);
   assert.equal(knockEvents(rows[4]!, PROD)[0]?.at, 1_700_000_000_250);
   assert.equal(knocks([rows[6]!]), 0);
+});
+
+test("a non-object history entry is skipped and the valid entries still count", () => {
+  const row = lead("mixed", {
+    dispositionHistory: [
+      null,
+      undefined,
+      4,
+      "Not Home",
+      ["Not Home"],
+      visit("Not Home", mon),
+      visit("Go Back", tue),
+    ] as unknown as Lead["dispositionHistory"],
+  });
+  assert.doesNotThrow(() => knocks([row]));
+  assert.equal(knocks([row], { userId: "u1" }), 2);
+  assert.equal(knockEvents(row, PROD).map((event) => event.dispositionId).sort().join(","), "go-back,not-home");
+});
+
+test("an account switch after restart wipes the previous ledger, and the row cap drops the oldest", async () => {
+  const saved = new Map<string, string>();
+  const previous = globalThis.localStorage;
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => { saved.set(key, String(value)); },
+      removeItem: (key: string) => { saved.delete(key); },
+    },
+  });
+  try {
+    resetKnockLedgerForTests();
+    const now = day(20).getTime();
+    const kept = lead("stay", {
+      status: "not-home",
+      dispositionHistory: [visit("Not Home", day(20))],
+    });
+    await rememberAcknowledgedKnocks("u1", kept, now);
+    await syncKnockLedgerAccount("u1");
+    await syncKnockLedgerAccount(null);
+    restartKnockLedgerSessionForTests();
+    assert.equal(saved.get("raydar-knock-ledger-uid"), "u1");
+    await syncKnockLedgerAccount("u1");
+    assert.equal((await readKnockLedger("u1", PROD, now)).length, 1);
+    restartKnockLedgerSessionForTests();
+    await syncKnockLedgerAccount("u2");
+    assert.equal((await readKnockLedger("u1", PROD, now)).length, 0);
+
+    const history = Array.from({ length: KNOCK_LEDGER_MAX_ROWS + 1 }, (_, index) =>
+      visit("Not Home", new Date(now - (KNOCK_LEDGER_MAX_ROWS - index) * 121_000), "u2"),
+    );
+    const oldest = now - KNOCK_LEDGER_MAX_ROWS * 121_000;
+    await rememberAcknowledgedKnocks("u2", lead("capped", {
+      dispositionHistory: history as Lead["dispositionHistory"],
+    }), now);
+    const rows = await readKnockLedger("u2", PROD, now);
+    assert.equal(rows.length, KNOCK_LEDGER_MAX_ROWS);
+    assert.equal(rows.some((event) => event.at === oldest), false);
+    assert.equal(rows.some((event) => event.at === now), true);
+  } finally {
+    resetKnockLedgerForTests();
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: previous });
+  }
+});
+
+test("the same rep and disposition within 2 minutes is one knock, including a ledger copy", () => {
+  const start = day(5).getTime();
+  const at = (seconds: number) => new Date(start + seconds * 1000);
+  const taps = (...seconds: number[]) =>
+    lead("door", {
+      dispositionHistory: seconds.map((seconds) => visit("Not Home", at(seconds))).reverse() as Lead["dispositionHistory"],
+    });
+  assert.equal(knocks([taps(0, 5)]), 1);
+  assert.equal(knocks([taps(0, 119, 121)]), 2);
+  assert.equal(knocks([taps(0, 60, 120, 180)]), 2);
+  const switched = lead("switch", {
+    dispositionHistory: [visit("Go Back", at(10)), visit("Not Home", at(0))],
+  });
+  assert.equal(knocks([switched]), 2);
+  const reps = lead("reps", {
+    dispositionHistory: [visit("Not Home", at(10), "u2"), visit("Not Home", at(0), "u1")],
+  });
+  assert.equal(knocks([reps]), 2);
+  const server = taps(0);
+  const ack = knockEvents(server, PROD)[0];
+  assert.ok(ack);
+  assert.equal(knocks([server], { userId: "u1", ledger: [ack] }), 1);
+  const laterAck = { ...ack, at: start + 5_000, key: `${ack.leadId}|${ack.userId}|${ack.dispositionId}|${start + 5_000}` };
+  assert.equal(knocks([server], { userId: "u1", ledger: [laterAck] }), 1);
 });
 
 test("case 17: the prod fixture's countsAsDoorKnock false set is exactly claimed, unclaimed, shade-dq, and has-solar", () => {
