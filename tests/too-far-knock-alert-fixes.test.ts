@@ -385,9 +385,36 @@ describe('#173 double-tap collapse', () => {
     assert.deepEqual(counts([door([entry(s + 60_000, 'u'), entry(s, 'u'), entry(s + 121_000, 'u')])]), [0, 2]);
   });
 
-  it('a far hit inside 30s marks the counted knock far without adding one', () => {
+  it('a far tap merged inside 120s flags the counted knock without adding one', () => {
+    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 45_000, 'u', flag('too_far'))])]), [1, 1]);
     assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 10_000, 'u', flag('too_far'))])]), [1, 1]);
-    assert.deepEqual(counts([door([entry(s, 'u'), entry(s + 60_000, 'u', flag('too_far'))])]), [0, 1]);
+  });
+
+  it('today counts only today when history also has other days', () => {
+    const threeDaysAgo = s - 3 * 86_400_000;
+    const yesterday = s - 86_400_000;
+    const after = day.endMs + 60_000;
+    const history = [
+      entry(threeDaysAgo, 'u', flag('too_far')),
+      entry(yesterday, 'u'),
+      entry(s, 'u'),
+      entry(after, 'u', flag('too_far')),
+    ];
+    assert.deepEqual(counts([door(history)]), [0, 1]);
+  });
+
+  it('a far tap outside the day does not flag today', () => {
+    const near = day.endMs - 10_000;
+    const far = day.endMs + 45_000;
+    assert.deepEqual(counts([door([entry(near, 'u'), entry(far, 'u', flag('too_far'))])]), [0, 1]);
+  });
+
+  it('trims the user id before matching a far tap to the counted knock', () => {
+    const history = [
+      entry(s, ' u '),
+      entry(s + 45_000, 'u', flag('too_far')),
+    ];
+    assert.deepEqual(counts([door(history)]), [1, 1]);
   });
 
   it('the same eventId counts once', () => {

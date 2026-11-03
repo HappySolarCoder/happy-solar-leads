@@ -9,13 +9,11 @@ import {
 } from '@/app/utils/gpsRule';
 import type { Lead } from '@/app/types';
 import type { Disposition } from '@/app/types/disposition';
-import { collectKnockEvents, isCountedKnock, normalizeDispoKey } from '@/app/utils/knockCount';
+import { collectKnockEvents, isCountedKnock, KNOCK_REPEAT_MS, normalizeDispoKey } from '@/app/utils/knockCount';
 
 export const TOO_FAR_ALERT_TO = 'evan@happyslr.com';
 export const LEAD_PAGE = 250;
 export const LEAD_PAGE_CAP = 40;
-/** A raw hit this close to a counted tap can mark that tap far. It does not change the total. */
-const DUP_KNOCK_MS = 30_000;
 const NY = 'America/New_York';
 const ENV_KEYS = ['CRON_SECRET', 'RESEND_API_KEY', 'RESEND_FROM'] as const;
 const SEND_ENV_KEYS = ['RESEND_API_KEY', 'RESEND_FROM'] as const;
@@ -264,13 +262,19 @@ export function entryIsFar(entry: Record<string, unknown>): boolean {
 type KnockHit = { at: number; far: boolean };
 
 /**
- * The counted knock is the helper's kept tap. A raw hit within 30s of that
- * tap can mark it far. That window never adds or removes a knock.
+ * A counted knock is far when any in-window tap merged into it by the 120s
+ * rule was far. Taps outside the day do not flag it, and they do not add a knock.
  */
-function keptTapIsFar(keptAt: number, hits: KnockHit[] | undefined): boolean {
+function countedKnockIsFar(
+  keptAt: number,
+  hits: KnockHit[] | undefined,
+  startMs: number,
+  endMs: number,
+): boolean {
   if (!hits) return false;
-  const limit = keptAt + DUP_KNOCK_MS;
+  const limit = keptAt + KNOCK_REPEAT_MS;
   for (const hit of hits) {
+    if (hit.at < startMs || hit.at >= endMs) continue;
     if (hit.at < keptAt || hit.at > limit) continue;
     if (hit.far) return true;
   }
@@ -292,8 +296,8 @@ export function tallyKnocks(
     const history = historyEntries(lead.data.dispositionHistory);
     countable.push({ id: lead.id, dispositionHistory: history } as unknown as Lead);
     for (const entry of history) {
-      const userId = entry.userId;
-      if (typeof userId !== 'string' || !userId) continue;
+      const userId = typeof entry.userId === 'string' ? entry.userId.trim() : '';
+      if (!userId) continue;
       const at = millisOf(entry.timestamp);
       if (at == null) continue;
       const dispositionId = normalizeDispoKey(entry.disposition, rows);
@@ -308,14 +312,15 @@ export function tallyKnocks(
       else rawHits.set(key, [hit]);
     }
   }
-  const events = collectKnockEvents(countable, rows, {
-    start: new Date(startMs),
-    end: new Date(endMs),
-  });
+  // collectKnockEvents ignores start/end. Collapse still sees every day, then
+  // the day window keeps the counted taps.
+  const events = collectKnockEvents(countable, rows).filter(
+    (event) => event.at >= startMs && event.at < endMs,
+  );
   const tallies = new Map<string, Tally>();
   for (const event of events) {
     const key = `${event.leadId}\u0000${event.userId}\u0000${event.dispositionId}`;
-    const far = keptTapIsFar(event.at, rawHits.get(key));
+    const far = countedKnockIsFar(event.at, rawHits.get(key), startMs, endMs);
     const named = names.get(event.userId);
     const current = tallies.get(event.userId) ?? { tooFar: 0, total: 0, rep: named ?? event.userId };
     current.total += 1;
