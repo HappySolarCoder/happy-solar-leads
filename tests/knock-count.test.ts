@@ -5,6 +5,7 @@ import type { Disposition } from '../app/types/disposition.ts';
 import { KNOCK_STATUS_IDS } from '../app/types/disposition.ts';
 import {
   EXCLUDED_KNOCK_KEYS,
+  KNOCK_REPEAT_MS,
   NON_KNOCK_KEYS,
   collectKnockEvents,
   countKnocks,
@@ -314,6 +315,47 @@ describe('knock count helper', () => {
     // Map visibility still treats Shade DQ as a knock pin. Counters do not.
     assert.equal(KNOCK_STATUS_IDS.includes('shade-dq'), true);
     assert.equal(isCountedKnock('shade-dq'), false);
+  });
+
+  it('skips null, missing, numeric, string, and array history entries', () => {
+    const row = lead('dirty', {
+      dispositionHistory: [
+        null,
+        undefined,
+        5,
+        'Not Home',
+        ['Not Home'],
+        visit('Not Home', mon, 'u1', 'kept'),
+      ] as unknown as Lead['dispositionHistory'],
+    });
+    assert.equal(knocks([row]), 1);
+    assert.equal(knockEvents(row, PROD).length, 1);
+  });
+
+  it('collapses the same rep and disposition within 2 minutes, anchored to the last kept tap', () => {
+    assert.equal(KNOCK_REPEAT_MS, 120000);
+    const at = (seconds: number) => new Date(mon.getTime() + seconds * 1000);
+    const taps = (seconds: number[]) => lead('taps', {
+      dispositionHistory: seconds.map((seconds, index) => visit('Not Home', at(seconds), 'u1', `t${index}`)),
+    });
+    assert.equal(knocks([taps([0, 5])]), 1);
+    assert.equal(knocks([taps([0, 119, 121])]), 2);
+    assert.equal(knocks([taps([0, 60, 120, 180])]), 2);
+    assert.equal(knocks([taps([180, 0, 60, 120])]), 2);
+    const otherDispo = lead('two-dispos', {
+      dispositionHistory: [
+        visit('Not Home', at(0), 'u1', 'a'),
+        visit('Go Back', at(10), 'u1', 'b'),
+      ],
+    });
+    assert.equal(knocks([otherDispo]), 2);
+    const twoReps = lead('two-reps-close', {
+      dispositionHistory: [
+        visit('Not Home', at(0), 'u1', 'a'),
+        visit('Not Home', at(10), 'u2', 'b'),
+      ],
+    });
+    assert.equal(knocks([twoReps]), 2);
   });
 
   it('unions a ledger event the loaded leads no longer contain', () => {

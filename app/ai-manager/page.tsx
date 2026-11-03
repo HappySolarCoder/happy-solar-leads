@@ -6,6 +6,7 @@ import { Brain, TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Clock, Tar
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { phoenixDayKey } from '@/app/utils/phoenixDay';
 import { User, Lead } from '@/app/types';
 import { Disposition } from '@/app/types/disposition';
 import { canSeeAllLeads } from '@/app/types';
@@ -27,7 +28,7 @@ export default function AIManagerPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
   const [analyses, setAnalyses] = useState<AIAnalysis[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState<string>(() => phoenixDayKey(Date.now()));
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
 
@@ -70,7 +71,8 @@ export default function AIManagerPage() {
     console.log('[AI Manager] Total leads:', leads.length);
     
     setGenerating(true);
-    const date = new Date(selectedDate);
+    const [year, month, day] = selectedDate.split('-').map(Number);
+    const date = new Date(Date.UTC(year, (month || 1) - 1, day || 1, 19, 0, 0));
     const newAnalyses: AIAnalysis[] = [];
 
     for (const user of users) {

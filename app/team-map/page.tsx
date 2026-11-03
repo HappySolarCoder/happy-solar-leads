@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/app/utils/firebase';
@@ -8,7 +8,7 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { getLeadsAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { Disposition } from '@/app/types/disposition';
-import { teamMapStats, type TeamMapTimeFilter } from '@/app/utils/webKnockCounts';
+import { teamMapBoard, type TeamMapTimeFilter } from '@/app/utils/webKnockCounts';
 import Image from 'next/image';
 
 const LeafletMap = dynamic(() => import('@/app/components/TeamMapView'), {
@@ -66,10 +66,13 @@ export default function TeamMapPage() {
     loadLeads();
   }, []);
 
-  // Calculate stats for each user based on time filter
-  const getUserStats = (userId: string, filter: TimeFilter) => {
-    return teamMapStats(leads, dispositions, userId, filter, new Date());
-  };
+  const statsBoard = useMemo(
+    () => teamMapBoard(leads, dispositions, timeFilter, new Date()),
+    [leads, dispositions, timeFilter],
+  );
+  const selectedStats = selectedMember
+    ? (statsBoard.get(selectedMember.id) ?? { doors: 0, appointments: 0 })
+    : { doors: 0, appointments: 0 };
 
   useEffect(() => {
     if (!currentUser || !db) return;
@@ -235,11 +238,11 @@ export default function TeamMapPage() {
                 {/* Stats cards */}
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div className="bg-gradient-to-br from-[#FF5F5A] to-[#F27141] rounded-2xl p-4 text-white">
-                    <div className="text-3xl font-bold">{getUserStats(selectedMember.id, timeFilter).doors}</div>
+                    <div className="text-3xl font-bold">{selectedStats.doors}</div>
                     <div className="text-white/80 text-sm mt-1">Doors {timeFilter === 'today' ? 'Today' : timeFilter === 'yesterday' ? 'Yesterday' : ''}</div>
                   </div>
                   <div className="bg-gradient-to-br from-[#48BB78] to-[#38A169] rounded-2xl p-4 text-white">
-                    <div className="text-3xl font-bold">{getUserStats(selectedMember.id, timeFilter).appointments}</div>
+                    <div className="text-3xl font-bold">{selectedStats.appointments}</div>
                     <div className="text-white/80 text-sm mt-1">Appointments</div>
                   </div>
                 </div>
@@ -264,7 +267,9 @@ export default function TeamMapPage() {
                   </div>
                 ) : (
                   <div className="space-y-2 pb-4">
-                    {teamMembers.map((member) => (
+                    {teamMembers.map((member) => {
+                      const memberStats = statsBoard.get(member.id) ?? { doors: 0, appointments: 0 };
+                      return (
                       <button
                         key={member.id}
                         onClick={() => setSelectedMember(member)}
@@ -278,7 +283,7 @@ export default function TeamMapPage() {
                         </div>
                         <div className="flex-1 text-left min-w-0">
                           <div className="font-semibold text-[#2D3748] text-base">{member.name}</div>
-                          <div className="text-sm text-[#718096] mt-0.5">{getUserStats(member.id, timeFilter).doors} doors • {getUserStats(member.id, timeFilter).appointments} appts</div>
+                          <div className="text-sm text-[#718096] mt-0.5">{memberStats.doors} doors • {memberStats.appointments} appts</div>
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="w-2.5 h-2.5 bg-[#48BB78] rounded-full animate-pulse"></div>
@@ -287,7 +292,8 @@ export default function TeamMapPage() {
                           </svg>
                         </div>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </>

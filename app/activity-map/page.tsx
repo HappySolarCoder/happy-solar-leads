@@ -8,6 +8,7 @@ import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { getCurrentAuthUser } from '@/app/utils/auth';
 import { activityKnocksByUser } from '@/app/utils/webKnockCounts';
+import { phoenixDayKey } from '@/app/utils/phoenixDay';
 import { Lead, User } from '@/app/types';
 import { Disposition } from '@/app/types/disposition';
 import { ensureUserColors } from '@/app/utils/userColors';
@@ -44,15 +45,7 @@ export default function ActivityMapPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [allLeads, setAllLeads] = useState<Lead[]>([]);
   const [dispositions, setDispositions] = useState<Disposition[]>([]);
-  const getLocalDateInputValue = () => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  };
-
-  const [selectedDate, setSelectedDate] = useState<string>(getLocalDateInputValue());
+  const [selectedDate, setSelectedDate] = useState<string>(() => phoenixDayKey(Date.now()));
   const [selectedUserId, setSelectedUserId] = useState<string>('all');
   const [focusedUserId, setFocusedUserId] = useState<string | null>(null); // For zoom focus
   const [userActivities, setUserActivities] = useState<UserActivity[]>([]);

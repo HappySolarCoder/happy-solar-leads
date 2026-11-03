@@ -1,7 +1,8 @@
 // Virtual Manager AI - Performance Analysis & Coaching
 import { Lead, User } from '@/app/types';
 import type { Disposition } from '@/app/types/disposition';
-import { collectKnockEvents } from '@/app/utils/knockCount';
+import { knockIndex } from '@/app/utils/webKnockCounts';
+import { phoenixDayKey, phoenixHourDecimal } from '@/app/utils/phoenixDay';
 
 export interface DailyMetrics {
   date: string;
@@ -56,7 +57,8 @@ export function calculateDailyMetrics(
   date: Date = new Date(),
   dispositions: readonly Disposition[] = [],
 ): DailyMetrics {
-  const dateStr = date.toISOString().split('T')[0];
+  const utcDateStr = date.toISOString().split('T')[0];
+  const dateStr = phoenixDayKey(date.getTime());
   
   // Debug: Check how many leads belong to this setter
   const setterLeads = leads.filter(l => l.claimedBy === setterId);
@@ -113,7 +115,7 @@ export function calculateDailyMetrics(
       if (isNaN(knockDateObj.getTime())) return false;
       
       const knockDate = knockDateObj.toISOString().split('T')[0];
-      return knockDate === dateStr;
+      return knockDate === utcDateStr;
     } catch (error) {
       // Invalid date, skip this lead
       return false;
@@ -122,12 +124,10 @@ export function calculateDailyMetrics(
 
   console.log(`[calculateDailyMetrics] ${setterName}: Found ${todayLeads.length} leads for ${dateStr}`);
 
-  // Same UTC calendar day the GPS filter used, applied to each visit.
-  // Credit is the history actor. Shade DQ and Has Solar do not count.
-  const knockEvents = collectKnockEvents(leads, dispositions).filter((event) => {
-    if (event.userId !== setterId) return false;
-    return new Date(event.at).toISOString().split('T')[0] === dateStr;
-  });
+  // Phoenix calendar day. The event list is built once per leads array.
+  const knockEvents = (knockIndex(leads, dispositions).byUser.get(setterId) ?? []).filter(
+    (event) => phoenixDayKey(event.at) === dateStr,
+  );
   const doorsKnocked = knockEvents.length;
   const appointments = todayLeads.filter(l => 
     l.disposition?.toLowerCase().includes('appointment') ||
@@ -160,9 +160,7 @@ export function calculateDailyMetrics(
   const primeTimeEnd = 20.5; // 8:30pm
   
   const primeTimeKnocks = knockEvents.filter(event => {
-    const knockTime = new Date(event.at);
-    if (isNaN(knockTime.getTime())) return false;
-    const hourDecimal = knockTime.getHours() + (knockTime.getMinutes() / 60);
+    const hourDecimal = phoenixHourDecimal(event.at);
     return hourDecimal >= primeTimeStart && hourDecimal <= primeTimeEnd;
   }).length;
 

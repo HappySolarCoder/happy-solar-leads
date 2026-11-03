@@ -1,7 +1,13 @@
 import type { Disposition } from '@/app/types/disposition';
 import type { Lead } from '@/app/types';
-import { collectKnockEvents } from '@/app/utils/knockCount';
-import { endOfMonth, isAfter, isBefore, startOfDay, startOfMonth, startOfWeek } from 'date-fns';
+import { collectKnockEvents, type KnockEvent } from '@/app/utils/knockCount';
+import {
+  phoenixDayWindow,
+  phoenixDayWindowFromKey,
+  phoenixMonthWindow,
+  phoenixPreviousMonthWindow,
+  phoenixWeekStartMs,
+} from '@/app/utils/phoenixDay';
 
 export type SetterTimeFilter =
   | 'today'
@@ -15,161 +21,174 @@ export type SetterTimeFilter =
 
 export type TeamMapTimeFilter = SetterTimeFilter;
 
-export type ExclusiveWindow = {
-  cutoff: Date;
-  end?: Date;
+export type RangeWindow = {
+  startMs: number;
+  endMs?: number;
+  /** Rolling windows keep the old strict lower edge. Calendar days are inclusive. */
+  exclusiveStart?: boolean;
 };
 
-/**
- * Setter stats compares with date-fns isAfter, so both edges are exclusive.
- * lastmonth is the previous calendar month.
- */
-export function setterStatsWindow(filter: SetterTimeFilter, now: Date): ExclusiveWindow {
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function setterStatsWindow(filter: SetterTimeFilter, now: Date): RangeWindow {
+  const today = phoenixDayWindow(now);
   switch (filter) {
     case 'today':
-      return { cutoff: startOfDay(now) };
-    case 'yesterday':
-      return {
-        cutoff: new Date(startOfDay(now).getTime() - 86400000),
-        end: startOfDay(now),
-      };
+      return { startMs: today.startMs, endMs: today.endMs };
+    case 'yesterday': {
+      const startMs = today.startMs - DAY_MS;
+      return { startMs, endMs: today.startMs };
+    }
     case 'last7days':
-      return { cutoff: new Date(now.getTime() - 7 * 86400000) };
+      return { startMs: now.getTime() - 7 * DAY_MS, exclusiveStart: true };
     case 'thisweek':
-      return { cutoff: startOfWeek(now) };
+      return { startMs: phoenixWeekStartMs(now) };
     case 'lastweek':
-      return { cutoff: new Date(startOfWeek(now).getTime() - 7 * 86400000) };
+      return { startMs: phoenixWeekStartMs(now) - 7 * DAY_MS };
     case 'thismonth':
-      return { cutoff: startOfMonth(now) };
+      return { startMs: phoenixMonthWindow(now).startMs };
     case 'lastmonth': {
-      const thisMonth = startOfMonth(now);
-      return {
-        cutoff: startOfMonth(new Date(thisMonth.getFullYear(), thisMonth.getMonth() - 1, 1)),
-        end: thisMonth,
-      };
+      const month = phoenixPreviousMonthWindow(now);
+      return { startMs: month.startMs, endMs: month.endMs };
     }
     default:
-      return { cutoff: new Date(0) };
+      return { startMs: 0 };
   }
 }
 
 /**
- * Team map uses the same exclusive edges. lastmonth is 30 days before the
- * start of this month, with no upper bound — that is the boundary this page
- * already used.
+ * Same Phoenix edges as setter stats, except lastmonth stays "30 days before
+ * the Phoenix start of this month" with no upper bound.
  */
-export function teamMapWindow(filter: TeamMapTimeFilter, now: Date): ExclusiveWindow {
-  switch (filter) {
-    case 'today':
-      return { cutoff: startOfDay(now) };
-    case 'yesterday':
-      return {
-        cutoff: new Date(startOfDay(now).getTime() - 86400000),
-        end: startOfDay(now),
-      };
-    case 'last7days':
-      return { cutoff: new Date(now.getTime() - 7 * 86400000) };
-    case 'thisweek':
-      return { cutoff: startOfWeek(now) };
-    case 'lastweek':
-      return { cutoff: new Date(startOfWeek(now).getTime() - 7 * 86400000) };
-    case 'thismonth':
-      return { cutoff: startOfMonth(now) };
-    case 'lastmonth':
-      return { cutoff: new Date(startOfMonth(now).getTime() - 30 * 86400000) };
-    default:
-      return { cutoff: new Date(0) };
+export function teamMapWindow(filter: TeamMapTimeFilter, now: Date): RangeWindow {
+  if (filter === 'lastmonth') {
+    return {
+      startMs: phoenixMonthWindow(now).startMs - 30 * DAY_MS,
+      exclusiveStart: true,
+    };
   }
+  return setterStatsWindow(filter, now);
 }
 
-export function dateInExclusiveWindow(date: Date, window: ExclusiveWindow): boolean {
-  if (!isAfter(date, window.cutoff)) return false;
-  if (window.end && !isAfter(window.end, date)) return false;
+export function instantInWindow(at: number, window: RangeWindow): boolean {
+  if (window.exclusiveStart) {
+    if (!(at > window.startMs)) return false;
+  } else if (at < window.startMs) return false;
+  if (window.endMs != null && at >= window.endMs) return false;
   return true;
 }
 
-function eventsInExclusiveWindow(
+export type KnockIndex = {
+  leads: readonly Lead[];
+  dispositions: readonly Disposition[];
+  events: KnockEvent[];
+  byUser: Map<string, KnockEvent[]>;
+  leadsById: Map<string, Lead>;
+};
+
+let cachedIndex: KnockIndex | null = null;
+
+/** One pass per leads array. Later reads for the same arrays do not rescan. */
+export function knockIndex(
   leads: readonly Lead[],
   dispositions: readonly Disposition[],
-  window: ExclusiveWindow,
-) {
-  return collectKnockEvents(leads, dispositions).filter((event) =>
-    dateInExclusiveWindow(new Date(event.at), window),
-  );
+): KnockIndex {
+  if (cachedIndex && cachedIndex.leads === leads && cachedIndex.dispositions === dispositions) {
+    return cachedIndex;
+  }
+  const events = collectKnockEvents(leads, dispositions);
+  const byUser = new Map<string, KnockEvent[]>();
+  for (const event of events) {
+    const list = byUser.get(event.userId);
+    if (list) list.push(event);
+    else byUser.set(event.userId, [event]);
+  }
+  const leadsById = new Map<string, Lead>();
+  for (const lead of leads) {
+    if (lead?.id && !leadsById.has(lead.id)) leadsById.set(lead.id, lead);
+  }
+  cachedIndex = { leads, dispositions, events, byUser, leadsById };
+  return cachedIndex;
 }
 
-/** Goals month is inclusive of startOfMonth and endOfMonth, in local time. */
+function countInWindow(events: readonly KnockEvent[] | undefined, window: RangeWindow): number {
+  if (!events) return 0;
+  let count = 0;
+  for (const event of events) {
+    if (instantInWindow(event.at, window)) count += 1;
+  }
+  return count;
+}
+
+/** Goals month is the Phoenix calendar month containing monthDate. */
 export function countMonthlyKnocks(
   leads: readonly Lead[],
   dispositions: readonly Disposition[],
   userId: string,
   monthDate: Date,
 ): number {
-  const start = startOfMonth(monthDate);
-  const end = endOfMonth(monthDate);
-  return collectKnockEvents(leads, dispositions).filter((event) => {
-    if (event.userId !== userId) return false;
-    const at = new Date(event.at);
-    return !isBefore(at, start) && !isAfter(at, end);
-  }).length;
+  const month = phoenixMonthWindow(monthDate);
+  return countInWindow(knockIndex(leads, dispositions).byUser.get(userId), {
+    startMs: month.startMs,
+    endMs: month.endMs,
+  });
 }
 
-/**
- * Dashboard knocks use the local calendar day of each event, the same
- * setHours comparison the page used on dispositionedAt.
- */
+export function dashboardTodayKnocks(
+  leads: readonly Lead[],
+  dispositions: readonly Disposition[],
+  now: Date,
+  viewerId?: string,
+): { total: number; byUser: Map<string, number> } {
+  const day = phoenixDayWindow(now);
+  const window = { startMs: day.startMs, endMs: day.endMs };
+  const byUser = new Map<string, number>();
+  let all = 0;
+  for (const [userId, events] of knockIndex(leads, dispositions).byUser) {
+    const count = countInWindow(events, window);
+    if (!count) continue;
+    byUser.set(userId, count);
+    all += count;
+  }
+  return { total: viewerId ? (byUser.get(viewerId) ?? 0) : all, byUser };
+}
+
 export function countDashboardKnocks(
   leads: readonly Lead[],
   dispositions: readonly Disposition[],
   now: Date,
+  viewerId?: string,
 ): number {
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  return collectKnockEvents(leads, dispositions).filter((event) => {
-    const at = new Date(event.at);
-    at.setHours(0, 0, 0, 0);
-    return at.getTime() === today.getTime();
-  }).length;
+  return dashboardTodayKnocks(leads, dispositions, now, viewerId).total;
 }
 
-export function activityDayBounds(selectedDate: string): { start: Date; end: Date } | null {
-  if (!selectedDate) return null;
-  const [y, m, d] = selectedDate.split('-').map(Number);
-  if (!y || !m || !d) return null;
-  return {
-    start: new Date(y, m - 1, d, 0, 0, 0, 0),
-    end: new Date(y, m - 1, d, 23, 59, 59, 999),
-  };
-}
-
-/**
- * One display lead per counted visit on the selected local day.
- * dispositionedAt is the visit time. Credit goes to the history actor.
- */
 export function activityKnocksByUser(
   leads: readonly Lead[],
   dispositions: readonly Disposition[],
   selectedDate: string,
 ): Map<string, Lead[]> {
-  const bounds = activityDayBounds(selectedDate);
+  const bounds = phoenixDayWindowFromKey(selectedDate);
   const grouped = new Map<string, Lead[]>();
   if (!bounds) return grouped;
-  const start = bounds.start.getTime();
-  const end = bounds.end.getTime();
-  for (const event of collectKnockEvents(leads, dispositions)) {
-    if (event.at < start || event.at > end) continue;
-    const lead = leads.find((row) => row.id === event.leadId);
+  const index = knockIndex(leads, dispositions);
+  const names = new Map<string, string>();
+  for (const row of dispositions) {
+    if (row?.id) names.set(row.id, row.name);
+  }
+  const window = { startMs: bounds.startMs, endMs: bounds.endMs };
+  for (const event of index.events) {
+    if (!instantInWindow(event.at, window)) continue;
+    const lead = index.leadsById.get(event.leadId);
     if (!lead) continue;
-    const name = dispositions.find((row) => row.id === event.dispositionId)?.name;
     const visit: Lead = {
       ...lead,
       status: event.dispositionId,
-      disposition: name || event.dispositionId,
+      disposition: names.get(event.dispositionId) || event.dispositionId,
       dispositionedAt: new Date(event.at),
     };
-    const list = grouped.get(event.userId) ?? [];
-    list.push(visit);
-    grouped.set(event.userId, list);
+    const list = grouped.get(event.userId);
+    if (list) list.push(visit);
+    else grouped.set(event.userId, [visit]);
   }
   for (const list of grouped.values()) {
     list.sort((a, b) => new Date(a.dispositionedAt || 0).getTime() - new Date(b.dispositionedAt || 0).getTime());
@@ -183,9 +202,11 @@ export function countSetterKnocks(
   filter: SetterTimeFilter,
   now: Date,
 ): Record<string, number> {
+  const window = setterStatsWindow(filter, now);
   const counts: Record<string, number> = {};
-  for (const event of eventsInExclusiveWindow(leads, dispositions, setterStatsWindow(filter, now))) {
-    counts[event.userId] = (counts[event.userId] || 0) + 1;
+  for (const [userId, events] of knockIndex(leads, dispositions).byUser) {
+    const count = countInWindow(events, window);
+    if (count) counts[userId] = count;
   }
   return counts;
 }
@@ -205,21 +226,44 @@ export function mergeSetterKnockCounts<T extends { userId: string; knocks: numbe
   }
 }
 
+export type TeamMapStat = { doors: number; appointments: number };
+
+export function teamMapBoard(
+  leads: readonly Lead[],
+  dispositions: readonly Disposition[],
+  filter: TeamMapTimeFilter,
+  now: Date,
+): Map<string, TeamMapStat> {
+  const window = teamMapWindow(filter, now);
+  const board = new Map<string, TeamMapStat>();
+  const ensure = (userId: string): TeamMapStat => {
+    let row = board.get(userId);
+    if (!row) {
+      row = { doors: 0, appointments: 0 };
+      board.set(userId, row);
+    }
+    return row;
+  };
+  for (const [userId, events] of knockIndex(leads, dispositions).byUser) {
+    const doors = countInWindow(events, window);
+    if (doors) ensure(userId).doors = doors;
+  }
+  for (const lead of leads) {
+    if (!lead?.claimedBy || !lead.dispositionedAt) continue;
+    if (lead.status !== 'appointment' && lead.status !== 'sale') continue;
+    const at = new Date(lead.dispositionedAt).getTime();
+    if (!Number.isFinite(at) || !instantInWindow(at, window)) continue;
+    ensure(lead.claimedBy).appointments += 1;
+  }
+  return board;
+}
+
 export function teamMapStats(
   leads: readonly Lead[],
   dispositions: readonly Disposition[],
   userId: string,
   filter: TeamMapTimeFilter,
   now: Date,
-): { doors: number; appointments: number } {
-  const window = teamMapWindow(filter, now);
-  const doors = eventsInExclusiveWindow(leads, dispositions, window).filter(
-    (event) => event.userId === userId,
-  ).length;
-  const appointments = leads.filter((lead) => {
-    if (lead.claimedBy !== userId || !lead.dispositionedAt) return false;
-    if (!dateInExclusiveWindow(new Date(lead.dispositionedAt), window)) return false;
-    return lead.status === 'appointment' || lead.status === 'sale';
-  }).length;
-  return { doors, appointments };
+): TeamMapStat {
+  return teamMapBoard(leads, dispositions, filter, now).get(userId) ?? { doors: 0, appointments: 0 };
 }

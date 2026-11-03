@@ -21,6 +21,12 @@ export const NON_KNOCK_KEYS = new Set([
   "my-targets",
 ]);
 
+/**
+ * Same rep, same lead, same normalized disposition. A later tap counts only
+ * when it is more than this long after the last tap that was kept.
+ */
+export const KNOCK_REPEAT_MS = 120000;
+
 export type KnockEvent = {
   key: string;
   leadId: string;
@@ -158,17 +164,19 @@ function eventIdOf(field: unknown): string | undefined {
 
 function rawFromHistory(
   leadId: string,
-  entry: HistoryLike,
-  dispositions: readonly Disposition[],
+  entry: unknown,
+  resolve: (raw: unknown) => string,
 ): RawEvent | null {
-  const userId = typeof entry.userId === "string" ? entry.userId.trim() : "";
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const row = entry as HistoryLike;
+  const userId = typeof row.userId === "string" ? row.userId.trim() : "";
   if (!userId) return null;
-  const at = knockInstant(entry.timestamp);
+  const at = knockInstant(row.timestamp);
   if (at == null) return null;
-  const dispositionId = normalizeDispoKey(entry.disposition, dispositions);
+  const dispositionId = resolve(row.disposition);
   if (!isCountedKnock(dispositionId)) return null;
   return {
-    eventId: eventIdOf(entry.field),
+    eventId: eventIdOf(row.field),
     leadId,
     userId,
     at,
@@ -178,19 +186,32 @@ function rawFromHistory(
 
 function legacyRaw(
   lead: Lead,
-  dispositions: readonly Disposition[],
+  resolve: (raw: unknown) => string,
 ): RawEvent | null {
   const userId = actorId(lead);
   if (!userId) return null;
   const at = knockInstant(lead.dispositionedAt);
   if (at == null) return null;
   const recorded = lead as Lead & { dispositionId?: unknown };
-  const dispositionId = normalizeDispoKey(
+  const dispositionId = resolve(
     recorded.dispositionId || lead.status || lead.disposition,
-    dispositions,
   );
   if (!isCountedKnock(dispositionId)) return null;
   return { leadId: lead.id, userId, at, dispositionId };
+}
+
+function dispositionLookup(dispositions: readonly Disposition[]): (raw: unknown) => string {
+  const byId = new Map<string, string>();
+  const byName = new Map<string, string>();
+  for (const row of dispositions) {
+    if (!row) continue;
+    byId.set(dispositionSlug(row.id), row.id);
+    byName.set(dispositionSlug(row.name), row.id);
+  }
+  return (raw: unknown) => {
+    const key = dispositionSlug(raw);
+    return byId.get(key) || byName.get(key) || key;
+  };
 }
 
 /** One event per history entry. Legacy status is used only when history is empty. */
@@ -198,22 +219,24 @@ export function knockEvents(
   lead: Lead,
   dispositions: readonly Disposition[],
 ): KnockEvent[] {
-  return dedupe(rawEvents(lead, dispositions)).map(toKnockEvent);
+  return dedupe(rawEvents(lead, dispositionLookup(dispositions))).map(toKnockEvent);
 }
 
 function rawEvents(
   lead: Lead,
-  dispositions: readonly Disposition[],
+  resolve: (raw: unknown) => string,
 ): RawEvent[] {
   if (!lead?.id) return [];
-  const history = (lead.dispositionHistory || []) as HistoryLike[];
-  if (history.length > 0) {
-    return history.flatMap((entry) => {
-      const raw = rawFromHistory(lead.id, entry, dispositions);
-      return raw ? [raw] : [];
-    });
+  const history = lead.dispositionHistory;
+  if (Array.isArray(history) && history.length > 0) {
+    const events: RawEvent[] = [];
+    for (const entry of history as unknown[]) {
+      const raw = rawFromHistory(lead.id, entry, resolve);
+      if (raw) events.push(raw);
+    }
+    return events;
   }
-  const legacy = legacyRaw(lead, dispositions);
+  const legacy = legacyRaw(lead, resolve);
   return legacy ? [legacy] : [];
 }
 
@@ -262,6 +285,37 @@ function dedupe(events: RawEvent[]): RawEvent[] {
     seenFallback.add(fallback);
     kept.push(event);
   }
+  return collapseRepeats(kept);
+}
+
+/**
+ * After event identity and exclusions. Same rep + lead + disposition counts
+ * again only once KNOCK_REPEAT_MS has passed since the last kept tap.
+ */
+function collapseRepeats(events: RawEvent[]): RawEvent[] {
+  if (events.length < 2) return events;
+  const groups = new Map<string, RawEvent[]>();
+  for (const event of events) {
+    const key = `${event.leadId}|${event.userId}|${event.dispositionId}`;
+    const list = groups.get(key);
+    if (list) list.push(event);
+    else groups.set(key, [event]);
+  }
+  const kept: RawEvent[] = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      kept.push(group[0]);
+      continue;
+    }
+    group.sort((a, b) => a.at - b.at);
+    let lastKeptAt = Number.NEGATIVE_INFINITY;
+    for (const event of group) {
+      if (event.at - lastKeptAt > KNOCK_REPEAT_MS) {
+        kept.push(event);
+        lastKeptAt = event.at;
+      }
+    }
+  }
   return kept;
 }
 
@@ -291,13 +345,35 @@ export function collectKnockEvents(
   opts: KnockCountOptions = {},
 ): KnockEvent[] {
   const aliases = aliasMap(opts.leadAliases);
+  const resolve = dispositionLookup(dispositions);
+  const ledger = opts.ledger;
+  if (aliases.size === 0 && (!ledger || ledger.length === 0)) {
+    const seenIds = new Set<string>();
+    const seenLeads = new Set<string>();
+    let duplicateLead = false;
+    const perLead: RawEvent[] = [];
+    for (const lead of leads) {
+      if (lead?.id) {
+        if (seenLeads.has(lead.id)) duplicateLead = true;
+        else seenLeads.add(lead.id);
+      }
+      for (const event of dedupe(rawEvents(lead, resolve))) {
+        if (event.eventId) {
+          if (seenIds.has(event.eventId)) continue;
+          seenIds.add(event.eventId);
+        }
+        perLead.push(event);
+      }
+    }
+    if (!duplicateLead) return perLead.map(toKnockEvent);
+  }
   const raw: RawEvent[] = [];
   for (const lead of leads) {
-    for (const event of rawEvents(lead, dispositions)) {
-      raw.push({ ...event, leadId: canonicalLeadId(event.leadId, aliases) });
+    for (const event of rawEvents(lead, resolve)) {
+      raw.push(aliases.size ? { ...event, leadId: canonicalLeadId(event.leadId, aliases) } : event);
     }
   }
-  for (const event of opts.ledger || []) {
+  for (const event of ledger || []) {
     const row = ledgerRaw(event);
     raw.push({ ...row, leadId: canonicalLeadId(row.leadId, aliases) });
   }

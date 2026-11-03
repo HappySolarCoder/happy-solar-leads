@@ -7,7 +7,8 @@ import {
   GPS_MAX_VERIFIED_ACCURACY_M,
   RADIUS_M,
 } from '@/app/utils/gpsRule';
-import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
+import type { Disposition } from '@/app/types/disposition';
+import { isCountedKnock, normalizeDispoKey } from '@/app/utils/knockCount';
 
 export const TOO_FAR_ALERT_TO = 'evan@happyslr.com';
 export const LEAD_PAGE = 250;
@@ -214,35 +215,23 @@ function historyEntries(value: unknown): Array<Record<string, unknown>> {
   return value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object');
 }
 
-function dispositionKeys(value: { id?: unknown; name?: unknown }): string[] {
-  const keys: string[] = [];
-  if (typeof value.id === 'string' && value.id.trim()) keys.push(value.id.trim().toLowerCase());
-  if (typeof value.name === 'string' && value.name.trim()) {
-    const name = value.name.trim().toLowerCase();
-    keys.push(name, name.replace(/\s+/g, '-'));
-  }
-  return keys;
-}
-
-/**
- * Lower-cased ids and names (plus hyphenated names) of dispositions with
- * countsAsDoorKnock === true. Same matching as the dashboard. A stored
- * disposition overrides the default with the same id or name.
- */
-export function doorKnockKeys(custom: DispositionDef[]): Set<string> {
-  const knock = new Set<string>();
-  const seen = new Set<string>();
+function dispositionRows(custom: DispositionDef[]): Disposition[] {
+  const rows: Disposition[] = [];
   for (const def of custom) {
-    const keys = dispositionKeys(def);
-    keys.forEach((key) => seen.add(key));
-    if (def.countsAsDoorKnock === true) keys.forEach((key) => knock.add(key));
+    if (typeof def.id !== 'string' || !def.id.trim()) continue;
+    rows.push({
+      id: def.id,
+      name: typeof def.name === 'string' ? def.name : def.id,
+      color: '',
+      icon: '',
+      countsAsDoorKnock: def.countsAsDoorKnock === true,
+      order: rows.length,
+      isDefault: false,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
   }
-  for (const def of DEFAULT_DISPOSITIONS) {
-    const keys = dispositionKeys(def);
-    if (keys.some((key) => seen.has(key))) continue;
-    if (def.countsAsDoorKnock) keys.forEach((key) => knock.add(key));
-  }
-  return knock;
+  return rows;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -308,8 +297,9 @@ export function tallyKnocks(
   leads: Array<{ id: string; data: Record<string, unknown> }>,
   startMs: number,
   endMs: number,
-  knockKeys: Set<string> = doorKnockKeys([]),
+  dispositions: DispositionDef[] = [],
 ): Map<string, Tally> {
+  const rows = dispositionRows(dispositions);
   const groups = new Map<string, KnockHit[]>();
   const names = new Map<string, string>();
   for (const lead of leads) {
@@ -319,9 +309,9 @@ export function tallyKnocks(
       if (at == null || at < startMs || at >= endMs) continue;
       const userId = entry.userId;
       if (typeof userId !== 'string' || !userId) continue;
-      const disposition = typeof entry.disposition === 'string' ? entry.disposition.trim().toLowerCase() : '';
-      if (!disposition || !knockKeys.has(disposition)) continue;
-      const key = `${userId}\u0000${lead.id}\u0000${disposition}`;
+      const dispositionId = normalizeDispoKey(entry.disposition, rows);
+      if (!isCountedKnock(dispositionId)) continue;
+      const key = `${userId}\u0000${lead.id}\u0000${dispositionId}`;
       const hits = groups.get(key);
       const hit = { at, far: entryIsFar(entry) };
       if (hits) hits.push(hit);
@@ -465,8 +455,8 @@ export async function handleTooFarKnockAlert(
     console.error(`[too-far-alert] truncated ${day.key}; not sending a partial email`);
     return { status: 503, body: { ok: false, sent: false, truncated: true, date: day.key } };
   }
-  const knockKeys = loaded.leads.length ? doorKnockKeys(await deps.getDispositions()) : new Set<string>();
-  const tallies = tallyKnocks(loaded.leads, day.startMs, day.endMs, knockKeys);
+  const dispositions = loaded.leads.length ? await deps.getDispositions() : [];
+  const tallies = tallyKnocks(loaded.leads, day.startMs, day.endMs, dispositions);
   const users = tallies.size ? await deps.getUsers([...tallies.keys()]) : new Map<string, Record<string, unknown> | null>();
   const rows = rowsFromTallies(tallies, users);
   const email = rows.length

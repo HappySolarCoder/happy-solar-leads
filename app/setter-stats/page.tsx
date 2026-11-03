@@ -10,7 +10,7 @@ import { Lead, User } from '@/app/types';
 import { Disposition } from '@/app/types/disposition';
 import {
   countSetterKnocks,
-  dateInExclusiveWindow,
+  instantInWindow,
   mergeSetterKnockCounts,
   setterStatsWindow,
 } from '@/app/utils/webKnockCounts';
@@ -136,7 +136,8 @@ export default function DataDashboard() {
     // Knocks are applied afterwards from visit history.
     const filteredLeads = leads.filter(lead => {
       if (!lead.dispositionedAt) return false;
-      return dateInExclusiveWindow(new Date(lead.dispositionedAt), range);
+      const at = new Date(lead.dispositionedAt).getTime();
+      return Number.isFinite(at) && instantInWindow(at, range);
     });
 
     // Process leads
