@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
@@ -551,8 +551,7 @@ test("save payloads on the direct and route paths stay byte-identical to base", 
   assert.equal(encoded.includes("dispoBlock"), false);
 });
 
-test("the gate adds no client request field, no knock count, and the flag stays off", () => {
-  assert.equal(existsSync(path.join(root, "app/utils/knockCount.ts")), false);
+test("the gate adds no client request field and the flag stays off", () => {
   assert.equal(HOT_LEADS_ENABLED, false);
   assert.match(read("app/hotLeads/flag.ts"), /NEXT_PUBLIC_HOT_LEADS === "1"/);
   const client = [

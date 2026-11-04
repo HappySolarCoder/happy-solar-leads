@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { groupHouseLeads } from "../../app/homeowners/houseIdentity";
@@ -293,8 +294,9 @@ test("a do-not-call 3PL pin hides Call, shows the chip, and still allows a knock
   assert.match(leadDetail, /tel:\$\{lead\.phone\}/);
 });
 
-test("this line does not add knockCount.ts", () => {
-  assert.equal(existsSync(path.join(root, "app/utils/knockCount.ts")), false);
+test("build 164 carries the #181 knockCount.ts, byte-identical to web #182", () => {
+  const hash = createHash("sha256").update(readFileSync(path.join(root, "app/utils/knockCount.ts"))).digest("hex");
+  assert.equal(hash, "a00be3335708b5b54605b08f11bd37fb9fa5ada20e3c0cb428d57b58bf1dd226");
 });
 
 test("save payloads on the direct and route paths match 05037a3", async () => {
