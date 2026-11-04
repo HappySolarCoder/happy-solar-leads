@@ -13,10 +13,11 @@ import { EMPTY_HOMES } from '@/app/homeowners/loader';
 import { observeMapSize } from '@/app/utils/observeMapSize';
 
 import { fieldPinArtwork, fieldPinZoomTier, withLegacyHotPin } from '@/app/utils/fieldPin';
-import { isHotLead, isHotOnlyLead, mergeHotLeads, publishHotLeadIndex, type HotLeadPin } from '@/app/hotLeads/model';
+import { hotLeadViewOnly, isHotLead, isHotOnlyLead, mergeHotLeads, publishHotLeadIndex, type HotLeadPin } from '@/app/hotLeads/model';
 import { applyHotFilter, hotLeadFilterVisible, hotLeadZoomBanner, type HotPinFilter } from '@/app/hotLeads/filter';
 import { useHotLeads } from '@/app/hooks/useHotLeads';
 import { HotLeadDetail } from '@/app/hotLeads/HotLeadDetail';
+import { TerritoryRecoveryList } from '@/app/field/TerritoryRecoveryList';
 import { buildLeadViewportIndex, queryLeadViewport } from '@/app/utils/mapViewport';
 import { getAppointmentOutcome } from '@/app/utils/appointmentOutcome';
 import { getLocation } from '@/app/utils/geolocation';
@@ -798,7 +799,7 @@ export default function LeadMap({
         const selected = selectedForAssignment;
         const displayLead = latestKnockDisplay(lead,dispositions);
         const disposition = byId.get(displayLead.status) || byName.get(String(displayLead.disposition || '').toLowerCase());
-        const styleKey = `${fieldPinZoomTier(currentZoom)}:${viewMode}:${selected}:${isClaimedByMe}:${canClaim}:${selectedForAssignment}:${isHotLead(displayLead) ? 1 : 0}`;
+        const styleKey = `${fieldPinZoomTier(currentZoom)}:${viewMode}:${selected}:${isClaimedByMe}:${canClaim}:${selectedForAssignment}:${isHotLead(displayLead) ? (hotLeadViewOnly(displayLead) ? 2 : 1) : 0}`;
         let entry = entries.get(lead.id);
         if (entry && entry.lead === lead && entry.styleKey === styleKey && entry.users === users && entry.disposition === disposition) continue;
         const icon = createCustomIcon(displayLead, users, viewMode, lead.solarCategory, displayLead.status, selected,
@@ -1688,6 +1689,7 @@ export default function LeadMap({
         </p>
       ) : null}
       {openHot && currentUser ? <HotLeadDetail pin={openHot} user={currentUser} dispositions={dispositions} onClose={() => setOpenHot(null)} /> : null}
+      <TerritoryRecoveryList />
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       
       {showHomeowners && <HomeownerStatus state={homeState} onSelect={selectListedHome} />}
@@ -2007,7 +2009,7 @@ function createCustomIcon(
         <span style="font-size:${Math.round(customerSize * 0.55)}px;line-height:1;">🙂</span>
       </div>
     `;
-    return L.divIcon({ html: isHotLead(lead) ? withLegacyHotPin(html) : html, className: 'custom-marker', iconSize: [customerSize, customerSize], iconAnchor: [customerSize / 2, customerSize / 2], popupAnchor: [0, -customerSize / 2] });
+    return L.divIcon({ html: isHotLead(lead) ? withLegacyHotPin(html, hotLeadViewOnly(lead)) : html, className: 'custom-marker', iconSize: [customerSize, customerSize], iconAnchor: [customerSize / 2, customerSize / 2], popupAnchor: [0, -customerSize / 2] });
   }
   
   const solarColors: Record<string, string> = {
@@ -2092,7 +2094,7 @@ function createCustomIcon(
     const html = `
       <div style="width:${size}px;height:${size}px;background:${color};border:${border};border-radius:50%;opacity:${opacity};box-shadow:0 2px 4px rgba(0,0,0,0.2);"></div>
     `;
-    return L.divIcon({ html: isHotLead(lead) ? withLegacyHotPin(html) : html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
+    return L.divIcon({ html: isHotLead(lead) ? withLegacyHotPin(html, hotLeadViewOnly(lead)) : html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
   }
   
   // Teardrop pin for zoomed in
@@ -2105,7 +2107,7 @@ function createCustomIcon(
     </div>
   `;
 
-  return L.divIcon({ html: isHotLead(lead) ? withLegacyHotPin(html) : html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size], popupAnchor: [0, -size] });
+  return L.divIcon({ html: isHotLead(lead) ? withLegacyHotPin(html, hotLeadViewOnly(lead)) : html, className: 'custom-marker', iconSize: [size, size], iconAnchor: [size / 2, size], popupAnchor: [0, -size] });
 }
 
 function isPersistentPinPopup(lead: Lead): boolean {

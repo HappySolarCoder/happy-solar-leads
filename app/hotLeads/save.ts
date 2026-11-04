@@ -1,5 +1,6 @@
 import type { Lead, User } from "@/app/types";
 import { GPS_WINDOW_AFTER_MS } from "@/app/field/gpsPolicy";
+import { SYNC_REASON } from "@/app/field/syncReasons";
 import type { FieldMutation, PendingMutation } from "@/app/field/types";
 import { canSeeHotLeads, type HotLeadProfile } from "./access";
 import { HOT_LEADS_ENABLED } from "./flag";
@@ -172,4 +173,19 @@ export function hotLeadParkNotice(
     && row.lastError === HOT_LEAD_OLD_SERVER_NOTICE
   );
   return hit ? HOT_LEAD_OLD_SERVER_NOTICE : null;
+}
+
+/** The long territory message stored on a parked hot draft for this pin. */
+export function hotTerritoryParkNotice(
+  drafts: { leadId?: string; collection?: string; kind?: string; syncState?: string; parkedReason?: string; lastError?: string }[] | undefined,
+  leadId: string,
+): string | null {
+  const hit = (drafts || []).find((row) =>
+    row.leadId === leadId
+    && isHotLeadDraft(row)
+    && row.syncState === "parked"
+    && row.parkedReason === SYNC_REASON.outOfTerritory
+    && !!row.lastError
+  );
+  return hit?.lastError || null;
 }

@@ -101,6 +101,14 @@ export function classifySyncFailure(
   return { kind: "transient" };
 }
 
+/** A hot-lead territory refusal stays parked. A leads refusal is not this. */
+export function terminalHotTerritory(m: {
+  collection?: string;
+  parkedReason?: string;
+}): boolean {
+  return m.collection === "hotLeads" && m.parkedReason === SYNC_REASON.outOfTerritory;
+}
+
 function knownReason(value: string): ParkedReason | undefined {
   return (Object.values(SYNC_REASON) as string[]).includes(value) ? (value as ParkedReason) : undefined;
 }

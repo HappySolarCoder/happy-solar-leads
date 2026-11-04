@@ -5,6 +5,12 @@ import { collectHistoricalStatusIds, isAppointmentSetOrSoldLead } from "@/app/ut
 
 export const HOT_LEAD_ID = /^ghl_[A-Za-z0-9_-]{1,120}$/;
 export const HOT_PAGE_SIZE = 200;
+export const DISPO_BLOCKS = ["outside_territory", "no_territory", "territory_unknown", "no_coords"] as const;
+export type DispoBlock = (typeof DISPO_BLOCKS)[number];
+
+export function isDispoBlock(value: unknown): value is DispoBlock {
+  return typeof value === "string" && (DISPO_BLOCKS as readonly string[]).includes(value);
+}
 /** Runaway guard while following nextCursor. Not a product page limit. */
 export const HOT_CURSOR_PAGE_CAP = 50;
 
@@ -46,7 +52,24 @@ export type HotLeadPin = {
   doNotCall?: true;
   testData?: true;
   dispositionHistory?: HotHistoryEntry[];
+  /**
+   * Contract v2. Absent (old server or cache) renders as writable.
+   * The server still decides the write. Staff bypass arrives as true.
+   */
+  canDispo?: boolean;
+  dispoBlock?: DispoBlock | null;
 };
+
+/** Absent canDispo is writable. Only an explicit false is view-only. */
+export function hotLeadCanDispo(pin: { canDispo?: boolean } | null | undefined): boolean {
+  return pin?.canDispo !== false;
+}
+
+export function hotLeadViewOnly(lead: object | null | undefined): boolean {
+  if (!lead) return false;
+  const row = lead as { hotLead?: boolean; hotPin?: { canDispo?: boolean } | null };
+  return row.hotLead === true && row.hotPin?.canDispo === false;
+}
 
 /** Shown on the 3PL lead detail when the route set doNotCall. */
 export const DO_NOT_CALL_WARNING = "Do not call";
@@ -195,6 +218,115 @@ export function mergeHotLeads(
 let hotIndex = new Map<string, HotLeadPin>();
 let hotCaps: HotCapabilities = { dispo: false, claim: false };
 let onLocalPins: ((pins: HotLeadPin[]) => void) | null = null;
+/** Last pin the server returned. Optimistic knocks, notes and claims sit on top. */
+let serverPins = new Map<string, HotLeadPin>();
+const detailListeners = new Set<(pin: HotLeadPin) => void>();
+let refreshHotLead: ((id: string) => Promise<HotLeadPin | null>) | null = null;
+
+function clonePin(pin: HotLeadPin): HotLeadPin {
+  return {
+    ...pin,
+    contacts: pin.contacts.map((row) => ({ ...row })),
+    dispositionHistory: pin.dispositionHistory?.map((row) => ({ ...row })),
+  };
+}
+
+function findHotPin(id: string): HotLeadPin | undefined {
+  for (const pin of hotIndex.values()) if (pin.id === id) return pin;
+  return undefined;
+}
+
+function uniquePins(): HotLeadPin[] {
+  const byId = new Map<string, HotLeadPin>();
+  for (const pin of hotIndex.values()) if (!byId.has(pin.id)) byId.set(pin.id, pin);
+  return [...byId.values()];
+}
+
+function writeHotPin(next: HotLeadPin, notifyDetail: boolean): void {
+  const nextIndex = new Map<string, HotLeadPin>();
+  let hit = false;
+  for (const [key, pin] of hotIndex) {
+    if (pin.id === next.id) {
+      nextIndex.set(key, next);
+      hit = true;
+    } else nextIndex.set(key, pin);
+  }
+  if (hit) {
+    hotIndex = nextIndex;
+    onLocalPins?.(uniquePins());
+  }
+  if (notifyDetail) for (const fn of detailListeners) fn(next);
+}
+
+function snapshotIfNeeded(id: string): void {
+  if (serverPins.has(id)) return;
+  const current = findHotPin(id);
+  if (current) serverPins.set(id, clonePin(current));
+}
+
+/** Network copy. Replaces any optimistic snapshot for this pin. */
+export function rememberServerHotPin(pin: HotLeadPin): void {
+  serverPins.set(pin.id, clonePin(pin));
+}
+
+export function rememberServerHotPinIfAbsent(pin: HotLeadPin): void {
+  if (!serverPins.has(pin.id)) serverPins.set(pin.id, clonePin(pin));
+}
+
+/** A saved hot write. The index already shows what the server accepted. */
+export function confirmHotServerPin(id: string): void {
+  const current = findHotPin(id);
+  if (current) serverPins.set(id, clonePin(current));
+}
+
+export function serverHotPin(id: string): HotLeadPin | null {
+  const pin = serverPins.get(id);
+  return pin ? clonePin(pin) : null;
+}
+
+export function subscribeHotLeadDetail(id: string, fn: (pin: HotLeadPin) => void): () => void {
+  const listener = (pin: HotLeadPin) => {
+    if (pin.id === id) fn(pin);
+  };
+  detailListeners.add(listener);
+  return () => {
+    detailListeners.delete(listener);
+  };
+}
+
+/** mode=one refresh after a territory refusal. One registration; the map hook owns it. */
+export function bindHotLeadRefresh(fn: (id: string) => Promise<HotLeadPin | null>): () => void {
+  refreshHotLead = fn;
+  return () => {
+    if (refreshHotLead === fn) refreshHotLead = null;
+  };
+}
+
+/**
+ * Drop the optimistic status, claim and notes back to the last server copy,
+ * then re-fetch mode=one. A refresh failure keeps that copy.
+ */
+export async function rollbackHotLead(id: string): Promise<void> {
+  const saved = serverPins.get(id);
+  if (saved) writeHotPin(clonePin(saved), true);
+  try {
+    const fresh = await refreshHotLead?.(id);
+    if (fresh && fresh.id === id) {
+      rememberServerHotPin(fresh);
+      writeHotPin(fresh, true);
+    }
+  } catch {
+    /* The parked draft still shows the last server copy. */
+  }
+}
+
+/** Optimistic claim, release or notes. Does not tell the open detail to reset. */
+export function noteHotLocal(id: string, patch: Partial<HotLeadPin>): void {
+  snapshotIfNeeded(id);
+  const current = findHotPin(id);
+  if (!current) return;
+  writeHotPin({ ...current, ...patch }, false);
+}
 
 export function publishHotLeadIndex(next: Map<string, HotLeadPin>): void {
   hotIndex = next;
@@ -227,6 +359,7 @@ export function bindHotPins(fn: (pins: HotLeadPin[]) => void): () => void {
 }
 
 export function noteHotDispo(id: string, status: string, disposition: string): void {
+  snapshotIfNeeded(id);
   const nextIndex = new Map<string, HotLeadPin>();
   const byId = new Map<string, HotLeadPin>();
   let hit = false;
@@ -245,4 +378,7 @@ export function resetHotLeadStore(): void {
   hotIndex = new Map();
   hotCaps = { dispo: false, claim: false };
   onLocalPins = null;
+  serverPins = new Map();
+  detailListeners.clear();
+  refreshHotLead = null;
 }

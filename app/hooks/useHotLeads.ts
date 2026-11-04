@@ -7,6 +7,7 @@ import { canSeeHotLeads } from "@/app/hotLeads/access";
 import { fetchHotLeadDetail, fetchHotLeadMap, type HotView } from "@/app/hotLeads/fetch";
 import { HOT_LEADS_ENABLED } from "@/app/hotLeads/flag";
 import {
+  bindHotLeadRefresh,
   bindHotPins,
   publishHotCapabilities,
   type HotCapabilities,
@@ -71,6 +72,23 @@ export function useHotLeads(user: User | null, view: HotView | null, active = tr
     window.addEventListener("online", online);
     return () => window.removeEventListener("online", online);
   }, [allowed]);
+
+  useEffect(() => {
+    if (!active) return;
+    const person = user;
+    return bindHotLeadRefresh(async (id) => {
+      if (!person || !HOT_LEADS_ENABLED || !canSeeHotLeads(person)) return null;
+      const token = await auth?.currentUser?.getIdToken().catch(() => "");
+      if (!token || auth?.currentUser?.uid !== person.id) return null;
+      const result = await fetchHotLeadDetail({
+        user: person,
+        id,
+        token,
+        fetcher: (url, init) => apiFetch(url, { headers: init.headers }),
+      });
+      return result.hotLead;
+    });
+  }, [active, user]);
 
   async function loadOne(id: string): Promise<HotLeadPin | null> {
     if (!allowed || !user) return null;
