@@ -307,6 +307,9 @@ export default function LeadMap({
     persistentPopupIdRef.current = lead.id;
   };
 
+  // One zoom for the 3PL pin list and the zoom banner. mapView is the
+  // reported viewport; mapZoom is the same camera before the first moveend.
+  const hotLayerZoom = mapView?.zoom ?? mapZoom;
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
   const leads = useMemo(() => {
@@ -321,8 +324,7 @@ export default function LeadMap({
       return point?.source === 'homeowner_corrected' ? {...l, lat: point.lat, lng: point.lng} : l;
     });
     const filter = hotLeadFilterVisible(currentUser) ? hotFilter : 'all';
-    const zoomNow = mapView?.zoom ?? zoom;
-    const pins = filter === 'only' && hotLeadZoomBanner(filter, zoomNow) ? [] : (hotLeads ?? fetchedHot.pins);
+    const pins = filter === 'only' && hotLeadZoomBanner(filter, hotLayerZoom) ? [] : (hotLeads ?? fetchedHot.pins);
     if (!pins.length && filter === 'all') {
       publishHotLeadIndex(new Map());
       return mapped;
@@ -332,7 +334,7 @@ export default function LeadMap({
     const merged = mergeHotLeads(mapped, pins, winners);
     publishHotLeadIndex(filter === 'hide' ? new Map() : merged.index);
     return applyHotFilter(merged.leads, filter);
-  }, [leadsProp, houseIndex, homeMerge, houseAnchors, hotLeads, fetchedHot.pins, hotFilter, currentUser, mapView, zoom]);
+  }, [leadsProp, houseIndex, homeMerge, houseAnchors, hotLeads, fetchedHot.pins, hotFilter, currentUser, hotLayerZoom]);
 
   const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
 
@@ -1675,7 +1677,7 @@ export default function LeadMap({
 
   const hotZoomNotice = hotLeadZoomBanner(
     hotLeadFilterVisible(currentUser) ? hotFilter : 'all',
-    mapView?.zoom ?? mapZoom,
+    hotLayerZoom,
   );
   return (
     <div className="relative w-full h-full">

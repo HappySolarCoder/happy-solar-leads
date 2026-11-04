@@ -127,7 +127,7 @@ export function HotLeadDetail({
         <span className="flex flex-wrap items-center gap-2">
           <span className="inline-block rounded-full bg-[#FFF1E6] px-2 py-1 text-xs font-semibold text-[#E8590C]">3PL lead</span>
           {noCall ? (
-            <span role="alert" className="inline-block rounded-full bg-[#FFF5F5] px-2 py-1 text-xs font-semibold text-[#C53030]">{DO_NOT_CALL_WARNING}</span>
+            <span role="status" className="inline-block rounded-full bg-[#FFF5F5] px-2 py-1 text-xs font-semibold text-[#C53030]">{DO_NOT_CALL_WARNING}</span>
           ) : null}
         </span>
         {variant === "panel" && onClose ? (

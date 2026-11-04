@@ -282,7 +282,7 @@ test("a do-not-call 3PL pin hides Call, shows the chip, and still allows a knock
   const flagged = pin({ doNotCall: true });
   assert.equal(hotLeadCallAllowed(flagged), false);
   const detail = read("app/hotLeads/HotLeadDetail.tsx");
-  assert.match(detail, /role="alert"/);
+  assert.match(detail, /role="status"/);
   assert.match(detail, /DO_NOT_CALL_WARNING/);
   assert.match(detail, /!noCall \? <a href=\{`tel:/);
   assert.match(detail, /stageHotKnock/);

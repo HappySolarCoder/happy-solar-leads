@@ -717,7 +717,7 @@ test("doNotCall hides the call control, warns, and still allows a knock", () => 
   const detail = readFileSync(new URL("../../app/hotLeads/HotLeadDetail.tsx", import.meta.url), "utf8");
   assert.match(detail, /DO_NOT_CALL_WARNING/);
   assert.match(detail, /hotLeadCallAllowed/);
-  assert.match(detail, /role="alert"/);
+  assert.match(detail, /role="status"/);
   assert.match(detail, /tel:/);
   assert.match(detail, /!noCall \? <a href=\{`tel:/);
   assert.match(detail, /canWrite/);

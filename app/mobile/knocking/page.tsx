@@ -144,11 +144,19 @@ export default function KnockingPage() {
   const showHotFilter = hotLeadFilterVisible(currentUser);
   useEffect(() => {
     if (!currentUser?.id) return;
-    setHotFilterState(readHotFilter(currentUser.id, window.localStorage));
+    try {
+      setHotFilterState(readHotFilter(currentUser.id, window.localStorage));
+    } catch {
+      /* A locked-down WebView keeps the default. */
+    }
   }, [currentUser?.id]);
   const setHotFilter = (next: HotPinFilter) => {
     setHotFilterState(next);
-    writeHotFilter(currentUser?.id, next, window.localStorage);
+    try {
+      writeHotFilter(currentUser?.id, next, window.localStorage);
+    } catch {
+      /* A locked-down WebView keeps the choice for this visit. */
+    }
   };
   const mapSource = useMemo(() => {
     return mergeLeadSnapshots(viewportPins.leads, leads).filter(l => inPinScope(l.lat,l.lng,pinPolygons));
