@@ -6,9 +6,9 @@
  * Geocode cache values hold lat/lng and never an address, so a territory
  * report can be re-run without new Census calls. The review file never
  * stores an address. Both sidecars are written mode 0600.
- * Re-imports write only ghl, import, updatedAt, and doNotCall.
- * Do Not Contact rows are imported with doNotCall: true. Lost rows, rows
- * with no address, and Not Interested stages are skipped.
+ * Re-imports write only ghl, import, and updatedAt.
+ * Do Not Contact rows import as normal pins with no extra flag. Lost rows,
+ * rows with no address, and Not Interested stages are skipped.
  */
 import { createHash } from 'node:crypto';
 import { chmod, writeFile } from 'node:fs/promises';
@@ -55,7 +55,7 @@ export const LEAD_HOUSE_CAP = 500;
 export const LINK_DISTANCE_M = 75;
 export const HOT_LIST_PAGE = 200;
 export const HOT_LIST_PAGES = 20;
-export const REIMPORT_KEYS = ['ghl', 'import', 'updatedAt', 'doNotCall'];
+export const REIMPORT_KEYS = ['ghl', 'import', 'updatedAt'];
 
 const OPP_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 
@@ -152,7 +152,7 @@ function cell(value) {
   return text;
 }
 
-/** Same normalisation for DNC and excluded stages: trim, lowercase, collapse spaces. */
+/** Stage normalisation for excluded stages: trim, lowercase, collapse spaces. */
 export function normalizeStage(stage) {
   return String(stage ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -163,20 +163,10 @@ export function isExcludedStage(stage) {
   return EXCLUDED_STAGES.includes(normalizeStage(stage));
 }
 
-/** DNC means do not call. The row is still a hot lead and can be knocked. */
-export function isDoNotContact(stage) {
-  const value = normalizeStage(stage);
-  return value === 'dead/do not contact'
-    || value === 'do not contact'
-    || value === 'dnc'
-    || value === 'do not call';
-}
-
 export function classifyRows(rows, options = {}) {
   const skipped = { noAddress: 0, lost: 0, duplicate: 0, badId: 0, excludedStage: 0 };
   const seen = new Set();
   const kept = [];
-  let dncImported = 0;
   for (const row of rows) {
     const opportunityId = cell(row['Opportunity ID']);
     if (!OPP_ID_RE.test(opportunityId)) {
@@ -208,10 +198,7 @@ export function classifyRows(rows, options = {}) {
       skipped.noAddress += 1;
       continue;
     }
-    const doNotCall = isDoNotContact(stage);
-    if (doNotCall) dncImported += 1;
     kept.push({
-      doNotCall,
       opportunityId,
       contactId: cell(row['Contact ID']),
       name: cell(row['Contact Name']) || [cell(row['First Name']), cell(row['Last Name'])].filter(Boolean).join(' '),
@@ -232,7 +219,7 @@ export function classifyRows(rows, options = {}) {
       updatedOn: cell(row['Updated on']),
     });
   }
-  return { skipped, kept, dncImported };
+  return { skipped, kept };
 }
 
 export function rowHash(row) {
@@ -297,7 +284,6 @@ export function groupHouses(kept) {
         ...(latest.updatedOn ? { updatedOn: latest.updatedOn } : {}),
       },
       rowHash: createHash('sha256').update(members.map((row) => rowHash(row)).sort().join('\n')).digest('hex'),
-      doNotCall: members.some((row) => row.doNotCall === true),
     });
   }
   return { houses, withinSheetMerges };
@@ -524,7 +510,6 @@ export function reimportPatch(existing, next, stamp = toTimestamp) {
       history,
     },
     updatedAt: stamp(next.at),
-    doNotCall: next.doNotCall === true,
   };
 }
 
@@ -551,7 +536,6 @@ export function createDoc(house, at, batchId, stamp = toTimestamp) {
     },
     hotStatus: 'active',
     updatedAt: stamp(at),
-    ...(house.doNotCall ? { doNotCall: true } : {}),
   };
 }
 
@@ -832,7 +816,6 @@ export function buildTerritoryReport(houses, index) {
   }
   const insideByOwnerRole = { setter: 0, closer: 0, manager: 0, admin: 0, other: 0 };
   let pins = 0;
-  let dnc = 0;
   let insideAny = 0;
   let insideNone = 0;
   let noCoords = 0;
@@ -844,7 +827,6 @@ export function buildTerritoryReport(houses, index) {
       continue;
     }
     pins += 1;
-    if (house.doNotCall === true) dnc += 1;
     const roles = new Set();
     for (const territory of usable) {
       if (insideTerritory(lat, lng, territory.polygon)) roles.add(territory.role);
@@ -857,7 +839,6 @@ export function buildTerritoryReport(houses, index) {
   }
   return {
     pins,
-    dnc,
     insideAny,
     insideByOwnerRole,
     insideNone,
@@ -871,7 +852,6 @@ export function emptyReport(extra = {}) {
   return {
     rowsRead: 0,
     skipped: { noAddress: 0, lost: 0, duplicate: 0, badId: 0, excludedStage: 0 },
-    dncImported: 0,
     houses: 0,
     created: 0,
     updated: 0,
@@ -962,7 +942,6 @@ export async function runImport(input) {
         batchId,
         at,
         rowHash: house.rowHash,
-        doNotCall: house.doNotCall,
       }, stamp);
       if (Object.keys(patch).some((key) => !REIMPORT_KEYS.includes(key))) throw new Error('reimport_keys');
       if (commit) {
@@ -1010,7 +989,6 @@ export async function runImport(input) {
     existingLeadLinks,
     leadCapHits,
     withinSheetMerges: grouped.withinSheetMerges,
-    dncImported: classified.dncImported,
     writes,
     dryRun: !commit,
   };
