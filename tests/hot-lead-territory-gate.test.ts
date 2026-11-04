@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { FIELD_REASON_CODES } from '../app/utils/server/fieldReasonCodes';
 import { HOT_LEAD_ROLE_SETS, withHotLeadRoles } from '../app/utils/server/hotLeadContract';
 import {
   handleFieldDispo,
@@ -443,6 +444,57 @@ describe('3PL territory gate', () => {
       });
     }
   }
+
+  it('pins the 403 body: reasonCode is out_of_territory and the block is only dispoBlock', async () => {
+    const blocks = ['outside_territory', 'no_territory', 'territory_unknown', 'no_coords'] as const;
+    assert.equal(FIELD_REASON_CODES.includes('out_of_territory'), true);
+    for (const block of blocks) {
+      assert.equal((FIELD_REASON_CODES as readonly string[]).includes(block), false, block);
+    }
+    const byName: Record<(typeof blocks)[number], Scenario> = {
+      outside_territory: scenarios.find((scenario) => scenario.name === 'outside') as Scenario,
+      no_territory: scenarios.find((scenario) => scenario.name === 'no-territory') as Scenario,
+      territory_unknown: scenarios.find((scenario) => scenario.name === 'truncated') as Scenario,
+      no_coords: scenarios.find((scenario) => scenario.name === 'no-coords') as Scenario,
+    };
+    for (const block of blocks) {
+      const scenario = byName[block];
+      const knock = await runDispo('closer', scenario, knockBody('closer', scenario));
+      const status = await runDispo('closer', scenario, knockBody('closer', scenario, {
+        status: 'interested',
+        disposition: 'Interested',
+      }));
+      const notes = await runDispo('closer', scenario, {
+        draftId: `draft-shape-${block}-notes`,
+        leadId: 'ghl_opp1',
+        kind: 'notes',
+        actionAt: ACTION,
+        collection: 'hotLeads',
+        notes: 'new note',
+        baseNotes: 'server copy',
+      });
+      const claim = await runClaim('closer', scenario, 'claim');
+      const release = await runClaim('closer', scenario, 'release');
+      for (const [label, outcome] of [
+        ['knock', knock.result],
+        ['status', status.result],
+        ['notes', notes.result],
+        ['claim', claim.result],
+        ['release', release.result],
+      ] as const) {
+        assert.equal(outcome.status, 403, `${block} ${label}`);
+        assert.deepEqual(Object.keys(outcome.body), ['ok', 'error', 'reasonCode', 'dispoBlock'], `${block} ${label}`);
+        assert.deepEqual(outcome.body, {
+          ok: false,
+          error: 'forbidden',
+          reasonCode: 'out_of_territory',
+          dispoBlock: block,
+        }, `${block} ${label}`);
+        assert.equal(outcome.body.reasonCode, 'out_of_territory', `${block} ${label}`);
+        assert.notEqual(outcome.body.reasonCode, block, `${block} ${label}`);
+      }
+    }
+  });
 
   it('replays a stored receipt after the territory is removed', async () => {
     const scenario = scenarios[0];

@@ -34,13 +34,17 @@ Staff (manager, admin) are always `canDispo: true` and `dispoBlock: null`. For e
 The server is the only authority. The test is the pin's lat/lng on the `hotLeads` document, not the rep's GPS. It applies to every 3PL write: knock, disposition, notes, claim, and release. Managers and admins bypass it. Everyone else:
 
 1. Load `territories` where `userId == uid`, limit 200.
-2. If that read is truncated (200 or more docs): 403 `territory_unknown`.
-3. If the caller has no counted polygon (archived and polygons with fewer than 3 points are skipped): 403 `no_territory`.
-4. If the pin lat/lng is missing or not finite: 403 `no_coords`.
+2. If that read is truncated (200 or more docs): `dispoBlock` `territory_unknown`.
+3. If the caller has no counted polygon (archived and polygons with fewer than 3 points are skipped): `dispoBlock` `no_territory`.
+4. If the pin lat/lng is missing or not finite: `dispoBlock` `no_coords`.
 5. If `insideTerritory` contains the point in one of those polygons: allow. No extra edge tolerance.
-6. Otherwise: 403 `outside_territory`.
+6. Otherwise: `dispoBlock` `outside_territory`.
 
-The 403 body is `{ ok: false, error: 'forbidden', reasonCode: 'out_of_territory', dispoBlock }` with `dispoBlock` set to the value above.
+Every territory refusal is HTTP 403 with exactly these fields:
+
+`{ ok: false, error: 'forbidden', reasonCode: 'out_of_territory', dispoBlock }`
+
+`reasonCode` is the existing `out_of_territory` code from `FIELD_REASON_CODES`. The client treats only that value as terminal. `outside_territory`, `no_territory`, `territory_unknown`, and `no_coords` are the `dispoBlock` value. They are never the `reasonCode`.
 
 The gate runs after the receipt replay check and before any write. Replaying a stored receipt returns that stored response even if the territory changed later. A denied write stores nothing, so a later attempt is not a replay.
 
