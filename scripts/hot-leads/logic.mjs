@@ -694,6 +694,7 @@ export function insideTerritory(lat, lng, polygon) {
 
 const WRITE_METHODS = ['set', 'update', 'delete', 'create', 'add', 'batch', 'bulkWriter', 'runTransaction'];
 const OWNER_ROLES = ['setter', 'closer', 'manager', 'admin'];
+const NATIVE_REF = new WeakMap();
 
 function writeBlockers() {
   const blocked = {};
@@ -735,12 +736,14 @@ function wrapQuery(query) {
 }
 
 function wrapDoc(ref) {
-  return {
+  const wrapped = {
     id: ref.id,
     path: ref.path,
     get(...args) { return ref.get(...args); },
     ...writeBlockers(),
   };
+  NATIVE_REF.set(wrapped, NATIVE_REF.get(ref) ?? ref);
+  return wrapped;
 }
 
 function wrapCollection(col) {
@@ -757,7 +760,7 @@ function wrapCollection(col) {
 export function readOnlyFirestore(db) {
   const wrapped = {
     collection(name) { return wrapCollection(db.collection(name)); },
-    getAll(...args) { return db.getAll(...args); },
+    getAll(...args) { return db.getAll(...args.map((arg) => NATIVE_REF.get(arg) ?? arg)); },
     ...writeBlockers(),
   };
   assertWriteBlocked(wrapped);

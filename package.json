@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "playwright test",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-happy-solar \"npx tsx --test tests/firestore-rules.test.ts\"",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-happy-solar \"tsx --test tests/firestore-rules.test.ts\"",
     "test:report": "playwright show-report",
     "setup-test": "node scripts/reset-data.js; node scripts/generate-test-users.js; node scripts/generate-test-leads.js",
     "test-assign": "node scripts/test-autoassign.js",
@@ -55,6 +55,7 @@
     "firebase-tools": "^15.34.0",
     "playwright": "^1.58.2",
     "tailwindcss": "^4.1.18",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

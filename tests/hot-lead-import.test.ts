@@ -441,6 +441,13 @@ describe('hot lead import', () => {
 
   it('matches the territory gate point-in-polygon on shared fixtures', () => {
     const square = box(43, -78, 43.2, -77);
+    const concave = [
+      { lat: 0, lng: 0 },
+      { lat: 0, lng: 4 },
+      { lat: 2, lng: 1 },
+      { lat: 4, lng: 4 },
+      { lat: 4, lng: 0 },
+    ];
     const fixtures = [
       { lat: 43.1, lng: -77.5, polygon: square },
       { lat: 43, lng: -77.5, polygon: square },
@@ -449,6 +456,8 @@ describe('hot lead import', () => {
       { lat: 43.1, lng: -77.5, polygon: [{ lat: 43, lng: -78 }, { lat: 43.2, lng: -77 }] },
       { lat: Number.NaN, lng: -77.5, polygon: square },
       { lat: 43.1, lng: Number.POSITIVE_INFINITY, polygon: square },
+      { lat: 2, lng: 0.5, polygon: concave },
+      { lat: 2, lng: 3.5, polygon: concave },
     ];
     for (const fixture of fixtures) {
       assert.equal(
@@ -459,6 +468,10 @@ describe('hot lead import', () => {
     }
     assert.equal(gateInside(43.1, -77.5, square), true);
     assert.equal(gateInside(43, -77.5, square), true);
+    assert.equal(insideTerritory(2, 0.5, concave), true);
+    assert.equal(gateInside(2, 0.5, concave), true);
+    assert.equal(insideTerritory(2, 3.5, concave), false);
+    assert.equal(gateInside(2, 3.5, concave), false);
   });
 
   it('counts territory pins without writing or leaking ids', async () => {
@@ -541,6 +554,27 @@ describe('hot lead import', () => {
     assert.equal(cachedTerritory.noCoords, 1);
     assert.equal(calls.gets, 2);
     assert.equal(calls.getAlls, 2);
+
+    const doubled = territoryFirestore(
+      [{ polygon: setterBox, userId: 'closer-1', archived: false }],
+      { 'closer-1': 'closer' },
+    );
+    const csv = [
+      'Opportunity ID,Address,stage,status',
+      'in-1,1 Inside Street Buffalo NY 14201,New,open',
+    ].join('\n');
+    const throughCli = await executeCli(['sheet.csv', '--territory-report'], {
+      env: {},
+      readFile: async () => csv,
+      territoryConnect: async () => readOnlyFirestore(doubled.api),
+      fetchBatch: async (text: string) => placedCensus(text),
+      throttle: async () => {},
+    });
+    assert.equal(throughCli.code, 0);
+    assert.equal(doubled.calls.getAlls, 1);
+    const doubledReport = throughCli.output as ImportReport;
+    assert.equal(doubledReport.territory?.ownersRead, 1);
+    assert.equal(doubledReport.territory?.insideByOwnerRole.closer, 1);
   });
 
   it('refuses more than 200 territories and blocks writes', async () => {
@@ -606,6 +640,12 @@ describe('hot lead import', () => {
   });
 
   it('writes the same hot lead payload as e850c8d, plus excludedStage', async () => {
+    const probe = trackingDb();
+    await probe.collection('leads').doc('lead-probe').set({ a: 1 });
+    await probe.collection('homeowners').doc('home-probe').update({ a: 1 });
+    assert.equal(probe.leadWrites, 1);
+    assert.equal(probe.homeownerWrites, 1);
+
     const rows = parseTable(readFileSync(FIXTURE, 'utf8'), 'sample.csv');
     const db = trackingDb();
     const created = await runImport({
@@ -736,6 +776,7 @@ function territoryFirestore(rows: Array<Record<string, unknown>>, users: Record<
     limits: [] as number[],
     fieldMasks: [] as string[][],
   };
+  const nativeRefs = new Set<object>();
   const api = {
     collection(name: string) {
       const query = {
@@ -748,7 +789,9 @@ function territoryFirestore(rows: Array<Record<string, unknown>>, users: Record<
           return query;
         },
         doc(id: string) {
-          return { id, path: `${name}/${id}` };
+          const ref = { id, path: `${name}/${id}` };
+          nativeRefs.add(ref);
+          return ref;
         },
         async get() {
           if (name !== 'territories') return { docs: [], size: 0 };
@@ -760,11 +803,18 @@ function territoryFirestore(rows: Array<Record<string, unknown>>, users: Record<
       return query;
     },
     async getAll(...args: unknown[]) {
+      const last = args[args.length - 1];
+      const hasMask = Boolean(last && typeof last === 'object' && 'fieldMask' in last);
+      const refs = (hasMask ? args.slice(0, -1) : args) as object[];
+      refs.forEach((ref, index) => {
+        if (!nativeRefs.has(ref)) {
+          throw new Error(`Element at index ${index} is not a valid DocumentReference.`);
+        }
+      });
       calls.getAlls += 1;
-      const mask = args[args.length - 1] as { fieldMask?: string[] };
+      const mask = (hasMask ? last : {}) as { fieldMask?: string[] };
       calls.fieldMasks.push(mask.fieldMask ?? []);
-      const refs = args.slice(0, -1) as Array<{ id: string }>;
-      return refs.map((ref) => {
+      return (refs as Array<{ id: string }>).map((ref) => {
         if (!Object.prototype.hasOwnProperty.call(users, ref.id)) return { exists: false, data: () => undefined };
         return { exists: true, id: ref.id, data: () => ({ role: users[ref.id] }) };
       });
@@ -799,11 +849,42 @@ function stamp(value: unknown): unknown {
 function trackingDb(seed: Record<string, Record<string, unknown>> = {}) {
   const docs = new Map(Object.entries(seed));
   const writes: Array<{ op: string; id: string; data: Record<string, unknown> }> = [];
-  return {
+  const counts = { leads: 0, homeowners: 0 };
+  function note(collection: string) {
+    if (collection === 'leads') counts.leads += 1;
+    if (collection === 'homeowners') counts.homeowners += 1;
+  }
+  const db = {
     docs,
     writes,
-    leadWrites: 0,
-    homeownerWrites: 0,
+    get leadWrites() { return counts.leads; },
+    get homeownerWrites() { return counts.homeowners; },
+    collection(name: string) {
+      const query = {
+        where() { return query; },
+        orderBy() { return query; },
+        limit(n: number) { return n >= 0 ? query : query; },
+        async get() { return []; },
+        doc(id: string) {
+          return {
+            async set(data: Record<string, unknown>) {
+              note(name);
+              writes.push({ op: 'set', id, data });
+            },
+            async update(data: Record<string, unknown>) {
+              note(name);
+              writes.push({ op: 'update', id, data });
+            },
+            async delete() { note(name); },
+            async create(data: Record<string, unknown>) {
+              note(name);
+              writes.push({ op: 'create', id, data });
+            },
+          };
+        },
+      };
+      return query;
+    },
     async get(id: string) {
       return docs.get(id) ?? null;
     },
@@ -819,21 +900,18 @@ function trackingDb(seed: Record<string, Record<string, unknown>> = {}) {
       writes.push({ op: 'retire', id, data: patch });
     },
     async homeownersNear() {
+      await db.collection('homeowners').limit(1).get();
       return [];
     },
     async leadPage() {
+      await db.collection('leads').limit(1).get();
       return [];
     },
     async listHotLeads() {
-      return [];
-    },
-    async writeLead() {
-      this.leadWrites += 1;
-    },
-    async writeHomeowner() {
-      this.homeownerWrites += 1;
+      return [...docs.entries()].map(([id, data]) => ({ id, hotStatus: data.hotStatus }));
     },
   };
+  return db;
 }
 
 function collectionSpy() {
