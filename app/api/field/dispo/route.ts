@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
+  FieldPath,
   FieldValue,
   Timestamp,
   type DocumentData,
@@ -74,6 +75,10 @@ function adaptDb(db: Firestore): DispoDb {
         where(field: string, op: string, value: string) {
           const native = col.where(field, op as FirebaseFirestore.WhereFilterOp, value);
           return asQuery(name, native, [{ field, op, value }], null);
+        },
+        cappedGet(n: number) {
+          const native = col.orderBy(FieldPath.documentId()).limit(n);
+          return asQuery(name, native, [], n);
         },
       };
     },
