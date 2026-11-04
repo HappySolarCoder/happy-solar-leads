@@ -4,6 +4,7 @@ import { collapseLegacyNotesQueue, compareQueuedDrafts } from "./draftQueue";
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
 import { absorbNotesText } from "./notesLimits";
 import { SERVER_DISPO_SLOW_RETRY_MS, splitCombinedDraft } from "./serverDispo";
+import { HOT_TERRITORY_RECOVERY_LABEL } from "@/app/hotLeads/copy";
 import { isHotLeadDraft } from "@/app/hotLeads/save";
 import { recordSyncEvent, reportInBackground, reportParked } from "./syncDiagnostics";
 import { SYNC_REASON } from "./syncReasons";
@@ -29,6 +30,35 @@ export type SyncOutboxDeps = {
   now?: () => number;
   random?: () => number;
 };
+
+export type TerritoryRecoveryRow = {
+  id: string;
+  label: typeof HOT_TERRITORY_RECOVERY_LABEL;
+  actions: readonly ["dismiss"];
+};
+
+/** Parked hot territory refusals. The only action is Dismiss. The draft is not sent again. */
+export function territoryRecoveryRows(
+  drafts: readonly {
+    id: string;
+    collection?: string;
+    kind?: string;
+    syncState?: string;
+    parkedReason?: string;
+  }[],
+): TerritoryRecoveryRow[] {
+  return drafts
+    .filter((row) =>
+      row.syncState === "parked"
+      && row.collection === "hotLeads"
+      && row.parkedReason === SYNC_REASON.outOfTerritory
+    )
+    .map((row) => ({
+      id: row.id,
+      label: HOT_TERRITORY_RECOVERY_LABEL,
+      actions: ["dismiss"] as const,
+    }));
+}
 
 function notesTooLongRow(m: PendingMutation): boolean {
   return m.kind === "notes" && m.parkedReason === SYNC_REASON.notesTooLong;

@@ -38,7 +38,7 @@ import { FeedbackSync } from "./VoiceFeedback";
 import { MOBILE_BUILD_LABEL } from '../_lib/startupDiagnostics';
 
 const EMPTY_LEADS: Lead[] = [];
-const MobileDataContext = createContext<ReturnType<
+export const MobileDataContext = createContext<ReturnType<
   typeof useSharedMobileData
 > | null>(null);
 

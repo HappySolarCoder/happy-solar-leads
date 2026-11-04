@@ -11,6 +11,8 @@ import { deliberateNotesClear, NOTES_CLEAR_UNAVAILABLE_MESSAGE, NOTES_MAX_CHARS,
 import { recordSyncEvent, reportInBackground, reportParked } from "./syncDiagnostics";
 import { ACTION_AT_FUTURE_MS, ACTION_AT_SERVER_LAG_MS, FIELD_DISPO_UNAVAILABLE, NOTES_ACTION_AT_RETRY_MESSAGE, PHONE_CLOCK_NOTICE, SYNC_REASON, type SyncReasonCode } from "./syncReasons";
 import type { PendingMutation } from "./types";
+import { hotDispoBlockMessage } from "@/app/hotLeads/copy";
+import { confirmHotServerPin, isDispoBlock, rollbackHotLead } from "@/app/hotLeads/model";
 import { HOT_CLAIM_PATH, HOT_LEAD_MISSING_NOTICE, HOT_LEAD_OLD_SERVER_NOTICE, HOT_LEAD_OWNED_MESSAGE, hotClaimBody, isHotLeadDraft } from "@/app/hotLeads/save";
 
 export { rebaseNotes } from "./notesRebase";
@@ -440,6 +442,7 @@ async function readJson(response: Response): Promise<{
   duplicate?: unknown;
   lead?: Lead;
   result?: unknown;
+  dispoBlock?: unknown;
   gps?: { outcome?: unknown };
 } | null> {
   try {
@@ -451,6 +454,7 @@ async function readJson(response: Response): Promise<{
       duplicate?: unknown;
       lead?: Lead;
       result?: unknown;
+      dispoBlock?: unknown;
       gps?: { outcome?: unknown };
     };
   } catch {
@@ -483,6 +487,18 @@ function unavailable(): Error {
 
 function routeError(message: string, status: number, reasonCode: SyncReasonCode, retryAfterMs?: number) {
   return Object.assign(Error(message), { status, reasonCode, ...(retryAfterMs == null ? {} : { retryAfterMs }) });
+}
+
+/** Contract v2. Only a hot write uses this. A leads 403 keeps its own message. */
+function hotOutOfTerritoryError(data: { reasonCode?: unknown; dispoBlock?: unknown } | null): Error | null {
+  if (knownReason(data?.reasonCode) !== SYNC_REASON.outOfTerritory) return null;
+  const block = isDispoBlock(data?.dispoBlock) ? data.dispoBlock : "outside_territory";
+  return routeError(hotDispoBlockMessage(block), 403, SYNC_REASON.outOfTerritory);
+}
+
+function isHotTerritoryDenial(error: unknown): boolean {
+  const row = error as { status?: number; reasonCode?: string };
+  return row?.status === 403 && row.reasonCode === SYNC_REASON.outOfTerritory;
 }
 
 export async function postFieldDispo(
@@ -698,6 +714,10 @@ export async function postFieldDispo(
   }
   if (response.status === 403) {
     const data = await readJson(response);
+    if (draft.collection === "hotLeads") {
+      const territory = hotOutOfTerritoryError(data);
+      if (territory) fail(territory);
+    }
     const reason = knownReason(data?.reasonCode) || SYNC_REASON.other;
     if (draft.kind === "notes") {
       fail(routeError(
@@ -975,19 +995,34 @@ function ownedHotMessage(name: unknown): string {
     : HOT_LEAD_OWNED_MESSAGE;
 }
 
-/** Claim, knock and notes for a 3PL lead. Never a direct leads, contact or photo write. */
+/**
+ * Claim, knock and notes for a 3PL lead. Never a direct leads, contact or photo write.
+ * A territory 403 is parked for good: the optimistic pin is rolled back and mode=one
+ * is fetched again. It is not held, retried, or rewritten onto leads.
+ */
 async function deliverHotLead(
   m: PendingMutation,
   user: User,
   deps: FieldDispoDeps,
 ): Promise<{ replayed: boolean; lead?: Lead; notice?: string }> {
-  if (m.kind === "claim") return postHotClaim(m, user, deps);
-  if (m.kind !== "knock" && m.kind !== "notes") {
-    throw routeError(HOT_LEAD_OLD_SERVER_NOTICE, 400, SYNC_REASON.invalidPayload);
-  }
   try {
-    return await postFieldDispo(m, user, deps);
+    if (m.kind === "claim") {
+      const claimed = await postHotClaim(m, user, deps);
+      confirmHotServerPin(m.leadId);
+      return claimed;
+    }
+    if (m.kind !== "knock" && m.kind !== "notes") {
+      throw routeError(HOT_LEAD_OLD_SERVER_NOTICE, 400, SYNC_REASON.invalidPayload);
+    }
+    const saved = await postFieldDispo(m, user, deps);
+    confirmHotServerPin(m.leadId);
+    return saved;
   } catch (error) {
+    if (isHotTerritoryDenial(error)) {
+      await rollbackHotLead(m.leadId);
+      throw error;
+    }
+    if (m.kind === "claim") throw error;
     const failure = error as Error & { status?: number; code?: string };
     const status = failure.status || 0;
     if (failure.code === "hot-leads-hold") throw failure;
@@ -1047,6 +1082,8 @@ async function postHotClaim(
     throw routeError("This 3PL lead could not be saved.", 409, reason || SYNC_REASON.other);
   }
   if (response.status === 403) {
+    const territory = hotOutOfTerritoryError(data);
+    if (territory) throw territory;
     const reason = knownReason(data?.reasonCode) || SYNC_REASON.other;
     throw routeError(
       reason === SYNC_REASON.ownedByOther ? ownedHotMessage((data as { claimedByName?: unknown } | null)?.claimedByName) : "The 3PL lead route denied this save.",

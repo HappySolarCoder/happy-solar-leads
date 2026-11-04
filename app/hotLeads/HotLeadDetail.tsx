@@ -5,12 +5,14 @@ import { DEFAULT_DISPOSITIONS, type Disposition } from "@/app/types/disposition"
 import type { User } from "@/app/types";
 import { getDispositionsAsync } from "@/app/utils/dispositions";
 import { useOptionalMobileData } from "@/app/mobile/_components/MobileDataProvider";
-import { DO_NOT_CALL_WARNING, hotCapabilities, hotLeadAfterDispo, hotLeadCallAllowed, noteHotDispo, type HotLeadPin } from "./model";
+import { hotLeadDetailState } from "./detailState";
+import { DO_NOT_CALL_WARNING, hotCapabilities, hotLeadAfterDispo, hotLeadCallAllowed, noteHotDispo, noteHotLocal, rememberServerHotPin, rememberServerHotPinIfAbsent, subscribeHotLeadDetail, type HotLeadPin } from "./model";
 import { stageHotKnock } from "./gps";
 import {
   HOT_LEAD_OLD_SERVER_NOTICE,
   HOT_LEAD_OWNED_MESSAGE,
   hotLeadParkNotice,
+  hotTerritoryParkNotice,
   queueHotClaim,
   queueHotKnock,
   queueHotNotes,
@@ -50,11 +52,24 @@ export function HotLeadDetail({
   const caps = hotCapabilities();
   const parked = hotLeadParkNotice(mobile?.field.drafts);
   const mine = !!user && pin.claimedBy === user.id;
-  const canRelease = canWrite && caps.claim && (mine || user?.role === "manager" || user?.role === "admin");
-  const canClaim = canWrite && caps.claim && !pin.claimedBy;
   const knocks = knockChoices(dispositions ?? loadedDispositions);
+  const access = hotLeadDetailState({
+    pin,
+    canWrite,
+    caps,
+    userId: user?.id,
+    role: user?.role,
+  });
+  const territoryNotice = access.message || hotTerritoryParkNotice(mobile?.field.drafts, pin.id);
+  const noCall = !hotLeadCallAllowed(pin);
 
   useEffect(() => { setPin(initial); setNotes(initial.notes || ""); }, [initial]);
+  useEffect(() => { rememberServerHotPinIfAbsent(initial); }, [initial]);
+  useEffect(() => subscribeHotLeadDetail(initial.id, (next) => {
+    setPin(next);
+    setNotes(next.notes || "");
+    setHistory(next.dispositionHistory || []);
+  }), [initial.id]);
   useEffect(() => {
     if (dispositions) return;
     let alive = true;
@@ -80,6 +95,7 @@ export function HotLeadDetail({
         fetcher: (url, init) => apiFetch(url, { headers: init.headers }),
       });
       if (!alive || !result.hotLead) return;
+      rememberServerHotPin(result.hotLead);
       setPin(result.hotLead);
       setHistory(result.hotLead.dispositionHistory || []);
     })();
@@ -93,7 +109,7 @@ export function HotLeadDetail({
   }
 
   async function runSave(makeDraft: () => ReturnType<typeof queueHotClaim>, after?: () => void) {
-    if (lock.current || !canWrite || !user) return;
+    if (lock.current || !canWrite || !user || access.viewOnly) return;
     lock.current = true;
     setBusy(true);
     setMessage("");
@@ -109,7 +125,7 @@ export function HotLeadDetail({
   }
 
   function knock(status: string, disposition: string) {
-    if (!caps.dispo) return;
+    if (!caps.dispo || access.viewOnly) return;
     const tappedAt = new Date();
     void runSave(() => {
       const draft = queueHotKnock({ user: user!, pin, draftId: crypto.randomUUID(), tappedAt, status, disposition });
@@ -120,9 +136,8 @@ export function HotLeadDetail({
     });
   }
 
-  const noCall = !hotLeadCallAllowed(pin);
   const body = (
-    <div className="space-y-4">
+    <div className="space-y-4" data-hot-view-only={access.viewOnly ? "true" : "false"}>
       <div className="flex items-center justify-between gap-2">
         <span className="flex flex-wrap items-center gap-2">
           <span className="inline-block rounded-full bg-[#FFF1E6] px-2 py-1 text-xs font-semibold text-[#E8590C]">3PL lead</span>
@@ -157,14 +172,22 @@ export function HotLeadDetail({
         {pin.claimedBy ? (mine ? "Claimed by you" : ownedCopy(pin)) : "Unclaimed"}
       </p>
       {parked ? <p role="status" className="text-sm font-semibold text-[#C53030]">{parked}</p> : null}
+      {territoryNotice ? <p role="status" className="text-sm font-semibold text-[#C53030]">{territoryNotice}</p> : null}
       {message ? <p role="status" className="text-sm font-semibold text-[#C53030]">{message}</p> : null}
-      {canWrite && caps.claim ? (
+      {access.showClaim || access.showRelease ? (
         <div className="flex gap-2">
-          {canClaim ? <button type="button" disabled={busy} onClick={() => void runSave(() => queueHotClaim({ user: user!, pin, draftId: crypto.randomUUID(), tappedAt: new Date(), action: "claim" }))}>Claim</button> : null}
-          {canRelease ? <button type="button" disabled={busy} onClick={() => void runSave(() => queueHotClaim({ user: user!, pin, draftId: crypto.randomUUID(), tappedAt: new Date(), action: "release" }))}>Release</button> : null}
+          {access.showClaim ? <button type="button" disabled={busy} onClick={() => void runSave(() => queueHotClaim({ user: user!, pin, draftId: crypto.randomUUID(), tappedAt: new Date(), action: "claim" }), () => {
+            const claimedAt = new Date().toISOString();
+            setPin({ ...pin, claimedBy: user!.id, claimedByName: user!.name, claimedAt });
+            noteHotLocal(pin.id, { claimedBy: user!.id, claimedByName: user!.name, claimedAt });
+          })}>Claim</button> : null}
+          {access.showRelease ? <button type="button" disabled={busy} onClick={() => void runSave(() => queueHotClaim({ user: user!, pin, draftId: crypto.randomUUID(), tappedAt: new Date(), action: "release" }), () => {
+            setPin({ ...pin, claimedBy: null, claimedByName: null, claimedAt: null });
+            noteHotLocal(pin.id, { claimedBy: null, claimedByName: null, claimedAt: null });
+          })}>Release</button> : null}
         </div>
       ) : null}
-      {canWrite && caps.dispo ? (
+      {access.showKnocks ? (
         <div className="flex flex-wrap gap-2" role="group" aria-label="3PL lead dispositions">
           {knocks.map((row) => (
             <button key={row.id} type="button" disabled={busy} onClick={() => knock(row.id, row.name)}>{row.name}</button>
@@ -173,9 +196,9 @@ export function HotLeadDetail({
       ) : null}
       <label className="block text-sm">
         Notes
-        <textarea aria-label="3PL lead notes" value={notes} readOnly={!canWrite} onChange={(event) => setNotes(event.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[#E2E8F0] px-3 py-2" />
+        <textarea aria-label="3PL lead notes" value={notes} readOnly={access.notesReadOnly} onChange={(event) => setNotes(event.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[#E2E8F0] px-3 py-2" />
       </label>
-      {canWrite ? <button
+      {access.showSave ? <button
         type="button"
         disabled={busy || !caps.dispo}
         onClick={() => void runSave(() => queueHotNotes({
@@ -186,7 +209,7 @@ export function HotLeadDetail({
           notes,
           baseNotes: pin.notes || "",
           clearNotes: notes === "" && (pin.notes || "") !== "",
-        }))}
+        }), () => { noteHotLocal(pin.id, { notes }); })}
       >
         Save 3PL lead notes
       </button> : null}

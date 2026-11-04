@@ -5,6 +5,8 @@ import {
   HOT_CURSOR_PAGE_CAP,
   HOT_LEAD_ID,
   HOT_PAGE_SIZE,
+  isDispoBlock,
+  rememberServerHotPin,
   type HotCapabilities,
   type HotContact,
   type HotHistoryEntry,
@@ -139,6 +141,13 @@ export function parseHotLeadPin(value: unknown): HotLeadPin | null {
   if (typeof row.gpsUnverifiedReason === "string") pin.gpsUnverifiedReason = row.gpsUnverifiedReason;
   if (row.testData === true) pin.testData = true;
   if (row.doNotCall === true) pin.doNotCall = true;
+  if (row.canDispo === false) {
+    pin.canDispo = false;
+    pin.dispoBlock = isDispoBlock(row.dispoBlock) ? row.dispoBlock : "outside_territory";
+  } else if (row.canDispo === true) {
+    pin.canDispo = true;
+    pin.dispoBlock = null;
+  }
   return pin;
 }
 
@@ -212,6 +221,7 @@ export async function fetchHotLeadMap(input: {
         const pin = parseHotLeadPin(row);
         if (!pin || seen.has(pin.id) || pin.testData === true) continue;
         seen.add(pin.id);
+        rememberServerHotPin(pin);
         pins.push(pin);
       }
       const next = data.nextCursor;
@@ -268,7 +278,9 @@ export async function fetchHotLeadDetail(input: {
         notes: text(row?.notes),
       };
     });
-    return { hotLead: { ...pin, dispositionHistory }, error: "" };
+    const hotLead = { ...pin, dispositionHistory };
+    rememberServerHotPin(hotLead);
+    return { hotLead, error: "" };
   } catch {
     return { hotLead: null, error: "" };
   }
