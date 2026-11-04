@@ -1,0 +1,1100 @@
+[
+  {
+    "name": "leads-knock",
+    "request": {
+      "draftId": "draft-knock",
+      "leadId": "lead-1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "not-home",
+      "disposition": "Not Home",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      }
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-knock",
+        "result": "applied",
+        "duplicate": false,
+        "gps": {
+          "reasonCode": null,
+          "outcome": null,
+          "gpsVerified": true,
+          "gpsDistanceM": 0
+        }
+      },
+      "patches": [
+        {
+          "path": "leads/lead-1",
+          "patch": {
+            "dispositionHistory": [
+              {
+                "disposition": "Not Home",
+                "timestamp": {
+                  "__stamp": 1792945864120
+                },
+                "userId": "uid-closer",
+                "userName": "Jane Rep",
+                "gpsFlag": {
+                  "gpsVerified": true,
+                  "gpsDistanceM": 0
+                }
+              }
+            ],
+            "status": "not-home",
+            "disposition": "Not Home",
+            "dispositionedAt": {
+              "__stamp": 1792945864120
+            },
+            "gpsVerified": true,
+            "gpsUnverifiedReason": {
+              "marker": "delete"
+            },
+            "gpsDistanceM": 0,
+            "knockGpsLat": 43.1,
+            "knockGpsLng": -77.6,
+            "knockGpsAccuracy": 8,
+            "knockGpsTimestamp": {
+              "__stamp": 1792945864120
+            },
+            "knockDistanceFromAddress": 0
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-knock",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-knock",
+            "leadId": "lead-1",
+            "kind": "knock",
+            "collection": "leads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-knock",
+              "result": "applied",
+              "duplicate": false,
+              "gps": {
+                "reasonCode": null,
+                "outcome": null,
+                "gpsVerified": true,
+                "gpsDistanceM": 0
+              }
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "leads-dispo-status",
+    "request": {
+      "draftId": "draft-status",
+      "leadId": "lead-1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "interested",
+      "disposition": "Interested",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      }
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-status",
+        "result": "applied",
+        "duplicate": false,
+        "gps": {
+          "reasonCode": null,
+          "outcome": null,
+          "gpsVerified": true,
+          "gpsDistanceM": 0
+        }
+      },
+      "patches": [
+        {
+          "path": "leads/lead-1",
+          "patch": {
+            "dispositionHistory": [
+              {
+                "disposition": "Interested",
+                "timestamp": {
+                  "__stamp": 1792945864120
+                },
+                "userId": "uid-closer",
+                "userName": "Jane Rep",
+                "gpsFlag": {
+                  "gpsVerified": true,
+                  "gpsDistanceM": 0
+                }
+              }
+            ],
+            "status": "interested",
+            "disposition": "Interested",
+            "dispositionedAt": {
+              "__stamp": 1792945864120
+            },
+            "gpsVerified": true,
+            "gpsUnverifiedReason": {
+              "marker": "delete"
+            },
+            "gpsDistanceM": 0,
+            "knockGpsLat": 43.1,
+            "knockGpsLng": -77.6,
+            "knockGpsAccuracy": 8,
+            "knockGpsTimestamp": {
+              "__stamp": 1792945864120
+            },
+            "knockDistanceFromAddress": 0
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-status",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-status",
+            "leadId": "lead-1",
+            "kind": "knock",
+            "collection": "leads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-status",
+              "result": "applied",
+              "duplicate": false,
+              "gps": {
+                "reasonCode": null,
+                "outcome": null,
+                "gpsVerified": true,
+                "gpsDistanceM": 0
+              }
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "leads-notes",
+    "request": {
+      "draftId": "draft-notes",
+      "leadId": "lead-1",
+      "kind": "notes",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "notes": "new note",
+      "baseNotes": "server copy"
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-notes",
+        "result": "applied",
+        "duplicate": false
+      },
+      "patches": [
+        {
+          "path": "leads/lead-1",
+          "patch": {
+            "notes": "new note"
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-notes",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-notes",
+            "leadId": "lead-1",
+            "kind": "notes",
+            "collection": "leads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-notes",
+              "result": "applied",
+              "duplicate": false
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "leads-go-back",
+    "request": {
+      "draftId": "draft-goback",
+      "leadId": "lead-1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "not-home",
+      "disposition": "Not Home",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      },
+      "goBack": {
+        "scheduledDate": "2026-10-28T00:00:00.000Z",
+        "scheduledTime": "14:30",
+        "notes": "After 5"
+      }
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-goback",
+        "result": "applied",
+        "duplicate": false,
+        "gps": {
+          "reasonCode": null,
+          "outcome": null,
+          "gpsVerified": true,
+          "gpsDistanceM": 0
+        }
+      },
+      "patches": [
+        {
+          "path": "leads/lead-1",
+          "patch": {
+            "dispositionHistory": [
+              {
+                "disposition": "Not Home",
+                "timestamp": {
+                  "__stamp": 1792945864120
+                },
+                "userId": "uid-closer",
+                "userName": "Jane Rep",
+                "gpsFlag": {
+                  "gpsVerified": true,
+                  "gpsDistanceM": 0
+                }
+              }
+            ],
+            "status": "not-home",
+            "disposition": "Not Home",
+            "dispositionedAt": {
+              "__stamp": 1792945864120
+            },
+            "gpsVerified": true,
+            "gpsUnverifiedReason": {
+              "marker": "delete"
+            },
+            "gpsDistanceM": 0,
+            "knockGpsLat": 43.1,
+            "knockGpsLng": -77.6,
+            "knockGpsAccuracy": 8,
+            "knockGpsTimestamp": {
+              "__stamp": 1792945864120
+            },
+            "knockDistanceFromAddress": 0,
+            "goBackScheduledDate": {
+              "__stamp": 1793145600000
+            },
+            "goBackScheduledTime": "14:30",
+            "goBackNotes": "After 5",
+            "goBackScheduledBy": "uid-closer"
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-goback",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-goback",
+            "leadId": "lead-1",
+            "kind": "knock",
+            "collection": "leads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-goback",
+              "result": "applied",
+              "duplicate": false,
+              "gps": {
+                "reasonCode": null,
+                "outcome": null,
+                "gpsVerified": true,
+                "gpsDistanceM": 0
+              }
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "leads-objection",
+    "request": {
+      "draftId": "draft-objection",
+      "leadId": "lead-1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "not-home",
+      "disposition": "Not Home",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      },
+      "objection": {
+        "type": "need-to-think",
+        "notes": "call friday"
+      }
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-objection",
+        "result": "applied",
+        "duplicate": false,
+        "gps": {
+          "reasonCode": null,
+          "outcome": null,
+          "gpsVerified": true,
+          "gpsDistanceM": 0
+        }
+      },
+      "patches": [
+        {
+          "path": "leads/lead-1",
+          "patch": {
+            "dispositionHistory": [
+              {
+                "disposition": "Not Home",
+                "timestamp": {
+                  "__stamp": 1792945864120
+                },
+                "userId": "uid-closer",
+                "userName": "Jane Rep",
+                "gpsFlag": {
+                  "gpsVerified": true,
+                  "gpsDistanceM": 0
+                }
+              }
+            ],
+            "status": "not-home",
+            "disposition": "Not Home",
+            "dispositionedAt": {
+              "__stamp": 1792945864120
+            },
+            "gpsVerified": true,
+            "gpsUnverifiedReason": {
+              "marker": "delete"
+            },
+            "gpsDistanceM": 0,
+            "knockGpsLat": 43.1,
+            "knockGpsLng": -77.6,
+            "knockGpsAccuracy": 8,
+            "knockGpsTimestamp": {
+              "__stamp": 1792945864120
+            },
+            "knockDistanceFromAddress": 0,
+            "objectionType": "need-to-think",
+            "objectionNotes": "call friday",
+            "objectionRecordedAt": {
+              "__stamp": 1792945864120
+            },
+            "objectionRecordedBy": "uid-closer"
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-objection",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-objection",
+            "leadId": "lead-1",
+            "kind": "knock",
+            "collection": "leads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-objection",
+              "result": "applied",
+              "duplicate": false,
+              "gps": {
+                "reasonCode": null,
+                "outcome": null,
+                "gpsVerified": true,
+                "gpsDistanceM": 0
+              }
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "leads-contact-save",
+    "request": {
+      "draftId": "draft-knock",
+      "leadId": "lead-1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "not-home",
+      "disposition": "Not Home",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      },
+      "phone": "5550100",
+      "email": "a@b.c"
+    },
+    "outcome": {
+      "status": 400,
+      "body": {
+        "ok": false,
+        "error": "invalid_payload",
+        "reasonCode": "invalid_payload",
+        "field": "phone"
+      },
+      "patches": [],
+      "creates": []
+    }
+  },
+  {
+    "name": "hot-knock",
+    "request": {
+      "draftId": "draft-knock",
+      "leadId": "ghl_opp1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "not-home",
+      "disposition": "Not Home",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      },
+      "collection": "hotLeads"
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-knock",
+        "result": "applied",
+        "duplicate": false,
+        "gps": {
+          "reasonCode": null,
+          "outcome": null,
+          "gpsVerified": true,
+          "gpsDistanceM": 0
+        }
+      },
+      "patches": [
+        {
+          "path": "hotLeads/ghl_opp1",
+          "patch": {
+            "dispositionHistory": [
+              {
+                "disposition": "Not Home",
+                "timestamp": {
+                  "__stamp": 1792945864120
+                },
+                "userId": "uid-closer",
+                "userName": "Jane Rep",
+                "gpsFlag": {
+                  "gpsVerified": true,
+                  "gpsDistanceM": 0
+                }
+              }
+            ],
+            "status": "not-home",
+            "disposition": "Not Home",
+            "dispositionedAt": {
+              "__stamp": 1792945864120
+            },
+            "dispositionedBy": "uid-closer",
+            "gpsVerified": true,
+            "gpsUnverifiedReason": {
+              "marker": "delete"
+            },
+            "gpsDistanceM": 0,
+            "hotStatus": "worked",
+            "updatedAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-knock",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-knock",
+            "leadId": "ghl_opp1",
+            "kind": "knock",
+            "collection": "hotLeads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-knock",
+              "result": "applied",
+              "duplicate": false,
+              "gps": {
+                "reasonCode": null,
+                "outcome": null,
+                "gpsVerified": true,
+                "gpsDistanceM": 0
+              }
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "hot-dispo-status",
+    "request": {
+      "draftId": "draft-status",
+      "leadId": "ghl_opp1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "interested",
+      "disposition": "Interested",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      },
+      "collection": "hotLeads"
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-status",
+        "result": "applied",
+        "duplicate": false,
+        "gps": {
+          "reasonCode": null,
+          "outcome": null,
+          "gpsVerified": true,
+          "gpsDistanceM": 0
+        }
+      },
+      "patches": [
+        {
+          "path": "hotLeads/ghl_opp1",
+          "patch": {
+            "dispositionHistory": [
+              {
+                "disposition": "Interested",
+                "timestamp": {
+                  "__stamp": 1792945864120
+                },
+                "userId": "uid-closer",
+                "userName": "Jane Rep",
+                "gpsFlag": {
+                  "gpsVerified": true,
+                  "gpsDistanceM": 0
+                }
+              }
+            ],
+            "status": "interested",
+            "disposition": "Interested",
+            "dispositionedAt": {
+              "__stamp": 1792945864120
+            },
+            "dispositionedBy": "uid-closer",
+            "gpsVerified": true,
+            "gpsUnverifiedReason": {
+              "marker": "delete"
+            },
+            "gpsDistanceM": 0,
+            "hotStatus": "worked",
+            "updatedAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-status",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-status",
+            "leadId": "ghl_opp1",
+            "kind": "knock",
+            "collection": "hotLeads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-status",
+              "result": "applied",
+              "duplicate": false,
+              "gps": {
+                "reasonCode": null,
+                "outcome": null,
+                "gpsVerified": true,
+                "gpsDistanceM": 0
+              }
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "hot-notes",
+    "request": {
+      "draftId": "draft-notes",
+      "leadId": "ghl_opp1",
+      "kind": "notes",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "collection": "hotLeads",
+      "notes": "new note",
+      "baseNotes": "server copy"
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-notes",
+        "result": "applied",
+        "duplicate": false
+      },
+      "patches": [
+        {
+          "path": "hotLeads/ghl_opp1",
+          "patch": {
+            "notes": "new note",
+            "updatedAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-notes",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-notes",
+            "leadId": "ghl_opp1",
+            "kind": "notes",
+            "collection": "hotLeads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-notes",
+              "result": "applied",
+              "duplicate": false
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "hot-go-back",
+    "request": {
+      "draftId": "draft-goback",
+      "leadId": "ghl_opp1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "not-home",
+      "disposition": "Not Home",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      },
+      "goBack": {
+        "scheduledDate": "2026-10-28T00:00:00.000Z",
+        "scheduledTime": "14:30",
+        "notes": "After 5"
+      },
+      "collection": "hotLeads"
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-goback",
+        "result": "applied",
+        "duplicate": false,
+        "gps": {
+          "reasonCode": null,
+          "outcome": null,
+          "gpsVerified": true,
+          "gpsDistanceM": 0
+        }
+      },
+      "patches": [
+        {
+          "path": "hotLeads/ghl_opp1",
+          "patch": {
+            "dispositionHistory": [
+              {
+                "disposition": "Not Home",
+                "timestamp": {
+                  "__stamp": 1792945864120
+                },
+                "userId": "uid-closer",
+                "userName": "Jane Rep",
+                "gpsFlag": {
+                  "gpsVerified": true,
+                  "gpsDistanceM": 0
+                }
+              }
+            ],
+            "status": "not-home",
+            "disposition": "Not Home",
+            "dispositionedAt": {
+              "__stamp": 1792945864120
+            },
+            "dispositionedBy": "uid-closer",
+            "gpsVerified": true,
+            "gpsUnverifiedReason": {
+              "marker": "delete"
+            },
+            "gpsDistanceM": 0,
+            "hotStatus": "worked",
+            "updatedAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-goback",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-goback",
+            "leadId": "ghl_opp1",
+            "kind": "knock",
+            "collection": "hotLeads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-goback",
+              "result": "applied",
+              "duplicate": false,
+              "gps": {
+                "reasonCode": null,
+                "outcome": null,
+                "gpsVerified": true,
+                "gpsDistanceM": 0
+              }
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "hot-objection",
+    "request": {
+      "draftId": "draft-objection",
+      "leadId": "ghl_opp1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "not-home",
+      "disposition": "Not Home",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      },
+      "objection": {
+        "type": "need-to-think",
+        "notes": "call friday"
+      },
+      "collection": "hotLeads"
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-objection",
+        "result": "applied",
+        "duplicate": false,
+        "gps": {
+          "reasonCode": null,
+          "outcome": null,
+          "gpsVerified": true,
+          "gpsDistanceM": 0
+        }
+      },
+      "patches": [
+        {
+          "path": "hotLeads/ghl_opp1",
+          "patch": {
+            "dispositionHistory": [
+              {
+                "disposition": "Not Home",
+                "timestamp": {
+                  "__stamp": 1792945864120
+                },
+                "userId": "uid-closer",
+                "userName": "Jane Rep",
+                "gpsFlag": {
+                  "gpsVerified": true,
+                  "gpsDistanceM": 0
+                }
+              }
+            ],
+            "status": "not-home",
+            "disposition": "Not Home",
+            "dispositionedAt": {
+              "__stamp": 1792945864120
+            },
+            "dispositionedBy": "uid-closer",
+            "gpsVerified": true,
+            "gpsUnverifiedReason": {
+              "marker": "delete"
+            },
+            "gpsDistanceM": 0,
+            "hotStatus": "worked",
+            "updatedAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-objection",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-objection",
+            "leadId": "ghl_opp1",
+            "kind": "knock",
+            "collection": "hotLeads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-objection",
+              "result": "applied",
+              "duplicate": false,
+              "gps": {
+                "reasonCode": null,
+                "outcome": null,
+                "gpsVerified": true,
+                "gpsDistanceM": 0
+              }
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "hot-contact-save",
+    "request": {
+      "draftId": "draft-knock",
+      "leadId": "ghl_opp1",
+      "kind": "knock",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "status": "not-home",
+      "disposition": "Not Home",
+      "userName": "Jane Rep",
+      "gps": {
+        "lat": 43.1,
+        "lng": -77.6,
+        "accuracyM": 8,
+        "capturedAt": "2026-10-25T16:31:04.120Z"
+      },
+      "phone": "5550100",
+      "collection": "hotLeads"
+    },
+    "outcome": {
+      "status": 400,
+      "body": {
+        "ok": false,
+        "error": "invalid_payload",
+        "reasonCode": "invalid_payload",
+        "field": "phone"
+      },
+      "patches": [],
+      "creates": []
+    }
+  },
+  {
+    "name": "hot-claim",
+    "request": {
+      "draftId": "draft-claim",
+      "hotLeadId": "ghl_opp1",
+      "action": "claim",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "userName": "Jane Rep"
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-claim",
+        "result": "applied",
+        "duplicate": false,
+        "claimedBy": "uid-closer"
+      },
+      "patches": [
+        {
+          "path": "hotLeads/ghl_opp1",
+          "patch": {
+            "claimedBy": "uid-closer",
+            "claimedByName": "Jane Rep",
+            "claimedAt": {
+              "__stamp": 1792945864120
+            },
+            "updatedAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-claim",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-claim",
+            "leadId": "ghl_opp1",
+            "kind": "claim",
+            "collection": "hotLeads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-claim",
+              "result": "applied",
+              "duplicate": false,
+              "claimedBy": "uid-closer"
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "hot-release",
+    "request": {
+      "draftId": "draft-release",
+      "hotLeadId": "ghl_opp1",
+      "action": "release",
+      "actionAt": "2026-10-25T16:31:04.120Z",
+      "userName": "Jane Rep"
+    },
+    "outcome": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "draftId": "draft-release",
+        "result": "applied",
+        "duplicate": false,
+        "claimedBy": null
+      },
+      "patches": [
+        {
+          "path": "hotLeads/ghl_opp1",
+          "patch": {
+            "claimedBy": null,
+            "claimedByName": null,
+            "claimedAt": null,
+            "updatedAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ],
+      "creates": [
+        {
+          "path": "fieldDispoReceipts/uid-closer_draft-release",
+          "data": {
+            "uid": "uid-closer",
+            "draftId": "draft-release",
+            "leadId": "ghl_opp1",
+            "kind": "claim",
+            "collection": "hotLeads",
+            "result": "applied",
+            "response": {
+              "ok": true,
+              "draftId": "draft-release",
+              "result": "applied",
+              "duplicate": false,
+              "claimedBy": null
+            },
+            "createdAt": {
+              "marker": "server-timestamp"
+            }
+          }
+        }
+      ]
+    }
+  }
+]

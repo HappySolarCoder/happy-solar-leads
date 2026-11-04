@@ -18,6 +18,15 @@ import { isTestAccount } from './discordNotification';
 import { FIELD_REASON_CODES, type FieldReasonCode } from './fieldReasonCodes';
 import { isHotLeadId, isHotLeadRole } from './hotLeadContract';
 import { HOT_LEAD_DISPOSITION_READ_LIMIT, hotStatusAfterKnock } from './hotLeadStatus';
+import {
+  countedPolygons,
+  loadTerritories,
+  pinTerritoryGate,
+  polygonOf,
+  TERRITORY_QUERY_LIMIT,
+} from './territoryGate';
+
+export { countedPolygons, loadTerritories, polygonOf, TERRITORY_QUERY_LIMIT };
 
 const KNOWN_REASONS: ReadonlySet<string> = new Set(FIELD_REASON_CODES);
 import {
@@ -33,7 +42,6 @@ export const FIELD_DISPO_MAX_BYTES = 32 * 1024;
 /** kind:notes may be larger. Knock and other dispos stay at FIELD_DISPO_MAX_BYTES. */
 export const FIELD_DISPO_NOTES_BODY_MAX = 256 * 1024;
 const NOTES_TEXT_MAX = 100_000;
-export const TERRITORY_QUERY_LIMIT = 200;
 export const HISTORY_CAP = 500;
 const RECEIPT_RESPONSE_MAX_BYTES = 2048;
 const ACTION_PAST_MS = 30 * 24 * 60 * 60 * 1000;
@@ -614,18 +622,6 @@ function leadCoords(lead: Record<string, unknown>): LatLng | null {
   return finitePoint(lead.lat, lead.lng);
 }
 
-function polygonOf(value: unknown): Array<{ lat: number; lng: number }> | null {
-  if (!Array.isArray(value) || value.length < 3) return null;
-  const points: Array<{ lat: number; lng: number }> = [];
-  for (const point of value) {
-    if (!isPlainObject(point)) return null;
-    if (typeof point.lat !== 'number' || typeof point.lng !== 'number') return null;
-    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return null;
-    points.push({ lat: point.lat, lng: point.lng });
-  }
-  return points;
-}
-
 /**
  * territoryId ownership follows firestore.rules leadInMyTerritory().
  * One direct read of territories/{lead.territoryId}. That predicate does not
@@ -658,29 +654,6 @@ function insideCallerPolygon(docs: DispoSnap[], lat: number, lng: number, uid: s
     if (insideTerritory(lat, lng, polygon)) return true;
   }
   return false;
-}
-
-async function loadTerritories(
-  db: DispoDb,
-  tx: DispoTransaction,
-  uid: string,
-): Promise<{ docs: DispoSnap[]; truncated: boolean }> {
-  const query = db.collection('territories').where('userId', '==', uid).limit(TERRITORY_QUERY_LIMIT);
-  const snap = await tx.getQuery(query);
-  const truncated = snap.docs.length >= TERRITORY_QUERY_LIMIT;
-  if (truncated) console.log('[field/dispo] territories_truncated 1');
-  return { docs: snap.docs, truncated };
-}
-
-function countedPolygons(docs: DispoSnap[], uid: string): Array<Array<{ lat: number; lng: number }>> {
-  const polygons: Array<Array<{ lat: number; lng: number }>> = [];
-  for (const doc of docs) {
-    const data = doc.data() ?? {};
-    if (data.userId !== uid || data.archived) continue;
-    const polygon = polygonOf(data.polygon);
-    if (polygon) polygons.push(polygon);
-  }
-  return polygons;
 }
 
 function placeName(doc: Record<string, unknown>, streetKey: string, fallbackKey: string): string {
@@ -1140,8 +1113,9 @@ function applyKnock(
 }
 
 /**
- * Hot leads use the role set in hotLeadContract. There is no
- * territory check and no claim check. GPS is a flag, never a block.
+ * Hot leads use the role set in hotLeadContract. GPS is a flag, never a block.
+ * The pin territory gate runs after the receipt replay, the role check, and
+ * the 404, and before any write. A stored receipt still replays.
  * Writes stay off ghl, contacts, coordinates, geo, import, and the link ids.
  */
 async function applyHotLead(
@@ -1166,6 +1140,23 @@ async function applyHotLead(
   const lead = leadSnap.data() ?? {};
   if (lead.testData === true) {
     return { status: 404, body: { ok: false, error: 'not_found', reasonCode: 'not_found' } };
+  }
+  const gate = await pinTerritoryGate(input.db, input.tx, {
+    uid: input.uid,
+    role: input.role,
+    lat: lead.lat,
+    lng: lead.lng,
+  });
+  if (!gate.allowed) {
+    return {
+      status: 403,
+      body: {
+        ok: false,
+        error: 'forbidden',
+        reasonCode: 'out_of_territory',
+        dispoBlock: gate.dispoBlock,
+      },
+    };
   }
   if (input.draft.kind === 'notes') {
     return applyNotes(input, leadRef, receiptRef, lead, { updatedAt: input.deps.serverTimestamp() });

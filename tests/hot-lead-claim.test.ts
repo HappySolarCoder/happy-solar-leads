@@ -6,6 +6,22 @@ import { handleHotLeadClaim, type ClaimDb, type ClaimSnap, type ClaimTx } from '
 const NOW = Date.parse('2026-10-25T16:31:04.120Z');
 const ACTION = '2026-10-25T16:31:04.120Z';
 const SERVER_TS = { marker: 'server-timestamp' };
+const TERRITORY_BOX = [
+  { lat: 43.0, lng: -77.7 },
+  { lat: 43.0, lng: -77.5 },
+  { lat: 43.2, lng: -77.5 },
+  { lat: 43.2, lng: -77.7 },
+];
+
+function territoriesOf(db: Mem) {
+  return async (_tx: ClaimTx, uid: string) => {
+    const prefix = 'territories/';
+    const docs = [...db.docs.entries()]
+      .filter(([path, data]) => path.startsWith(prefix) && data.userId === uid)
+      .map(([path, data]) => ({ id: path.slice(prefix.length), data }));
+    return { docs: docs.slice(0, 200), truncated: docs.length >= 200 };
+  };
+}
 
 class Stamp {
   constructor(readonly ms: number) {}
@@ -70,6 +86,7 @@ function harness(options: { role?: string; uid?: string; user?: Record<string, u
   const uid = options.uid ?? 'uid-closer';
   const role = options.role ?? 'closer';
   db.put(`users/${uid}`, options.user ?? user(role));
+  db.put(`territories/${uid}-box`, { userId: uid, archived: false, polygon: TERRITORY_BOX });
   if (options.lead !== null) {
     db.put('hotLeads/ghl_opp1', options.lead ?? {
       lat: 43.1,
@@ -91,6 +108,7 @@ function harness(options: { role?: string; uid?: string; user?: Record<string, u
           verifyIdToken: async () => ({ uid }),
           getUser: async () => ({ exists: true, data: db.docs.get(`users/${uid}`) }),
           db,
+          territories: territoriesOf(db),
           now: () => NOW,
           Timestamp: Stamp,
           serverTimestamp: () => SERVER_TS,
@@ -145,6 +163,8 @@ describe('POST /api/hot-leads/claim', () => {
     console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
     try {
       const owned = harness({ lead: {
+        lat: 43.1,
+        lng: -77.6,
         claimedBy: 'other-rep',
         claimedByName: 'Other Rep',
         notes: 'keep',
@@ -174,7 +194,7 @@ describe('POST /api/hot-leads/claim', () => {
       assert.equal(manager.db.docs.get('hotLeads/ghl_opp1')?.claimedAt, null);
       assert.equal(manager.db.docs.get('hotLeads/ghl_opp1')?.notes, 'keep');
 
-      const mine = harness({ lead: { claimedBy: 'uid-closer', claimedByName: 'Jane Rep', notes: 'keep' } });
+      const mine = harness({ lead: { lat: 43.1, lng: -77.6, claimedBy: 'uid-closer', claimedByName: 'Jane Rep', notes: 'keep' } });
       const self = await mine.run(claim({ draftId: 'draft-self', action: 'release' }));
       assert.equal(self.status, 200, JSON.stringify(self.body));
       assert.equal(mine.db.docs.get('hotLeads/ghl_opp1')?.claimedBy, null);
