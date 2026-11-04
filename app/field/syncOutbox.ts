@@ -4,6 +4,7 @@ import { collapseLegacyNotesQueue, compareQueuedDrafts } from "./draftQueue";
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
 import { absorbNotesText } from "./notesLimits";
 import { SERVER_DISPO_SLOW_RETRY_MS, splitCombinedDraft } from "./serverDispo";
+import { isHotLeadDraft } from "@/app/hotLeads/save";
 import { recordSyncEvent, reportInBackground, reportParked } from "./syncDiagnostics";
 import { SYNC_REASON } from "./syncReasons";
 import type { PendingMutation } from "./types";
@@ -147,7 +148,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       if (notesTooLongRow(m)) return false;
       const state = effectiveSyncState(m);
       const due = (m.nextAttemptAt ?? 0) > now();
-      return due && (state === "retry" || (state === "queued" && m.routeHold === "field-dispo"));
+      return due && (state === "retry" || (state === "queued" && (m.routeHold === "field-dispo" || m.routeHold === "hot-leads")));
     };
     const deferred = new Set<string>();
     const acceptedIds = new Set<string>();
@@ -321,7 +322,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
             syncState: "queued",
             attempts: (current.attempts ?? 0) + 1,
             nextAttemptAt: now() + SERVER_DISPO_SLOW_RETRY_MS,
-            routeHold: "field-dispo",
+            routeHold: isHotLeadDraft(current) ? "hot-leads" : "field-dispo",
             lastError: error.message,
           };
           delete next.blocked;

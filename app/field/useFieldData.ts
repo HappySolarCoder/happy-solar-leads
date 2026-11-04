@@ -18,6 +18,7 @@ import { acceptDisposition, collapseLegacyNotesQueue, supersededNotesIds } from 
 import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
 import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
+import { isHotLeadDraft } from '@/app/hotLeads/save';
 import { enqueueDirectSave } from './enqueueDirectSave';
 import { CONTACT_NOT_SENT_MESSAGE, assertContactReadyForSend, contactDraftBlocksSendInfo, parkContactDeniedDrafts, sendInfoMayWriteContact } from './sendInfoGate';
 import { cachedTerritoryIds } from '@/app/hooks/useTeamAreasOverlay';
@@ -191,6 +192,12 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         send: async m => {
           const actor = latest.current.user;
           if (!actor || actor.id !== uid) throw Error('Sign in again to sync your work.');
+          if (isHotLeadDraft(m)) {
+            return deliverFieldDispo(m, actor, {
+              getToken: async () => (await auth?.currentUser?.getIdToken()) || '',
+              persistDraft: putDraft,
+            });
+          }
           const result = DIRECT_MOBILE_WRITES
             ? await deliverFieldDispo(m, actor, {
               getToken: async () => (await auth?.currentUser?.getIdToken()) || '',
