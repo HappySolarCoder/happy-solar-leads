@@ -18,6 +18,12 @@ const ACTION = '2026-10-25T16:31:04.120Z';
 const LATER = new Date(NOW + 5 * 60 * 1000).toISOString();
 const SERVER_TS = { marker: 'server-timestamp' };
 const DELETED = { marker: 'delete' };
+const TERRITORY_BOX = [
+  { lat: 43.0, lng: -77.7 },
+  { lat: 43.0, lng: -77.5 },
+  { lat: 43.2, lng: -77.5 },
+  { lat: 43.2, lng: -77.7 },
+];
 
 class Stamp {
   constructor(readonly ms: number) {}
@@ -135,6 +141,7 @@ function harness(options: {
   const uid = options.uid ?? 'uid-closer';
   const role = options.role ?? 'closer';
   db.put(`users/${uid}`, options.user ?? approved(role));
+  db.put(`territories/${uid}-box`, { userId: uid, archived: false, polygon: TERRITORY_BOX });
   const leadId = options.leadId ?? 'ghl_opp1';
   if (options.lead !== null) {
     db.put(`hotLeads/${leadId}`, options.lead ?? {
@@ -234,7 +241,7 @@ describe('hot lead dispo', () => {
     assert.equal(doc.doNotCall, true);
     assert.equal(doc.lat, 43.1);
     assert.deepEqual(doc.geo, { source: 'census' });
-    assert.equal(open.db.ops.includes('territories'), false);
+    assert.equal(open.db.ops.filter((name) => name === 'territories').length, 1);
     assert.equal(open.db.ops.includes('leads'), false);
     assert.equal(open.db.ops.includes('homeowners'), false);
     assert.deepEqual(open.db.caps, [HOT_LEAD_DISPOSITION_READ_LIMIT]);
@@ -248,7 +255,7 @@ describe('hot lead dispo', () => {
     const claimed = harness({ lead: { lat: 43.1, lng: -77.6, claimedBy: 'other-rep', hotStatus: 'active' } });
     const byCloser = await claimed.run(knock({ draftId: 'draft-claimed' }));
     assert.equal(byCloser.status, 200, JSON.stringify(byCloser.body));
-    assert.equal(claimed.db.ops.includes('territories'), false);
+    assert.equal(claimed.db.ops.filter((name) => name === 'territories').length, 1);
 
     const manager = harness({
       role: 'manager',

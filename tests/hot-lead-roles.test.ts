@@ -141,6 +141,15 @@ function runDispo(role: string) {
   const db = new DispoMem();
   const uid = `uid-${role}`;
   db.put(`users/${uid}`, profile(role).user);
+  db.put(`territories/${uid}-box`, {
+    userId: uid,
+    polygon: [
+      { lat: 43.0, lng: -77.7 },
+      { lat: 43.0, lng: -77.5 },
+      { lat: 43.2, lng: -77.5 },
+      { lat: 43.2, lng: -77.7 },
+    ],
+  });
   db.put('hotLeads/ghl_opp1', {
     lat: 43.1,
     lng: -77.6,
@@ -183,6 +192,15 @@ function runClaim(role: string) {
   const db = new ClaimMem();
   const uid = `uid-${role}`;
   db.put(`users/${uid}`, profile(role).user);
+  db.put(`territories/${uid}-box`, {
+    userId: uid,
+    polygon: [
+      { lat: 43.0, lng: -77.7 },
+      { lat: 43.0, lng: -77.5 },
+      { lat: 43.2, lng: -77.5 },
+      { lat: 43.2, lng: -77.7 },
+    ],
+  });
   db.put('hotLeads/ghl_opp1', { lat: 43.1, lng: -77.6, hotStatus: 'active', notes: 'keep' });
   return handleHotLeadClaim({
     authorization: 'Bearer good-token',
@@ -197,6 +215,13 @@ function runClaim(role: string) {
       verifyIdToken: async () => ({ uid }),
       getUser: async () => ({ exists: true, data: db.docs.get(`users/${uid}`) }),
       db,
+      territories: async (_tx, ownerId) => {
+        const prefix = 'territories/';
+        const docs = [...db.docs.entries()]
+          .filter(([path, data]) => path.startsWith(prefix) && data.userId === ownerId)
+          .map(([path, data]) => ({ id: path.slice(prefix.length), data }));
+        return { docs: docs.slice(0, 200), truncated: docs.length >= 200 };
+      },
       now: () => NOW,
       Timestamp: Stamp,
       serverTimestamp: () => SERVER_TS,

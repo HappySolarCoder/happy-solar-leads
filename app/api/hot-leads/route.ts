@@ -8,7 +8,9 @@ import {
   type HotLeadResult,
   type HotLeadStore,
   type LatQueryCall,
+  type TerritoryRead,
 } from '@/app/utils/server/hotLeads';
+import { TERRITORY_QUERY_LIMIT } from '@/app/utils/server/territoryGate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,6 +21,18 @@ type LatChain = {
   limit(n: number): LatChain;
   startAfter(lat: number, id: string): LatChain;
 };
+
+async function loadCallerTerritories(uid: string): Promise<TerritoryRead> {
+  const snap = await adminDb()
+    .collection('territories')
+    .where('userId', '==', uid)
+    .limit(TERRITORY_QUERY_LIMIT)
+    .get();
+  return {
+    docs: snap.docs.map((doc) => ({ id: doc.id, data: doc.data() as Record<string, unknown> })),
+    truncated: snap.docs.length >= TERRITORY_QUERY_LIMIT,
+  };
+}
 
 function liveStore(): HotLeadStore {
   const db = adminDb();
@@ -53,6 +67,7 @@ export async function GET(request: NextRequest) {
         return { exists: doc.exists, data: doc.data() };
       },
       store: liveStore(),
+      territories: loadCallerTerritories,
     },
   });
   return respond(result);

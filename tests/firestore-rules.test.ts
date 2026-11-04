@@ -639,6 +639,7 @@ function cases(): RuleCase[] {
     { id: 'setter dispositions', uid: 'realSetter', run: (db) => db.collection('dispositions').get(), expectTight: 'allow' },
     { id: 'setter own territory', uid: 'realSetter', run: (db) => db.collection('territories').doc('realTerritory').get(), expectTight: 'allow' },
     { id: 'setter other territory', uid: 'realSetter', run: (db) => db.collection('territories').doc('TEST-appreview-territory').get(), expectTight: 'deny' },
+    { id: 'closer other territory', uid: 'closer', run: (db) => db.collection('territories').doc('realTerritory').get(), expectTight: 'deny' },
     { id: 'setter all leads', uid: 'realSetter', run: (db) => db.collection('leads').get(), expectTight: 'deny' },
     { id: 'setter easter egg read', uid: 'realSetter', run: (db) => db.collection('easterEggs').doc('egg-1').get(), expectTight: 'allow' },
     { id: 'setter easter egg clear', uid: 'realSetter', run: (db) => lead('clearLead')(db).update({ hasEasterEgg: false, easterEggId: null }), expectTight: 'allow' },

@@ -290,3 +290,90 @@ describe('GET /api/hot-leads', () => {
     assert.equal(badId.status, 400);
   });
 });
+
+const BOX = [
+  { lat: 43.0, lng: -77.66 },
+  { lat: 43.0, lng: -77.62 },
+  { lat: 43.05, lng: -77.62 },
+  { lat: 43.05, lng: -77.66 },
+];
+const MAP = 'mode=map&south=43&north=43.05&west=-77.66&east=-77.58&zoom=16';
+
+describe('hot lead territory capability', () => {
+  function loader(docs: Array<{ id: string; data: Record<string, unknown> }>, calls: string[]) {
+    return async (uid: string) => {
+      calls.push(uid);
+      const mine = docs.filter((doc) => doc.data.userId === uid);
+      return { docs: mine.slice(0, 200), truncated: mine.length >= 200 };
+    };
+  }
+
+  it('adds canDispo, dispoBlock, and territoryGate on map and one', async () => {
+    const calls: string[] = [];
+    const rows = [
+      row('ghl_in', pin({ lat: 43.02, lng: -77.64 })),
+      row('ghl_out', pin({ lat: 43.02, lng: -77.59 })),
+      row('ghl_blank', pin({ lat: null, lng: -77.6 })),
+    ];
+    const territories = loader([{ id: 'box', data: { userId: 'uid-1', polygon: BOX } }], calls);
+    const map = await handleHotLeadsGet({
+      user: user('closer'),
+      params: new URLSearchParams(MAP),
+      store: store(rows, []),
+      territories,
+    });
+    assert.equal(map.status, 200);
+    const body = map.body as {
+      hotLeads: Array<{ id: string; canDispo: boolean; dispoBlock: string | null }>;
+      capabilities: { dispo: boolean; claim: boolean; territoryGate: boolean };
+    };
+    assert.equal(body.capabilities.dispo, true);
+    assert.equal(body.capabilities.claim, true);
+    assert.equal(body.capabilities.territoryGate, true);
+    assert.deepEqual(body.hotLeads.map((item) => [item.id, item.canDispo, item.dispoBlock]), [
+      ['ghl_in', true, null],
+      ['ghl_out', false, 'outside_territory'],
+      ['ghl_blank', false, 'no_coords'],
+    ]);
+    assert.deepEqual(calls, ['uid-1']);
+
+    const one = await handleHotLeadsGet({
+      user: user('closer'),
+      params: new URLSearchParams('id=ghl_out'),
+      store: store(rows, []),
+      territories,
+    });
+    assert.equal(one.status, 200);
+    const hotLead = (one.body as { hotLead: { canDispo: boolean; dispoBlock: string } }).hotLead;
+    assert.equal(hotLead.canDispo, false);
+    assert.equal(hotLead.dispoBlock, 'outside_territory');
+    assert.deepEqual(calls, ['uid-1', 'uid-1']);
+  });
+
+  it('lets staff dispo anywhere and does not read territories', async () => {
+    const calls: string[] = [];
+    const rows = [row('ghl_blank', pin({ lat: null, lng: -77.6 })), row('ghl_out', pin({ lat: 43.02, lng: -77.59 }))];
+    for (const role of ['manager', 'admin']) {
+      calls.length = 0;
+      const map = await handleHotLeadsGet({
+        user: user(role),
+        params: new URLSearchParams(MAP),
+        store: store(rows, []),
+        territories: loader([], calls),
+      });
+      const pins = (map.body as { hotLeads: Array<{ canDispo: boolean; dispoBlock: null }> }).hotLeads;
+      assert.deepEqual(pins.map((item) => [item.canDispo, item.dispoBlock]), [[true, null], [true, null]], role);
+      assert.deepEqual(calls, [], role);
+      const one = await handleHotLeadsGet({
+        user: user(role),
+        params: new URLSearchParams('id=ghl_blank'),
+        store: store(rows, []),
+        territories: loader([], calls),
+      });
+      const hotLead = (one.body as { hotLead: { canDispo: boolean; dispoBlock: null } }).hotLead;
+      assert.equal(hotLead.canDispo, true);
+      assert.equal(hotLead.dispoBlock, null);
+      assert.deepEqual(calls, [], role);
+    }
+  });
+});

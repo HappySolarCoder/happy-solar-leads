@@ -1,6 +1,13 @@
 import { HttpError, requireApprovedUser, type ApprovedUser, type RequireApprovedUserDeps, type UserProfile } from './requireApprovedUser';
-import { assertFieldWriter, isBlockedTestAccount } from './fieldDispo';
+import {
+  assertFieldWriter,
+  isBlockedTestAccount,
+  type DispoDb,
+  type DispoQuery,
+  type DispoTransaction,
+} from './fieldDispo';
 import { HOT_LEADS_PAGE, isHotLeadId, isHotLeadRole } from './hotLeadContract';
+import { pinTerritoryGate, TERRITORY_QUERY_LIMIT, type DispoBlock } from './territoryGate';
 
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 const HISTORY_LIMIT = 50;
@@ -48,11 +55,17 @@ export type ClaimDb = {
   runTransaction<T>(fn: (tx: ClaimTx) => Promise<T>): Promise<T>;
 };
 
+export type TerritoryDoc = { id: string; data: Record<string, unknown> };
+
+/** Bounded `where userId == uid` read, limit 200. Claim calls it inside the transaction. */
+export type TerritoryRead = { docs: TerritoryDoc[]; truncated: boolean };
+
 export type ClaimDeps = RequireApprovedUserDeps & {
   db: ClaimDb;
   now?: () => number;
   Timestamp: { fromMillis: (ms: number) => { toMillis: () => number } };
   serverTimestamp: () => unknown;
+  territories: (tx: ClaimTx, uid: string) => Promise<TerritoryRead>;
 };
 
 type Chain<Q> = {
@@ -277,15 +290,105 @@ function readerAllowed(user: ApprovedUser): boolean {
   return true;
 }
 
+function territoryAdapter(load: (uid: string) => Promise<TerritoryRead>): { db: DispoDb; tx: DispoTransaction } {
+  const tx: DispoTransaction = {
+    async get() {
+      throw new Error('Territory gate does not read documents');
+    },
+    async getQuery(query) {
+      const uid = query.filters[0]?.value;
+      if (
+        query.collectionName !== 'territories'
+        || query.filters.length !== 1
+        || query.filters[0]?.field !== 'userId'
+        || query.filters[0]?.op !== '=='
+        || query.limitCount !== TERRITORY_QUERY_LIMIT
+        || typeof uid !== 'string'
+      ) {
+        throw new Error('Territory query left the bounded user read');
+      }
+      const loaded = await load(uid);
+      return {
+        docs: loaded.docs.map((doc) => ({
+          exists: true,
+          id: doc.id,
+          data: () => doc.data,
+        })),
+      };
+    },
+    update() {
+      throw new Error('Territory gate must not write');
+    },
+    create() {
+      throw new Error('Territory gate must not write');
+    },
+  };
+  const db: DispoDb = {
+    collection(name: string) {
+      return {
+        name,
+        doc() {
+          throw new Error('Territory gate does not read documents');
+        },
+        where(field: string, op: string, value: string): DispoQuery {
+          const filters = [{ field, op, value }];
+          const query: DispoQuery = {
+            kind: 'query',
+            collectionName: name,
+            filters,
+            limitCount: null,
+            limit(n: number) {
+              return { ...query, limitCount: n, limit: query.limit };
+            },
+          };
+          return query;
+        },
+        cappedGet() {
+          throw new Error('Territory gate does not scan');
+        },
+      };
+    },
+    runTransaction() {
+      throw new Error('Territory gate does not start a transaction');
+    },
+  };
+  return { db, tx };
+}
+
+async function withDispoAccess(
+  user: ApprovedUser,
+  pins: Record<string, unknown>[],
+  territories: ((uid: string) => Promise<TerritoryRead>) | undefined,
+): Promise<Array<Record<string, unknown> & { canDispo: boolean; dispoBlock: DispoBlock | null }>> {
+  const load = territories ?? (async () => ({ docs: [], truncated: false }));
+  const { db, tx } = territoryAdapter(load);
+  const annotated = [];
+  for (const pin of pins) {
+    const gate = await pinTerritoryGate(db, tx, {
+      uid: user.uid,
+      role: user.role,
+      lat: pin.lat,
+      lng: pin.lng,
+    });
+    annotated.push({
+      ...pin,
+      canDispo: gate.allowed,
+      dispoBlock: gate.allowed ? null : gate.dispoBlock,
+    });
+  }
+  return annotated;
+}
+
 export async function handleHotLeadsGet(input: {
   user: ApprovedUser;
   params: URLSearchParams;
   store: HotLeadStore;
+  territories?: (uid: string) => Promise<TerritoryRead>;
 }): Promise<HotLeadResult> {
   if (!readerAllowed(input.user)) return finish(403, { error: 'not_allowed' });
 
   const id = input.params.get('id');
-  if (id != null) return readOne(input.store, id);
+  if (id != null) return readOne(input.user, input.store, id, input.territories);
 
   if (input.params.get('mode') !== 'map') return finish(400, { error: 'invalid_bounds' });
   if (mapBoundsProblem(input.params)) return finish(400, { error: 'invalid_bounds' });
@@ -306,12 +409,13 @@ export async function handleHotLeadsGet(input: {
   } catch {
     return finish(500, { error: 'internal' });
   }
-  const hotLeads = rows
+  const pins = rows
     .filter((row) => {
       const lng = row.data.lng;
       return typeof lng === 'number' && lng >= west && lng <= east && visibleToRealAccount(row.data);
     })
     .map((row) => toHotLeadPin(row.id, row.data, false));
+  const hotLeads = await withDispoAccess(input.user, pins, input.territories);
   const last = rows.at(-1);
   const lastLat = last && typeof last.data.lat === 'number' ? last.data.lat : null;
   const nextCursor = rows.length === HOT_LEADS_PAGE && last && lastLat != null
@@ -320,11 +424,16 @@ export async function handleHotLeadsGet(input: {
   return finish(200, {
     hotLeads,
     nextCursor,
-    capabilities: { dispo: true, claim: true },
+    capabilities: { dispo: true, claim: true, territoryGate: true },
   }, hotLeads.length);
 }
 
-async function readOne(store: HotLeadStore, id: string): Promise<HotLeadResult> {
+async function readOne(
+  user: ApprovedUser,
+  store: HotLeadStore,
+  id: string,
+  territories: ((uid: string) => Promise<TerritoryRead>) | undefined,
+): Promise<HotLeadResult> {
   if (!isHotLeadId(id)) return finish(400, { error: 'invalid_bounds' });
   let row: HotLeadRow | null;
   try {
@@ -333,20 +442,29 @@ async function readOne(store: HotLeadStore, id: string): Promise<HotLeadResult> 
     return finish(500, { error: 'internal' });
   }
   if (!row || !visibleToRealAccount(row.data)) return finish(404, { error: 'not_found' });
-  return finish(200, { hotLead: toHotLeadPin(row.id, row.data, true) }, 1);
+  const [hotLead] = await withDispoAccess(user, [toHotLeadPin(row.id, row.data, true)], territories);
+  return finish(200, { hotLead }, 1);
 }
 
 export async function serveHotLeads(input: {
   authorization: string | null;
   params: URLSearchParams;
-  deps: RequireApprovedUserDeps & { store: HotLeadStore };
+  deps: RequireApprovedUserDeps & {
+    store: HotLeadStore;
+    territories?: (uid: string) => Promise<TerritoryRead>;
+  };
   loadApprovedUser?: () => Promise<ApprovedUser>;
 }): Promise<HotLeadResult> {
   try {
     const user = input.loadApprovedUser
       ? await input.loadApprovedUser()
       : await requireApprovedUser(input.authorization, input.deps);
-    return await handleHotLeadsGet({ user, params: input.params, store: input.deps.store });
+    return await handleHotLeadsGet({
+      user,
+      params: input.params,
+      store: input.deps.store,
+      territories: input.deps.territories,
+    });
   } catch (error) {
     if (error instanceof HttpError) {
       return finish(error.status === 401 ? 401 : 403, {
@@ -469,6 +587,22 @@ export async function handleHotLeadClaim(input: {
       if (!leadSnap.exists) return finish(404, { ok: false, error: 'not_found' });
       const lead = leadSnap.data() ?? {};
       if (lead.testData === true) return finish(404, { ok: false, error: 'not_found' });
+
+      const { db: gateDb, tx: gateTx } = territoryAdapter((uid) => input.deps.territories(tx, uid));
+      const gate = await pinTerritoryGate(gateDb, gateTx, {
+        uid: approved.uid,
+        role: approved.role,
+        lat: lead.lat,
+        lng: lead.lng,
+      });
+      if (!gate.allowed) {
+        return finish(403, {
+          ok: false,
+          error: 'forbidden',
+          reasonCode: 'out_of_territory',
+          dispoBlock: gate.dispoBlock,
+        });
+      }
 
       const claimedBy = stringOrNull(lead.claimedBy);
       const staff = approved.role === 'manager' || approved.role === 'admin';
