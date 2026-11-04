@@ -10,6 +10,7 @@ import {
   type DispoTransaction,
   type FieldDispoDeps,
 } from '../app/utils/server/fieldDispo';
+import { HOT_LEAD_ROLE_SETS, withHotLeadRoles } from '../app/utils/server/hotLeadContract';
 import { HOT_LEAD_DISPOSITION_READ_LIMIT, hotStatusAfterKnock } from '../app/utils/server/hotLeadStatus';
 
 const NOW = Date.parse('2026-10-25T16:31:04.120Z');
@@ -257,12 +258,22 @@ describe('hot lead dispo', () => {
     const byManager = await manager.run(knock({ draftId: 'draft-mgr' }));
     assert.equal(byManager.status, 200, JSON.stringify(byManager.body));
 
-    const setter = harness({ role: 'setter', uid: 'uid-setter' });
-    const denied = await setter.run(knock());
-    assert.equal(denied.status, 403);
-    assert.equal(denied.body.reasonCode, 'permission_denied');
-    assert.equal(setter.db.ops.includes('hotLeads'), false);
-    assert.equal(setter.db.patches.length, 0);
+    for (const variant of ['A', 'B'] as const) {
+      await withHotLeadRoles(HOT_LEAD_ROLE_SETS[variant], async () => {
+        const setter = harness({ role: 'setter', uid: 'uid-setter' });
+        const result = await setter.run(knock({ draftId: `draft-setter-${variant}` }));
+        if (variant === 'A') {
+          assert.equal(result.status, 403);
+          assert.equal(result.body.reasonCode, 'permission_denied');
+          assert.equal(setter.db.ops.includes('hotLeads'), false);
+          assert.equal(setter.db.patches.length, 0);
+        } else {
+          assert.equal(result.status, 200, JSON.stringify(result.body));
+          assert.equal(result.body.result, 'applied');
+          assert.equal(setter.db.docs.get('hotLeads/ghl_opp1')?.dispositionedBy, 'uid-setter');
+        }
+      });
+    }
   });
 
   it('replays a receipt and rejects a different collection', async () => {

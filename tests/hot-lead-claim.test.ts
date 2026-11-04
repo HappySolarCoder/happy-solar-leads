@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { HOT_LEAD_ROLE_SETS, withHotLeadRoles } from '../app/utils/server/hotLeadContract';
 import { handleHotLeadClaim, type ClaimDb, type ClaimSnap, type ClaimTx } from '../app/utils/server/hotLeads';
 
 const NOW = Date.parse('2026-10-25T16:31:04.120Z');
@@ -178,11 +179,20 @@ describe('POST /api/hot-leads/claim', () => {
       assert.equal(self.status, 200, JSON.stringify(self.body));
       assert.equal(mine.db.docs.get('hotLeads/ghl_opp1')?.claimedBy, null);
 
-      const setter = harness({ role: 'setter', uid: 'uid-setter' });
-      const denied = await setter.run(claim());
-      assert.equal(denied.status, 403);
-      assert.equal(denied.body.reasonCode, 'permission_denied');
-      assert.equal(setter.db.txCount, 0);
+      for (const variant of ['A', 'B'] as const) {
+        await withHotLeadRoles(HOT_LEAD_ROLE_SETS[variant], async () => {
+          const setter = harness({ role: 'setter', uid: 'uid-setter' });
+          const result = await setter.run(claim({ draftId: `draft-setter-${variant}` }));
+          if (variant === 'A') {
+            assert.equal(result.status, 403);
+            assert.equal(result.body.reasonCode, 'permission_denied');
+            assert.equal(setter.db.txCount, 0);
+          } else {
+            assert.equal(result.status, 200, JSON.stringify(result.body));
+            assert.equal(result.body.claimedBy, 'uid-setter');
+          }
+        });
+      }
 
       const testAccount = harness({ user: user('closer', { team: 'TEST' }) });
       const hidden = await testAccount.run(claim());

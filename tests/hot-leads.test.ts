@@ -162,7 +162,6 @@ describe('GET /api/hot-leads', () => {
       assert.equal(mapped.status, 403);
       assert.deepEqual(mapped.body, { error: 'not_allowed' });
       for (const denied of [
-        user('setter'),
         user('closer', { team: 'TEST' }),
         user('closer', { isTestAccount: true }),
         user('manager', { testData: true }),

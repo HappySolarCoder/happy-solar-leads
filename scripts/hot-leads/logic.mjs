@@ -3,10 +3,12 @@
  * houseIdentity.ts is not in this repo, so houseStreet / sameHouse live here.
  * Street suffixes match app/homeowners/model.ts normalizeStreet.
  *
- * Geocode cache values and the review file never store an address.
+ * Geocode cache values hold lat/lng and never an address, so a territory
+ * report can be re-run without new Census calls. The review file never
+ * stores an address. Both sidecars are written mode 0600.
  * Re-imports write only ghl, import, updatedAt, and doNotCall.
- * Do Not Contact rows are imported with doNotCall: true. Lost rows and rows
- * with no address are still skipped.
+ * Do Not Contact rows are imported with doNotCall: true. Lost rows, rows
+ * with no address, and Not Interested stages are skipped.
  */
 import { createHash } from 'node:crypto';
 import { chmod, writeFile } from 'node:fs/promises';
@@ -150,9 +152,20 @@ function cell(value) {
   return text;
 }
 
+/** Same normalisation for DNC and excluded stages: trim, lowercase, collapse spaces. */
+export function normalizeStage(stage) {
+  return String(stage ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export const EXCLUDED_STAGES = ['not interested', 'not interested campaign'];
+
+export function isExcludedStage(stage) {
+  return EXCLUDED_STAGES.includes(normalizeStage(stage));
+}
+
 /** DNC means do not call. The row is still a hot lead and can be knocked. */
 export function isDoNotContact(stage) {
-  const value = String(stage ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const value = normalizeStage(stage);
   return value === 'dead/do not contact'
     || value === 'do not contact'
     || value === 'dnc'
@@ -160,7 +173,7 @@ export function isDoNotContact(stage) {
 }
 
 export function classifyRows(rows, options = {}) {
-  const skipped = { noAddress: 0, lost: 0, duplicate: 0, badId: 0 };
+  const skipped = { noAddress: 0, lost: 0, duplicate: 0, badId: 0, excludedStage: 0 };
   const seen = new Set();
   const kept = [];
   let dncImported = 0;
@@ -176,6 +189,10 @@ export function classifyRows(rows, options = {}) {
     }
     seen.add(opportunityId);
     const stage = cell(row.stage);
+    if (isExcludedStage(stage)) {
+      skipped.excludedStage += 1;
+      continue;
+    }
     const status = cell(row.status);
     if (!options.includeLost && status === 'lost') {
       skipped.lost += 1;
@@ -639,10 +656,218 @@ export async function linkHouse(house, db) {
   return { homeownerReads, leadCapped: band.capped, leadPages: Math.ceil(band.scanned / LEAD_PAGE) || (band.scanned ? 1 : 0) };
 }
 
+function cross(a, b, c) {
+  return (b.lng - a.lng) * (c.lat - a.lat) - (b.lat - a.lat) * (c.lng - a.lng);
+}
+
+function onSegment(a, b, p) {
+  return (
+    Math.abs(cross(a, b, p)) < 1e-12
+    && p.lat >= Math.min(a.lat, b.lat) - 1e-12
+    && p.lat <= Math.max(a.lat, b.lat) + 1e-12
+    && p.lng >= Math.min(a.lng, b.lng) - 1e-12
+    && p.lng <= Math.max(a.lng, b.lng) + 1e-12
+  );
+}
+
+/** Port of app/utils/territoryManager insideTerritory. A unit test locks them together. */
+export function insideTerritory(lat, lng, polygon) {
+  if (
+    typeof lat !== 'number'
+    || typeof lng !== 'number'
+    || !Number.isFinite(lat)
+    || !Number.isFinite(lng)
+  ) return false;
+  const p = { lat, lng };
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (onSegment(a, b, p)) return true;
+    if (
+      a.lat > lat !== b.lat > lat
+      && lng < ((b.lng - a.lng) * (lat - a.lat)) / (b.lat - a.lat) + a.lng
+    ) inside = !inside;
+  }
+  return inside;
+}
+
+const WRITE_METHODS = ['set', 'update', 'delete', 'create', 'add', 'batch', 'bulkWriter', 'runTransaction'];
+const OWNER_ROLES = ['setter', 'closer', 'manager', 'admin'];
+
+function writeBlockers() {
+  const blocked = {};
+  for (const method of WRITE_METHODS) {
+    blocked[method] = () => {
+      const error = new Error(`read_only:${method}`);
+      error.code = 'read_only';
+      throw error;
+    };
+  }
+  return blocked;
+}
+
+export function assertWriteBlocked(db) {
+  for (const method of WRITE_METHODS) {
+    let threw = false;
+    try {
+      db[method]();
+    } catch (error) {
+      threw = error?.code === 'read_only';
+    }
+    if (!threw) {
+      const error = new Error(`write_block_failed:${method}`);
+      error.code = 'write_block_failed';
+      throw error;
+    }
+  }
+}
+
+function wrapQuery(query) {
+  return {
+    select(...args) { return wrapQuery(query.select(...args)); },
+    limit(n) { return wrapQuery(query.limit(n)); },
+    where(...args) { return wrapQuery(query.where(...args)); },
+    orderBy(...args) { return wrapQuery(query.orderBy(...args)); },
+    get(...args) { return query.get(...args); },
+    ...writeBlockers(),
+  };
+}
+
+function wrapDoc(ref) {
+  return {
+    id: ref.id,
+    path: ref.path,
+    get(...args) { return ref.get(...args); },
+    ...writeBlockers(),
+  };
+}
+
+function wrapCollection(col) {
+  return {
+    select(...args) { return wrapQuery(col.select(...args)); },
+    limit(n) { return wrapQuery(col.limit(n)); },
+    where(...args) { return wrapQuery(col.where(...args)); },
+    doc(id) { return wrapDoc(col.doc(id)); },
+    ...writeBlockers(),
+  };
+}
+
+/** Any set/update/delete/create/add/batch/bulkWriter/runTransaction throws. Self-test runs before return. */
+export function readOnlyFirestore(db) {
+  const wrapped = {
+    collection(name) { return wrapCollection(db.collection(name)); },
+    getAll(...args) { return db.getAll(...args); },
+    ...writeBlockers(),
+  };
+  assertWriteBlocked(wrapped);
+  assertWriteBlocked(wrapped.collection('__write_block__'));
+  assertWriteBlocked(wrapped.collection('__write_block__').doc('__write_block__'));
+  return wrapped;
+}
+
+function polygonOf(value) {
+  if (!Array.isArray(value) || value.length < 3) return null;
+  const points = [];
+  for (const point of value) {
+    if (!point || typeof point !== 'object') return null;
+    if (typeof point.lat !== 'number' || typeof point.lng !== 'number') return null;
+    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return null;
+    points.push({ lat: point.lat, lng: point.lng });
+  }
+  return points;
+}
+
+export async function loadTerritoryIndex(db) {
+  const snap = await db.collection('territories').select('polygon', 'userId', 'archived').limit(201).get();
+  const docs = Array.isArray(snap?.docs) ? snap.docs : [];
+  if (docs.length > 200) {
+    const error = new Error('More than 200 territories; territory report refused.');
+    error.code = 'too_many_territories';
+    throw error;
+  }
+  const territories = docs.map((doc) => (typeof doc.data === 'function' ? doc.data() : (doc.data ?? {})));
+  const ids = [];
+  const seen = new Set();
+  for (const territory of territories) {
+    const userId = territory && typeof territory.userId === 'string' ? territory.userId : '';
+    if (!userId || seen.has(userId)) continue;
+    seen.add(userId);
+    ids.push(userId);
+  }
+  const owners = new Map();
+  if (ids.length > 0) {
+    const refs = ids.map((id) => db.collection('users').doc(id));
+    const snaps = await db.getAll(...refs, { fieldMask: ['role'] });
+    const list = Array.isArray(snaps) ? snaps : [];
+    list.forEach((userSnap, index) => {
+      const data = userSnap && typeof userSnap.data === 'function' ? userSnap.data() : null;
+      const role = data && typeof data.role === 'string' ? data.role : null;
+      owners.set(ids[index], role);
+    });
+  }
+  return {
+    territories,
+    owners,
+    territoriesRead: docs.length,
+    ownersRead: ids.length,
+  };
+}
+
+function ownerRole(owners, userId) {
+  const role = owners.get(userId);
+  return OWNER_ROLES.includes(role) ? role : 'other';
+}
+
+export function buildTerritoryReport(houses, index) {
+  const usable = [];
+  for (const territory of index.territories) {
+    if (territory?.archived) continue;
+    const polygon = polygonOf(territory?.polygon);
+    if (!polygon) continue;
+    usable.push({ polygon, role: ownerRole(index.owners, territory.userId) });
+  }
+  const insideByOwnerRole = { setter: 0, closer: 0, manager: 0, admin: 0, other: 0 };
+  let pins = 0;
+  let dnc = 0;
+  let insideAny = 0;
+  let insideNone = 0;
+  let noCoords = 0;
+  for (const house of houses) {
+    const lat = house?.lat;
+    const lng = house?.lng;
+    if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      noCoords += 1;
+      continue;
+    }
+    pins += 1;
+    if (house.doNotCall === true) dnc += 1;
+    const roles = new Set();
+    for (const territory of usable) {
+      if (insideTerritory(lat, lng, territory.polygon)) roles.add(territory.role);
+    }
+    if (roles.size === 0) insideNone += 1;
+    else {
+      insideAny += 1;
+      for (const role of roles) insideByOwnerRole[role] += 1;
+    }
+  }
+  return {
+    pins,
+    dnc,
+    insideAny,
+    insideByOwnerRole,
+    insideNone,
+    noCoords,
+    territoriesRead: index.territoriesRead,
+    ownersRead: index.ownersRead,
+  };
+}
+
 export function emptyReport(extra = {}) {
   return {
     rowsRead: 0,
-    skipped: { noAddress: 0, lost: 0, duplicate: 0, badId: 0 },
+    skipped: { noAddress: 0, lost: 0, duplicate: 0, badId: 0, excludedStage: 0 },
     dncImported: 0,
     houses: 0,
     created: 0,
@@ -679,6 +904,15 @@ export async function runImport(input) {
       throttle: input.throttle || (async () => {}),
       fetchBatch: input.fetchBatch,
     });
+  }
+  let territoryIndex = null;
+  if (input.territoryReport) {
+    if (!input.territoryDb) {
+      const error = new Error('Territory report needs a read-only admin connection.');
+      error.code = 'territory_db_required';
+      throw error;
+    }
+    territoryIndex = await loadTerritoryIndex(readOnlyFirestore(input.territoryDb));
   }
   const review = [];
   const batchId = input.batchId || 'batch';
@@ -777,17 +1011,18 @@ export async function runImport(input) {
     writes,
     dryRun: !commit,
   };
+  if (territoryIndex) output.territory = buildTerritoryReport(grouped.houses, territoryIndex);
   return { ok: true, code: 0, writes, output, review: reviewCsv(review), cache };
 }
 
 export function parseArgs(argv) {
-  const args = { commit: false, retireMissing: false, includeDnc: false, includeLost: false, project: null, path: null };
+  const args = { commit: false, retireMissing: false, includeLost: false, territoryReport: false, project: null, path: null };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     if (token === '--commit') args.commit = true;
     else if (token === '--retire-missing') args.retireMissing = true;
-    else if (token === '--include-dnc') args.includeDnc = true;
+    else if (token === '--territory-report') args.territoryReport = true;
     else if (token === '--include-lost') args.includeLost = true;
     else if (token === '--project') {
       args.project = argv[i + 1] || '';
@@ -1059,21 +1294,39 @@ export async function executeCli(argv, deps) {
   let db = null;
   if (args.commit && deps.connect) db = await deps.connect(args.project);
   else if (deps.db) db = deps.db;
-  const result = await runImport({
-    rows,
-    commit: args.commit,
-    confirm: deps.env?.HOT_LEADS_IMPORT_CONFIRM,
-    includeDnc: args.includeDnc,
-    includeLost: args.includeLost,
-    retireMissing: args.retireMissing,
-    cache,
-    db,
-    fetchBatch: deps.fetchBatch,
-    throttle: deps.throttle,
-    batchSize: deps.batchSize,
-    at: deps.at,
-    batchId: deps.batchId,
-  });
+  let territoryDb = null;
+  if (args.territoryReport) {
+    if (deps.territoryDb) territoryDb = deps.territoryDb;
+    else if (deps.territoryConnect) territoryDb = await deps.territoryConnect(args.project);
+    else return { code: 1, output: { error: 'territory_db_required', writes: 0 } };
+  }
+  let result;
+  try {
+    result = await runImport({
+      rows,
+      commit: args.commit,
+      confirm: deps.env?.HOT_LEADS_IMPORT_CONFIRM,
+      includeLost: args.includeLost,
+      retireMissing: args.retireMissing,
+      territoryReport: args.territoryReport,
+      territoryDb,
+      cache,
+      db,
+      fetchBatch: deps.fetchBatch,
+      throttle: deps.throttle,
+      batchSize: deps.batchSize,
+      at: deps.at,
+      batchId: deps.batchId,
+    });
+  } catch (error) {
+    if (error?.code === 'too_many_territories') {
+      return { code: 1, output: { error: 'too_many_territories', message: String(error.message), writes: 0 } };
+    }
+    if (error?.code === 'territory_db_required') {
+      return { code: 1, output: { error: 'territory_db_required', writes: 0 } };
+    }
+    throw error;
+  }
   if (deps.writeFile && result.cache) {
     await deps.writeFile(paths.cache, serializeCache(result.cache));
     await deps.writeFile(paths.review, result.review || reviewCsv([]));

@@ -1140,7 +1140,7 @@ function applyKnock(
 }
 
 /**
- * Hot leads have their own gate: closer, manager, or admin. There is no
+ * Hot leads use the role set in hotLeadContract. There is no
  * territory check and no claim check. GPS is a flag, never a block.
  * Writes stay off ghl, contacts, coordinates, geo, import, and the link ids.
  */

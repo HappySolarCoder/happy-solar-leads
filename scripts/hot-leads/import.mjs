@@ -1,10 +1,15 @@
 /**
  * Dry-run by default.
  * node scripts/hot-leads/import.mjs <file.xlsx|csv> [--commit] [--retire-missing]
- *   [--include-lost] [--project <id>]
- * Do Not Contact / DNC rows are imported with doNotCall: true. --include-dnc is accepted and ignored.
+ *   [--include-lost] [--territory-report] [--project <id>]
+ * Do Not Contact rows are always imported with doNotCall: true.
+ * --territory-report is read-only (write methods throw) and does not need --commit.
+ * The geocode cache holds lat/lng and never an address, at mode 0600, so
+ * --territory-report can be re-run without new Census calls. The review CSV
+ * is also mode 0600.
  * --commit also requires HOT_LEADS_IMPORT_CONFIRM=yes.
- * A dry run never opens Firestore. Do not pass --commit in this environment.
+ * A dry run without --territory-report never opens Firestore (connect: null).
+ * Do not pass --commit in this environment.
  */
 import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -14,6 +19,7 @@ import {
   HOMEOWNER_QUERY_CAP,
   HOMEOWNER_QUERY_LIMIT,
   isCensusCsv,
+  readOnlyFirestore,
   writeOwnerOnly,
 } from './logic.mjs';
 
@@ -33,9 +39,16 @@ async function throttle() {
   await new Promise((resolve) => setTimeout(resolve, 500));
 }
 
-async function openAdmin(projectId) {
+export function cliConnections({ commit, confirmed, territoryReport }) {
+  return {
+    connect: commit && confirmed ? 'admin' : null,
+    territory: territoryReport ? 'readonly' : null,
+  };
+}
+
+async function openFirestore(projectId) {
   const { initializeApp, cert, getApp } = await import('firebase-admin/app');
-  const { FieldPath, getFirestore } = await import('firebase-admin/firestore');
+  const { getFirestore } = await import('firebase-admin/firestore');
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (!raw) throw new Error('missing_credentials');
   const parsed = JSON.parse(raw);
@@ -50,7 +63,11 @@ async function openAdmin(projectId) {
       projectId: projectId || parsed.project_id,
     }, name);
   }
-  const db = getFirestore(app);
+  return getFirestore(app);
+}
+
+export function hotLeadDb(db, FieldPath) {
+  const documentId = () => FieldPath.documentId();
   return {
     async get(id) {
       const snap = await db.collection('hotLeads').doc(id).get();
@@ -77,7 +94,7 @@ async function openAdmin(projectId) {
             .where('geohash', '>=', query.start)
             .where('geohash', '<=', query.end)
             .orderBy('geohash')
-            .orderBy(FieldPath.documentId())
+            .orderBy(documentId())
             .limit(limit);
           if (after) geohashQuery = geohashQuery.startAfter(after.geohash, after.id);
           const snap = await geohashQuery.get();
@@ -103,12 +120,17 @@ async function openAdmin(projectId) {
     },
     async listHotLeads({ limit, afterId }) {
       const page = Math.min(limit, 200);
-      let query = db.collection('hotLeads').orderBy(FieldPath.documentId()).select('hotStatus').limit(page);
+      let query = db.collection('hotLeads').orderBy(documentId()).select('hotStatus').limit(page);
       if (afterId) query = query.startAfter(afterId);
       const snap = await query.get();
       return snap.docs.map((doc) => ({ id: doc.id, hotStatus: doc.get('hotStatus') ?? null }));
     },
   };
+}
+
+async function openAdmin(projectId) {
+  const { FieldPath } = await import('firebase-admin/firestore');
+  return hotLeadDb(await openFirestore(projectId), FieldPath);
 }
 
 function isDirectRun() {
@@ -118,8 +140,11 @@ function isDirectRun() {
 }
 
 if (isDirectRun()) {
-  const commit = process.argv.includes('--commit');
-  const confirmed = process.env.HOT_LEADS_IMPORT_CONFIRM === 'yes';
+  const mode = cliConnections({
+    commit: process.argv.includes('--commit'),
+    confirmed: process.env.HOT_LEADS_IMPORT_CONFIRM === 'yes',
+    territoryReport: process.argv.includes('--territory-report'),
+  });
   executeCli(process.argv.slice(2), {
     env: process.env,
     readFile: (file) => readFile(file),
@@ -133,7 +158,8 @@ if (isDirectRun()) {
     writeFile: (file, text) => writeOwnerOnly(file, text),
     fetchBatch,
     throttle,
-    connect: commit && confirmed ? openAdmin : null,
+    connect: mode.connect ? openAdmin : null,
+    territoryConnect: mode.territory ? (async (project) => readOnlyFirestore(await openFirestore(project))) : null,
   }).then((result) => {
     process.stdout.write(`${JSON.stringify(result.output)}\n`);
     process.exitCode = result.code;
