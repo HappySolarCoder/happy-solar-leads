@@ -2,7 +2,7 @@
  * Dry-run by default.
  * node scripts/hot-leads/import.mjs <file.xlsx|csv> [--commit] [--retire-missing]
  *   [--include-lost] [--territory-report] [--project <id>]
- * Do Not Contact rows are always imported with doNotCall: true.
+ * Do Not Contact rows import as normal pins, with no Do-not-call flag.
  * --territory-report is read-only (write methods throw) and does not need --commit.
  * The geocode cache holds lat/lng and never an address, at mode 0600, so
  * --territory-report can be re-run without new Census calls. The review CSV

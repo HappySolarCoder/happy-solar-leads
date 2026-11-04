@@ -15,7 +15,6 @@ import {
   homeownerReadPlan,
   houseStreet,
   insideTerritory,
-  isDoNotContact,
   isExcludedStage,
   collectLeadBand,
   geocodeHouses,
@@ -134,12 +133,8 @@ describe('hot lead import', () => {
 
     const text = readFileSync(FIXTURE, 'utf8');
     const rows = parseTable(text, 'sample.csv');
-    assert.equal(isDoNotContact('Dead/Do not Contact'), true);
-    assert.equal(isDoNotContact('DNC'), true);
-    assert.equal(isDoNotContact('Do Not Contact'), true);
-    assert.equal(isDoNotContact('New'), false);
     const classified = classifyRows(rows, {});
-    assert.equal(classified.dncImported, 1);
+    assert.equal('dncImported' in classified, false);
     assert.equal(classified.skipped.excludedStage, 0);
     assert.equal(classified.skipped.lost, 1);
     assert.equal(classified.skipped.noAddress, 1);
@@ -150,12 +145,12 @@ describe('hot lead import', () => {
     assert.equal(grouped.houses.length, 4);
     const dncHouse = grouped.houses.find((house: { id: string }) => house.id === 'ghl_opp-c');
     assert.ok(dncHouse);
-    assert.equal(dncHouse.doNotCall, true);
+    assert.equal('doNotCall' in dncHouse, false);
     const merged = grouped.houses.find((house: { id: string }) => house.id === 'ghl_opp-a');
     assert.ok(merged);
     assert.equal(merged.contacts.length, 2);
     assert.equal(merged.contacts.some((contact: { phone?: string }) => contact.phone === SECRET_PHONE), true);
-    assert.equal(merged.doNotCall, false);
+    assert.equal('doNotCall' in merged, false);
     const fallback = grouped.houses.find((house: { opportunityId: string }) => house.opportunityId === 'opp-f');
     assert.ok(fallback);
     assert.equal(fallback.address.includes('Oak Avenue'), true);
@@ -187,7 +182,6 @@ describe('hot lead import', () => {
       withinSheetMerges: number;
       geocodeUnmatched: number;
       created: number;
-      dncImported: number;
       homeownerLinks: number;
       existingLeadLinks: number;
     };
@@ -197,7 +191,7 @@ describe('hot lead import', () => {
     assert.equal(output.withinSheetMerges, 1);
     assert.equal(output.geocodeUnmatched, 1);
     assert.equal(output.created, 3);
-    assert.equal(output.dncImported, 1);
+    assert.equal('dncImported' in output, false);
     assert.ok(output.homeownerLinks >= 1);
     assert.ok(output.existingLeadLinks >= 1);
     assert.ok(throttled >= 1);
@@ -268,10 +262,11 @@ describe('hot lead import', () => {
     assert.equal(retiredAt.toMillis(), Date.parse('2026-10-30T00:00:00.000Z'));
     assert.equal(typeof retiredAt.toDate, 'function');
     assert.equal(db.docs.get('ghl_left')?.notes, 'stay');
-    assert.equal(merge.data.doNotCall, false);
+    assert.equal('doNotCall' in merge.data, false);
     const dncWrite = db.writes.find((write) => write.op === 'create' && write.id === 'ghl_opp-c');
     assert.ok(dncWrite);
-    assert.equal(dncWrite.data.doNotCall, true);
+    assert.equal('doNotCall' in dncWrite.data, false);
+    assert.equal(dncWrite.data.ghl?.stage, 'Dead/Do not Contact');
     assert.equal(dncWrite.data.hotStatus, 'active');
     assert.equal(Object.prototype.hasOwnProperty.call(dncWrite.data, 'notes'), false);
     const at = Date.parse('2026-10-30T00:00:00.000Z');
@@ -396,13 +391,13 @@ describe('hot lead import', () => {
     }
   });
 
-  it('skips Not Interested stages and keeps Dead/Do not Contact', () => {
+  it('skips Not Interested stages and keeps Dead/Do not Contact as normal pins', () => {
     assert.deepEqual([...EXCLUDED_STAGES], ['not interested', 'not interested campaign']);
     assert.equal(isExcludedStage(' Not  Interested '), true);
     assert.equal(isExcludedStage('not   interested   campaign'), true);
     assert.equal(isExcludedStage('NOT INTERESTED CAMPAIGN'), true);
     assert.equal(isExcludedStage('Dead/Do not Contact'), false);
-    assert.equal(isDoNotContact('  DEAD/DO NOT CONTACT '), true);
+    assert.equal(isExcludedStage('  DEAD/DO NOT CONTACT '), false);
     const rows = [
       sheetRow({ 'Opportunity ID': 'keep-1', stage: 'New', Address: '10 Main Street Buffalo NY 14201', 'Contact Name': 'Kept Person' }),
       sheetRow({ 'Opportunity ID': 'ni-1', stage: 'Not Interested', Address: '10 Main Street Buffalo NY 14201', 'Contact Name': 'Dropped Person' }),
@@ -416,22 +411,19 @@ describe('hot lead import', () => {
     const classified = classifyRows(rows, {});
     assert.equal(classified.skipped.excludedStage, 5);
     assert.equal(classified.skipped.lost, 0);
-    assert.equal(classified.dncImported, 2);
     assert.deepEqual(classified.kept.map((row: { opportunityId: string }) => row.opportunityId), ['keep-1', 'dnc-1', 'dnc-2']);
-    const kept = classified.kept.find((row: { opportunityId: string; doNotCall: boolean }) => row.opportunityId === 'keep-1');
-    assert.ok(kept);
-    assert.equal(kept.doNotCall, false);
-    assert.equal(classified.kept.filter((row: { opportunityId: string }) => row.opportunityId !== 'keep-1').every((row: { doNotCall: boolean }) => row.doNotCall === true), true);
+    assert.equal(classified.kept.every((row: object) => !('doNotCall' in row)), true);
     const grouped = groupHouses(classified.kept);
     const merged = grouped.houses.find((house: { id: string }) => house.id === 'ghl_keep-1');
     assert.ok(merged);
     assert.equal(merged.contacts.length, 1);
     assert.equal(merged.contacts[0].name, 'Kept Person');
     assert.equal(merged.ghl.stage, 'New');
-    assert.equal(merged.doNotCall, false);
-    const dnc = grouped.houses.find((house: { id: string; doNotCall: boolean }) => house.id === 'ghl_dnc-1');
+    assert.equal('doNotCall' in merged, false);
+    const dnc = grouped.houses.find((house: { id: string }) => house.id === 'ghl_dnc-1');
     assert.ok(dnc);
-    assert.equal(dnc.doNotCall, true);
+    assert.equal('doNotCall' in dnc, false);
+    assert.equal(dnc.ghl.stage, 'Dead/Do not Contact');
     assert.equal(grouped.houses.some((house: { opportunityId: string }) => house.opportunityId.startsWith('ni')), false);
     assert.deepEqual(parseArgs(['sheet.csv', '--include-dnc']), { error: 'unknown_flag' });
     const flagged = parseArgs(['sheet.csv', '--territory-report']) as { territoryReport: boolean; commit: boolean };
@@ -527,7 +519,6 @@ describe('hot lead import', () => {
     const territory = territoryOutput.territory;
     assert.deepEqual(territory, {
       pins: 3,
-      dnc: 1,
       insideAny: 2,
       insideByOwnerRole: { setter: 2, closer: 2, manager: 0, admin: 0, other: 0 },
       insideNone: 1,
@@ -664,7 +655,7 @@ describe('hot lead import', () => {
     assert.equal(excludedStage, 0);
     assert.deepEqual(skippedBefore, { noAddress: 1, lost: 1, duplicate: 1, badId: 0 });
     assert.equal(createdOutput.created, 3);
-    assert.equal(createdOutput.dncImported, 1);
+    assert.equal('dncImported' in createdOutput, false);
     assert.equal(createdOutput.writes, 3);
     assert.equal(Object.prototype.hasOwnProperty.call(created.output, 'territory'), false);
     const create = db.writes.find((write) => write.op === 'create' && write.id === 'ghl_opp-c');
@@ -703,7 +694,7 @@ describe('hot lead import', () => {
     const { db: firestore, writes } = collectionSpy();
     const adapter = hotLeadDb(firestore, { documentId: () => '__name__' });
     await adapter.create('ghl_x', { hotStatus: 'active' });
-    await adapter.merge('ghl_x', { doNotCall: true });
+    await adapter.merge('ghl_x', { updatedAt: 1 });
     await adapter.retire('ghl_left', { hotStatus: 'retired' });
     await adapter.homeownersNear({ queries: [] });
     await adapter.leadPage({ start: 0, end: 1, limit: 1, after: null });
@@ -715,11 +706,9 @@ describe('hot lead import', () => {
 type ImportReport = {
   skipped: { noAddress: number; lost: number; duplicate: number; badId: number; excludedStage: number };
   created: number;
-  dncImported: number;
   writes: number;
   territory?: {
     pins: number;
-    dnc: number;
     insideAny: number;
     insideByOwnerRole: { setter: number; closer: number; manager: number; admin: number; other: number };
     insideNone: number;
@@ -945,7 +934,6 @@ const GOLDEN_CREATE = {
   addressNorm: '11 oak ave',
   city: 'Rochester',
   contacts: [{ email: 'skip.dnc@example.com', name: 'Skip Dnc', phone: '5550103' }],
-  doNotCall: true,
   geo: { quality: 'Exact', source: 'census' },
   geohash: 'dr8v1yn5ey',
   ghl: {
@@ -979,7 +967,6 @@ const GOLDEN_CREATE = {
 };
 
 const GOLDEN_PATCH = {
-  doNotCall: true,
   ghl: GOLDEN_CREATE.ghl,
   import: {
     batchId: 'batch-golden',
