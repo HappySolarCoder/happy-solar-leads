@@ -26,6 +26,7 @@ import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas'
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 import { useHistoricalTerritoryPins } from '@/app/hooks/useHistoricalTerritoryPins';
 import { mergeHistoricalTerritoryPins } from '@/app/utils/historicalTerritoryPins';
+import { hotLeadFilterVisible, readHotFilter, writeHotFilter, type HotPinFilter } from '@/app/hotLeads/filter';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -70,6 +71,7 @@ function WebHome() {
   const [setterFilter, setSetterFilter] = useState<string>('all');
   const [solarFilter, setSolarFilter] = useState<string[]>([]);
   const [dispositionFilter, setDispositionFilter] = useState<string>('all');
+  const [hotFilter, setHotFilterState] = useState<HotPinFilter>('all');
   const [sortBy, setSortBy] = useState<'default' | 'knockability' | 'newest' | 'oldest'>('default');
   
   // Map state - persisted to user session
@@ -78,6 +80,23 @@ function WebHome() {
   const [mapType, setMapType] = useState<'street' | 'satellite'>('satellite');
   const [showTeamAreas, setShowTeamAreas] = useState(false);
   const { territories: overlayTerritories, members: overlayMembers } = useTeamAreasOverlay(showTeamAreas);
+  const showHotFilter = hotLeadFilterVisible(currentUser);
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    try {
+      setHotFilterState(readHotFilter(currentUser.id, window.localStorage));
+    } catch {
+      /* A locked-down WebView keeps the default. */
+    }
+  }, [currentUser?.id]);
+  const setHotFilter = (next: HotPinFilter) => {
+    setHotFilterState(next);
+    try {
+      writeHotFilter(currentUser?.id, next, window.localStorage);
+    } catch {
+      /* A locked-down WebView keeps the choice for this visit. */
+    }
+  };
   const historicalPins = useHistoricalTerritoryPins(currentUser?.id);
   
   // Address search state
@@ -626,6 +645,9 @@ function WebHome() {
                 onDispositionFilterChange={setDispositionFilter}
                 users={users}
                 goodLeads={goodLeads}
+                showHotFilter={showHotFilter}
+                hotFilter={hotFilter}
+                onHotFilterChange={setHotFilter}
               />
             </div>
           </div>
@@ -716,6 +738,7 @@ function WebHome() {
               onMapTypeChange={setMapType}
               viewMode={(viewMode === 'territory' ? 'territory' : 'map') as 'map' | 'assignments' | 'territory'}
               searchLocation={searchLocation}
+              hotFilter={showHotFilter ? hotFilter : 'all'}
               showTeamAreas={showTeamAreas}
               territories={mapTerritories}
               teamMembers={teamAreaMembers}

@@ -4,6 +4,8 @@ import { collapseLegacyNotesQueue, compareQueuedDrafts } from "./draftQueue";
 import { backoffDelay, classifySyncFailure, effectiveSyncState } from "./draftState";
 import { absorbNotesText } from "./notesLimits";
 import { SERVER_DISPO_SLOW_RETRY_MS, splitCombinedDraft } from "./serverDispo";
+import { HOT_TERRITORY_RECOVERY_LABEL } from "@/app/hotLeads/copy";
+import { isHotLeadDraft } from "@/app/hotLeads/save";
 import { recordSyncEvent, reportInBackground, reportParked } from "./syncDiagnostics";
 import { SYNC_REASON } from "./syncReasons";
 import type { PendingMutation } from "./types";
@@ -28,6 +30,35 @@ export type SyncOutboxDeps = {
   now?: () => number;
   random?: () => number;
 };
+
+export type TerritoryRecoveryRow = {
+  id: string;
+  label: typeof HOT_TERRITORY_RECOVERY_LABEL;
+  actions: readonly ["dismiss"];
+};
+
+/** Parked hot territory refusals. The only action is Dismiss. The draft is not sent again. */
+export function territoryRecoveryRows(
+  drafts: readonly {
+    id: string;
+    collection?: string;
+    kind?: string;
+    syncState?: string;
+    parkedReason?: string;
+  }[],
+): TerritoryRecoveryRow[] {
+  return drafts
+    .filter((row) =>
+      row.syncState === "parked"
+      && row.collection === "hotLeads"
+      && row.parkedReason === SYNC_REASON.outOfTerritory
+    )
+    .map((row) => ({
+      id: row.id,
+      label: HOT_TERRITORY_RECOVERY_LABEL,
+      actions: ["dismiss"] as const,
+    }));
+}
 
 function notesTooLongRow(m: PendingMutation): boolean {
   return m.kind === "notes" && m.parkedReason === SYNC_REASON.notesTooLong;
@@ -81,6 +112,12 @@ function withRebasedNotes(m: PendingMutation, rebased?: PendingMutation): Pendin
 function keepClearConversion(m: PendingMutation, rebased?: PendingMutation): PendingMutation {
   if (!rebased || !m.clearNotes || rebased.clearNotes) return m;
   return withRebasedNotes(m, rebased);
+}
+
+/** A GPS-held create has not landed yet. Later drafts for that lead wait. A parked create does not hold them. */
+function gpsHeldCreate(m: PendingMutation): boolean {
+  const state = effectiveSyncState(m);
+  return !!m.direct?.create && state !== "parked" && (!!m.direct?.gps || state === "gps");
 }
 
 function eventFor(m: PendingMutation, state: PendingMutation["syncState"] | "accepted") {
@@ -141,10 +178,12 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       if (notesTooLongRow(m)) return false;
       const state = effectiveSyncState(m);
       const due = (m.nextAttemptAt ?? 0) > now();
-      return due && (state === "retry" || (state === "queued" && m.routeHold === "field-dispo"));
+      return due && (state === "retry" || (state === "queued" && (m.routeHold === "field-dispo" || m.routeHold === "hot-leads")));
     };
     const deferred = new Set<string>();
+    const acceptedIds = new Set<string>();
     for (const m of all) if (holding(m)) deferred.add(m.leadId);
+    for (const m of all) if (gpsHeldCreate(m)) deferred.add(m.leadId);
     const ids = new Set(all.map((row) => row.id));
     let flushed = false;
     for (const row of fresh) {
@@ -174,7 +213,10 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       if (seen.has(m.id)) continue;
       seen.add(m.id);
       const state = effectiveSyncState(m);
-      if (m.direct?.gps || state === "gps" || state === "parked") continue;
+      if (m.direct?.gps || state === "gps" || state === "parked") {
+        if (gpsHeldCreate(m)) deferred.add(m.leadId);
+        continue;
+      }
       if (notesTooLongRow(m) && (m.nextAttemptAt ?? 0) > now()) continue;
       if (deps.heldNotesPending?.has(m.id)) {
         deferred.add(m.leadId);
@@ -284,6 +326,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
       try {
         await deps.send(current);
         await deps.remove(current.id);
+        acceptedIds.add(current.id);
         await dropAbsorbed();
         accepted += 1;
         await recordSyncEvent(eventFor(current, "accepted"));
@@ -309,7 +352,7 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
             syncState: "queued",
             attempts: (current.attempts ?? 0) + 1,
             nextAttemptAt: now() + SERVER_DISPO_SLOW_RETRY_MS,
-            routeHold: "field-dispo",
+            routeHold: isHotLeadDraft(current) ? "hot-leads" : "field-dispo",
             lastError: error.message,
           };
           delete next.blocked;
@@ -326,12 +369,29 @@ export async function syncOutbox(deps: SyncOutboxDeps): Promise<{
           try {
             await deps.send(current);
             await deps.remove(current.id);
+            acceptedIds.add(current.id);
             await dropAbsorbed();
             accepted += 1;
             await recordSyncEvent(eventFor(current, "accepted"));
           } catch (again) {
             await fail(current, again as Error, "retry");
           }
+          continue;
+        }
+        if (
+          outcome.kind === "denial"
+          && outcome.parkedReason === SYNC_REASON.notFound
+          && current.kind === "notes"
+          && all.some((row) =>
+            row.leadId === current.leadId
+            && row.id !== current.id
+            && !!row.direct?.create
+            && effectiveSyncState(row) !== "parked"
+            && !acceptedIds.has(row.id)
+          )
+        ) {
+          // The home's create is still queued. Parking this 410 would drop the note. Retry on the next flush.
+          await recordSyncEvent(eventFor({ ...current, lastError: error.message }, "retry"));
           continue;
         }
         if (outcome.kind === "denial") {

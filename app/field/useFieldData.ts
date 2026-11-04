@@ -18,6 +18,7 @@ import { acceptDisposition, collapseLegacyNotesQueue, supersededNotesIds } from 
 import { migrateDraft, reopenDeniedParked } from './draftMigration';
 import { schedulingHold } from './draftState';
 import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
+import { isHotLeadDraft } from '@/app/hotLeads/save';
 import { enqueueDirectSave } from './enqueueDirectSave';
 import { CONTACT_NOT_SENT_MESSAGE, assertContactReadyForSend, contactDraftBlocksSendInfo, parkContactDeniedDrafts, sendInfoMayWriteContact } from './sendInfoGate';
 import { cachedTerritoryIds } from '@/app/hooks/useTeamAreasOverlay';
@@ -191,6 +192,12 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
         send: async m => {
           const actor = latest.current.user;
           if (!actor || actor.id !== uid) throw Error('Sign in again to sync your work.');
+          if (isHotLeadDraft(m)) {
+            return deliverFieldDispo(m, actor, {
+              getToken: async () => (await auth?.currentUser?.getIdToken()) || '',
+              persistDraft: putDraft,
+            });
+          }
           const result = DIRECT_MOBILE_WRITES
             ? await deliverFieldDispo(m, actor, {
               getToken: async () => (await auth?.currentUser?.getIdToken()) || '',
@@ -366,14 +373,14 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     },
     [uid, reloadDrafts],
   );
-  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead, deferGps = false, point?: KnockPoint | null) => {
+  const enqueueDirect = useCallback(async (lead: Lead, patch: Partial<Lead>, create?: Lead, deferGps = false, point?: KnockPoint | null, recordedAt?: Date) => {
     const actor = latest.current.user;
     if (!DIRECT_MOBILE_WRITES || !actor || actor.id !== uid || auth?.currentUser?.uid !== uid)
       throw Error('Sign in with the rep who is recording this action.');
-    const recordedAt = new Date();
+    const stamped = recordedAt ?? new Date();
     rejectCombinedKnockAndNotes(patch);
     const clean = directPatch(patch), entry = clean.dispositionHistory?.[0];
-    const tappedAt = entry?.timestamp ? new Date(entry.timestamp) : recordedAt;
+    const tappedAt = entry?.timestamp ? new Date(entry.timestamp) : stamped;
     if (entry) clean.dispositionHistory = [entry];
     if (entry && (entry.userId !== uid || entry.userName !== actor.name))
       throw Error('The knock identity does not match the signed-in rep.');

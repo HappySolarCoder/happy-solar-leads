@@ -2,6 +2,7 @@ import type { Lead, User } from "@/app/types";
 import type { FieldConfig, PendingMutation } from "./types";
 import { mergeReportingPatch, reportingPatch } from './directWrites';
 import { compareQueuedDrafts } from './draftQueue';
+import { terminalHotTerritory } from './draftState';
 export type PreparedArea = {
   userId: string;
   at: number;
@@ -130,7 +131,7 @@ export function overlayDrafts(
 ): Lead[] {
   if (drafts.some(m => m.direct)) {
     const map = new Map(leads.map(l => [l.id, l]));
-    for (const m of drafts.filter(m => m.direct).sort(byAction)) {
+    for (const m of drafts.filter(m => m.direct && !terminalHotTerritory(m)).sort(byAction)) {
       const lead = map.get(m.leadId) || m.direct?.create;
       if (!lead || !m.direct || refusedClear(m)) continue;
       try {
@@ -151,6 +152,7 @@ export function overlayDrafts(
     if (!ms) return l;
     let next = { ...l };
     for (const m of ms) {
+      if (terminalHotTerritory(m)) continue;
       if (m.kind === "notes" && !refusedClear(m)) next = { ...next, notes: m.notes };
       if (
         m.kind === "knock" &&

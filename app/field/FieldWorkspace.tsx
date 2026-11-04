@@ -30,6 +30,7 @@ import {
 import { getAppointmentOutcome } from "@/app/utils/appointmentOutcome";
 import { DIRECT_MOBILE_WRITES } from './directWrites';
 import { parkedNotesBanner, phoneClockNotice, type NotesLengthDraft } from './notesLimits';
+import { TerritoryRecoveryList } from './TerritoryRecoveryList';
 import PersonPicker from "@/app/mobile/_components/PersonPicker";
 import { MobileHeader, MobileNav } from "@/app/mobile/_components/MobileShell";
 const rate = (n: number, d: number) =>
@@ -244,6 +245,7 @@ export default function FieldWorkspace(p: Props) {
             {clockNotice}
           </div>
         )}
+        <TerritoryRecoveryList floating={false} />
         {(p.error || message) && (
           <p className="rf-notice" role="status">
             {message || p.error}

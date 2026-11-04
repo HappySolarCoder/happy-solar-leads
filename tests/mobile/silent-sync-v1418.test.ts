@@ -1063,12 +1063,12 @@ test("native requests carry the build headers and web fetch calls carry neither"
     headers: { Authorization: "Bearer test-only", "Content-Type": "application/json" },
     body: "{}",
   }, async (request) => {
-    assert.equal(request.headers?.["X-Raydar-Build"], "160");
+    assert.equal(request.headers?.["X-Raydar-Build"], "161");
     assert.equal(request.headers?.["X-Raydar-Platform"], "ios");
     return { status: 200, data: "{}", headers: {}, url: request.url };
   }, "ios");
   await nativeApiFetch("/api/field/dispo", { method: "GET" }, async (request) => {
-    assert.equal(request.headers?.["X-Raydar-Build"], "160");
+    assert.equal(request.headers?.["X-Raydar-Build"], "161");
     assert.equal(request.headers?.["X-Raydar-Platform"], "android");
     return { status: 200, data: "{}", headers: {}, url: request.url };
   }, "android");

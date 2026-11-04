@@ -62,7 +62,7 @@ export function classifySyncFailure(
   const message = error.message || "";
   if (/GPS verification is still pending/i.test(message))
     return { kind: "gps-pending" };
-  if (code === FIELD_DISPO_UNAVAILABLE)
+  if (code === FIELD_DISPO_UNAVAILABLE || code === "hot-leads-hold")
     return { kind: "slow" };
   if (status === 401 || status === 408 || status === 429 || status >= 500)
     return { kind: "transient" };
@@ -99,6 +99,14 @@ export function classifySyncFailure(
   if (status === 400 || status === 409)
     return { kind: "denial", parkedReason: SYNC_REASON.invalidPayload };
   return { kind: "transient" };
+}
+
+/** A hot-lead territory refusal stays parked. A leads refusal is not this. */
+export function terminalHotTerritory(m: {
+  collection?: string;
+  parkedReason?: string;
+}): boolean {
+  return m.collection === "hotLeads" && m.parkedReason === SYNC_REASON.outOfTerritory;
 }
 
 function knownReason(value: string): ParkedReason | undefined {

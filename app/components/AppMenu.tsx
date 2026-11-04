@@ -6,6 +6,8 @@ import {
   Menu, X, Shield, Map, Users, Filter, LogOut, ChevronRight, BarChart3, Calendar, Layers
 } from 'lucide-react';
 import { User, canManageUsers, canAssignLeads, canSeeAllLeads } from '@/app/types';
+import { HOT_FILTER_BADGE, type HotPinFilter } from '@/app/hotLeads/filter';
+import { HotLeadFilterSection } from '@/app/hotLeads/HotLeadFilterSection';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/app/utils/firebase';
@@ -21,6 +23,9 @@ interface AppMenuProps {
   onDispositionFilterChange: (value: string) => void;
   users: any[];
   goodLeads: any[];
+  showHotFilter?: boolean;
+  hotFilter?: HotPinFilter;
+  onHotFilterChange?: (value: HotPinFilter) => void;
 }
 
 export default function AppMenu({
@@ -34,6 +39,9 @@ export default function AppMenu({
   onDispositionFilterChange,
   users,
   goodLeads,
+  showHotFilter = false,
+  hotFilter = 'all',
+  onHotFilterChange,
 }: AppMenuProps) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
@@ -124,9 +132,13 @@ export default function AppMenu({
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="flex items-center justify-center w-10 h-10 bg-[#F7FAFC] hover:bg-[#FF5F5A] border border-[#E2E8F0] rounded-lg transition-all duration-150"
+        aria-label={showHotFilter && hotFilter !== 'all' ? `Menu, Filters, ${HOT_FILTER_BADGE}` : 'Menu'}
+        className="relative flex items-center justify-center w-10 h-10 bg-[#F7FAFC] hover:bg-[#FF5F5A] border border-[#E2E8F0] rounded-lg transition-all duration-150"
       >
         <Menu className="w-5 h-5 text-[#718096] hover:text-white transition-colors" />
+        {showHotFilter && hotFilter !== 'all' ? (
+          <span className="absolute -top-1 -right-1 rounded-full bg-[#E8590C] px-1 text-[10px] font-semibold leading-4 text-white">{HOT_FILTER_BADGE}</span>
+        ) : null}
       </button>
 
       {/* Backdrop */}
@@ -300,6 +312,10 @@ export default function AppMenu({
                 ))}
               </select>
             </div>
+
+            {showHotFilter && onHotFilterChange ? (
+              <HotLeadFilterSection value={hotFilter} onChange={onHotFilterChange} />
+            ) : null}
           </div>
 
           {/* Navigation Items */}

@@ -65,6 +65,7 @@ export function asContactDraft(m: PendingMutation): PendingMutation {
  * This does not set clearNotes. An unflagged blank note is not a clear.
  */
 export function coerceLegacyContactDraft(m: PendingMutation): PendingMutation {
+  if (m.collection === "hotLeads" || m.kind === "claim") return m;
   if (m.kind !== "notes") return m;
   if (notesWereEdited(m)) return m;
   if (!hasContactFields(m)) return m;
@@ -75,6 +76,7 @@ export function splitNotesAndContact(
   m: PendingMutation,
   existingIds: ReadonlySet<string>,
 ): { contact: PendingMutation; notes: PendingMutation } | "unsafe" | null {
+  if (m.collection === "hotLeads" || m.kind === "claim") return null;
   if (m.kind !== "notes" || !notesWereEdited(m) || !hasContactFields(m) || !m.direct?.patch) return null;
   // The combined row has not been posted. The notes part keeps that id so the
   // receipt is not burned by the contact part. The contact part always gets its own id.

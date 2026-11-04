@@ -1,0 +1,432 @@
+{
+  "knock": {
+    "leads": {
+      "direct": {
+        "updates": [
+          "{\"path\":\"leads/lead-1\",\"data\":{\"knockGpsLat\":43.1601,\"knockGpsLng\":-77.6101,\"knockGpsAccuracy\":8,\"knockGpsTimestamp\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793372640,\"nanoseconds\":0},\"status\":\"not-home\",\"dispositionedAt\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793372640,\"nanoseconds\":0},\"dispositionHistory\":[{\"disposition\":\"Not Home\",\"timestamp\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793372640,\"nanoseconds\":0},\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}}"
+        ],
+        "refused": null,
+        "patch": "{\"knockGpsLat\":43.1601,\"knockGpsLng\":-77.6101,\"knockGpsAccuracy\":8,\"knockGpsTimestamp\":\"2026-10-30T15:04:00.000Z\",\"status\":\"not-home\",\"dispositionedAt\":\"2026-10-30T15:04:00.000Z\",\"dispositionHistory\":[{\"disposition\":\"Not Home\",\"timestamp\":\"2026-10-30T15:04:00.000Z\",\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"lead-1\",\"draftId\":\"draft-not-home\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"not-home\",\"disposition\":\"Not Home\",\"userName\":\"Riley Example\",\"gps\":{\"lat\":43.1601,\"lng\":-77.6101,\"accuracyM\":8,\"capturedAt\":\"2026-10-30T15:04:00.000Z\"}}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [],
+        "refused": {
+          "status": 500,
+          "code": "direct-not-used"
+        }
+      }
+    },
+    "hot": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{\"status\":\"not-home\",\"disposition\":\"Not Home\",\"dispositionedAt\":\"2026-10-30T15:04:00.000Z\",\"dispositionHistory\":[{\"disposition\":\"Not Home\",\"timestamp\":\"2026-10-30T15:04:00.000Z\",\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}],\"knockGpsLat\":43.1601,\"knockGpsLng\":-77.6101,\"knockGpsAccuracy\":8,\"knockGpsTimestamp\":\"2026-10-30T15:04:00.000Z\"}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-hot-knock\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"not-home\",\"disposition\":\"Not Home\",\"userName\":\"Riley Example\",\"gps\":{\"lat\":43.1601,\"lng\":-77.6101,\"accuracyM\":8,\"capturedAt\":\"2026-10-30T15:04:00.000Z\"},\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-hot-knock\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"not-home\",\"disposition\":\"Not Home\",\"userName\":\"Riley Example\",\"gps\":{\"lat\":43.1601,\"lng\":-77.6101,\"accuracyM\":8,\"capturedAt\":\"2026-10-30T15:04:00.000Z\"},\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      }
+    }
+  },
+  "dispo": {
+    "leads": {
+      "direct": {
+        "updates": [
+          "{\"path\":\"leads/lead-1\",\"data\":{\"status\":\"appointment\",\"dispositionedAt\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793372640,\"nanoseconds\":0},\"dispositionHistory\":[{\"disposition\":\"Appointment Set\",\"timestamp\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793372640,\"nanoseconds\":0},\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}}"
+        ],
+        "refused": null,
+        "patch": "{\"status\":\"appointment\",\"dispositionedAt\":\"2026-10-30T15:04:00.000Z\",\"dispositionHistory\":[{\"disposition\":\"Appointment Set\",\"timestamp\":\"2026-10-30T15:04:00.000Z\",\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"lead-1\",\"draftId\":\"draft-appointment\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"appointment\",\"disposition\":\"Appointment Set\",\"userName\":\"Riley Example\"}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [],
+        "refused": {
+          "status": 500,
+          "code": "direct-not-used"
+        }
+      }
+    },
+    "hot": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{\"status\":\"appointment\",\"disposition\":\"Appointment Set\",\"dispositionedAt\":\"2026-10-30T15:04:00.000Z\",\"dispositionHistory\":[{\"disposition\":\"Appointment Set\",\"timestamp\":\"2026-10-30T15:04:00.000Z\",\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-hot-dispo\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"appointment\",\"disposition\":\"Appointment Set\",\"userName\":\"Riley Example\",\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-hot-dispo\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"appointment\",\"disposition\":\"Appointment Set\",\"userName\":\"Riley Example\",\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      }
+    }
+  },
+  "notes": {
+    "leads": {
+      "direct": {
+        "updates": [
+          "{\"path\":\"leads/lead-1\",\"data\":{\"notes\":\"updated note\"}}"
+        ],
+        "refused": null,
+        "patch": "{\"notes\":\"updated note\"}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"lead-1\",\"draftId\":\"draft-notes\",\"kind\":\"notes\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"notes\":\"updated note\",\"baseNotes\":\"existing note\"}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"lead-1\",\"draftId\":\"draft-notes\",\"kind\":\"notes\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"notes\":\"updated note\",\"baseNotes\":\"existing note\"}"
+          }
+        ],
+        "refused": null
+      }
+    },
+    "hot": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{\"notes\":\"updated note\"}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-hot-notes\",\"kind\":\"notes\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"notes\":\"updated note\",\"baseNotes\":\"existing note\",\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-hot-notes\",\"kind\":\"notes\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"notes\":\"updated note\",\"baseNotes\":\"existing note\",\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      }
+    }
+  },
+  "contact": {
+    "leads": {
+      "direct": {
+        "updates": [
+          "{\"path\":\"leads/lead-1\",\"data\":{\"phone\":\"555-0111\",\"email\":\"next@example.com\"}}"
+        ],
+        "refused": null,
+        "patch": "{\"phone\":\"555-0111\",\"email\":\"next@example.com\"}"
+      },
+      "route": {
+        "posts": [],
+        "refused": {
+          "status": 400,
+          "reasonCode": "invalid_payload"
+        }
+      },
+      "delivered": {
+        "posts": [],
+        "refused": {
+          "status": 500,
+          "code": "direct-not-used"
+        }
+      }
+    },
+    "hot": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{\"phone\":\"555-0111\",\"email\":\"next@example.com\"}"
+      },
+      "route": {
+        "posts": [],
+        "refused": {
+          "status": 400,
+          "reasonCode": "invalid_payload"
+        }
+      },
+      "delivered": {
+        "posts": [],
+        "refused": {
+          "status": 400,
+          "reasonCode": "invalid_payload"
+        }
+      }
+    }
+  },
+  "claim": {
+    "leads": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{}"
+      },
+      "route": {
+        "posts": [],
+        "refused": {
+          "status": 400
+        }
+      },
+      "delivered": {
+        "posts": [],
+        "refused": {
+          "status": 400
+        }
+      }
+    },
+    "hot": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/hot-leads/claim",
+            "body": "{\"draftId\":\"draft-hot-claim\",\"hotLeadId\":\"ghl_opp_example_1\",\"action\":\"claim\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"userName\":\"Riley Example\"}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [
+          {
+            "path": "/api/hot-leads/claim",
+            "body": "{\"draftId\":\"draft-hot-claim\",\"hotLeadId\":\"ghl_opp_example_1\",\"action\":\"claim\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"userName\":\"Riley Example\"}"
+          }
+        ],
+        "refused": null
+      }
+    }
+  },
+  "release": {
+    "leads": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{}"
+      },
+      "route": {
+        "posts": [],
+        "refused": {
+          "status": 400
+        }
+      },
+      "delivered": {
+        "posts": [],
+        "refused": {
+          "status": 400
+        }
+      }
+    },
+    "hot": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/hot-leads/claim",
+            "body": "{\"draftId\":\"draft-hot-release\",\"hotLeadId\":\"ghl_opp_example_1\",\"action\":\"release\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"userName\":\"Riley Example\"}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [
+          {
+            "path": "/api/hot-leads/claim",
+            "body": "{\"draftId\":\"draft-hot-release\",\"hotLeadId\":\"ghl_opp_example_1\",\"action\":\"release\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"userName\":\"Riley Example\"}"
+          }
+        ],
+        "refused": null
+      }
+    }
+  },
+  "go-back": {
+    "leads": {
+      "direct": {
+        "updates": [
+          "{\"path\":\"leads/lead-1\",\"data\":{\"goBackScheduledDate\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793631600,\"nanoseconds\":0},\"goBackScheduledTime\":\"16:30\",\"goBackNotes\":\"come back after work\",\"status\":\"go-back\",\"dispositionedAt\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793372640,\"nanoseconds\":0},\"dispositionHistory\":[{\"disposition\":\"Go Back\",\"timestamp\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793372640,\"nanoseconds\":0},\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}}"
+        ],
+        "refused": null,
+        "patch": "{\"goBackScheduledDate\":\"2026-11-02T15:00:00.000Z\",\"goBackScheduledTime\":\"16:30\",\"goBackNotes\":\"come back after work\",\"status\":\"go-back\",\"dispositionedAt\":\"2026-10-30T15:04:00.000Z\",\"dispositionHistory\":[{\"disposition\":\"Go Back\",\"timestamp\":\"2026-10-30T15:04:00.000Z\",\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"lead-1\",\"draftId\":\"draft-go-back\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"go-back\",\"disposition\":\"Go Back\",\"userName\":\"Riley Example\",\"goBack\":{\"scheduledDate\":\"2026-11-02T15:00:00.000Z\",\"scheduledTime\":\"16:30\",\"notes\":\"come back after work\"}}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [],
+        "refused": {
+          "status": 500,
+          "code": "direct-not-used"
+        }
+      }
+    },
+    "hot": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{\"goBackScheduledDate\":\"2026-11-02T15:00:00.000Z\",\"goBackScheduledTime\":\"16:30\",\"goBackNotes\":\"come back after work\",\"status\":\"go-back\",\"dispositionedAt\":\"2026-10-30T15:04:00.000Z\",\"dispositionHistory\":[{\"disposition\":\"Go Back\",\"timestamp\":\"2026-10-30T15:04:00.000Z\",\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-go-back\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"go-back\",\"disposition\":\"Go Back\",\"userName\":\"Riley Example\",\"goBack\":{\"scheduledDate\":\"2026-11-02T15:00:00.000Z\",\"scheduledTime\":\"16:30\",\"notes\":\"come back after work\"},\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-go-back\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"go-back\",\"disposition\":\"Go Back\",\"userName\":\"Riley Example\",\"goBack\":{\"scheduledDate\":\"2026-11-02T15:00:00.000Z\",\"scheduledTime\":\"16:30\",\"notes\":\"come back after work\"},\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      }
+    }
+  },
+  "objection": {
+    "leads": {
+      "direct": {
+        "updates": [
+          "{\"path\":\"leads/lead-1\",\"data\":{\"objectionType\":\"cost\",\"objectionNotes\":\"price\",\"status\":\"not-interested\",\"dispositionedAt\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793372640,\"nanoseconds\":0},\"dispositionHistory\":[{\"disposition\":\"Not Interested\",\"timestamp\":{\"type\":\"firestore/timestamp/1.0\",\"seconds\":1793372640,\"nanoseconds\":0},\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}}"
+        ],
+        "refused": null,
+        "patch": "{\"objectionType\":\"cost\",\"objectionNotes\":\"price\",\"status\":\"not-interested\",\"dispositionedAt\":\"2026-10-30T15:04:00.000Z\",\"dispositionHistory\":[{\"disposition\":\"Not Interested\",\"timestamp\":\"2026-10-30T15:04:00.000Z\",\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"lead-1\",\"draftId\":\"draft-not-interested\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"not-interested\",\"disposition\":\"Not Interested\",\"userName\":\"Riley Example\",\"objection\":{\"type\":\"cost\",\"notes\":\"price\"}}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [],
+        "refused": {
+          "status": 500,
+          "code": "direct-not-used"
+        }
+      }
+    },
+    "hot": {
+      "direct": {
+        "updates": [],
+        "refused": {
+          "status": 400,
+          "code": "hot-lead-direct"
+        },
+        "patch": "{\"objectionType\":\"cost\",\"objectionNotes\":\"price\",\"status\":\"not-interested\",\"dispositionedAt\":\"2026-10-30T15:04:00.000Z\",\"dispositionHistory\":[{\"disposition\":\"Not Interested\",\"timestamp\":\"2026-10-30T15:04:00.000Z\",\"userId\":\"rep-1\",\"userName\":\"Riley Example\"}]}"
+      },
+      "route": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-not-interested\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"not-interested\",\"disposition\":\"Not Interested\",\"userName\":\"Riley Example\",\"objection\":{\"type\":\"cost\",\"notes\":\"price\"},\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      },
+      "delivered": {
+        "posts": [
+          {
+            "path": "/api/field/dispo",
+            "body": "{\"leadId\":\"ghl_opp_example_1\",\"draftId\":\"draft-not-interested\",\"kind\":\"knock\",\"actionAt\":\"2026-10-30T15:04:00.000Z\",\"status\":\"not-interested\",\"disposition\":\"Not Interested\",\"userName\":\"Riley Example\",\"objection\":{\"type\":\"cost\",\"notes\":\"price\"},\"collection\":\"hotLeads\"}"
+          }
+        ],
+        "refused": null
+      }
+    }
+  }
+}
