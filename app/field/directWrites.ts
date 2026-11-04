@@ -144,7 +144,7 @@ async function rememberNotesPlan(draft: PendingMutation, io?: DirectCommitIo): P
 
 export async function commitDirectMutation(m: PendingMutation, user: User, io?: DirectCommitIo) {
   if (isHotLeadDraft(m)) {
-    throw Object.assign(Error('Hot leads are saved through the disposition route.'), { status: 400, code: 'hot-lead-direct' });
+    throw Object.assign(Error('3PL leads are saved through the disposition route.'), { status: 400, code: 'hot-lead-direct' });
   }
   const database = io?.db ?? db;
   const session = io?.auth ?? auth;

@@ -59,7 +59,7 @@ import GoBackScheduleModal, { GoBackScheduleData } from './GoBackScheduleModal';
 import { formatGoBackScheduledTime } from '@/app/utils/timezone';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 import { HotLeadDetail } from '@/app/hotLeads/HotLeadDetail';
-import { hotPinForLead, isHotOnlyLead, suppressLeadCall } from '@/app/hotLeads/model';
+import { DO_NOT_CALL_WARNING, hotPinForLead, isHotOnlyLead, suppressLeadCall } from '@/app/hotLeads/model';
 
 interface LeadDetailProps {
   relatedLeads?: Lead[];
@@ -909,7 +909,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
                 <div className="flex items-center gap-3 p-3 bg-[#F7FAFC] border border-[#E2E8F0] rounded-lg">
                   <Phone className="w-4 h-4 text-[#718096]" />
                   {suppressLeadCall(lead) ? (
-                    <span className="text-[#2D3748]">{lead.phone}</span>
+                    <span className="inline-flex items-center gap-2">
+                      <span className="text-[#2D3748]">{lead.phone}</span>
+                      <span role="status" className="inline-block rounded-full bg-[#FFF5F5] px-2 py-1 text-xs font-semibold text-[#C53030]">{DO_NOT_CALL_WARNING}</span>
+                    </span>
                   ) : (
                     <a href={`tel:${lead.phone}`} className="text-[#2D3748] hover:text-[#FF5F5A] transition-colors">
                       {lead.phone}

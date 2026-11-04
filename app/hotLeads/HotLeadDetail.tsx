@@ -124,16 +124,20 @@ export function HotLeadDetail({
   const body = (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <span className="inline-block rounded-full bg-[#FFF1E6] px-2 py-1 text-xs font-semibold text-[#E8590C]">Hot lead</span>
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="inline-block rounded-full bg-[#FFF1E6] px-2 py-1 text-xs font-semibold text-[#E8590C]">3PL lead</span>
+          {noCall ? (
+            <span role="alert" className="inline-block rounded-full bg-[#FFF5F5] px-2 py-1 text-xs font-semibold text-[#C53030]">{DO_NOT_CALL_WARNING}</span>
+          ) : null}
+        </span>
         {variant === "panel" && onClose ? (
-          <button type="button" aria-label="Close hot lead" onClick={onClose} className="px-2 py-1 text-sm text-[#718096]">Close</button>
+          <button type="button" aria-label="Close 3PL lead" onClick={onClose} className="px-2 py-1 text-sm text-[#718096]">Close</button>
         ) : null}
       </div>
       <div>
         <p className="text-base font-semibold text-[#2D3748]">{pin.address}</p>
         <p className="text-sm text-[#718096]">{[pin.city, pin.state, pin.zip].filter(Boolean).join(", ")}</p>
       </div>
-      {noCall ? <p role="alert" className="text-sm font-semibold text-[#C53030]">{DO_NOT_CALL_WARNING}</p> : null}
       <ul className="space-y-1 text-sm">
         {pin.contacts.map((contact, index) => (
           <li key={`${contact.phone || contact.email || index}`}>
@@ -161,7 +165,7 @@ export function HotLeadDetail({
         </div>
       ) : null}
       {canWrite && caps.dispo ? (
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Hot lead dispositions">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="3PL lead dispositions">
           {knocks.map((row) => (
             <button key={row.id} type="button" disabled={busy} onClick={() => knock(row.id, row.name)}>{row.name}</button>
           ))}
@@ -169,7 +173,7 @@ export function HotLeadDetail({
       ) : null}
       <label className="block text-sm">
         Notes
-        <textarea aria-label="Hot lead notes" value={notes} readOnly={!canWrite} onChange={(event) => setNotes(event.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[#E2E8F0] px-3 py-2" />
+        <textarea aria-label="3PL lead notes" value={notes} readOnly={!canWrite} onChange={(event) => setNotes(event.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[#E2E8F0] px-3 py-2" />
       </label>
       {canWrite ? <button
         type="button"
@@ -184,7 +188,7 @@ export function HotLeadDetail({
           clearNotes: notes === "" && (pin.notes || "") !== "",
         }))}
       >
-        Save hot lead notes
+        Save 3PL lead notes
       </button> : null}
       {history.length ? (
         <ol className="space-y-1 text-sm text-[#718096]">
@@ -196,7 +200,7 @@ export function HotLeadDetail({
     </div>
   );
 
-  if (variant === "section") return <section aria-label="Hot lead">{body}</section>;
+  if (variant === "section") return <section aria-label="3PL lead">{body}</section>;
   return (
     <div className="rm-lead-detail fixed inset-0 md:inset-y-0 md:right-0 md:left-auto z-[80] w-full md:max-w-sm overflow-y-auto bg-white p-4 shadow-2xl">
       {body}

@@ -14,7 +14,7 @@ import { observeMapSize } from '@/app/utils/observeMapSize';
 
 import { fieldPinArtwork, fieldPinZoomTier, withLegacyHotPin } from '@/app/utils/fieldPin';
 import { isHotLead, isHotOnlyLead, mergeHotLeads, publishHotLeadIndex, type HotLeadPin } from '@/app/hotLeads/model';
-import { applyHotFilter, hotLeadFilterVisible, type HotPinFilter } from '@/app/hotLeads/filter';
+import { applyHotFilter, hotLeadFilterVisible, hotLeadZoomBanner, type HotPinFilter } from '@/app/hotLeads/filter';
 import { useHotLeads } from '@/app/hooks/useHotLeads';
 import { HotLeadDetail } from '@/app/hotLeads/HotLeadDetail';
 import { buildLeadViewportIndex, queryLeadViewport } from '@/app/utils/mapViewport';
@@ -93,7 +93,7 @@ interface LeadMapProps {
   showTeamAreas?: boolean; // User toggle: overlay FMA territories + teammate pins
   teamMembers?: TeamAreaMember[];
   onToggleTeamAreas?: (next: boolean) => void;
-  /** Undefined: this map loads hot leads. An array: the parent already loaded them. */
+  /** Undefined: this map loads 3PL leads. An array: the parent already loaded them. */
   hotLeads?: HotLeadPin[];
   hotFilter?: HotPinFilter;
 }
@@ -320,8 +320,9 @@ export default function LeadMap({
       const point = displayedKnockPoint(l, home);
       return point?.source === 'homeowner_corrected' ? {...l, lat: point.lat, lng: point.lng} : l;
     });
-    const pins = hotLeads ?? fetchedHot.pins;
     const filter = hotLeadFilterVisible(currentUser) ? hotFilter : 'all';
+    const zoomNow = mapView?.zoom ?? zoom;
+    const pins = filter === 'only' && hotLeadZoomBanner(filter, zoomNow) ? [] : (hotLeads ?? fetchedHot.pins);
     if (!pins.length && filter === 'all') {
       publishHotLeadIndex(new Map());
       return mapped;
@@ -331,7 +332,7 @@ export default function LeadMap({
     const merged = mergeHotLeads(mapped, pins, winners);
     publishHotLeadIndex(filter === 'hide' ? new Map() : merged.index);
     return applyHotFilter(merged.leads, filter);
-  }, [leadsProp, houseIndex, homeMerge, houseAnchors, hotLeads, fetchedHot.pins, hotFilter, currentUser]);
+  }, [leadsProp, houseIndex, homeMerge, houseAnchors, hotLeads, fetchedHot.pins, hotFilter, currentUser, mapView, zoom]);
 
   const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
 
@@ -1672,9 +1673,18 @@ export default function LeadMap({
     });
   };
 
+  const hotZoomNotice = hotLeadZoomBanner(
+    hotLeadFilterVisible(currentUser) ? hotFilter : 'all',
+    mapView?.zoom ?? mapZoom,
+  );
   return (
     <div className="relative w-full h-full">
       {proximity.dialog}
+      {hotZoomNotice ? (
+        <p role="status" className="absolute top-16 left-1/2 z-20 max-w-[90%] -translate-x-1/2 rounded-lg bg-white px-4 py-2 text-center text-sm font-semibold text-[#2D3748] shadow-lg">
+          {hotZoomNotice}
+        </p>
+      ) : null}
       {openHot && currentUser ? <HotLeadDetail pin={openHot} user={currentUser} dispositions={dispositions} onClose={() => setOpenHot(null)} /> : null}
       <div ref={mapRef} className="w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg" style={{ zIndex: 0 }} />
       

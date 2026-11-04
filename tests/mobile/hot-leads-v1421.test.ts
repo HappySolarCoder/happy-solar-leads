@@ -16,6 +16,7 @@ import {
   resetHotLeadFetchForTests,
   type HotFetcher,
 } from "../../app/hotLeads/fetch";
+import { HOT_LEAD_ROLE_SETS, HOT_LEAD_ROLE_VARIANT } from "../../app/hotLeads/access";
 import { applyHotFilter, HOT_LEAD_LEGEND, hotLeadFilterVisible } from "../../app/hotLeads/filter";
 import {
   DO_NOT_CALL_WARNING,
@@ -144,10 +145,10 @@ function contrast(hex: string, against: string) {
 test("flag defaults off and the hot layer is role, test and demo gated", () => {
   assert.equal(HOT_LEADS_ENABLED, process.env.NEXT_PUBLIC_HOT_LEADS === "1");
   assert.equal(HOT_LEADS_ENABLED, false);
-  assert.equal(canSeeHotLeads(person("closer")), true);
-  assert.equal(canSeeHotLeads(person("manager")), true);
-  assert.equal(canSeeHotLeads(person("admin")), true);
-  assert.equal(canSeeHotLeads(person("setter")), false);
+  for (const role of ["setter", "closer", "manager", "admin"] as const) {
+    const allowed = (HOT_LEAD_ROLE_SETS[HOT_LEAD_ROLE_VARIANT] as readonly string[]).includes(role);
+    assert.equal(canSeeHotLeads(person(role)), allowed, role);
+  }
   assert.equal(canSeeHotLeads(null), false);
   assert.equal(canSeeHotLeads(person("closer", { isActive: false })), false);
   assert.equal(canSeeHotLeads(person("closer", { approved: false })), false);
@@ -159,7 +160,10 @@ test("flag defaults off and the hot layer is role, test and demo gated", () => {
   assert.equal(isDemoAccount(person("closer", { email: "demo@example.com" })), true);
   assert.equal(canSeeHotLeads(person("admin", { id: "demo-admin", email: "demo@example.com" })), false);
   assert.equal(canSeeHotLeads(person("closer", { demo: true })), false);
-  assert.equal(hotLeadFilterVisible(person("setter"), true), false);
+  assert.equal(
+    hotLeadFilterVisible(person("setter"), true),
+    (HOT_LEAD_ROLE_SETS[HOT_LEAD_ROLE_VARIANT] as readonly string[]).includes("setter"),
+  );
   assert.equal(hotLeadFilterVisible(person("closer"), false), false);
   assert.equal(hotLeadFilterVisible(person("closer"), true), true);
   assert.equal(hotLeadFilterVisible(person("closer", { team: "TEST" }), true), false);
@@ -172,8 +176,11 @@ test("setters, test accounts, demo accounts and a disabled flag never call /api/
     calls.push(url);
     return json(200, { hotLeads: [pin()], nextCursor: null, capabilities: { dispo: true, claim: true } });
   };
+  const outside = (["setter", "closer", "manager", "admin"] as const).filter(
+    (role) => !(HOT_LEAD_ROLE_SETS[HOT_LEAD_ROLE_VARIANT] as readonly string[]).includes(role),
+  );
   for (const user of [
-    person("setter"),
+    ...outside.map((role) => person(role)),
     person("closer", { isTestAccount: true }),
     person("admin", { email: "demo@example.com", id: "demo" }),
     null,
@@ -341,7 +348,7 @@ test("pin art keeps a non-hot pin unchanged and marks a hot pin at every zoom", 
     const svg = decode(art.url);
     assert.match(svg, /data-hot-lead="true"/);
     assert.match(svg, new RegExp(HOT_RING_COLOR));
-    assert.equal(art.label.startsWith("Hot lead · "), true);
+    assert.equal(art.label.startsWith("3PL lead · "), true);
     const compact = zoom < 17;
     if (compact) assert.equal(svg.includes("M9.2 2.2"), false);
     else assert.match(svg, /M9\.2 2\.2/);
@@ -644,13 +651,18 @@ test("a hot pin stays hot after a dispo and is still absent for a setter", async
   assert.equal(hotLeadAfterDispo(hot, "custom-pass", "Not Home", custom).hotStatus, "worked");
   assert.equal(isHotLead(toHotDisplayLead(worked)), true);
   assert.equal(isHotLead(toHotDisplayLead(converted)), true);
-  assert.equal(canSeeHotLeads(person("setter")), false);
+  const hiddenRole = (["setter", "closer", "manager", "admin"] as const).find(
+    (role) => !(HOT_LEAD_ROLE_SETS[HOT_LEAD_ROLE_VARIANT] as readonly string[]).includes(role),
+  );
   resetHotLeadFetchForTests();
   let calls = 0;
   const fetcher: HotFetcher = async () => { calls += 1; return json(200, { hotLeads: [worked], nextCursor: null, capabilities: { dispo: true, claim: true } }); };
-  const hidden = await fetchHotLeadMap({ user: person("setter"), view: view(), token: "tok", fetcher, enabled: true });
-  assert.deepEqual(hidden.pins, []);
-  assert.equal(calls, 0);
+  if (hiddenRole) {
+    assert.equal(canSeeHotLeads(person(hiddenRole)), false);
+    const hidden = await fetchHotLeadMap({ user: person(hiddenRole), view: view(), token: "tok", fetcher, enabled: true });
+    assert.deepEqual(hidden.pins, []);
+    assert.equal(calls, 0);
+  }
   const seen = await fetchHotLeadMap({ user: person("closer"), view: view(), token: "tok", fetcher, enabled: true });
   assert.equal(isHotLead(toHotDisplayLead(seen.pins[0])), true);
   assert.equal(isHotLeadDraft({ collection: "hotLeads", kind: "knock" }), true);
@@ -726,8 +738,10 @@ test("doNotCall hides the call control, warns, and still allows a knock", () => 
 test("the map filter copy and the hot hook stay out of the lead sign-in path", () => {
   const page = readFileSync(new URL("../../app/mobile/knocking/page.tsx", import.meta.url), "utf8");
   const detail = readFileSync(new URL("../../app/hotLeads/HotLeadDetail.tsx", import.meta.url), "utf8");
-  assert.equal(HOT_LEAD_LEGEND, "Hot lead (purchased inbound)");
-  assert.equal(page.includes("HOT_LEAD_LEGEND"), true);
+  assert.equal(HOT_LEAD_LEGEND, "3PL lead");
+  const section = readFileSync(new URL("../../app/hotLeads/HotLeadFilterSection.tsx", import.meta.url), "utf8");
+  assert.equal(section.includes("HOT_LEAD_LEGEND"), true);
+  assert.equal(page.includes("HotLeadFilterSection"), true);
   assert.match(page, /setHotFilter\('all'\)/);
   assert.match(page, /hotLeadFilterVisible/);
   assert.doesNotMatch(detail, /Send Info to Scheduling Manager/);

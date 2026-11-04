@@ -1,7 +1,19 @@
-import type { User, UserRole } from "@/app/types";
+import type { User } from "@/app/types";
 import { isTestAccountUser } from "@/app/utils/testAccount";
 
-const HOT_ROLES = new Set<UserRole>(["closer", "manager", "admin"]);
+export const HOT_LEAD_ROLE_SETS = {
+  A: ['closer', 'manager', 'admin'],
+  B: ['setter', 'closer', 'manager', 'admin'],
+} as const;
+export const HOT_LEAD_ROLE_VARIANT: 'A' | 'B' = 'A';
+const HOT_LEAD_ROLES = new Set<string>(HOT_LEAD_ROLE_SETS[HOT_LEAD_ROLE_VARIANT]);
+
+export type HotLeadRoleList = ReadonlySet<string> | readonly string[];
+
+function allowsHotLeadRole(role: string | undefined, roles: HotLeadRoleList): boolean {
+  if (!role) return false;
+  return roles instanceof Set ? roles.has(role) : (roles as readonly string[]).includes(role);
+}
 
 export type HotLeadProfile = User & {
   deleted?: boolean;
@@ -27,14 +39,17 @@ export function isDemoAccount(
 }
 
 /**
- * Closers, managers and admins only. Setters, unknown roles, signed-out
- * users, and inactive or unapproved profiles never see the layer.
- * Test and demo accounts never see it, including testData hot leads.
+ * The signed-in role must be in HOT_LEAD_ROLE_SETS for HOT_LEAD_ROLE_VARIANT.
+ * Unknown roles, signed-out users, and inactive or unapproved profiles never
+ * see the layer. Test and demo accounts never see it, including testData pins.
  * Account `status` is enforced on the server. The client field is free-form
  * metadata, so only explicit inactive values are denied here.
  */
-export function canSeeHotLeads(user: HotLeadProfile | null | undefined): boolean {
-  if (!user?.id || !user.role || !HOT_ROLES.has(user.role)) return false;
+export function canSeeHotLeads(
+  user: HotLeadProfile | null | undefined,
+  roles: HotLeadRoleList = HOT_LEAD_ROLES,
+): boolean {
+  if (!user?.id || !allowsHotLeadRole(user.role, roles)) return false;
   if (isTestAccountUser(user) || isDemoAccount(user)) return false;
   if (user.isActive === false || user.approved === false) return false;
   if (user.approvalStatus != null && user.approvalStatus !== "approved") return false;

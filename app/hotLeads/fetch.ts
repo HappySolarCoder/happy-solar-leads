@@ -174,9 +174,11 @@ export async function fetchHotLeadMap(input: {
   enabled?: boolean;
   now?: number;
   pageCap?: number;
+  /** Test injection. Production callers use HOT_LEAD_ROLE_VARIANT. */
+  roles?: readonly string[];
 }): Promise<HotMapResult> {
   const enabled = input.enabled ?? HOT_LEADS_ENABLED;
-  if (!enabled || !canSeeHotLeads(input.user) || !input.token) return EMPTY;
+  if (!enabled || !canSeeHotLeads(input.user, input.roles) || !input.token) return EMPTY;
   if (!hotMapBoundsOk(input.view)) return EMPTY;
   const now = input.now ?? Date.now();
   if (now < silentUntil) return EMPTY;
@@ -234,9 +236,11 @@ export async function fetchHotLeadDetail(input: {
   fetcher: HotFetcher;
   enabled?: boolean;
   now?: number;
+  /** Test injection. Production callers use HOT_LEAD_ROLE_VARIANT. */
+  roles?: readonly string[];
 }): Promise<{ hotLead: HotLeadPin | null; error: "" }> {
   const enabled = input.enabled ?? HOT_LEADS_ENABLED;
-  if (!enabled || !canSeeHotLeads(input.user) || !input.token || !HOT_LEAD_ID.test(input.id)) return { hotLead: null, error: "" };
+  if (!enabled || !canSeeHotLeads(input.user, input.roles) || !input.token || !HOT_LEAD_ID.test(input.id)) return { hotLead: null, error: "" };
   const now = input.now ?? Date.now();
   if (now < silentUntil) return { hotLead: null, error: "" };
   try {

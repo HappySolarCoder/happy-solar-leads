@@ -8,10 +8,10 @@ import { HOT_LEAD_ID, type HotLeadPin } from "./model";
 export const HOT_CLAIM_PATH = "/api/hot-leads/claim";
 export const HOT_LEAD_COLLECTION = "hotLeads" as const;
 /** Parked where the rep can see it. The draft is not deleted. */
-export const HOT_LEAD_OLD_SERVER_NOTICE = "This hot lead is saved on this phone. The server does not accept it yet.";
-/** A 404 for this hot lead parks. It is not retried forever. */
-export const HOT_LEAD_MISSING_NOTICE = "This hot lead is no longer available.";
-export const HOT_LEAD_OWNED_MESSAGE = "This hot lead belongs to someone else.";
+export const HOT_LEAD_OLD_SERVER_NOTICE = "This 3PL lead is saved on this phone. The server does not accept it yet.";
+/** A 404 for this 3PL lead parks. It is not retried forever. */
+export const HOT_LEAD_MISSING_NOTICE = "This 3PL lead is no longer available.";
+export const HOT_LEAD_OWNED_MESSAGE = "This 3PL lead belongs to someone else.";
 /** Hot saves never ask the area gate or the proximity warning. */
 export const HOT_LEAD_AREA_GATE = false;
 export const HOT_LEAD_PROXIMITY_WARNING = false;
@@ -141,11 +141,11 @@ export function hotClaimBody(m: Pick<PendingMutation, "id" | "leadId" | "created
   userName?: string;
 } {
   if (m.claimAction !== "claim" && m.claimAction !== "release") {
-    throw Object.assign(Error("Hot lead claim action is not valid."), { status: 400 });
+    throw Object.assign(Error("3PL lead claim action is not valid."), { status: 400 });
   }
   const actionAt = new Date(m.createdAt).toISOString();
   if (!Number.isFinite(Date.parse(actionAt)) || !HOT_LEAD_ID.test(m.leadId)) {
-    throw Object.assign(Error("Hot lead claim is not valid."), { status: 400 });
+    throw Object.assign(Error("3PL lead claim is not valid."), { status: 400 });
   }
   const body: {
     draftId: string;

@@ -166,7 +166,7 @@ export function fieldPinArtwork(
     if (cache.size > 256) cache.clear();
     cache.set(key, url);
   }
-  const label = `${hot ? "Hot lead · " : ""}${style.label}${warm ? ' · Raydar solar-rated warm lead' : ''}${style.outcome ? ` · GHL ${style.outcome.label}` : ""}${lead.solarCategory ? ` · ${lead.solarCategory} roof` : ""}`;
+  const label = `${hot ? "3PL lead · " : ""}${style.label}${warm ? ' · Raydar solar-rated warm lead' : ''}${style.outcome ? ` · GHL ${style.outcome.label}` : ""}${lead.solarCategory ? ` · ${lead.solarCategory} roof` : ""}`;
   const height = compact ? size : Math.round((size * 56) / 48);
   return { url, size, height, anchorY: compact ? height / 2 : height * 53 / 56, label, style };
 }

@@ -150,6 +150,7 @@ export function FieldToolbar({
   onSearch,
   onFilter,
   filterCount,
+  filterBadge,
   name = "Team",
   knocks,
 }: {
@@ -162,6 +163,8 @@ export function FieldToolbar({
   onSearch: () => void;
   onFilter: () => void;
   filterCount: number;
+  /** Shown on the Filters button when the 3PL filter is not All pins. */
+  filterBadge?: string;
   name?: string;
   knocks?: number;
   // Retained for existing preview callers; GPS lives on the map.
@@ -211,11 +214,12 @@ export function FieldToolbar({
         </div>}
       </div>
       <button
-        className={`rm-filter ${filterCount ? "is-active" : ""}`}
+        className={`rm-filter ${filterCount || filterBadge ? "is-active" : ""}`}
         onClick={onFilter}
-        aria-label={`Filters${filterCount ? `, ${filterCount} active` : ""}`}
+        aria-label={`Filters${filterBadge ? `, ${filterBadge}` : ""}${filterCount ? `, ${filterCount} active` : ""}`}
       >
         <SlidersHorizontal size={19} />
+        {filterBadge ? <span>{filterBadge}</span> : null}
         {filterCount > 0 && <span>{filterCount}</span>}
       </button>
       <Link className="rm-toolbar-account" href="/mobile/more" aria-label="Open account and tools">

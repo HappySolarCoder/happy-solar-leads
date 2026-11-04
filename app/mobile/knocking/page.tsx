@@ -37,9 +37,9 @@ import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import { useViewportLeads } from "@/app/hooks/useViewportLeads";
 import { useHotLeads } from "@/app/hooks/useHotLeads";
-import { hotLeadFilterVisible, HOT_LEAD_LEGEND, type HotPinFilter } from "@/app/hotLeads/filter";
+import { hotLeadFilterVisible, readHotFilter, writeHotFilter, HOT_FILTER_BADGE, type HotPinFilter } from "@/app/hotLeads/filter";
+import { HotLeadFilterSection } from "@/app/hotLeads/HotLeadFilterSection";
 import { hotLeadParkNotice } from "@/app/hotLeads/save";
-import { HOT_RING_COLOR } from "@/app/utils/fieldPin";
 import { inPinScope } from "../_lib/pinScope";
 import type { View } from "@/app/homeowners/model";
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
@@ -99,7 +99,7 @@ export default function KnockingPage() {
   const [areaNotice, setAreaNotice] = useState('');
   const deviceNow = useDeviceNow();
   const [mapZoom, setMapZoom] = useState(15);
-  const [hotFilter, setHotFilter] = useState<HotPinFilter>('all');
+  const [hotFilter, setHotFilterState] = useState<HotPinFilter>('all');
   const [knockPeriod, setKnockPeriod] = useState<KnockPeriod>('all');
   const [dispositionFilter, setDispositionFilter] = useState<string[]>([]);
   const [setterFilter, setSetterFilter] = useState<string>('all');
@@ -142,6 +142,14 @@ export default function KnockingPage() {
   const viewportPins = useViewportLeads(currentUser, viewport, pinPolygons, areasReady);
   const hotLeads = useHotLeads(currentUser, viewport);
   const showHotFilter = hotLeadFilterVisible(currentUser);
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    setHotFilterState(readHotFilter(currentUser.id, window.localStorage));
+  }, [currentUser?.id]);
+  const setHotFilter = (next: HotPinFilter) => {
+    setHotFilterState(next);
+    writeHotFilter(currentUser?.id, next, window.localStorage);
+  };
   const mapSource = useMemo(() => {
     return mergeLeadSnapshots(viewportPins.leads, leads).filter(l => inPinScope(l.lat,l.lng,pinPolygons));
   }, [viewportPins.leads,leads,pinPolygons]);
@@ -638,7 +646,8 @@ export default function KnockingPage() {
           areasLoading={areasLoading} onZoomMine={()=>{setAreaMode('mine');setZoomMinePending(true);}}
           onSearch={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
           onFilter={() => setShowFilters(!showFilters)}
-          filterCount={Number(knockPeriod !== 'all') + Number(dispositionFilter.length > 0) + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly)}
+          filterCount={Number(knockPeriod !== 'all') + Number(dispositionFilter.length > 0) + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly) + Number(showHotFilter && hotFilter !== 'all')}
+          filterBadge={showHotFilter && hotFilter !== 'all' ? HOT_FILTER_BADGE : undefined}
           name={currentUser.name} knocks={dataLoading || dataUnavailable ? undefined : todaysKnocks} />
         {areasError && showTeamAreas && <MobileNotice>{areasError}<button className="ml-2 underline" onClick={retryAreas}>Retry areas</button></MobileNotice>}
         {areaNotice && <MobileNotice>{areaNotice}</MobileNotice>}
@@ -717,16 +726,7 @@ export default function KnockingPage() {
               <button aria-pressed={!dispositionFilter.length} onClick={()=>setDispositionFilter([])}>All dispositions</button>
               {dispositions.map(d=><button key={d.id} aria-pressed={dispositionFilter.includes(d.id)} onClick={()=>setDispositionFilter(prev=>prev.includes(d.id)?prev.filter(id=>id!==d.id):[...prev,d.id])}>{d.name}</button>)}
             </div></fieldset>
-            {showHotFilter && <fieldset className="rm-map-filter-group"><legend>Hot leads</legend><div className="rm-filter-options">
-              <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ width: 14, height: 14, borderRadius: 99, boxShadow: `0 0 0 3px ${HOT_RING_COLOR}` }} />
-                <span>🔥</span>
-              </span>
-              <span>{HOT_LEAD_LEGEND}</span>
-              <button type="button" aria-pressed={hotFilter === 'all'} onClick={() => setHotFilter('all')}>All pins</button>
-              <button type="button" aria-pressed={hotFilter === 'only'} onClick={() => setHotFilter('only')}>Hot leads only</button>
-              <button type="button" aria-pressed={hotFilter === 'hide'} onClick={() => setHotFilter('hide')}>Hide hot leads</button>
-            </div></fieldset>}
+            {showHotFilter && <HotLeadFilterSection value={hotFilter} onChange={setHotFilter} />}
             <button className="w-full mt-3 py-3 text-sm text-[#476E88]" onClick={() => { setKnockPeriod('all'); setDispositionFilter([]); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); setHotFilter('all'); }}>Reset all filters</button>
             <details className="rm-pin-key"><summary>Map display</summary>
               <div className="rm-map-summary"><button aria-pressed={showHomeowners} onClick={()=>setHomePreference(showHomeowners?'off':'on')}>Homeowner pins{showHomeowners?' ✓':''}</button><button aria-pressed={showHeat} onClick={()=>setShowHeat(!showHeat)}>Heat map{showHeat?' ✓':''}</button></div>

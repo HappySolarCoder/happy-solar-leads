@@ -169,7 +169,7 @@ export type FieldDispoBody = {
   goBack?: { scheduledDate: string; scheduledTime?: string; notes?: string };
   objection?: { type: string; notes?: string } | null;
   homeownerId?: string;
-  /** Present only for a hot lead. Absent, the body is a leads write. */
+  /** Present only for a 3PL lead. Absent, the body is a leads write. */
   collection?: "hotLeads";
 };
 
@@ -458,7 +458,7 @@ async function readJson(response: Response): Promise<{
   }
 }
 
-/** #180 uses this body for a missing hot lead. Any other 404 is the route not being live. */
+/** #180 uses this body for a missing 3PL lead. Any other 404 is the route not being live. */
 function hotLeadMissingBody(data: { error?: unknown; reasonCode?: unknown } | null): boolean {
   return data?.error === "not_found" || data?.reasonCode === "not_found";
 }
@@ -963,7 +963,7 @@ function writesContactDirect(m: PendingMutation): boolean {
 }
 
 function hotHold(status: number): Error {
-  return Object.assign(Error("Hot lead route is not ready. This save stays queued."), {
+  return Object.assign(Error("3PL lead route is not ready. This save stays queued."), {
     status,
     code: "hot-leads-hold",
   });
@@ -975,7 +975,7 @@ function ownedHotMessage(name: unknown): string {
     : HOT_LEAD_OWNED_MESSAGE;
 }
 
-/** Claim, knock and notes for a hot lead. Never a direct leads, contact or photo write. */
+/** Claim, knock and notes for a 3PL lead. Never a direct leads, contact or photo write. */
 async function deliverHotLead(
   m: PendingMutation,
   user: User,
@@ -1044,19 +1044,19 @@ async function postHotClaim(
     if (reason === SYNC_REASON.ownedByOther) {
       throw routeError(ownedHotMessage((data as { claimedByName?: unknown } | null)?.claimedByName), 409, SYNC_REASON.ownedByOther);
     }
-    throw routeError("This hot lead could not be saved.", 409, reason || SYNC_REASON.other);
+    throw routeError("This 3PL lead could not be saved.", 409, reason || SYNC_REASON.other);
   }
   if (response.status === 403) {
     const reason = knownReason(data?.reasonCode) || SYNC_REASON.other;
     throw routeError(
-      reason === SYNC_REASON.ownedByOther ? ownedHotMessage((data as { claimedByName?: unknown } | null)?.claimedByName) : "The hot lead route denied this save.",
+      reason === SYNC_REASON.ownedByOther ? ownedHotMessage((data as { claimedByName?: unknown } | null)?.claimedByName) : "The 3PL lead route denied this save.",
       403,
       reason,
     );
   }
   if (response.status === 401) throw Object.assign(Error("Sign in again to sync your work."), { status: 401 });
   if (response.status === 429) {
-    throw Object.assign(Error("Hot lead route asked us to wait."), { status: 429 });
+    throw Object.assign(Error("3PL lead route asked us to wait."), { status: 429 });
   }
   throw hotHold(response.status || 503);
 }

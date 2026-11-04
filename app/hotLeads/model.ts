@@ -48,7 +48,7 @@ export type HotLeadPin = {
   dispositionHistory?: HotHistoryEntry[];
 };
 
-/** Shown on the hot-lead detail when the route set doNotCall. */
+/** Shown on the 3PL lead detail when the route set doNotCall. */
 export const DO_NOT_CALL_WARNING = "Do not call";
 
 /** A call control is only offered when the route did not set doNotCall. */
@@ -96,7 +96,7 @@ export function toHotDisplayLead(pin: HotLeadPin): HotDisplayLead {
   const contact = pin.contacts.find((row) => row.name || row.phone || row.email);
   return {
     id: pin.id,
-    name: contact?.name || "Hot lead",
+    name: contact?.name || "3PL lead",
     address: pin.address,
     city: pin.city || "",
     state: pin.state,
@@ -121,7 +121,7 @@ export function toHotDisplayLead(pin: HotLeadPin): HotDisplayLead {
 
 /**
  * One pin per linked lead. The link is the route's linkedLeadId, optionally
- * mapped to the winning house pin. Unlinked hot leads are their own pin.
+ * mapped to the winning house pin. Unlinked 3PL leads are their own pin.
  * Lead objects passed in are not mutated.
  */
 export function mergeHotLeads(
@@ -208,7 +208,7 @@ export function hotPinForLead(leadId: string): HotLeadPin | null {
   return hotIndex.get(leadId) ?? null;
 }
 
-/** Display only. A merged house hides Call when its hot lead is doNotCall. */
+/** Display only. A merged house hides Call when its 3PL lead is doNotCall. */
 export function suppressLeadCall(lead: { id: string; hotPin?: HotLeadPin | null } | null | undefined): boolean {
   if (!lead) return false;
   const pin = lead.hotPin ?? hotPinForLead(lead.id);
