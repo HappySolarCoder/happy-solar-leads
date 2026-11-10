@@ -178,6 +178,26 @@ export async function ownershipForRows(
   });
 }
 
+/**
+ * "Jordan M." style label: first name plus last initial, never the full name. A single word stays as is.
+ * Null for a missing or blank name.
+ */
+export function shortOwnerName(name: unknown): string | null {
+  if (typeof name !== 'string') return null;
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return null;
+  const first = parts[0].slice(0, 30);
+  if (parts.length === 1) return first;
+  const initial = Array.from(parts[parts.length - 1])[0]?.toUpperCase();
+  return initial ? `${first} ${initial}.` : first;
+}
+
+/** Short owner names for these uids from the shared 10-minute directory cache (one batched read per miss). */
+export async function shortOwnerNames(db: Firestore, uids: string[], now: number): Promise<Map<string, string | null>> {
+  await loadDirectory(db, uids, now);
+  return new Map(uids.map((uid) => [uid, shortOwnerName(directory.get(uid)?.name)]));
+}
+
 export function popupExemptForRole(role: unknown): boolean {
   return popupExemptFor(role);
 }
