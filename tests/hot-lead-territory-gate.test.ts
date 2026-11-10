@@ -916,6 +916,44 @@ describe('3PL counts-only knocks (territory mode)', () => {
     assert.deepEqual(ledger.map((e) => e.key), [`ghl_opp1|uid-closer|not-home|${Date.parse(ACTION)}`]);
   });
 
+  it("staff (admin/manager) accepted everywhere: reason 'staff' outside their own territories, 'in_territory' inside; counting is identical", async () => {
+    const byName = (name: string) => scenarios.find((item) => item.name === name) as Scenario;
+    for (const role of ['manager', 'admin']) {
+      const labels: Record<string, string> = {};
+      for (const name of ['inside', 'outside', 'no-territory', 'truncated']) {
+        const scenario = byName(name);
+        const body = knockBody(role, scenario);
+        const { result, db } = await runDispo(role, scenario, body, { mode: 'territory' });
+        assert.equal(result.status, 200, `${role} ${name}`);
+        assert.equal(result.body.result, 'applied', `${role} ${name}: staff are never counts-only`);
+        assert.equal(db.patches.length, 1, `${role} ${name}: the pin is still updated`);
+        const events = db.creates.filter((row) => row.path.startsWith('fieldKnockEvents/'));
+        assert.equal(events.length, 1, `${role} ${name}: exactly one event`);
+        const data = events[0].data as Record<string, unknown>;
+        labels[name] = String(data.reason);
+        // Only the label differs: same ids, same owner fields, same ledger key.
+        assert.equal(data.uid, `uid-${role}`);
+        assert.equal(data.effectiveOwnerId, `uid-${role}`);
+        assert.equal(data.ownerSource, 'gate');
+        assert.equal(data.dispositionId, 'not-home');
+        const ledger = ledgerFromFieldEvents([{ ...data, actionAt: { toMillis: () => Date.parse(ACTION) } }]);
+        assert.deepEqual(ledger.map((e) => e.key), [`ghl_opp1|uid-${role}|not-home|${Date.parse(ACTION)}`]);
+      }
+      assert.deepEqual(labels, { inside: 'in_territory', outside: 'staff', 'no-territory': 'staff', truncated: 'staff' }, role);
+    }
+    // A rep is never labelled staff.
+    const rep = await runDispo('closer', byName('inside'), knockBody('closer', byName('inside')), { mode: 'territory' });
+    assert.equal((rep.db.creates.find((row) => row.path.startsWith('fieldKnockEvents/'))?.data as Record<string, unknown>).reason, 'in_territory');
+  });
+
+  it("staff flag OFF: no territory read at all and no event (unchanged)", async () => {
+    const scenario = scenarios.find((item) => item.name === 'outside') as Scenario;
+    const { result, db } = await runDispo('manager', scenario, knockBody('manager', scenario));
+    assert.equal(result.body.result, 'applied');
+    assert.equal(db.territoryQueries, 0);
+    assert.equal(db.creates.some((row) => row.path.startsWith('fieldKnockEvents/')), false);
+  });
+
   it('flag OFF (no doc or legacy): an in-territory 3PL knock writes no event, exactly as today', async () => {
     const scenario = scenarios[0];
     for (const flag of [undefined, { mode: 'legacy' }] as const) {

@@ -29,7 +29,11 @@ import { mobileKnockEvents, type MobileKnockEvent } from '@/app/utils/fieldKnock
 export const MOBILE_ALL_TERRITORIES_LIMIT = 500;
 export const MOBILE_EVENT_WINDOW_MS = 45 * 24 * 60 * 60 * 1000;
 export const MOBILE_EVENT_READ_LIMIT = 600;
-export const MOBILE_EVENT_RETURN_LIMIT = 500;
+/**
+ * Everything read is returned (3 short fields per event, ~50 KB at 600), so a rep with 501-599 events loses
+ * none. `truncated` is true whenever the read hit its cap, or whenever any row was dropped for size.
+ */
+export const MOBILE_EVENT_RETURN_LIMIT = MOBILE_EVENT_READ_LIMIT;
 const OWNERS_MAX = 5;
 /** Mode flag: re-read every 60 s so a flag flip reaches phones within a minute. */
 const CACHE_MS = 60_000;
@@ -40,17 +44,26 @@ const CACHE_MS = 60_000;
  * Territory writes through /api/territory-management clear it on the instance that handled them.
  */
 export const TERRITORY_CACHE_MS = 5 * 60_000;
+/** After a failed polygon re-read, serve the last good list and do not retry for this long (avoids a 1.8 MB read per request). */
+export const TERRITORY_RETRY_BACKOFF_MS = 45_000;
+/** The last good polygons are served through an outage for at most this long, then the read fails as it did before. */
+export const TERRITORY_STALE_MAX_MS = 60 * 60_000;
 const DIRECTORY_CACHE_MS = 10 * 60_000;
 
 type Ctx = { mode: 'legacy' | 'territory'; territories: PreparedTerritory[] | null };
 let ctxCache: { at: number; value: Ctx } | null = null;
-let territoryCache: { at: number; territories: PreparedTerritory[] } | null = null;
+let territoryCache: { at: number; territories: PreparedTerritory[]; failedAt?: number } | null = null;
 const directory = new Map<string, { at: number; name: string | null; active: boolean }>();
 
 export function resetMobileOwnershipCaches(): void {
   ctxCache = null;
   territoryCache = null;
   directory.clear();
+}
+
+/** Tests: expire only the 60 s flag/context cache, keeping the polygon cache and its failure state. */
+export function expireOwnershipFlagCache(): void {
+  ctxCache = null;
 }
 
 /** A territory was written on this instance: re-read polygons on the next request. */
@@ -61,6 +74,12 @@ export function invalidateMobileTerritoryCache(): void {
 
 async function loadTerritories(db: Firestore, now: number): Promise<PreparedTerritory[] | null> {
   if (territoryCache && now >= territoryCache.at && now - territoryCache.at < TERRITORY_CACHE_MS) return territoryCache.territories;
+  // Recent failed re-read: do not hit Firestore again yet. Serve the last good list while it is under the
+  // stale cap, otherwise fail exactly as a first-ever read would.
+  if (territoryCache?.failedAt !== undefined && now >= territoryCache.failedAt && now - territoryCache.failedAt < TERRITORY_RETRY_BACKOFF_MS) {
+    if (now - territoryCache.at < TERRITORY_STALE_MAX_MS) return territoryCache.territories;
+    throw new Error('territories unavailable (stale cap exceeded)');
+  }
   try {
     const snap = await db
       .collection('territories')
@@ -76,8 +95,13 @@ async function loadTerritories(db: Firestore, now: number): Promise<PreparedTerr
     territoryCache = { at: now, territories };
     return territories;
   } catch (error) {
-    // A failed re-read keeps serving the last good list rather than dropping every phone to legacy.
-    if (territoryCache) return territoryCache.territories;
+    // A failed re-read keeps serving the last good list (up to TERRITORY_STALE_MAX_MS old) rather than dropping
+    // every phone to legacy, and backs off TERRITORY_RETRY_BACKOFF_MS before the next attempt.
+    if (territoryCache && now >= territoryCache.at && now - territoryCache.at < TERRITORY_STALE_MAX_MS) {
+      territoryCache.failedAt = now;
+      console.log('[mobile/leads] territories_reread_failed_serving_stale 1');
+      return territoryCache.territories;
+    }
     throw error;
   }
 }
@@ -162,7 +186,7 @@ export function popupExemptForRole(role: unknown): boolean {
  * The caller's own counts-only knocks, last 45 days, NEWEST first, capped at MOBILE_EVENT_READ_LIMIT.
  * where uid == caller AND actionAt >= window start, orderBy actionAt desc: needs the composite index
  * fieldKnockEvents (uid ASC, actionAt DESC) in firestore.indexes.json. When the cap is hit the OLDEST
- * rows are the ones left out, and `truncated` is true.
+ * rows are the ones left out, and `truncated` is true. Returns every row read (up to the cap).
  */
 export async function loadOwnKnockEventsPage(
   db: Firestore,
@@ -179,12 +203,14 @@ export async function loadOwnKnockEventsPage(
     .select('uid', 'leadId', 'actionAt', 'dispositionId', 'status', 'disposition')
     .limit(MOBILE_EVENT_READ_LIMIT)
     .get();
-  const truncated = snap.size >= MOBILE_EVENT_READ_LIMIT;
-  if (truncated) console.log('[mobile/leads] knock_events_capped 1');
-  const events = mobileKnockEvents(snap.docs.map((d) => d.data()))
+  const hitCap = snap.size >= MOBILE_EVENT_READ_LIMIT;
+  const all = mobileKnockEvents(snap.docs.map((d) => d.data()))
     .filter((event) => event.at >= since)
-    .sort((a, b) => b.at - a.at)
-    .slice(0, MOBILE_EVENT_RETURN_LIMIT);
+    .sort((a, b) => b.at - a.at);
+  const events = all.slice(0, MOBILE_EVENT_RETURN_LIMIT);
+  // Truncated whenever rows may be missing: the read hit its cap, or a row was dropped for size.
+  const truncated = hitCap || events.length < all.length;
+  if (truncated) console.log('[mobile/leads] knock_events_capped 1');
   return { events, truncated };
 }
 
