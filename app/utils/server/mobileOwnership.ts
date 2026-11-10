@@ -23,7 +23,7 @@ import { mobileKnockEvents, type MobileKnockEvent } from '@/app/utils/fieldKnock
  *   ownerSource          'territory' | 'go-back' | 'stamp' | 'none'
  *   expiredGoBack        boolean  status go-back and older than 90 d (derived, never stored)
  *   inOtherUsersTerritory boolean pin is in a live territory and the caller is not one of its owners
- * Response field: popupExempt boolean (caller-specific; staff default true, TBD).
+ * Response field: popupExempt boolean (caller-specific; staff true, final per Evan).
  * Warn on place/dispo when: inOtherUsersTerritory && !popupExempt.
  */
 export const MOBILE_ALL_TERRITORIES_LIMIT = 500;
