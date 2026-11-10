@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { Lead, User, UserRole } from "../../app/types";
+import type { Lead, User } from "../../app/types";
 import { DEFAULT_DISPOSITIONS } from "../../app/types/disposition";
 import { HOT_LEAD_ROLE_SETS, canSeeHotLeads, isDemoAccount } from "../../app/hotLeads/access";
 import { HOT_DISPO_BLOCK_COPY } from "../../app/hotLeads/copy";
@@ -108,13 +108,13 @@ function svg(url: string) {
   return decodeURIComponent(url.slice("data:image/svg+xml,".length));
 }
 
-function person(role: UserRole, extra: Record<string, unknown> = {}): User {
+function person(role: string, extra: Record<string, unknown> = {}): User {
   return {
     id: "rep-1",
     name: "Riley Example",
     email: "riley@example.com",
     color: "#335364",
-    role,
+    role: role as User["role"],
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     approved: true,
     approvalStatus: "approved",
@@ -150,15 +150,15 @@ test("every 3PL pin uses the gold outline and a dashed ring means view only", ()
   assert.equal(fieldPin.includes("#334155"), false);
   assert.equal(fieldPin.includes("HOT_VIEW_ONLY_RING"), false);
   assert.match(fieldPin, /warm \? 20 : 0/);
-  const open = fieldPinArtwork({ ...house(), hotLead: true, hotPin: pin() }, undefined, 18, false, true);
+  const open = fieldPinArtwork({ ...house(), hotLead: true, hotPin: pin() } as Lead, undefined, 18, false, true);
   const locked = fieldPinArtwork(
-    { ...house(), hotLead: true, hotPin: pin({ canDispo: false, dispoBlock: "outside_territory" }) },
+    { ...house(), hotLead: true, hotPin: pin({ canDispo: false, dispoBlock: "outside_territory" }) } as Lead,
     undefined,
     18,
     false,
     true,
   );
-  const selected = fieldPinArtwork({ ...house(), hotLead: true, hotPin: pin() }, undefined, 16, true, true);
+  const selected = fieldPinArtwork({ ...house(), hotLead: true, hotPin: pin() } as Lead, undefined, 16, true, true);
   assert.match(svg(open.url), new RegExp(`stroke="${HOT_RING_COLOR}"`));
   assert.equal(svg(open.url).includes("stroke-dasharray"), false);
   assert.equal(svg(open.url).includes("data-hot-view-only"), false);
@@ -175,7 +175,7 @@ test("every 3PL pin uses the gold outline and a dashed ring means view only", ()
   assert.match(section, /3PL lead — view only|HOT_VIEW_ONLY_LEGEND/);
   assert.match(section, /dashed \$\{HOT_RING_COLOR\}/);
   const warm = svg(fieldPinArtwork(
-    { ...house({ solarCategory: "great", tags: ["solar-data"] }), hotLead: true, hotPin: pin() },
+    { ...house({ solarCategory: "great", tags: ["solar-data"] }), hotLead: true, hotPin: pin() } as Lead,
     undefined,
     18,
     false,
@@ -215,7 +215,7 @@ test("3PL visibility follows role sets A and B and stays hidden when the flag is
     assert.equal(canSeeHotLeads(person("closer"), roles), true, variant);
     assert.equal(canSeeHotLeads(person("manager"), roles), true, variant);
     assert.equal(canSeeHotLeads(person("admin"), roles), true, variant);
-    assert.equal(canSeeHotLeads(person("setter"), roles), roles.includes("setter"), variant);
+    assert.equal(canSeeHotLeads(person("setter"), roles), (roles as readonly string[]).includes("setter"), variant);
     assert.equal(canSeeHotLeads(person("closer", { isActive: false }), roles), false);
     assert.equal(canSeeHotLeads(person("closer", { approved: false }), roles), false);
     assert.equal(canSeeHotLeads(person("closer", { approvalStatus: "pending" }), roles), false);

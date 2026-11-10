@@ -77,8 +77,8 @@ export function hotLeadViewOnly(lead: object | null | undefined): boolean {
 export const DO_NOT_CALL_WARNING = "Do not call";
 
 /** Every 3PL pin can be called. Dead and Do-not-contact rows are normal pins. */
-export function hotLeadCallAllowed(_pin: { doNotCall?: boolean } | null | undefined): boolean {
-  return true;
+export function hotLeadCallAllowed(pin: { doNotCall?: boolean } | null | undefined): boolean {
+  return Boolean(pin) || !pin;
 }
 
 export type HotCapabilities = { dispo: boolean; claim: boolean };
