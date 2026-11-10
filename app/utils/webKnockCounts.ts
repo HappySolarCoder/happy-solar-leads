@@ -87,6 +87,18 @@ export type KnockIndex = {
 };
 
 let cachedIndex: KnockIndex | null = null;
+let fieldEventLedger: readonly KnockEvent[] = [];
+
+/**
+ * Counts-only knocks (fieldKnockEvents) for the signed-in viewer's scope, set by
+ * loadFieldKnockEventLedger. They join history through knockCount's `ledger`
+ * option, deduped on the shared key leadId|userId|dispositionId|at, then the
+ * 120 s collapse. Empty = exactly today's counts.
+ */
+export function setFieldKnockEventLedger(events: readonly KnockEvent[]): void {
+  fieldEventLedger = events;
+  cachedIndex = null;
+}
 
 /** One pass per leads array. Later reads for the same arrays do not rescan. */
 export function knockIndex(
@@ -96,7 +108,7 @@ export function knockIndex(
   if (cachedIndex && cachedIndex.leads === leads && cachedIndex.dispositions === dispositions) {
     return cachedIndex;
   }
-  const events = collectKnockEvents(leads, dispositions);
+  const events = collectKnockEvents(leads, dispositions, fieldEventLedger.length ? { ledger: fieldEventLedger } : {});
   const byUser = new Map<string, KnockEvent[]>();
   for (const event of events) {
     const list = byUser.get(event.userId);

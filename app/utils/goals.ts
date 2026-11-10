@@ -3,6 +3,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { startOfMonth, endOfMonth, format, isBefore } from 'date-fns';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
+import { loadFieldKnockEventLedger } from '@/app/utils/fieldKnockEventsClient';
 import { countMonthlyKnocks } from '@/app/utils/webKnockCounts';
 import { User } from '@/app/types';
 
@@ -66,6 +67,7 @@ export function countWorkdaysElapsedAndRemaining(monthDate: Date, now = new Date
 
 export async function getMyMonthlyKnocksAsync(monthDate: Date, currentUser: User) {
   const [leads, dispositions] = await Promise.all([getLeadsAsync(), getDispositionsAsync()]);
+  await loadFieldKnockEventLedger();
   return countMonthlyKnocks(leads, dispositions, currentUser.id, monthDate);
 }
 
