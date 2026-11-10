@@ -43,10 +43,12 @@ import { useHotLeads } from "@/app/hooks/useHotLeads";
 import { hotLeadFilterVisible, readHotFilter, writeHotFilter, HOT_FILTER_BADGE, type HotPinFilter } from "@/app/hotLeads/filter";
 import { HotLeadFilterSection } from "@/app/hotLeads/HotLeadFilterSection";
 import { hotLeadParkNotice } from "@/app/hotLeads/save";
+import { HOT_PINS_UNAVAILABLE } from "@/app/hotLeads/fetch";
 import { inPinScope } from "../_lib/pinScope";
 import type { View } from "@/app/homeowners/model";
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
+import { planAreaFocus } from '../_lib/areaFocus';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -96,10 +98,13 @@ export default function KnockingPage() {
   const [viewMode] = useState<'map' | 'list'>('map');
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const centeredActivation = useRef('');
+  const holdGpsRecentreUntil = useRef(0);
   const [cameraRevision,setCameraRevision] = useState(0);
   const [fitAreaBounds, setFitAreaBounds] = useState<[number, number][] | undefined>();
   const [zoomMinePending, setZoomMinePending] = useState(false);
   const [areaNotice, setAreaNotice] = useState('');
+  const [pendingAreaFocus, setPendingAreaFocus] = useState<{ mode: 'mine' | 'team'; token: number } | null>(null);
+  const areaFocusToken = useRef(0);
   const deviceNow = useDeviceNow();
   const [mapZoom, setMapZoom] = useState(15);
   const [hotFilter, setHotFilterState] = useState<HotPinFilter>('all');
@@ -185,6 +190,10 @@ export default function KnockingPage() {
   useEffect(() => {
     const key = `${currentUser?.id}:${gpsActivation}`;
     if (!currentUser || !gpsPosition || !gpsActivation || centeredActivation.current === key) return;
+    if (Date.now() < holdGpsRecentreUntil.current) {
+      centeredActivation.current = key;
+      return;
+    }
     centeredActivation.current = key;
     setFitAreaBounds(undefined);
     setCameraRevision(v=>v+1);
@@ -197,6 +206,42 @@ export default function KnockingPage() {
     else setAreaNotice('You do not have an assigned territory yet.');
     setZoomMinePending(false);
   }, [zoomMinePending, areasReady, areasLoading, areasError, overlayTerritories, currentUser?.id]);
+  useEffect(() => {
+    if (!pendingAreaFocus) return;
+    if (areasError) {
+      setPendingAreaFocus(null);
+      return;
+    }
+    if (!areasReady || areasLoading || !viewport) return;
+    const plan = planAreaFocus({
+      mode: pendingAreaFocus.mode,
+      userId: currentUser?.id,
+      territories: overlayTerritories,
+      view: viewport,
+    });
+    if (plan.fit?.length) {
+      setFitAreaBounds(plan.fit);
+      holdGpsRecentreUntil.current = Date.now() + 10_000;
+    }
+    setAreaNotice(plan.notice);
+    setPendingAreaFocus(null);
+  }, [pendingAreaFocus, areasReady, areasLoading, areasError, overlayTerritories, currentUser?.id, viewport]);
+  function onAreaMode(mode: 'off' | 'mine' | 'team') {
+    setAreaMode(mode);
+    setAreaNotice('');
+    setZoomMinePending(false);
+    if (mode === 'off') {
+      setPendingAreaFocus(null);
+      return;
+    }
+    areaFocusToken.current += 1;
+    setPendingAreaFocus({ mode, token: areaFocusToken.current });
+  }
+  function onZoomMine() {
+    setAreaMode('mine');
+    setZoomMinePending(true);
+    setPendingAreaFocus(null);
+  }
 
   // Fetch weather when GPS position is available
   useEffect(() => {
@@ -648,6 +693,9 @@ export default function KnockingPage() {
 
   if (isLoading) return <MobileLoading />;
   if (!currentUser) return <MobileNotice>{sessionError || 'Sign in to open the map.'}</MobileNotice>;
+  const teamScopeNotice = areaMode === 'team' && !['admin', 'manager'].includes(currentUser.role)
+    ? 'Your account shows its own territories only.'
+    : '';
 
   return (
     <LocationPermissionGuard requireLocation={false}>
@@ -656,15 +704,16 @@ export default function KnockingPage() {
 
       <header className={`relative flex-shrink-0 ${showSearchSheet ? 'z-[70]' : 'z-50'}`}>
         <FieldToolbar showTeamAreas={showTeamAreas} onToggleTeamAreas={() => setAreaMode(v=>v==='off'?'mine':'off')}
-          areaMode={areaMode} onAreaMode={mode=>{setAreaMode(mode);setAreaNotice('');setZoomMinePending(false);}}
-          areasLoading={areasLoading} onZoomMine={()=>{setAreaMode('mine');setZoomMinePending(true);}}
+          areaMode={areaMode} onAreaMode={onAreaMode}
+          areasLoading={areasLoading} onZoomMine={onZoomMine}
           onSearch={() => { setShowSearchSheet(true); setTimeout(() => searchInputRef.current?.focus(), 50); }}
           onFilter={() => setShowFilters(!showFilters)}
           filterCount={Number(knockPeriod !== 'all') + Number(dispositionFilter.length > 0) + Number(setterFilter !== 'all') + Number(freshPinsOnly) + Number(leadTypeFilter !== 'all') + Number(outcomesOnly) + Number(showHotFilter && hotFilter !== 'all')}
           filterBadge={showHotFilter && hotFilter !== 'all' ? HOT_FILTER_BADGE : undefined}
           name={currentUser.name} knocks={dataLoading || dataUnavailable ? undefined : todaysKnocks} />
+        {areaMode !== 'off' && areasLoading && <MobileNotice>Loading territories…</MobileNotice>}
         {areasError && showTeamAreas && <MobileNotice>{areasError}<button className="ml-2 underline" onClick={retryAreas}>Retry areas</button></MobileNotice>}
-        {areaNotice && <MobileNotice>{areaNotice}</MobileNotice>}
+        {(areaNotice || teamScopeNotice) && <MobileNotice>{[areaNotice, teamScopeNotice].filter(Boolean).join(' ')}</MobileNotice>}
         {live?.error && <MobileNotice>{live.error}<button className="ml-2 underline font-semibold" onClick={() => void refresh()}>Retry data</button></MobileNotice>}
         {notesSavedNotice ? <MobileNotice>{notesSavedNotice}</MobileNotice> : null}
         {/* Search Sheet */}
@@ -912,6 +961,7 @@ export default function KnockingPage() {
           {gpsError && <div className="rm-gps-notice" role="status">{gpsError.code === 1 ? "Enable Raydar location access in your phone Settings, then tap GPS to retry." : "Location unavailable. Tap GPS to try again."}</div>}
           {currentUser && !dataLoading && !dataUnavailable && <DoorCoach key={`focus:${currentUser.id}`} leads={leads} userId={currentUser.id} dispositions={dispositions} />}
           {currentUser && !isRefreshing && !dataUnavailable && !showLeadDetail && <ReturnVisitReminder key={`reminder:${currentUser.id}`} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
+          {hotLeads.unavailable && <div className="rm-map-loading" role="status"><button type="button" onClick={() => hotLeads.retry()}>{HOT_PINS_UNAVAILABLE}</button></div>}
           {viewportPins.loading && <div className="rm-map-loading" role="status">Loading nearby pins…</div>}
           {viewportPins.error && <div className="rm-map-loading" role="status">{viewportPins.error} <button onClick={viewportPins.retry}>Retry pins</button></div>}
           {hotLeadParkNotice(field.drafts) && <div className="rm-map-loading" role="status">{hotLeadParkNotice(field.drafts)}</div>}
@@ -920,7 +970,9 @@ export default function KnockingPage() {
             title={gpsError ? 'Location unavailable — enable location access' : 'Center map on my location'}
             aria-busy={gpsLoading} onClick={() => {
               if (!gpsPosition || gpsError) { retryGps(); return; }
-              if (gpsPosition) { setCameraRevision(v=>v+1); setFitAreaBounds(undefined); setMapCenter([gpsPosition.lat,gpsPosition.lng]); setMapZoom(18); }
+              setAreaNotice('');
+              setPendingAreaFocus(null);
+              setCameraRevision(v=>v+1); setFitAreaBounds(undefined); setMapCenter([gpsPosition.lat,gpsPosition.lng]); setMapZoom(18);
             }}><Crosshair size={24}/></button>
         </main>
       )}

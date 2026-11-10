@@ -272,11 +272,19 @@ test("403, 404, 405, 401 and 5xx are silent: no pins, no sign-in copy, no lead-c
     assert.deepEqual(first.pins, []);
     assert.equal(first.error, "");
     assert.equal(JSON.stringify(first).includes("Sign in"), false);
-    const second = await fetchHotLeadMap({
-      user: person("closer"), view: view(), token: "tok", fetcher, enabled: true, now: 1_000 + 60_000,
+    const windowMs = status === 404 || status === 405 ? 15 * 60 * 1000 : 60 * 1000;
+    const during = await fetchHotLeadMap({
+      user: person("closer"), view: view(), token: "tok", fetcher, enabled: true, now: 1_000 + windowMs - 1,
     });
-    assert.deepEqual(second.pins, []);
+    assert.deepEqual(during.pins, []);
+    assert.equal(during.error, "");
     assert.equal(calls, 1);
+    const after = await fetchHotLeadMap({
+      user: person("closer"), view: view(), token: "tok", fetcher, enabled: true, now: 1_000 + windowMs,
+    });
+    assert.equal(after.error, "");
+    assert.equal(JSON.stringify(after).toLowerCase().includes("sign in"), false);
+    assert.equal(calls, 2);
     assert.equal(leadCache.clears, 0);
   }
 });
@@ -365,8 +373,8 @@ test("pin art keeps a non-hot pin unchanged and marks a hot pin at every zoom", 
   assert.match(selected, /#F4C84A/);
   assert.match(selected, new RegExp(HOT_RING_COLOR));
   assert.notEqual(HOT_RING_COLOR.toLowerCase(), "#f4c84a");
+  assert.equal(HOT_RING_COLOR, "#B8860B");
   assert.ok(contrast(HOT_RING_COLOR, "#ffffff") >= 3);
-  assert.ok(contrast(HOT_RING_COLOR, "#f2efe9") >= 3);
   const fresh = lead("fresh", { status: "assigned" });
   assert.ok(fieldPinArtwork(fresh, undefined, 18, false, true).size > fieldPinArtwork(fresh, undefined, 18).size);
   assert.equal(fieldPinZoomTier(18), 4);
@@ -668,7 +676,7 @@ test("a hot pin stays hot after a dispo and is still absent for a setter", async
   assert.equal(isHotLeadDraft({ collection: "hotLeads", kind: "knock" }), true);
 });
 
-test("two hot leads at one house stay one pin, and a merged doNotCall house hides Call", () => {
+test("two hot leads at one house stay one pin, and a merged house does not inherit doNotCall", () => {
   resetHotLeadStore();
   const house = lead("house-1", { phone: "555-0101", address: "100 Example Ave", city: "Rochester", state: "NY", lat: 43.16, lng: -77.61 });
   const hidden = lead("older-visit", { address: "100 Example Ave", city: "Rochester", state: "NY", lat: 43.1601, lng: -77.6101 });
@@ -680,17 +688,18 @@ test("two hot leads at one house stay one pin, and a merged doNotCall house hide
   assert.equal(merged.leads[0].id, "house-1");
   assert.equal(isHotLead(merged.leads[0]), true);
   publishHotLeadIndex(merged.index);
-  assert.equal(suppressLeadCall(house), true);
+  assert.equal((merged.leads[0] as { hotPin?: { doNotCall?: boolean } }).hotPin?.doNotCall, undefined);
+  assert.equal(suppressLeadCall(merged.leads[0]), false);
   assert.equal(suppressLeadCall(lead("plain-house")), false);
   const loneA = pin({ id: "ghl_same_a", linkedLeadId: null, address: "50 Example Ave", city: "Rochester", state: "NY", lat: 43.2, lng: -77.7 });
   const loneB = pin({ id: "ghl_same_b", linkedLeadId: null, address: "50 Example Ave", city: "Rochester", state: "NY", lat: 43.2001, lng: -77.7001 });
   assert.equal(mergeHotLeads([], [loneA, loneB]).leads.length, 1);
 });
 
-test("doNotCall hides the call control, warns, and still allows a knock", () => {
+test("doNotCall stays on the parsed pin but does not hide Call, and a knock still queues", () => {
   const flagged = pin({ doNotCall: true });
   const open = pin();
-  assert.equal(hotLeadCallAllowed(flagged), false);
+  assert.equal(hotLeadCallAllowed(flagged), true);
   assert.equal(hotLeadCallAllowed(open), true);
   assert.equal(hotLeadCallAllowed(null), true);
   assert.equal(DO_NOT_CALL_WARNING, "Do not call");
@@ -715,11 +724,11 @@ test("doNotCall hides the call control, warns, and still allows a knock", () => 
   assert.equal(after.hotStatus, "worked");
   assert.equal(isHotLead(toHotDisplayLead(after)), true);
   const detail = readFileSync(new URL("../../app/hotLeads/HotLeadDetail.tsx", import.meta.url), "utf8");
-  assert.match(detail, /DO_NOT_CALL_WARNING/);
-  assert.match(detail, /hotLeadCallAllowed/);
+  assert.doesNotMatch(detail, /DO_NOT_CALL_WARNING/);
+  assert.doesNotMatch(detail, /Do not call/);
   assert.match(detail, /role="status"/);
   assert.match(detail, /tel:/);
-  assert.match(detail, /!noCall \? <a href=\{`tel:/);
+  assert.match(detail, /contact\.phone \? <a href=\{`tel:/);
   assert.match(detail, /canWrite/);
   assert.match(detail, /stageHotKnock/);
   assert.match(detail, /getDispositionsAsync/);

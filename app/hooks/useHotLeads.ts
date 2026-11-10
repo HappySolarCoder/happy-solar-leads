@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { App } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
 import { auth } from "@/app/utils/firebase";
 import { apiFetch } from "@/app/utils/apiFetch";
 import { canSeeHotLeads } from "@/app/hotLeads/access";
-import { fetchHotLeadDetail, fetchHotLeadMap, type HotView } from "@/app/hotLeads/fetch";
+import { clearHotLeadBackoff, fetchHotLeadDetail, fetchHotLeadMap, type HotView } from "@/app/hotLeads/fetch";
 import { HOT_LEADS_ENABLED } from "@/app/hotLeads/flag";
 import {
   bindHotLeadRefresh,
@@ -28,6 +30,7 @@ export function useHotLeads(user: User | null, view: HotView | null, active = tr
     : "";
   const [pins, setPins] = useState<HotLeadPin[]>([]);
   const [capabilities, setCapabilities] = useState<HotCapabilities>(EMPTY_CAPS);
+  const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -58,6 +61,8 @@ export function useHotLeads(user: User | null, view: HotView | null, active = tr
         setPins(result.pins);
         setCapabilities(result.capabilities);
         publishHotCapabilities(result.capabilities);
+        if (result.unavailable) setFailed(true);
+        else if (!result.skipped) setFailed(false);
       })();
     }, 250);
     return () => {
@@ -68,9 +73,25 @@ export function useHotLeads(user: User | null, view: HotView | null, active = tr
 
   useEffect(() => {
     if (!allowed) return;
-    const online = () => setAttempt((value) => value + 1);
-    window.addEventListener("online", online);
-    return () => window.removeEventListener("online", online);
+    const wake = () => {
+      clearHotLeadBackoff();
+      setAttempt((value) => value + 1);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") wake();
+    };
+    window.addEventListener("online", wake);
+    document.addEventListener("visibilitychange", onVisible);
+    const listener = Capacitor.isNativePlatform()
+      ? App.addListener("appStateChange", ({ isActive }) => {
+          if (isActive) wake();
+        })
+      : null;
+    return () => {
+      window.removeEventListener("online", wake);
+      document.removeEventListener("visibilitychange", onVisible);
+      void listener?.then((handle) => handle.remove()).catch(() => {});
+    };
   }, [allowed]);
 
   useEffect(() => {
@@ -103,11 +124,19 @@ export function useHotLeads(user: User | null, view: HotView | null, active = tr
     return result.hotLead;
   }
 
+  function retry() {
+    clearHotLeadBackoff();
+    setAttempt((value) => value + 1);
+  }
+
   const visible = allowed && !!view;
+  const zoomOk = !!view && view.zoom >= 15;
   return {
     pins: visible ? pins : [],
     capabilities: visible ? capabilities : EMPTY_CAPS,
     error: "" as const,
+    unavailable: visible && zoomOk && failed,
+    retry,
     loadOne,
   };
 }

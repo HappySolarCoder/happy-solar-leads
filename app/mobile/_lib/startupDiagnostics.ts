@@ -1,6 +1,7 @@
 import release from './release.json';
+import { HOT_LEADS_ENABLED } from '@/app/hotLeads/flag';
 
-export const MOBILE_BUILD_LABEL = `Raydar v${release.version} · build ${release.build}`;
+export const MOBILE_BUILD_LABEL = `Raydar v${release.version} · build ${release.build}${HOT_LEADS_ENABLED ? " · 3PL" : ""}`;
 
 // Deliberately log stages, elapsed time and error codes only. Never log
 // credentials, profile/lead records, request URLs, or Firebase tokens.

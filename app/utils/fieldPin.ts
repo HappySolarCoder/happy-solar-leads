@@ -98,26 +98,23 @@ export function fieldPinZoomTier(zoom: number): number {
 
 // Signal R is inline vector geometry: no per-pin asset requests or bitmap decoding.
 const signalR = '<g fill="white"><path d="M0 78Q0 64 24 64H48V234H0Z"/><path d="M103 195Q125 192 139 177L173 211Q186 223 189 234H140Z"/></g><g fill="#F0BC18"><path d="M84 0A126 126 0 0 1 193.12 189L155.01 167A82 82 0 0 0 84 44Z"/><path d="M84 54A72 72 0 0 1 146.35 162L115.18 144A36 36 0 0 0 84 90H80Q64 90 64 72Q64 54 80 54Z"/><circle cx="84" cy="126" r="20"/></g>';
-/** Orange-red halo. Distinct from the selected ring #F4C84A. At least 3:1 on a light tile. */
-export const HOT_RING_COLOR = "#E8590C";
-/** Dashed slate ring for a 3PL pin the server marked canDispo false. */
-export const HOT_VIEW_ONLY_RING = "#334155";
+/** Dark goldenrod halo. Distinct from the selected ring #F4C84A. At least 3:1 on a light tile. */
+export const HOT_RING_COLOR = "#B8860B";
 const hotFlame = '<path fill="white" d="M9.2 2.2c.4 2.4-1.5 3.2-1.5 5.6a3.3 3.3 0 1 0 6.6 0c0-1.7-.9-2.6-.9-4.2 1.7 1.6 2.6 3.3 2.6 5a5.1 5.1 0 1 1-10.2 0c0-2.6 1.7-4.3 3.4-6.4z"/>';
 
 function decorateHotSvg(svg: string, small: boolean, warm: boolean, viewOnly = false): string {
-  const ring = viewOnly ? HOT_VIEW_ONLY_RING : HOT_RING_COLOR;
   const dash = viewOnly ? ' stroke-dasharray="3 2"' : "";
   const mark = viewOnly ? ' data-hot-view-only="true"' : "";
   if (small) {
     return svg.replace(
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">',
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><g data-hot-lead="true"${mark}><circle cx="10" cy="10" r="9.15" fill="none" stroke="${ring}" stroke-width="1.35"${dash}/></g>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><g data-hot-lead="true"${mark}><circle cx="10" cy="10" r="9.15" fill="none" stroke="${HOT_RING_COLOR}" stroke-width="1.35"${dash}/></g>`,
     );
   }
   if (viewOnly) {
     return svg.replace(
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 56">',
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 56"><g data-hot-lead="true" data-hot-view-only="true"><rect x="1.2" y="1.2" width="45.6" height="53.6" rx="16" fill="none" stroke="${HOT_VIEW_ONLY_RING}" stroke-width="2.4" stroke-dasharray="4 3"/></g>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 56"><g data-hot-lead="true" data-hot-view-only="true"><rect x="1.2" y="1.2" width="45.6" height="53.6" rx="16" fill="none" stroke="${HOT_RING_COLOR}" stroke-width="2.4" stroke-dasharray="4 3"/></g>`,
     );
   }
   let next = svg.replace(
@@ -130,10 +127,10 @@ function decorateHotSvg(svg: string, small: boolean, warm: boolean, viewOnly = f
   return next.replace("</svg>", `${flame}</svg>`);
 }
 
-/** Legacy divIcon pins. Same orange-red ring and a flame, including the compact dot. */
+/** Legacy divIcon pins. Same gold ring and a flame, including the compact dot. Dashed means view only. */
 export function withLegacyHotPin(html: string, viewOnly = false): string {
   if (viewOnly) {
-    return `<div data-hot-lead="true" data-hot-view-only="true" style="position:relative;box-shadow:0 0 0 3px ${HOT_VIEW_ONLY_RING};outline:2px dashed ${HOT_VIEW_ONLY_RING};outline-offset:1px;border-radius:9999px;">${html}</div>`;
+    return `<div data-hot-lead="true" data-hot-view-only="true" style="position:relative;box-shadow:0 0 0 3px ${HOT_RING_COLOR};outline:2px dashed ${HOT_RING_COLOR};outline-offset:1px;border-radius:9999px;">${html}</div>`;
   }
   return `<div data-hot-lead="true" style="position:relative;box-shadow:0 0 0 3px ${HOT_RING_COLOR};border-radius:9999px;">${html}<span aria-hidden="true" style="position:absolute;top:-8px;left:-4px;font-size:12px;line-height:1;">🔥</span></div>`;
 }

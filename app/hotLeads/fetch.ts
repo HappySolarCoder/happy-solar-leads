@@ -14,8 +14,11 @@ import {
 } from "./model";
 
 export const HOT_LEADS_PATH = "/api/hot-leads";
-/** Same session backoff as a missing route. Silent failures share it. */
+/** 404 and 405 only. A missing route stays quiet for 15 minutes. */
 export const HOT_SILENT_BACKOFF_MS = 15 * 60 * 1000;
+/** 401, 403 and 5xx. Cleared when the phone comes online or the app resumes. */
+export const HOT_TRANSIENT_BACKOFF_MS = 60 * 1000;
+export const HOT_PINS_UNAVAILABLE = "3PL pins couldn't load. Tap to retry.";
 
 export type HotView = {
   south: number;
@@ -30,6 +33,10 @@ export type HotMapResult = {
   capabilities: HotCapabilities;
   /** Always empty. This layer never asks the user to sign in again. */
   error: "";
+  /** No network attempt: flag, role, zoom, token, or an active backoff. */
+  skipped?: boolean;
+  /** The network attempt failed, or a failure backoff is still in effect. */
+  unavailable?: boolean;
 };
 
 const EMPTY_CAPS: HotCapabilities = { dispo: false, claim: false };
@@ -75,8 +82,22 @@ export function hotDetailUrl(id: string): string {
   return `${HOT_LEADS_PATH}?id=${encodeURIComponent(id)}`;
 }
 
-function silentStatus(status: number): boolean {
-  return status === 401 || status === 403 || status === 404 || status === 405 || status >= 500;
+function backoffMs(status: number): number | null {
+  if (status === 404 || status === 405) return HOT_SILENT_BACKOFF_MS;
+  if (status === 401 || status === 403 || status >= 500) return HOT_TRANSIENT_BACKOFF_MS;
+  return null;
+}
+
+export function clearHotLeadBackoff(): void {
+  silentUntil = 0;
+}
+
+function missed(unavailable = false, skipped = false): HotMapResult {
+  return {
+    ...EMPTY,
+    ...(unavailable ? { unavailable: true } : {}),
+    ...(skipped ? { skipped: true } : {}),
+  };
 }
 
 function text(value: unknown): string | undefined {
@@ -208,10 +229,10 @@ export async function fetchHotLeadMap(input: {
   roles?: readonly string[];
 }): Promise<HotMapResult> {
   const enabled = input.enabled ?? HOT_LEADS_ENABLED;
-  if (!enabled || !canSeeHotLeads(input.user, input.roles) || !input.token) return EMPTY;
-  if (!hotMapBoundsOk(input.view)) return EMPTY;
+  if (!enabled || !canSeeHotLeads(input.user, input.roles) || !input.token) return missed(false, true);
+  if (!hotMapBoundsOk(input.view)) return missed(false, true);
   const now = input.now ?? Date.now();
-  if (now < silentUntil) return EMPTY;
+  if (now < silentUntil) return missed(true, true);
   const key = [input.user?.id, input.view.south, input.view.north, input.view.west, input.view.east, input.view.zoom]
     .map((part) => String(part))
     .join(":");
@@ -227,11 +248,16 @@ export async function fetchHotLeadMap(input: {
       const response = await input.fetcher(hotMapUrl(input.view, cursor), {
         headers: { Authorization: `Bearer ${input.token}` },
       });
-      if (silentStatus(response.status)) {
-        silentUntil = now + HOT_SILENT_BACKOFF_MS;
-        return EMPTY;
+      const wait = backoffMs(response.status);
+      if (wait != null) {
+        silentUntil = now + wait;
+        return missed(true);
       }
-      if (!response.ok) return saved ? { pins: saved.pins, capabilities: saved.capabilities, error: "" } : EMPTY;
+      if (!response.ok) {
+        return saved
+          ? { pins: saved.pins, capabilities: saved.capabilities, error: "", unavailable: true }
+          : missed(true);
+      }
       const data = await response.json() as {
         hotLeads?: unknown[];
         nextCursor?: { id?: unknown; lat?: unknown } | null;
@@ -253,9 +279,11 @@ export async function fetchHotLeadMap(input: {
       cursor = { id: next.id, lat: next.lat };
     }
   } catch {
-    return saved ? { pins: saved.pins, capabilities: saved.capabilities, error: "" } : EMPTY;
+    return saved
+      ? { pins: saved.pins, capabilities: saved.capabilities, error: "", unavailable: true }
+      : missed(true);
   }
-  const value = { pins, capabilities, error: "" as const };
+  const value = { pins, capabilities, error: "" as const, unavailable: false };
   remember(key, { at: now, pins, capabilities });
   return value;
 }
@@ -278,8 +306,9 @@ export async function fetchHotLeadDetail(input: {
     const response = await input.fetcher(hotDetailUrl(input.id), {
       headers: { Authorization: `Bearer ${input.token}` },
     });
-    if (silentStatus(response.status)) {
-      silentUntil = now + HOT_SILENT_BACKOFF_MS;
+    const wait = backoffMs(response.status);
+    if (wait != null) {
+      silentUntil = now + wait;
       return { hotLead: null, error: "" };
     }
     if (!response.ok) return { hotLead: null, error: "" };
