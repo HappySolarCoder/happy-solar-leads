@@ -823,8 +823,9 @@ describe('3PL territory gate', () => {
     // Re-pinned for the fieldKnockEvents deny-all match (field owner territory PR). Nothing else in the rules changed.
     const rules = readFileSync(new URL('../firestore.rules', import.meta.url));
     assert.equal(createHash('sha256').update(rules).digest('hex'), 'd526c61dbfdd733359b4b3a69012e060f84d401a31dd92f731771e6dc13808b7');
+    // Re-pinned for the fieldKnockEvents (uid ASC, actionAt DESC) index. Not deployed; it ships with the held rules deploy.
     const indexes = readFileSync(new URL('../firestore.indexes.json', import.meta.url));
-    assert.equal(createHash('sha256').update(indexes).digest('hex'), '1020c4a7360e838be82004129460c912e5eb19c4f9ec24e057c7d1bc515e45ea');
+    assert.equal(createHash('sha256').update(indexes).digest('hex'), 'ecbc081576f5cf6d9f8d619b3c6fcbd7a0a99b0277beafcbeb04616832f20085');
     for (const rel of [
       '../app/utils/server/territoryGate.ts',
       '../app/utils/server/fieldDispo.ts',
