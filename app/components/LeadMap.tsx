@@ -12,9 +12,10 @@ import { EMPTY_HOMES } from '@/app/homeowners/loader';
 
 import { observeMapSize } from '@/app/utils/observeMapSize';
 
-import { fieldPinArtwork, fieldPinZoomTier, withLegacyHotPin } from '@/app/utils/fieldPin';
+import { fieldPinArtwork, fieldPinZoomTier, HOT_RING_COLOR, withLegacyHotPin } from '@/app/utils/fieldPin';
 import { hotLeadViewOnly, isHotLead, isHotOnlyLead, mergeHotLeads, publishHotLeadIndex, type HotLeadPin } from '@/app/hotLeads/model';
 import { applyHotFilter, hotLeadFilterVisible, hotLeadZoomBanner, type HotPinFilter } from '@/app/hotLeads/filter';
+import { hotOverviewClusterLabel, type HotOverviewPoint } from '@/app/hotLeads/overview';
 import { useHotLeads } from '@/app/hooks/useHotLeads';
 import { HotLeadDetail } from '@/app/hotLeads/HotLeadDetail';
 import { TerritoryRecoveryList } from '@/app/field/TerritoryRecoveryList';
@@ -97,6 +98,8 @@ interface LeadMapProps {
   /** Undefined: this map loads 3PL leads. An array: the parent already loaded them. */
   hotLeads?: HotLeadPin[];
   hotFilter?: HotPinFilter;
+  /** Zoomed-out 3PL counts. Undefined keeps the pre-166 map. */
+  hotOverview?: HotOverviewPoint[];
 }
 
 const DEFAULT_CENTER: [number, number] = [43.1566, -77.6088];
@@ -164,6 +167,7 @@ export default function LeadMap({
   onToggleTeamAreas,
   hotLeads,
   hotFilter = 'all',
+  hotOverview,
 }: LeadMapProps) {
   const [homeownerMap, setHomeownerMap] = useState<L.Map | null>(null);
   const [mapView, setMapView] = useState<View | null>(null);
@@ -215,6 +219,8 @@ export default function LeadMap({
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
+  const hotOverviewLayerRef = useRef<L.MarkerClusterGroup | null>(null);
+  const hotOverviewPointsRef = useRef<HotOverviewPoint[] | null>(null);
   const pinEntriesRef = useRef(new Map<string, PinEntry>());
   const routeModeRef = useRef(false);
   const selectedPinRef = useRef<string | undefined>(undefined);
@@ -311,6 +317,7 @@ export default function LeadMap({
   // One zoom for the 3PL pin list and the zoom banner. mapView is the
   // reported viewport; mapZoom is the same camera before the first moveend.
   const hotLayerZoom = mapView?.zoom ?? mapZoom;
+  const hotOverviewReady = !!hotOverview?.length;
   // Use leadsProp directly - parent already handles filtering if needed
   // For large datasets, we only render what's passed in
   const leads = useMemo(() => {
@@ -325,7 +332,7 @@ export default function LeadMap({
       return point?.source === 'homeowner_corrected' ? {...l, lat: point.lat, lng: point.lng} : l;
     });
     const filter = hotLeadFilterVisible(currentUser) ? hotFilter : 'all';
-    const pins = filter === 'only' && hotLeadZoomBanner(filter, hotLayerZoom) ? [] : (hotLeads ?? fetchedHot.pins);
+    const pins = filter === 'only' && hotLeadZoomBanner(filter, hotLayerZoom, hotOverviewReady) ? [] : (hotLeads ?? fetchedHot.pins);
     if (!pins.length && filter === 'all') {
       publishHotLeadIndex(new Map());
       return mapped;
@@ -335,7 +342,7 @@ export default function LeadMap({
     const merged = mergeHotLeads(mapped, pins, winners);
     publishHotLeadIndex(filter === 'hide' ? new Map() : merged.index);
     return applyHotFilter(merged.leads, filter);
-  }, [leadsProp, houseIndex, homeMerge, houseAnchors, hotLeads, fetchedHot.pins, hotFilter, currentUser, hotLayerZoom]);
+  }, [leadsProp, houseIndex, homeMerge, houseAnchors, hotLeads, fetchedHot.pins, hotFilter, currentUser, hotLayerZoom, hotOverviewReady]);
 
   const viewportIndex = useMemo(() => buildLeadViewportIndex(leads), [leads]);
 
@@ -381,6 +388,66 @@ export default function LeadMap({
       circle.addTo(layer);
     }
   }, [heatCells, heatCellRadiusMeters, isClient]);
+
+  // 3PL overview clusters. Shown only while the filter is 3PL only and zoom < 15.
+  // Removed at zoom >= 15. Never feeds the lead pin index.
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !isClient) return;
+    const filter = hotLeadFilterVisible(currentUser) ? hotFilter : 'all';
+    const showHotOverview = filter === 'only' && hotLayerZoom < 15 && !!hotOverview?.length;
+    if (!showHotOverview) {
+      const group = hotOverviewLayerRef.current;
+      if (group) {
+        group.clearLayers();
+        if (map.hasLayer(group)) map.removeLayer(group);
+      }
+      hotOverviewPointsRef.current = null;
+      return;
+    }
+    let group = hotOverviewLayerRef.current;
+    if (!group) {
+      group = L.markerClusterGroup({
+        maxClusterRadius: 70,
+        showCoverageOnHover: false,
+        zoomToBoundsOnClick: true,
+        spiderfyOnMaxZoom: true,
+        chunkedLoading: false,
+        removeOutsideVisibleBounds: true,
+        disableClusteringAtZoom: 15,
+        iconCreateFunction: (cluster) => {
+          const count = cluster.getChildCount();
+          const label = hotOverviewClusterLabel(count);
+          const text = `${count} 3PL leads, zoom in`;
+          return L.divIcon({
+            className: 'field-cluster hot-cluster',
+            iconSize: [46, 46],
+            html: `<div title="${text}" aria-label="${text}" style="width:46px;height:46px;border-radius:16px;background:#203d49;border:2px solid ${HOT_RING_COLOR};display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;font:700 15px system-ui"><span>${label}</span><span style="font:700 8px system-ui;letter-spacing:.4px">3PL</span></div>`,
+          });
+        },
+      });
+      hotOverviewLayerRef.current = group;
+    }
+    if (!map.hasLayer(group)) group.addTo(map);
+    if (hotOverviewPointsRef.current === hotOverview) return;
+    hotOverviewPointsRef.current = hotOverview ?? null;
+    group.clearLayers();
+    for (const point of hotOverview ?? []) {
+      const marker = L.circleMarker([point.lat, point.lng], {
+        radius: 9,
+        color: HOT_RING_COLOR,
+        weight: 2,
+        fillColor: '#F0BC18',
+        fillOpacity: 0.9,
+        interactive: true,
+      });
+      marker.on('click', () => {
+        map.setView([point.lat, point.lng], 16, { animate: true });
+      });
+      group.addLayer(marker);
+    }
+  }, [hotOverview, hotFilter, currentUser, hotLayerZoom, isClient, homeownerMap]);
+  // end 3PL overview clusters
 
   // Reset lead bounds fitting when leads change significantly
   useEffect(() => {
@@ -551,6 +618,8 @@ export default function LeadMap({
       if (routeLineRef.current) routeLineRef.current.remove();
       map.remove();
       mapInstanceRef.current = null;
+      hotOverviewLayerRef.current = null;
+      hotOverviewPointsRef.current = null;
       pinEntriesRef.current.clear();
       routeModeRef.current = false;
     };
@@ -1679,6 +1748,7 @@ export default function LeadMap({
   const hotZoomNotice = hotLeadZoomBanner(
     hotLeadFilterVisible(currentUser) ? hotFilter : 'all',
     hotLayerZoom,
+    hotOverviewReady,
   );
   return (
     <div className="relative w-full h-full">

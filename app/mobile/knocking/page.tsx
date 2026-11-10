@@ -40,7 +40,8 @@ import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import { useViewportLeads } from "@/app/hooks/useViewportLeads";
 import { useHotLeads } from "@/app/hooks/useHotLeads";
-import { hotLeadFilterVisible, readHotFilter, writeHotFilter, HOT_FILTER_BADGE, type HotPinFilter } from "@/app/hotLeads/filter";
+import { useHotOverview } from "@/app/hooks/useHotOverview";
+import { hotLeadFilterVisible, hotOnlyLayers, readHotFilter, writeHotFilter, HOT_FILTER_BADGE, HOT_LEAD_MIN_ZOOM, type HotPinFilter } from "@/app/hotLeads/filter";
 import { HotLeadFilterSection } from "@/app/hotLeads/HotLeadFilterSection";
 import { hotLeadParkNotice } from "@/app/hotLeads/save";
 import { HOT_PINS_UNAVAILABLE } from "@/app/hotLeads/fetch";
@@ -150,6 +151,10 @@ export default function KnockingPage() {
   const viewportPins = useViewportLeads(currentUser, viewport, pinPolygons, areasReady);
   const hotLeads = useHotLeads(currentUser, viewport);
   const showHotFilter = hotLeadFilterVisible(currentUser);
+  const hotOverview = useHotOverview(
+    currentUser,
+    showHotFilter && hotFilter === 'only' && (viewport?.zoom ?? mapZoom) < HOT_LEAD_MIN_ZOOM,
+  );
   useEffect(() => {
     if (!currentUser?.id) return;
     try {
@@ -184,6 +189,10 @@ export default function KnockingPage() {
     }
     return membersFromTerritories(overlayTerritories, coloredUsers);
   }, [areaMode, overlayTerritories, overlayMembers, coloredUsers]);
+  const ownTerritories = useMemo(
+    () => colorTerritories(overlayTerritories.filter(t=>t.userId===currentUser?.id), coloredUsers),
+    [overlayTerritories, currentUser?.id, coloredUsers],
+  );
 
   // A fresh foreground GPS fix centers every account once. Later fixes move the
   // blue dot only, so a rep can inspect another street without camera snap-back.
@@ -693,6 +702,7 @@ export default function KnockingPage() {
 
   if (isLoading) return <MobileLoading />;
   if (!currentUser) return <MobileNotice>{sessionError || 'Sign in to open the map.'}</MobileNotice>;
+  const only = hotOnlyLayers(hotFilter, showHotFilter);
   const teamScopeNotice = areaMode === 'team' && !['admin', 'manager'].includes(currentUser.role)
     ? 'Your account shows its own territories only.'
     : '';
@@ -792,7 +802,8 @@ export default function KnockingPage() {
             {showHotFilter && <HotLeadFilterSection value={hotFilter} onChange={setHotFilter} />}
             <button className="w-full mt-3 py-3 text-sm text-[#476E88]" onClick={() => { setKnockPeriod('all'); setDispositionFilter([]); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); setHotFilter('all'); }}>Reset all filters</button>
             <details className="rm-pin-key"><summary>Map display</summary>
-              <div className="rm-map-summary"><button aria-pressed={showHomeowners} onClick={()=>setHomePreference(showHomeowners?'off':'on')}>Homeowner pins{showHomeowners?' ✓':''}</button><button aria-pressed={showHeat} onClick={()=>setShowHeat(!showHeat)}>Heat map{showHeat?' ✓':''}</button></div>
+              <div className="rm-map-summary"><button aria-pressed={showHomeowners} disabled={!!only} onClick={() => { if (only) return; setHomePreference(showHomeowners?'off':'on'); }}>Homeowner pins{showHomeowners?' ✓':''}</button><button aria-pressed={showHeat} onClick={()=>setShowHeat(!showHeat)}>Heat map{showHeat?' ✓':''}</button></div>
+              {only ? <p>Hidden while 3PL only is on.</p> : null}
               <p>Date and disposition filters hide unworked homeowner pins.</p>
             </details>
             {/* Apply Button - Closes filter panel */}
@@ -928,7 +939,7 @@ export default function KnockingPage() {
             leads={mapLeads}
             pinPolygons={pinPolygons}
             onViewportChange={setViewport}
-            showHomeowners={areasReady && showHomeowners && !outcomesOnly && dispositionFilter.length === 0 && leadTypeFilter !== "customers" && knockPeriod === 'all' && !freshPinsOnly && setterFilter === "all"}
+            showHomeowners={areasReady && showHomeowners && !outcomesOnly && dispositionFilter.length === 0 && leadTypeFilter !== "customers" && knockPeriod === 'all' && !freshPinsOnly && setterFilter === "all" && !only}
             homeownerLeads={homeownerLeads}
             selectedHomeownerId={selectedHomeowner?.id}
             onHomeownerClick={handleHomeownerSelect}
@@ -936,6 +947,7 @@ export default function KnockingPage() {
             currentUser={currentUser}
             hotLeads={hotLeads.pins}
             hotFilter={showHotFilter ? hotFilter : 'all'}
+            hotOverview={hotOverview.points}
             users={coloredUsers}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
@@ -951,11 +963,11 @@ export default function KnockingPage() {
             saveManualLead={DIRECT_MOBILE_WRITES ? async lead => directSave.current(lead, lead, lead, true) : undefined}
             onLeadAdded={refreshLeads}
             searchLocation={searchLocation}
-            heatCells={heatCells}
+            heatCells={only ? [] : heatCells}
             heatCellRadiusMeters={805}
             showTeamAreas={showTeamAreas}
-            territories={showTeamAreas ? teamAreaTerritories : []}
-            teamMembers={teamMembersForMap}
+            territories={only ? (showTeamAreas ? ownTerritories : []) : (showTeamAreas ? teamAreaTerritories : [])}
+            teamMembers={only ? [] : teamMembersForMap}
           />
           <FieldCompass />
           {gpsError && <div className="rm-gps-notice" role="status">{gpsError.code === 1 ? "Enable Raydar location access in your phone Settings, then tap GPS to retry." : "Location unavailable. Tap GPS to try again."}</div>}

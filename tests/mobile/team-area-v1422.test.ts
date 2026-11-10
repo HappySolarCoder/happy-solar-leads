@@ -287,14 +287,14 @@ test("A4 the areas menu ignores an inside pointer and closes on an outside point
   assert.equal(items.match(/onAreaMode\?\.\(mode\)/g)?.length, 1);
 });
 
-test("release 14.22 build 165 is the same number in the app, iOS and Android", () => {
+test("release 14.22 build 166 is the same number in the app, iOS and Android", () => {
   assert.equal(release.version, "14.22");
-  assert.equal(release.build, 165);
+  assert.equal(release.build, 166);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
   assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.22", "14.22"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["165", "165"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["166", "166"]);
   const gradle = read("android/app/build.gradle");
   assert.match(gradle, /versionName "14\.22"/);
-  assert.match(gradle, /versionCode 165\b/);
-  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "165"/);
+  assert.match(gradle, /versionCode 166\b/);
+  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "166"/);
 });

@@ -43,8 +43,26 @@ export function writeHotFilter(
   }
 }
 
-/** "3PL only" below the fetch zoom shows the banner and no pins. */
-export function hotLeadZoomBanner(filter: HotPinFilter, zoom: number | null | undefined): string | null {
+export type HotOnlyLayers = {
+  homeowners: boolean;
+  heat: boolean;
+  teamMembers: boolean;
+  otherTerritories: boolean;
+};
+
+/** Null unless this rep can see the filter and chose 3PL only. Callers then hide the other layers. */
+export function hotOnlyLayers(filter: HotPinFilter, visible: boolean): HotOnlyLayers | null {
+  if (!(visible && filter === "only")) return null;
+  return { homeowners: false, heat: false, teamMembers: false, otherTerritories: false };
+}
+
+/** "3PL only" below the fetch zoom shows the banner and no pins. A ready overview hides the banner. */
+export function hotLeadZoomBanner(
+  filter: HotPinFilter,
+  zoom: number | null | undefined,
+  overviewReady = false,
+): string | null {
+  if (overviewReady) return null;
   if (filter !== "only") return null;
   if (typeof zoom !== "number" || !Number.isFinite(zoom) || zoom >= HOT_LEAD_MIN_ZOOM) return null;
   return HOT_LEAD_ZOOM_BANNER;
