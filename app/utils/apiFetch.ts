@@ -30,9 +30,50 @@ export function resolveApiUrl(path: string, origin: string): string {
   return url.href;
 }
 
+/** Geocode and route only. Other paths keep whatever Authorization the caller set. */
+export const BEARER_PATHS = ['/api/geocode', '/api/route'] as const;
+export const BEARER_TOKEN_TIMEOUT_MS = 1000;
+export type BearerTokenProvider = () => Promise<string | null | undefined>;
+
+export function wantsBearer(path: string): boolean {
+  const pathname = path.split(/[?#]/, 1)[0];
+  return (BEARER_PATHS as readonly string[]).includes(pathname);
+}
+
+/** Lazy so importing this module in node tests does not initialise Firebase. */
+async function defaultBearerToken(): Promise<string | null> {
+  const { auth } = await import('@/app/utils/firebase');
+  return (await auth?.currentUser?.getIdToken()) ?? null;
+}
+
+/** Null (never throws) when the path is out of scope, the token is missing, or it is too slow. */
+export async function bearerForPath(
+  path: string,
+  provider?: BearerTokenProvider,
+  timeoutMs = BEARER_TOKEN_TIMEOUT_MS,
+): Promise<string | null> {
+  if (!wantsBearer(path)) return null;
+  const read = provider ?? defaultBearerToken;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const token = await Promise.race([
+      Promise.resolve().then(read),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+    return typeof token === 'string' && token.length > 0 ? token : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Existing web behavior, with native HTTP for the installed app's JSON APIs.
  * Explicitly preserves callers' bearer tokens; never patches Firebase's transport.
  * Native requests deliberately do not follow redirects with credentials.
+ * The web branch does not add a bearer (web pages are a separate change).
  */
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   if (!Capacitor.isNativePlatform()) return fetch(path, init);
@@ -44,6 +85,7 @@ export async function nativeApiFetch(
   init: RequestInit = {},
   request: typeof CapacitorHttp.request = options => CapacitorHttp.request(options),
   platform = Capacitor.getPlatform(),
+  bearer: BearerTokenProvider = defaultBearerToken,
 ): Promise<Response> {
   const origin = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (!origin) throw new Error('The mobile API origin is not configured');
@@ -52,6 +94,10 @@ export async function nativeApiFetch(
   const headers = new Headers(init.headers);
   const buildHeaders = raydarNativeHeaders(platform);
   for (const [key, value] of Object.entries(buildHeaders)) headers.set(key, value);
+  if (wantsBearer(path) && !headers.has('authorization')) {
+    const token = await bearerForPath(path, bearer);
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+  }
   if (init.body != null && typeof init.body !== 'string') {
     throw new Error('Native API requests require a serialized JSON or text body');
   }

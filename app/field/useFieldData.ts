@@ -197,7 +197,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
           at,
         }]).catch(() => {});
       }
-      if (takeCountedToast(m.id, result.duplicate === true) && typeof window !== 'undefined') {
+      if (takeCountedToast(m.id) && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(KNOCK_COUNTED_EVENT, {
           detail: { owner: countedToastText(result.owner, result.owners) },
         }));

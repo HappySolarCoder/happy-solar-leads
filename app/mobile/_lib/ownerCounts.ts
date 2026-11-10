@@ -104,7 +104,7 @@ export function countedToastText(
 }
 
 /** True the first time this draft should toast this session, including a duplicate replay. */
-export function takeCountedToast(draftId: string, _duplicate = false): boolean {
+export function takeCountedToast(draftId: string): boolean {
   if (!draftId || toasted.has(draftId)) return false;
   toasted.add(draftId);
   return true;
@@ -159,8 +159,21 @@ export function territoryOwnershipOn(uid: string | null | undefined): boolean {
   return !!uid && sessions.get(uid)?.ownership === "territory";
 }
 
+export function anyTerritoryOwnership(): boolean {
+  for (const meta of sessions.values()) if (meta.ownership === "territory") return true;
+  return false;
+}
+
 export function callerPopupExempt(uid: string | null | undefined): boolean {
   return !!uid && sessions.get(uid)?.popupExempt === true;
+}
+
+/** False for legacy or an exempt session. True for territory, and when meta has not arrived. */
+export function territoryCheckNeeded(uid: string | null | undefined): boolean {
+  const meta = uid ? sessions.get(uid) : undefined;
+  if (!meta) return true;
+  if (meta.ownership === "legacy" || meta.popupExempt === true) return false;
+  return true;
 }
 
 /** Territory mode keeps the row flags. Legacy or a missing mode strips them. */
@@ -222,14 +235,4 @@ export function isTerritoryWarningCancelled(error: unknown): boolean {
 
 export function selectableDispositions<T extends { id: string }>(list: readonly T[]): T[] {
   return list.filter((row) => row.id !== EXP_GO_BACK.id);
-}
-
-/** A row already loaded for this coordinate. No polygon math. No row means no warning. */
-export function leadAtPoint<T extends { lat?: number; lng?: number }>(
-  leads: readonly T[],
-  lat?: number,
-  lng?: number,
-): T | null {
-  if (typeof lat !== "number" || typeof lng !== "number") return null;
-  return leads.find((lead) => lead.lat === lat && lead.lng === lng) ?? null;
 }

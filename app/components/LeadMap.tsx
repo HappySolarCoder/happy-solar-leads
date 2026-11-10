@@ -38,7 +38,8 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.markercluster';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
-import { callerPopupExempt, EXP_GO_BACK, isTerritoryWarningCancelled, leadAtPoint, ownershipBadge, pinIsMine, shouldWarnTerritory, territoryOwnershipOn, territoryWarningCancelled, TERRITORY_WARNING } from '@/app/mobile/_lib/ownerCounts';
+import { EXP_GO_BACK, isTerritoryWarningCancelled, ownershipBadge, pinIsMine, TERRITORY_WARNING } from '@/app/mobile/_lib/ownerCounts';
+import { guardNewPinTerritory, pinSaveTimestamps } from '@/app/field/territoryCheck';
 import { auth } from '@/app/utils/firebase';
 import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync, isKnockStatus } from '@/app/utils/dispositions';
@@ -1573,19 +1574,17 @@ export default function LeadMap({
   // Handle saving new lead from dropped pin
   const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
     try {
+      const actedAt = new Date();
+      const actorUid = auth?.currentUser?.uid ?? currentUser?.id ?? '';
       const pinLat = typeof leadData.lat === 'number' ? leadData.lat : dropPinLocation?.lat;
-      const pinLngEarly = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
-      const placedAt = leadData.createdAt instanceof Date ? leadData.createdAt : new Date();
-      const territoryRow = leadAtPoint(leads, pinLat, pinLngEarly);
-      const warnTerritory = shouldWarnTerritory({
-        active: territoryOwnershipOn(currentUser?.id),
-        popupExempt: callerPopupExempt(currentUser?.id),
-        row: territoryRow,
-      });
-      if (warnTerritory && (typeof window === 'undefined' || !window.confirm(TERRITORY_WARNING))) {
-        throw territoryWarningCancelled();
-      }
       const pinLng = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
+      const placedAt = leadData.createdAt instanceof Date ? leadData.createdAt : actedAt;
+      const guard = await guardNewPinTerritory({
+        uid: actorUid,
+        lat: pinLat,
+        lng: pinLng,
+        confirm: () => typeof window !== 'undefined' && window.confirm(TERRITORY_WARNING),
+      });
       let gpsFields: Partial<Lead> = {};
       const id = manualDraftId.current || (manualDraftId.current = crypto.randomUUID());
       try {
@@ -1628,10 +1627,17 @@ export default function LeadMap({
 
       const manualDisposition = typeof leadData.disposition === 'string' ? leadData.disposition : undefined;
       const manualStatus = typeof leadData.status === 'string' ? leadData.status : undefined;
+      const times = pinSaveTimestamps({
+        checked: guard.checked,
+        actedAt,
+        placedAt,
+        dispositionedAt: leadData.dispositionedAt,
+        manualDisposition: Boolean(manualDisposition),
+      });
       const historyEntry = manualDisposition
         ? [{
             disposition: manualDisposition,
-            timestamp: leadData.dispositionedAt || new Date(),
+            timestamp: times.historyTimestamp,
             userId: firebaseUid,
             userName: currentUser?.name || 'User',
           }]
@@ -1643,9 +1649,9 @@ export default function LeadMap({
         id,
         status: manualStatus || 'available',
         disposition: manualDisposition,
-        dispositionedAt: manualDisposition ? (leadData.dispositionedAt || new Date()) : leadData.dispositionedAt,
+        dispositionedAt: times.dispositionedAt,
         dispositionHistory: (leadData.dispositionHistory as any) || historyEntry,
-        createdAt: warnTerritory ? placedAt : new Date(),
+        createdAt: times.createdAt,
         // Manual lead ownership: must match Firestore rules (setterId == request.auth.uid)
         setterId: firebaseUid,
         // Also set claimedBy so rep-safe map queries (claimedBy/assignedTo) include it
