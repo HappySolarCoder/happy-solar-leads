@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
+import { invalidateTerritoryCache } from '@/app/utils/server/fieldOwnership';
+import { invalidateMobileTerritoryCache } from '@/app/utils/server/mobileOwnership';
 
 /**
  * Admin API: Delete user account (soft or hard delete)
@@ -137,6 +139,9 @@ export async function POST(request: NextRequest) {
         }
         
         await territoryBatch.commit();
+        // Territory assignment changed: drop the cached polygons on this instance, as /api/territory-management does.
+        invalidateTerritoryCache();
+        invalidateMobileTerritoryCache();
       }
 
       // Step 2: Also unclaim leads where user is assignedTo but not claimedBy

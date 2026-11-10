@@ -23,6 +23,7 @@ import { isHotLeadId, isHotLeadRole } from './hotLeadContract';
 import { HOT_LEAD_DISPOSITION_READ_LIMIT, hotStatusAfterKnock } from './hotLeadStatus';
 import {
   countedPolygons,
+  decidePinTerritory,
   loadTerritories,
   pinTerritoryGate,
   polygonOf,
@@ -1385,9 +1386,17 @@ async function applyHotKnock(
   // reads hotLeads history (web counters, mobile, and the reporting mirror all read
   // fieldKnockEvents). Reads first (flag, existing event), writes after.
   const eventRef = input.db.collection(FIELD_KNOCK_EVENTS).doc(`${input.uid}_${draft.draftId}`);
+  // reason 'in_territory' = the knocker owns a territory containing the pin. 'staff' = an admin/manager the
+  // gate let through everywhere (pinTerritoryGate bypasses staff) whose own territories do not contain it.
+  // The label is informational only: both count identically.
   let writeEvent = false;
+  let eventReason: 'in_territory' | 'staff' = 'in_territory';
   if ((await readOwnershipMode(input.db, input.tx, input.deps.now?.() ?? Date.now())) === 'territory') {
     writeEvent = !(await input.tx.get(eventRef)).exists;
+    if (writeEvent && (input.role === 'admin' || input.role === 'manager')) {
+      const loaded = await loadTerritories(input.db, input.tx, input.uid);
+      if (!decidePinTerritory(loaded, { uid: input.uid, lat: lead.lat, lng: lead.lng }).allowed) eventReason = 'staff';
+    }
   }
   if (Object.keys(patch).length > 0) input.tx.update(leadRef, patch);
   if (writeEvent) {
@@ -1402,7 +1411,7 @@ async function applyHotKnock(
       status: draft.status,
       actionAt: input.deps.Timestamp.fromMillis(draft.actionAtMs),
       createdAt: input.deps.serverTimestamp(),
-      reason: 'in_territory',
+      reason: eventReason,
       effectiveOwnerId: input.uid,
       effectiveOwnerIds: [input.uid],
       ownerSource: 'gate',

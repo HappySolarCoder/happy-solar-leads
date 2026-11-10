@@ -5,7 +5,12 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { NextRequest } from 'next/server';
 import { createMobileLeadHandler } from '../app/utils/server/mobileLeads';
 import {
+  MOBILE_EVENT_READ_LIMIT,
+  MOBILE_EVENT_RETURN_LIMIT,
   TERRITORY_CACHE_MS,
+  TERRITORY_RETRY_BACKOFF_MS,
+  TERRITORY_STALE_MAX_MS,
+  expireOwnershipFlagCache,
   invalidateMobileTerritoryCache,
   loadOwnershipContext,
   resetMobileOwnershipCaches,
@@ -194,12 +199,31 @@ describe('own knockEvents read: newest first, capped, truncated', () => {
     const t = setup({ flag: true, events: [...many(700), ['sawyer_x', { uid: 'sawyer', leadId: 'lx', actionAt: ts(NOW - 1000), dispositionId: 'not-home' }]] });
     const { body } = await t.call('mode=personal&field=claimedBy');
     assert.equal(body.knockEventsTruncated, true);
-    assert.equal(body.knockEvents.length, 500, 'return limit');
+    assert.equal(body.knockEvents.length, 600, 'return limit equals the read limit');
     assert.equal(body.knockEvents[0].leadId, 'l699', 'the newest event is kept');
     assert.ok(body.knockEvents.every((e: { at: number }, i: number, all: Array<{ at: number }>) => i === 0 || all[i - 1].at >= e.at));
     assert.ok(!body.knockEvents.some((e: { leadId: string }) => e.leadId === 'lx'), 'only the caller own events');
     assert.ok(!body.knockEvents.some((e: { leadId: string }) => e.leadId === 'l0'), 'the oldest fall off, not the newest');
   });
+
+  it('read and return caps agree, so no event that was read is silently dropped', () => {
+    assert.equal(MOBILE_EVENT_READ_LIMIT, 600);
+    assert.equal(MOBILE_EVENT_RETURN_LIMIT, MOBILE_EVENT_READ_LIMIT);
+  });
+
+  // Boundary table: [events stored, returned, truncated flag expected]
+  for (const [stored, returned, truncated] of [[499, 499, false], [500, 500, false], [501, 501, false], [550, 550, false], [599, 599, false], [600, 600, true], [601, 600, true], [750, 600, true]] as const) {
+    it(`${stored} events: returns ${returned}, knockEventsTruncated ${truncated}`, async () => {
+      const t = setup({ flag: true, events: many(stored) });
+      const { body } = await t.call('mode=personal&field=claimedBy');
+      assert.equal(body.knockEvents.length, returned);
+      assert.equal(body.knockEventsTruncated === true, truncated);
+      assert.equal('knockEventsTruncated' in body, truncated);
+      assert.equal(body.knockEvents[0].leadId, `l${stored - 1}`, 'the newest is always first');
+      if (stored <= MOBILE_EVENT_READ_LIMIT) assert.ok(body.knockEvents.some((e: { leadId: string }) => e.leadId === 'l0'), 'nothing that was stored is dropped under the cap');
+      if (stored > MOBILE_EVENT_READ_LIMIT) assert.ok(!body.knockEvents.some((e: { leadId: string }) => e.leadId === 'l0'), 'over the cap the oldest fall off');
+    });
+  }
 
   it('the 45-day window is part of the query, so old rows never use up the cap', async () => {
     const old: Array<[string, Doc]> = Array.from({ length: 650 }, (_, i) => [`me_old${i}`, { uid: 'me', leadId: `o${i}`, actionAt: ts(NOW - 60 * DAY - i * 1000), dispositionId: 'not-home' }]);
@@ -241,6 +265,8 @@ describe('territory polygon cache (5 min) and flag cache (60 s)', () => {
   const terr: Array<[string, Doc]> = [['t1', { userId: 'me', polygon: box(33.45, -112.07), createdAt: ts(NOW) }]];
   const territoryReads = (log: string[]) => log.filter((line) => line === 'query territories').length;
   const T = 1_000_000_000_000;
+  // Expire only the 60 s flag cache so each call re-enters the polygon cache logic.
+  const resetCtxOnly = () => expireOwnershipFlagCache();
 
   it('polygons are read once per 5 minutes per instance, not once a minute', async () => {
     const { log, docs } = setup({ flag: true, territories: terr });
@@ -284,5 +310,90 @@ describe('territory polygon cache (5 min) and flag cache (60 s)', () => {
     const ctx = await loadOwnershipContext(failing, T + TERRITORY_CACHE_MS + 5);
     assert.equal(ctx.mode, 'territory');
     assert.equal(ctx.territories?.length, 1);
+  });
+
+  describe('failed re-read: backoff and 1 hour stale cap', () => {
+    const failingDb = (real: ReturnType<typeof fakeDb>, log: string[]) => ({
+      ...real,
+      collection: (name: string) => (name === 'territories'
+        ? { select: () => ({ limit: () => ({ get: async () => { log.push('query territories (failed)'); throw new Error('unavailable'); } }) }) }
+        : real.collection(name)),
+    }) as never;
+    const attempts = (log: string[]) => log.filter((line) => line === 'query territories (failed)').length;
+
+    it('after a failed re-read it backs off ~45 s: repeated requests do not re-read, and the stale list is served', async () => {
+      const { log, docs } = setup({ flag: true, territories: terr });
+      const real = fakeDb(docs, log);
+      await loadOwnershipContext(real as never, T);
+      const bad = failingDb(real, log);
+      // Flag cache is 60 s, so drop it each time to isolate the polygon-read behaviour.
+      const first = T + TERRITORY_CACHE_MS + 5;
+      assert.equal((await loadOwnershipContext(bad, first)).mode, 'territory');
+      assert.equal(attempts(log), 1);
+      for (const offset of [1_000, 20_000, TERRITORY_RETRY_BACKOFF_MS - 1]) {
+        resetCtxOnly();
+        assert.equal((await loadOwnershipContext(bad, first + offset)).territories?.length, 1);
+      }
+      assert.equal(attempts(log), 1, 'no further territory reads inside the backoff');
+      resetCtxOnly();
+      assert.equal((await loadOwnershipContext(bad, first + TERRITORY_RETRY_BACKOFF_MS + 1)).territories?.length, 1);
+      assert.equal(attempts(log), 2, 'retries once the backoff is over');
+    });
+
+    it('a recovery after the outage replaces the stale list and clears the backoff', async () => {
+      const { log, docs } = setup({ flag: true, territories: terr });
+      const real = fakeDb(docs, log);
+      await loadOwnershipContext(real as never, T);
+      const first = T + TERRITORY_CACHE_MS + 5;
+      await loadOwnershipContext(failingDb(real, log), first);
+      docs.set('territories/t1', { userId: 'sawyer', polygon: box(33.45, -112.07), createdAt: ts(NOW) });
+      resetCtxOnly();
+      const ctx = await loadOwnershipContext(real as never, first + TERRITORY_RETRY_BACKOFF_MS + 1);
+      assert.equal(ctx.territories?.[0].userIds[0], 'sawyer');
+      resetCtxOnly();
+      await loadOwnershipContext(real as never, first + TERRITORY_RETRY_BACKOFF_MS + 2 + TERRITORY_CACHE_MS - 1000);
+      assert.equal(territoryReads(log), 2, 'fresh again: cached for 5 min');
+    });
+
+    it('stale polygons are served for at most 1 hour of outage; after that it fails as before (legacy)', async () => {
+      assert.equal(TERRITORY_STALE_MAX_MS, 60 * 60_000);
+      const { log, docs } = setup({ flag: true, territories: terr });
+      const real = fakeDb(docs, log);
+      await loadOwnershipContext(real as never, T);
+      const bad = failingDb(real, log);
+      let at = T + TERRITORY_CACHE_MS + 5;
+      while (at < T + TERRITORY_STALE_MAX_MS - 1000) {
+        resetCtxOnly();
+        assert.equal((await loadOwnershipContext(bad, at)).mode, 'territory', `still serving stale at +${Math.round((at - T) / 60_000)} min`);
+        at += TERRITORY_RETRY_BACKOFF_MS + 1;
+      }
+      resetCtxOnly();
+      assert.equal((await loadOwnershipContext(bad, T + TERRITORY_STALE_MAX_MS + 1)).mode, 'legacy', 'past the cap: same as an uncached failure');
+      resetCtxOnly();
+      assert.equal((await loadOwnershipContext(bad, T + TERRITORY_STALE_MAX_MS + 2)).mode, 'legacy');
+    });
+
+    it('with no cache at all a failure still falls to legacy and is retried on the next request (unchanged)', async () => {
+      const { log, docs } = setup({ flag: true, territories: terr });
+      const bad = failingDb(fakeDb(docs, log), log);
+      assert.equal((await loadOwnershipContext(bad, T)).mode, 'legacy');
+      resetCtxOnly();
+      assert.equal((await loadOwnershipContext(bad, T + 1)).mode, 'legacy');
+      assert.equal(attempts(log), 2);
+    });
+  });
+});
+
+describe('delete-user (server route) clears the polygon caches after it deletes territories', () => {
+  it('hard delete invalidates both territory caches right after the territory batch commits', () => {
+    const source = readFileSync(new URL('../app/api/admin/delete-user/route.ts', import.meta.url), 'utf8');
+    assert.match(source, /import \{ invalidateTerritoryCache \} from '@\/app\/utils\/server\/fieldOwnership'/);
+    assert.match(source, /import \{ invalidateMobileTerritoryCache \} from '@\/app\/utils\/server\/mobileOwnership'/);
+    const commit = source.indexOf('await territoryBatch.commit()');
+    assert.ok(commit > 0);
+    const a = source.indexOf('invalidateTerritoryCache();', commit);
+    const b = source.indexOf('invalidateMobileTerritoryCache();', commit);
+    assert.ok(a > commit && b > commit, 'both calls follow the territory delete');
+    assert.ok(a < source.indexOf('Step 2:') && b < source.indexOf('Step 2:'), 'and happen inside the territory step');
   });
 });
