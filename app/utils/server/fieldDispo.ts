@@ -1381,7 +1381,34 @@ async function applyHotKnock(
     patch.updatedAt = input.deps.serverTimestamp();
   }
   assertHotKnockPatch(patch);
+  // Territory mode: an accepted 3PL knock also gets a counts-only event, because nothing
+  // reads hotLeads history (web counters, mobile, and the reporting mirror all read
+  // fieldKnockEvents). Reads first (flag, existing event), writes after.
+  const eventRef = input.db.collection(FIELD_KNOCK_EVENTS).doc(`${input.uid}_${draft.draftId}`);
+  let writeEvent = false;
+  if ((await readOwnershipMode(input.db, input.tx, input.deps.now?.() ?? Date.now())) === 'territory') {
+    writeEvent = !(await input.tx.get(eventRef)).exists;
+  }
   if (Object.keys(patch).length > 0) input.tx.update(leadRef, patch);
+  if (writeEvent) {
+    input.tx.create(eventRef, {
+      uid: input.uid,
+      userName: draft.userName,
+      draftId: draft.draftId,
+      leadId: draft.leadId,
+      collection: draft.collection,
+      disposition: draft.disposition,
+      dispositionId: dispositionSlug(draft.status),
+      status: draft.status,
+      actionAt: input.deps.Timestamp.fromMillis(draft.actionAtMs),
+      createdAt: input.deps.serverTimestamp(),
+      reason: 'in_territory',
+      effectiveOwnerId: input.uid,
+      effectiveOwnerIds: [input.uid],
+      ownerSource: 'gate',
+      source: 'live',
+    });
+  }
   const body = stale
     ? receiptBody(draft, 'stale_history_only', {
       reasonCode: 'stale_tap',

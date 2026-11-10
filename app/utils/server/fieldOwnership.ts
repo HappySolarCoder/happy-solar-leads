@@ -23,6 +23,11 @@ export function resetFieldOwnershipCaches(): void {
   territoryCache = null;
 }
 
+/** A territory was written on this instance: re-read polygons on the next dispo. */
+export function invalidateTerritoryCache(): void {
+  territoryCache = null;
+}
+
 function fresh(at: number, now: number): boolean {
   return now >= at && now - at < OWNERSHIP_CACHE_MS;
 }
