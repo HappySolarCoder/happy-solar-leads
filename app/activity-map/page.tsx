@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Calendar, Users, MapPin, Clock } from 'lucide-react';
+import { loadFieldKnockEventLedger } from '@/app/utils/fieldKnockEventsClient';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { getCurrentAuthUser } from '@/app/utils/auth';
@@ -75,6 +76,7 @@ export default function ActivityMapPage() {
           getDispositionsAsync(),
         ]);
 
+        await loadFieldKnockEventLedger();
         setAllLeads(loadedLeads);
         setUsers(ensureUserColors(loadedUsers));
         setDispositions(loadedDispositions);

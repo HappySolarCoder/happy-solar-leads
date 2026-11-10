@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ArrowLeft, Trash2, Users, MapPin, Pencil } from 'lucide-react';
@@ -268,6 +268,14 @@ export default function LeadManagementPage() {
   const sourceUsers = users.length > 0
     ? users
     : buildAssignableUsersFromPageData(currentUser, territories, leads);
+
+  // LeadMap rebuilds every pin when its `users` prop changes identity, so the
+  // colored list must be stable across unrelated renders (same as app/page.tsx).
+  // Only a real change to the roster or to the page data it falls back on makes a new array.
+  const coloredUsers = useMemo(
+    () => ensureUserColors(users.length > 0 ? users : buildAssignableUsersFromPageData(currentUser, territories, leads)),
+    [users, currentUser, territories, leads],
+  );
 
   const activeAssignableUsers = sourceUsers.filter(u => {
     const ux = u as any;
@@ -773,7 +781,7 @@ export default function LeadManagementPage() {
         <LeadMap
           leads={filteredLeads}
           currentUser={currentUser}
-          users={ensureUserColors(sourceUsers)}
+          users={coloredUsers}
           onLeadClick={(lead) => {}}
           center={mapCenter}
           zoom={mapZoom}
