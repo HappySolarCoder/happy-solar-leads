@@ -23,6 +23,7 @@ import { overlayDrafts } from '@/app/field/deviceStore';
 import { useOptionalMobileData } from '@/app/mobile/_components/MobileDataProvider';
 import type { FieldMutation, FieldObservation } from '@/app/field/types';
 import { localParts } from '@/app/field/analysis';
+import { callerPopupExempt, ownershipBadge, pinIsMine, selectableDispositions, shouldWarnTerritory, territoryOwnershipOn, TERRITORY_WARNING } from '@/app/mobile/_lib/ownerCounts';
 
 import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
 import { getLocation } from '@/app/utils/geolocation';
@@ -203,9 +204,24 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     if (message === AREA_BLOCK_MESSAGE) return true;
     return /Reload your dispositions|Connect before claiming|Only the rep who claimed|Field capture is paused|Review pending drafts|Sign in to save this visit|Open the mobile Knock screen|Sign in with the rep/i.test(message);
   }
-  async function recordField(kind: FieldMutation['kind'], patch: Partial<FieldMutation> = {}) {
+  const territoryTapRef = useRef<Date | null>(null);
+  function allowTerritory(at: Date): boolean {
+    const warn = shouldWarnTerritory({
+      active: territoryOwnershipOn(currentUser?.id),
+      popupExempt: callerPopupExempt(currentUser?.id),
+      row: lead,
+    });
+    if (!warn) {
+      territoryTapRef.current = null;
+      return true;
+    }
+    if (typeof window !== 'undefined' && !window.confirm(TERRITORY_WARNING)) return false;
+    territoryTapRef.current = at;
+    return true;
+  }
+  async function recordField(kind: FieldMutation['kind'], patch: Partial<FieldMutation> = {}, atOverride?: Date) {
     if (!field || !currentUser) throw Error('Sign in to save this visit.');
-    const at = new Date(), id = crypto.randomUUID(), zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const at = atOverride ?? new Date(), id = crypto.randomUUID(), zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const parts = localParts(at, zone), status = patch.status || lead.status;
     const disposition = dispositions.find(d => d.id === status);
     const observation: FieldObservation = {
@@ -310,7 +326,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
   const [pendingGoBackStatus, setPendingGoBackStatus] = useState('go-back');
   const [loadedDispositions, setDispositions] = useState<Disposition[]>(DEFAULT_DISPOSITIONS);
-  const dispositions = dispositionOptions ?? loadedDispositions;
+  const dispositions = selectableDispositions(dispositionOptions ?? loadedDispositions);
   const [users, setUsers] = useState<User[]>([]);
   const [adminAssignUser, setAdminAssignUser] = useState<string>('');
   const [isLoadingDispositions, setIsLoadingDispositions] = useState(!dispositionOptions);
@@ -327,6 +343,8 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
 
 
   const isClaimedByMe = currentUser && lead.claimedBy === currentUser.id;
+  const workedByMe = !!currentUser && pinIsMine(lead, currentUser.id);
+  const ownedByLabel = ownershipBadge(lead);
   const canClaim = !lead.claimedBy || isClaimedByMe;
   const isClaimed = !!lead.claimedBy;
 
@@ -442,6 +460,8 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     const actor = currentUser;
     const signedInUid = auth?.currentUser?.uid;
     if (pausedWithDrafts) { setFieldMessage('Field capture is paused. Sync or review this pin’s pending drafts in Field tools before changing it.'); return; }
+    if (newStatus === 'exp-go-back') return;
+    if (!['claimed', 'unclaimed'].includes(newStatus) && !allowTerritory(knockedAt)) return;
     
     // Check for special behavior dispositions
     const disposition = dispositions.find(d => d.id === newStatus);
@@ -469,7 +489,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     if (capture && !['claimed','unclaimed'].includes(newStatus)) {
       setIsUpdating(true);
       try {
-        await recordField('knock', { status: newStatus });
+        await recordField('knock', { status: newStatus }, territoryTapRef.current ?? undefined);
         await saveDirtyNotes(knockedAt);
       }
       catch (e) { setFieldMessage((e as Error).message); }
@@ -665,13 +685,15 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
 
   const handleObjectionSave = async (objectionType: ObjectionType, objectionNotes: string) => {
     if (!currentUser) return;
-    const at = new Date();
+    const tapped = territoryTapRef.current;
+    territoryTapRef.current = null;
+    const at = tapped ?? new Date();
     const actor = currentUser;
     const signedInUid = auth?.currentUser?.uid;
     setIsUpdating(true);
     try {
       if (capture) {
-        await recordField('knock', { status: 'not-interested', objectionType, objectionNotes });
+        await recordField('knock', { status: 'not-interested', objectionType, objectionNotes }, tapped ?? undefined);
         await saveDirtyNotes(at);
         setShowObjectionTracker(false);
         return;
@@ -698,13 +720,15 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
 
   const handleGoBackSave = async (scheduleData: GoBackScheduleData) => {
     if (!currentUser) return;
-    const at = new Date();
+    const tapped = territoryTapRef.current;
+    territoryTapRef.current = null;
+    const at = tapped ?? new Date();
     const actor = currentUser;
     const signedInUid = auth?.currentUser?.uid;
     setIsUpdating(true);
     try {
       if (capture) {
-        await recordField('knock', { status: pendingGoBackStatus || 'go-back', goBackScheduledDate: new Date(scheduleData.date).toISOString(), goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes });
+        await recordField('knock', { status: pendingGoBackStatus || 'go-back', goBackScheduledDate: new Date(scheduleData.date).toISOString(), goBackScheduledTime: scheduleData.time, goBackNotes: scheduleData.notes }, tapped ?? undefined);
         await saveDirtyNotes(at);
         setShowGoBackSchedule(false);
         return;
@@ -843,10 +867,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           <div className="flex items-center gap-3">
             <div 
               className="w-3 h-3 rounded-full"
-              style={{ backgroundColor: unvisitedHome ? '#476E88' : currentDisposition?.color || '#6B7280' }}
+              style={{ backgroundColor: lead.expiredGoBack ? '#a16207' : unvisitedHome ? '#476E88' : currentDisposition?.color || '#6B7280' }}
             />
             <span className="font-semibold text-[#2D3748]">
-              {unvisitedHome ? 'Ready to knock' : currentDisposition?.name || lead.status}
+              {lead.expiredGoBack ? 'Exp. Go-Back' : unvisitedHome ? 'Ready to knock' : currentDisposition?.name || lead.status}
             </span>
           </div>
           <button
@@ -864,9 +888,12 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           {/* Name & Status */}
           <div className={homeowner?.ownerName === lead.name ? 'mb-2' : 'mb-6'}>
             {homeowner?.ownerName !== lead.name && <h2 className="text-xl font-bold text-[#2D3748]">{lead.name}</h2>}
+            {ownedByLabel && (
+              <p className="text-sm font-semibold text-[#92400e] mt-1">{ownedByLabel}</p>
+            )}
             {!unvisitedHome && isClaimed && lead.claimedBy && (
               <p className="text-sm text-[#718096] mt-1">
-                Claimed by {isClaimedByMe ? 'you' : 'another rep'}
+                Claimed by {workedByMe ? 'you' : 'another rep'}
                 {lead.claimedAt && (
                   <> • {formatTimeAgo(new Date(lead.claimedAt))}</>
                 )}

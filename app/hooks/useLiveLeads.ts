@@ -6,7 +6,8 @@ import { mapLeadDoc } from '@/app/utils/firestore';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import type { Lead, User } from '@/app/types';
 import { startupEvent } from '@/app/mobile/_lib/startupDiagnostics';
-import { rememberAcknowledgedKnocks } from '@/app/mobile/_lib/knockLedger';
+import { rememberAcknowledgedKnocks, rememberCountedKnocks } from '@/app/mobile/_lib/knockLedger';
+import { parseMobileKnockEvents, rowsForOwnership } from '@/app/mobile/_lib/ownerCounts';
 import { mergeLeadSnapshots } from '@/app/homeowners/houseIdentity';
 
 type Result = { userId:string; leads:Lead[]; error:string; cached:boolean; complete:boolean };
@@ -46,7 +47,10 @@ function readPersonal(uid:string,role:string) {
         if(!response.ok)throw Error(response.status===404?'The company server needs the v14.8 data update. Your saved knocks are safe.':'Your activity could not refresh. Tap Retry data.');
         const data=await response.json();
         if(auth?.currentUser?.uid!==uid)throw Error('Account changed.');
-        for(const lead of data.leads||[]){
+        if(data?.ownership==='territory' && Array.isArray(data.knockEvents)){
+          void rememberCountedKnocks(uid, parseMobileKnockEvents(data.knockEvents, uid)).catch(()=>{});
+        }
+        for(const lead of rowsForOwnership<Lead>(uid, data)){
           const previous=records.get(lead.id), incoming=mapLeadDoc({id:lead.id,data:()=>lead});
           records.set(lead.id,mergeLeadSnapshots(previous?[previous]:[],[incoming])[0]);
         }

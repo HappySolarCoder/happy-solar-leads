@@ -1,5 +1,6 @@
 import type { Lead } from '@/app/types';
 import type { Disposition } from '@/app/types/disposition';
+import { EXP_GO_BACK } from './ownerCounts';
 export type KnockPeriod = 'all' | 'week' | 'month' | 'year';
 export const KNOCK_PERIODS: {
     id: KnockPeriod;
@@ -38,8 +39,15 @@ export function matchesMapFilters(lead: Lead, period: KnockPeriod, selected: str
     }
     if (!selected.length)
         return true;
+    const expSelected = selected.includes(EXP_GO_BACK.id);
+    const rest = expSelected ? selected.filter(id => id !== EXP_GO_BACK.id) : selected;
+    if (expSelected && lead.expiredGoBack === true && !rest.length)
+        return true;
+    if (!rest.length)
+        return false;
     const norm = (v: unknown) => String(v || '').trim().toLowerCase().replace(/\s+/g, '-');
     // Status is authoritative. Only old records without it use legacy names/history.
     const status = norm(lead.status || lead.disposition || lead.dispositionHistory?.[0]?.disposition);
-    return selected.some(id => status === norm(id) || status === norm(dispositions.find(d => d.id === id)?.name));
+    const statusMatch = rest.some(id => status === norm(id) || status === norm(dispositions.find(d => d.id === id)?.name));
+    return statusMatch || (expSelected && lead.expiredGoBack === true);
 }

@@ -37,13 +37,29 @@ export function latestKnockDisplay(lead: Lead, dispositions: Disposition[] = DEF
 }
 /** Reconcile the same document from personal, viewport and saved-knock caches.
  * Arrival order is not event order. Equal versions prefer a full document. */
+const OWNERSHIP_KEEP = ["ownedByMe", "owners", "ownerSource", "expiredGoBack", "inOtherUsersTerritory"] as const;
+function keepOwnershipFields(winner: Lead, other: Lead): Lead {
+  let next: Lead | null = null;
+  for (const key of OWNERSHIP_KEEP) {
+    if (winner[key] === undefined && other[key] !== undefined) {
+      next ??= { ...winner };
+      (next as Lead)[key] = other[key] as never;
+    }
+  }
+  return next ?? winner;
+}
 export function mergeLeadSnapshots(...sources: ReadonlyArray<ReadonlyArray<Lead>>): Lead[] {
   const records = new Map<string, Lead>();
   for (const source of sources) for (const lead of source) {
     const previous = records.get(lead.id);
     const delta = previous ? latestVisit(lead) - latestVisit(previous) : 1;
     const summary = (l:Lead) => !!(l as Lead & {mobileSummary?:boolean}).mobileSummary;
-    if (!previous || delta > 0 || (delta === 0 && !(summary(lead) && !summary(previous)))) records.set(lead.id, lead);
+    if (!previous || delta > 0 || (delta === 0 && !(summary(lead) && !summary(previous)))) {
+      records.set(lead.id, previous ? keepOwnershipFields(lead, previous) : lead);
+    } else {
+      const kept = keepOwnershipFields(previous, lead);
+      if (kept !== previous) records.set(lead.id, kept);
+    }
   }
   return [...records.values()];
 }

@@ -33,7 +33,12 @@ export function fieldPinStyle(lead: Lead, disposition?: Disposition) {
   let kind = "other",
     color = "#55717c",
     label = disposition?.name || lead.disposition || lead.status || "Unworked";
-  if (
+  const expGoBack = lead.expiredGoBack === true;
+  if (expGoBack) {
+    kind = "return";
+    color = "#a16207";
+    label = "Exp. Go-Back";
+  } else if (
     !status ||
     [
       "assigned",
@@ -71,7 +76,7 @@ export function fieldPinStyle(lead: Lead, disposition?: Disposition) {
     kind = "no";
     color = "#747983";
   }
-  color = safeColor(disposition?.color, color);
+  if (!expGoBack) color = safeColor(disposition?.color, color);
   const solar =
     (
       { great: "#4de0ac", good: "#72b9fa", solid: "#ffca73" } as Record<
@@ -79,7 +84,7 @@ export function fieldPinStyle(lead: Lead, disposition?: Disposition) {
         string
       >
     )[lead.solarCategory || ""] || "#91a8b4";
-  return { kind, color, label, solar, outcome: getAppointmentOutcome(lead) };
+  return { kind, color, label, solar, outcome: getAppointmentOutcome(lead), exp: expGoBack };
 }
 // Static vector artwork, no animation/filters/external images. Cache by visual state.
 const cache = new Map<string, string>();
@@ -163,13 +168,14 @@ export function fieldPinArtwork(
     warm,
     hot,
     viewOnly,
+    style.exp,
   ].join(":");
   let url = cache.get(key);
   if (!url) {
     const small = compact;
     let svg = small
       ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">${selected ? '<circle cx="10" cy="10" r="9" fill="none" stroke="#F4C84A" stroke-width="2"/>' : ''}<circle cx="10" cy="10" r="7.5" fill="${style.color}" stroke="#fffcf5" stroke-width="1.5"/>${style.outcome ? `<circle cx="10" cy="10" r="5.5" fill="none" stroke="${style.outcome.color}" stroke-width="1.5"/>` : ''}</svg>`
-      : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 56">${selected ? '<path d="M2 15V3h12m20 0h12v12M2 31v12h9m26 0h9V31" fill="none" stroke="#00d4de" stroke-width="2"/>' : ""}<path d="M24 53 8 35V13l7-7h18l7 7v22z" fill="#173240" stroke="white" stroke-width="2"/><path d="M24 47 12 33V15l5-5h14l5 5v18z" fill="${style.color}"/><path d="M17 11h14" stroke="${style.solar}" stroke-width="3" stroke-linecap="round"/><g transform="translate(12 16)" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${glyphs[style.kind]}</g>${style.outcome ? `<rect x="29" y="0" width="19" height="18" rx="6" fill="${style.outcome.color}" stroke="white" stroke-width="1.5"/><text x="38.5" y="13" text-anchor="middle" fill="white" font-family="Arial,sans-serif" font-weight="bold" font-size="12">${escape(style.outcome.symbol)}</text>` : ""}</svg>`;
+      : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 56">${selected ? '<path d="M2 15V3h12m20 0h12v12M2 31v12h9m26 0h9V31" fill="none" stroke="#00d4de" stroke-width="2"/>' : ""}<path d="M24 53 8 35V13l7-7h18l7 7v22z" fill="#173240" stroke="white" stroke-width="2"/><path d="M24 47 12 33V15l5-5h14l5 5v18z" fill="${style.color}"/><path d="M17 11h14" stroke="${style.solar}" stroke-width="3" stroke-linecap="round"/>${style.exp ? '<text x="24" y="34" text-anchor="middle" fill="white" font-family="Arial,sans-serif" font-size="16">\u21ba</text>' : `<g transform="translate(12 16)" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${glyphs[style.kind]}</g>`}${style.outcome ? `<rect x="29" y="0" width="19" height="18" rx="6" fill="${style.outcome.color}" stroke="white" stroke-width="1.5"/><text x="38.5" y="13" text-anchor="middle" fill="white" font-family="Arial,sans-serif" font-weight="bold" font-size="12">${escape(style.outcome.symbol)}</text>` : ""}</svg>`;
     if (warm && !small) {
       // Keep the main disposition glyph and the opposite-side GHL outcome badge.
       svg = svg.replace('</svg>', `<g data-warm-lead="true"><rect x="0" y="0" width="18" height="19" rx="5" fill="#587E98" stroke="white" stroke-width="1.3"/><g transform="translate(3.5 3) scale(.053)">${signalR}</g></g></svg>`);

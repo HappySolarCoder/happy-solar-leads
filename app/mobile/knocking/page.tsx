@@ -8,6 +8,7 @@ import { DIRECT_MOBILE_WRITES } from '@/app/field/directWrites';
 import { NOTES_SAVED_TOAST_MS } from '@/app/field/dirtyNotes';
 import type { Homeowner } from '@/app/homeowners/model';
 import { KNOCK_PERIODS, matchesMapFilters, type KnockPeriod } from '../_lib/mapFilters';
+import { EXP_GO_BACK, KNOCK_COUNTED_EVENT, territoryOwnershipOn } from '../_lib/ownerCounts';
 import { useDeviceNow } from '../_components/useDeviceNow';
 import { useDeviceValue } from '../_components/useDeviceValue';
 
@@ -40,7 +41,8 @@ import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
 import { useViewportLeads } from "@/app/hooks/useViewportLeads";
 import { useHotLeads } from "@/app/hooks/useHotLeads";
-import { hotLeadFilterVisible, readHotFilter, writeHotFilter, HOT_FILTER_BADGE, type HotPinFilter } from "@/app/hotLeads/filter";
+import { useHotOverview } from "@/app/hooks/useHotOverview";
+import { hotLeadFilterVisible, hotOnlyLayers, readHotFilter, writeHotFilter, HOT_FILTER_BADGE, HOT_LEAD_MIN_ZOOM, type HotPinFilter } from "@/app/hotLeads/filter";
 import { HotLeadFilterSection } from "@/app/hotLeads/HotLeadFilterSection";
 import { hotLeadParkNotice } from "@/app/hotLeads/save";
 import { HOT_PINS_UNAVAILABLE } from "@/app/hotLeads/fetch";
@@ -84,11 +86,25 @@ export default function KnockingPage() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | undefined>();
   const [showLeadDetail, setShowLeadDetail] = useState(false);
   const [notesSavedNotice, setNotesSavedNotice] = useState('');
+  const [countedNotice, setCountedNotice] = useState('');
   useEffect(() => {
     if (!notesSavedNotice) return;
     const timer = window.setTimeout(() => setNotesSavedNotice(''), NOTES_SAVED_TOAST_MS);
     return () => window.clearTimeout(timer);
   }, [notesSavedNotice]);
+  useEffect(() => {
+    const onCounted = (event: Event) => {
+      const text = (event as CustomEvent<{ owner?: string }>).detail?.owner;
+      if (typeof text === 'string' && text) setCountedNotice(text);
+    };
+    window.addEventListener(KNOCK_COUNTED_EVENT, onCounted);
+    return () => window.removeEventListener(KNOCK_COUNTED_EVENT, onCounted);
+  }, []);
+  useEffect(() => {
+    if (!countedNotice) return;
+    const timer = window.setTimeout(() => setCountedNotice(''), 4000);
+    return () => window.clearTimeout(timer);
+  }, [countedNotice]);
   const closeLeadDetail = (message?: string) => {
     setShowLeadDetail(false);
     setSelectedLeadId(undefined);
@@ -150,6 +166,10 @@ export default function KnockingPage() {
   const viewportPins = useViewportLeads(currentUser, viewport, pinPolygons, areasReady);
   const hotLeads = useHotLeads(currentUser, viewport);
   const showHotFilter = hotLeadFilterVisible(currentUser);
+  const hotOverview = useHotOverview(
+    currentUser,
+    showHotFilter && hotFilter === 'only' && (viewport?.zoom ?? mapZoom) < HOT_LEAD_MIN_ZOOM,
+  );
   useEffect(() => {
     if (!currentUser?.id) return;
     try {
@@ -184,6 +204,10 @@ export default function KnockingPage() {
     }
     return membersFromTerritories(overlayTerritories, coloredUsers);
   }, [areaMode, overlayTerritories, overlayMembers, coloredUsers]);
+  const ownTerritories = useMemo(
+    () => colorTerritories(overlayTerritories.filter(t=>t.userId===currentUser?.id), coloredUsers),
+    [overlayTerritories, currentUser?.id, coloredUsers],
+  );
 
   // A fresh foreground GPS fix centers every account once. Later fixes move the
   // blue dot only, so a rep can inspect another street without camera snap-back.
@@ -693,6 +717,7 @@ export default function KnockingPage() {
 
   if (isLoading) return <MobileLoading />;
   if (!currentUser) return <MobileNotice>{sessionError || 'Sign in to open the map.'}</MobileNotice>;
+  const only = hotOnlyLayers(hotFilter, showHotFilter);
   const teamScopeNotice = areaMode === 'team' && !['admin', 'manager'].includes(currentUser.role)
     ? 'Your account shows its own territories only.'
     : '';
@@ -716,6 +741,7 @@ export default function KnockingPage() {
         {(areaNotice || teamScopeNotice) && <MobileNotice>{[areaNotice, teamScopeNotice].filter(Boolean).join(' ')}</MobileNotice>}
         {live?.error && <MobileNotice>{live.error}<button className="ml-2 underline font-semibold" onClick={() => void refresh()}>Retry data</button></MobileNotice>}
         {notesSavedNotice ? <MobileNotice>{notesSavedNotice}</MobileNotice> : null}
+        {countedNotice ? <MobileNotice>{countedNotice}</MobileNotice> : null}
         {/* Search Sheet */}
         {showSearchSheet && (
           <div className="fixed inset-0 z-50">
@@ -787,13 +813,16 @@ export default function KnockingPage() {
             </div><p>Uses each door’s most recent knock. Unworked doors appear with All time.</p></fieldset>
             <fieldset className="rm-map-filter-group"><legend>Dispositions</legend><div className="rm-filter-options">
               <button aria-pressed={!dispositionFilter.length} onClick={()=>setDispositionFilter([])}>All dispositions</button>
-              {dispositions.map(d=><button key={d.id} aria-pressed={dispositionFilter.includes(d.id)} onClick={()=>setDispositionFilter(prev=>prev.includes(d.id)?prev.filter(id=>id!==d.id):[...prev,d.id])}>{d.name}</button>)}
+              {dispositions.filter(d => d.id !== EXP_GO_BACK.id).map(d=><button key={d.id} aria-pressed={dispositionFilter.includes(d.id)} onClick={()=>setDispositionFilter(prev=>prev.includes(d.id)?prev.filter(id=>id!==d.id):[...prev,d.id])}>{d.name}</button>)}
+              {territoryOwnershipOn(currentUser?.id) && <button aria-pressed={dispositionFilter.includes(EXP_GO_BACK.id)} onClick={()=>setDispositionFilter(prev=>prev.includes(EXP_GO_BACK.id)?prev.filter(id=>id!==EXP_GO_BACK.id):[...prev,EXP_GO_BACK.id])}><span aria-hidden="true">{EXP_GO_BACK.icon}</span> {EXP_GO_BACK.label}</button>}
             </div></fieldset>
             {showHotFilter && <HotLeadFilterSection value={hotFilter} onChange={setHotFilter} />}
             <button className="w-full mt-3 py-3 text-sm text-[#476E88]" onClick={() => { setKnockPeriod('all'); setDispositionFilter([]); setSetterFilter('all'); setFreshPinsOnly(false); setLeadTypeFilter('all'); setOutcomesOnly(false); setHotFilter('all'); }}>Reset all filters</button>
             <details className="rm-pin-key"><summary>Map display</summary>
-              <div className="rm-map-summary"><button aria-pressed={showHomeowners} onClick={()=>setHomePreference(showHomeowners?'off':'on')}>Homeowner pins{showHomeowners?' ✓':''}</button><button aria-pressed={showHeat} onClick={()=>setShowHeat(!showHeat)}>Heat map{showHeat?' ✓':''}</button></div>
+              <div className="rm-map-summary"><button aria-pressed={showHomeowners} disabled={!!only} onClick={() => { if (only) return; setHomePreference(showHomeowners?'off':'on'); }}>Homeowner pins{showHomeowners?' ✓':''}</button><button aria-pressed={showHeat} onClick={()=>setShowHeat(!showHeat)}>Heat map{showHeat?' ✓':''}</button></div>
+              {only ? <p>Hidden while 3PL only is on.</p> : null}
               <p>Date and disposition filters hide unworked homeowner pins.</p>
+              {territoryOwnershipOn(currentUser?.id) && <p><span aria-hidden="true" style={{ color: EXP_GO_BACK.color }}>{EXP_GO_BACK.icon}</span> {EXP_GO_BACK.label}</p>}
             </details>
             {/* Apply Button - Closes filter panel */}
             <button
@@ -928,7 +957,7 @@ export default function KnockingPage() {
             leads={mapLeads}
             pinPolygons={pinPolygons}
             onViewportChange={setViewport}
-            showHomeowners={areasReady && showHomeowners && !outcomesOnly && dispositionFilter.length === 0 && leadTypeFilter !== "customers" && knockPeriod === 'all' && !freshPinsOnly && setterFilter === "all"}
+            showHomeowners={areasReady && showHomeowners && !outcomesOnly && dispositionFilter.length === 0 && leadTypeFilter !== "customers" && knockPeriod === 'all' && !freshPinsOnly && setterFilter === "all" && !only}
             homeownerLeads={homeownerLeads}
             selectedHomeownerId={selectedHomeowner?.id}
             onHomeownerClick={handleHomeownerSelect}
@@ -936,6 +965,7 @@ export default function KnockingPage() {
             currentUser={currentUser}
             hotLeads={hotLeads.pins}
             hotFilter={showHotFilter ? hotFilter : 'all'}
+            hotOverview={hotOverview.points}
             users={coloredUsers}
             onLeadClick={handleLeadSelect}
             selectedLeadId={selectedLeadId}
@@ -951,11 +981,11 @@ export default function KnockingPage() {
             saveManualLead={DIRECT_MOBILE_WRITES ? async lead => directSave.current(lead, lead, lead, true) : undefined}
             onLeadAdded={refreshLeads}
             searchLocation={searchLocation}
-            heatCells={heatCells}
+            heatCells={only ? [] : heatCells}
             heatCellRadiusMeters={805}
             showTeamAreas={showTeamAreas}
-            territories={showTeamAreas ? teamAreaTerritories : []}
-            teamMembers={teamMembersForMap}
+            territories={only ? (showTeamAreas ? ownTerritories : []) : (showTeamAreas ? teamAreaTerritories : [])}
+            teamMembers={only ? [] : teamMembersForMap}
           />
           <FieldCompass />
           {gpsError && <div className="rm-gps-notice" role="status">{gpsError.code === 1 ? "Enable Raydar location access in your phone Settings, then tap GPS to retry." : "Location unavailable. Tap GPS to try again."}</div>}
