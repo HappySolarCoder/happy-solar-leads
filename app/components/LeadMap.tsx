@@ -19,6 +19,7 @@ import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/
 import { isAppointmentSetOrSoldLead, pastPinPopupLines } from '@/app/utils/historicalTerritoryPins';
 import { EXP_GO_BACK, effectiveOwner, isExpiredGoBack, ownerDisplayColor } from '@/app/utils/effectiveOwner';
 import { useFieldOwnership } from '@/app/utils/useFieldOwnership';
+import { confirmForeignTerritory } from '@/app/utils/confirmForeignTerritory';
 
 /** Display-only ownership for one pin. Present only when fieldOwnership mode is 'territory'. */
 type PinDisplay = { expGoBack: boolean; ownerColor?: string; ownerNames?: string[] };
@@ -1358,6 +1359,9 @@ export default function LeadMap({
   // Handle saving new lead from dropped pin
   const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
     try {
+      // Foreign-territory warning, every time a rep places a pin (flag-gated).
+      const place = { lat: leadData.lat ?? dropPinLocation?.lat, lng: leadData.lng ?? dropPinLocation?.lng };
+      if (!(await confirmForeignTerritory(place, currentUser))) return;
       if (isProximityRequired(currentUser) && navigator.geolocation) {
         try {
           const position = await new Promise<GeolocationPosition>((resolve, reject) => {
