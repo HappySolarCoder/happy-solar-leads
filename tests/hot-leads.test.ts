@@ -63,6 +63,9 @@ function store(rows: HotLeadRow[], specs: LatQueryCall[]): HotLeadStore {
     async getById(id) {
       return rows.find((item) => item.id === id) ?? null;
     },
+    async pointsOverview() {
+      return rows;
+    },
   };
 }
 

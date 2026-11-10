@@ -617,6 +617,7 @@ describe('3PL territory gate', () => {
       store: {
         async latBand() { return []; },
         async getById() { return null; },
+        async pointsOverview() { return []; },
       },
       territories: async (uid) => {
         calls.push(uid);
@@ -639,6 +640,9 @@ describe('3PL territory gate', () => {
         async getById(id) {
           const pin = pins.find((item) => item.id === id);
           return pin ? { id, data: { lat: pin.lat, lng: pin.lng, hotStatus: 'active', contacts: [] } } : null;
+        },
+        async pointsOverview() {
+          return pins.map((pin) => ({ id: pin.id, data: { lat: pin.lat, lng: pin.lng, hotStatus: 'active' } }));
         },
       },
       territories: async (uid) => {
@@ -675,6 +679,7 @@ describe('3PL territory gate', () => {
         async getById() {
           return { id: 'ghl_blank', data: { lat: null, lng: 11, hotStatus: 'active', contacts: [] } };
         },
+        async pointsOverview() { return []; },
       },
       territories: async () => {
         calls.push('one');

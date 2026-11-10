@@ -10,6 +10,30 @@ import { HOT_LEADS_PAGE, isHotLeadId, isHotLeadRole } from './hotLeadContract';
 import { pinTerritoryGate, TERRITORY_QUERY_LIMIT, type DispoBlock } from './territoryGate';
 
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
+const POINTS_CACHE = { 'Cache-Control': 'private, max-age=900' };
+
+/** Overview cap. The query asks for one extra row so truncated can be set. */
+export const HOT_LEADS_POINTS_CAP = 2000;
+export const HOT_LEADS_POINTS_QUERY_LIMIT = 2001;
+export const HOT_LEADS_POINTS_FIELDS = ['lat', 'lng', 'hotStatus', 'testData'] as const;
+export const HOT_LEADS_POINTS_CACHE_MS = 15 * 60 * 1000;
+
+/** All readerAllowed roles share this inventory. Never key a memo by uid. */
+const POINTS_SCOPE = 'hotLeadRoles';
+
+type PointsMemo = {
+  at: number;
+  scope: string;
+  points: HotLeadPoint[];
+  truncated: boolean;
+  generatedAt: string;
+};
+
+let pointsMemo: PointsMemo | null = null;
+
+export function clearHotLeadsPointsMemo(): void {
+  pointsMemo = null;
+}
 const HISTORY_LIMIT = 50;
 const CLAIM_MAX_BYTES = 2 * 1024;
 const CLAIM_KEYS = new Set(['draftId', 'hotLeadId', 'action', 'actionAt', 'userName']);
@@ -28,9 +52,22 @@ export type LatQueryCall = {
 
 export type HotLeadRow = { id: string; data: Record<string, unknown> };
 
+export type PointsQueryCall = {
+  limit: number;
+  select: readonly string[];
+};
+
+export type HotLeadPoint = {
+  id: string;
+  lat: number;
+  lng: number;
+  hotStatus: string | null;
+};
+
 export type HotLeadStore = {
   latBand(spec: LatQueryCall): Promise<HotLeadRow[]>;
   getById(id: string): Promise<HotLeadRow | null>;
+  pointsOverview(spec: PointsQueryCall): Promise<HotLeadRow[]>;
 };
 
 export type HotLeadResult = {
@@ -96,6 +133,13 @@ export function describeLatBand(input: {
   };
 }
 
+export function describePointsQuery(): PointsQueryCall {
+  return {
+    limit: HOT_LEADS_POINTS_QUERY_LIMIT,
+    select: [...HOT_LEADS_POINTS_FIELDS],
+  };
+}
+
 export function applyLatBand<Q extends Chain<Q>>(query: Q, spec: LatQueryCall, documentId: unknown): Q {
   if (spec.where.some((filter) => filter.field !== 'lat' || (filter.op !== '>=' && filter.op !== '<='))) {
     throw new Error('Hot lead lat query only allows a lat range');
@@ -111,9 +155,68 @@ export function applyLatBand<Q extends Chain<Q>>(query: Q, spec: LatQueryCall, d
   return next;
 }
 
-function finish(status: number, body: Record<string, unknown>, count = 0): HotLeadResult {
+function finish(
+  status: number,
+  body: Record<string, unknown>,
+  count = 0,
+  headers: Record<string, string> = NO_STORE,
+): HotLeadResult {
   console.log(`[hot-leads] ${status} ${count}`);
-  return { status, body, headers: { ...NO_STORE } };
+  return { status, body, headers: { ...headers } };
+}
+
+function finiteCoord(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function toHotLeadPoint(id: string, data: Record<string, unknown>): HotLeadPoint | null {
+  if (!visibleToRealAccount(data)) return null;
+  const lat = data.lat;
+  const lng = data.lng;
+  if (!finiteCoord(lat) || !finiteCoord(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return null;
+  }
+  return {
+    id,
+    lat,
+    lng,
+    hotStatus: typeof data.hotStatus === 'string' && data.hotStatus ? data.hotStatus : null,
+  };
+}
+
+async function readPoints(store: HotLeadStore, nowMs: number): Promise<HotLeadResult> {
+  if (
+    pointsMemo
+    && pointsMemo.scope === POINTS_SCOPE
+    && nowMs - pointsMemo.at >= 0
+    && nowMs - pointsMemo.at < HOT_LEADS_POINTS_CACHE_MS
+  ) {
+    return finish(200, {
+      ok: true,
+      points: pointsMemo.points,
+      truncated: pointsMemo.truncated,
+      generatedAt: pointsMemo.generatedAt,
+    }, pointsMemo.points.length, POINTS_CACHE);
+  }
+
+  const spec = describePointsQuery();
+  let rows: HotLeadRow[];
+  try {
+    rows = await store.pointsOverview(spec);
+  } catch {
+    return finish(500, { error: 'internal' });
+  }
+
+  const visible: HotLeadPoint[] = [];
+  for (const row of rows) {
+    const point = toHotLeadPoint(row.id, row.data);
+    if (point) visible.push(point);
+  }
+  const truncated = rows.length > HOT_LEADS_POINTS_CAP || visible.length > HOT_LEADS_POINTS_CAP;
+  const points = visible.slice(0, HOT_LEADS_POINTS_CAP);
+  const generatedAt = new Date(nowMs).toISOString();
+  pointsMemo = { at: nowMs, scope: POINTS_SCOPE, points, truncated, generatedAt };
+  return finish(200, { ok: true, points, truncated, generatedAt }, points.length, POINTS_CACHE);
 }
 
 function isPlain(value: unknown): value is Record<string, unknown> {
@@ -384,12 +487,16 @@ export async function handleHotLeadsGet(input: {
   params: URLSearchParams;
   store: HotLeadStore;
   territories?: (uid: string) => Promise<TerritoryRead>;
+  now?: () => number;
 }): Promise<HotLeadResult> {
   if (!readerAllowed(input.user)) return finish(403, { error: 'not_allowed' });
 
   const id = input.params.get('id');
   if (id != null) return readOne(input.user, input.store, id, input.territories);
 
+  if (input.params.get('mode') === 'points') {
+    return readPoints(input.store, input.now?.() ?? Date.now());
+  }
   if (input.params.get('mode') !== 'map') return finish(400, { error: 'invalid_bounds' });
   if (mapBoundsProblem(input.params)) return finish(400, { error: 'invalid_bounds' });
 
@@ -452,6 +559,7 @@ export async function serveHotLeads(input: {
   deps: RequireApprovedUserDeps & {
     store: HotLeadStore;
     territories?: (uid: string) => Promise<TerritoryRead>;
+    now?: () => number;
   };
   loadApprovedUser?: () => Promise<ApprovedUser>;
 }): Promise<HotLeadResult> {
@@ -464,6 +572,7 @@ export async function serveHotLeads(input: {
       params: input.params,
       store: input.deps.store,
       territories: input.deps.territories,
+      now: input.deps.now,
     });
   } catch (error) {
     if (error instanceof HttpError) {
