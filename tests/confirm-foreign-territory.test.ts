@@ -34,7 +34,7 @@ describe('foreign territory warning decision', () => {
     assert.equal(shouldWarnForeignTerritory({ ...base, territories, lat: undefined, lng: undefined }), false);
     assert.equal(shouldWarnForeignTerritory({ ...base, territories: [] }), false);
   });
-  it('staff exemption follows the single switch (default true, TBD with Evan)', () => {
+  it('staff exemption follows the single switch (true, final per Evan)', () => {
     assert.equal(STAFF_POPUP_EXEMPT, true);
     assert.equal(shouldWarnForeignTerritory({ ...base, role: 'admin', territories }), !STAFF_POPUP_EXEMPT);
     assert.equal(shouldWarnForeignTerritory({ ...base, role: 'manager', territories }), !STAFF_POPUP_EXEMPT);

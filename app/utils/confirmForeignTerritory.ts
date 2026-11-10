@@ -10,7 +10,7 @@ import {
  * territory. Do you wish to place this pin?" before placing or dispositioning
  * a pin. Every time, no memory. Never when the flag is not 'territory', the
  * point has no territory, the rep is one of its assignees (dual owner), or the
- * role is exempt (staff default exempt, TBD with Evan: effectiveOwner.STAFF_POPUP_EXEMPT).
+ * role is exempt (staff exempt, final per Evan: effectiveOwner.STAFF_POPUP_EXEMPT).
  */
 export function shouldWarnForeignTerritory(input: {
   mode: 'legacy' | 'territory';
