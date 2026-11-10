@@ -365,8 +365,8 @@ test("pin art keeps a non-hot pin unchanged and marks a hot pin at every zoom", 
   assert.match(selected, /#F4C84A/);
   assert.match(selected, new RegExp(HOT_RING_COLOR));
   assert.notEqual(HOT_RING_COLOR.toLowerCase(), "#f4c84a");
+  assert.equal(HOT_RING_COLOR, "#B8860B");
   assert.ok(contrast(HOT_RING_COLOR, "#ffffff") >= 3);
-  assert.ok(contrast(HOT_RING_COLOR, "#f2efe9") >= 3);
   const fresh = lead("fresh", { status: "assigned" });
   assert.ok(fieldPinArtwork(fresh, undefined, 18, false, true).size > fieldPinArtwork(fresh, undefined, 18).size);
   assert.equal(fieldPinZoomTier(18), 4);

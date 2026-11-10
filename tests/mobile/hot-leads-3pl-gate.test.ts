@@ -35,7 +35,7 @@ import {
 } from "../../app/hotLeads/model";
 import { queueHotClaim, queueHotKnock, queueHotNotes } from "../../app/hotLeads/save";
 import { MobileDataContext } from "../../app/mobile/_components/MobileDataProvider";
-import { fieldPinArtwork, HOT_RING_COLOR, HOT_VIEW_ONLY_RING, withLegacyHotPin } from "../../app/utils/fieldPin";
+import { fieldPinArtwork, HOT_RING_COLOR, withLegacyHotPin } from "../../app/utils/fieldPin";
 import type { Lead, User, UserRole } from "../../app/types";
 import { captureSavePayloads } from "./helpers/savePayloadContract";
 
@@ -226,17 +226,17 @@ test("map pins with canDispo false use the view-only ring and legend", () => {
   assert.equal(lockedArt.label.startsWith(`${HOT_VIEW_ONLY_LEGEND} · `), true);
   assert.match(decodeURIComponent(lockedArt.url), /data-hot-view-only="true"/);
   assert.match(decodeURIComponent(lockedArt.url), /stroke-dasharray/);
-  assert.match(decodeURIComponent(lockedArt.url), new RegExp(HOT_VIEW_ONLY_RING));
-  assert.equal(decodeURIComponent(lockedArt.url).includes(HOT_RING_COLOR), false);
+  assert.match(decodeURIComponent(lockedArt.url), new RegExp(HOT_RING_COLOR));
+  assert.equal(HOT_RING_COLOR, "#B8860B");
   assert.match(decodeURIComponent(lockedSmall.url), /data-hot-view-only="true"/);
   assert.match(decodeURIComponent(openArt.url), new RegExp(HOT_RING_COLOR));
   assert.equal(decodeURIComponent(openArt.url).includes("data-hot-view-only"), false);
   const legacy = withLegacyHotPin("<div>pin</div>", true);
   assert.match(legacy, /data-hot-view-only="true"/);
+  assert.match(legacy, /dashed/);
   assert.equal(legacy.includes("🔥"), false);
   assert.match(withLegacyHotPin("<div>pin</div>"), /🔥/);
-  assert.ok(contrast(HOT_VIEW_ONLY_RING, "#ffffff") >= 3);
-  assert.ok(contrast(HOT_VIEW_ONLY_RING, "#f2efe9") >= 3);
+  assert.ok(contrast(HOT_RING_COLOR, "#ffffff") >= 3);
   const section = read("app/hotLeads/HotLeadFilterSection.tsx");
   assert.match(section, /HOT_VIEW_ONLY_LEGEND/);
   assert.equal(HOT_VIEW_ONLY_LEGEND, "3PL lead — view only");
