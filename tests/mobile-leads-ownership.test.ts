@@ -1,5 +1,6 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { Timestamp } from 'firebase-admin/firestore';
 import { NextRequest } from 'next/server';
 import { createMobileLeadHandler } from '../app/utils/server/mobileLeads';
@@ -25,7 +26,8 @@ class Q {
   private cap = Infinity;
   constructor(private docs: Map<string, Doc>, private name: string, private log: string[]) {}
   where(f: string, op: string, v: unknown) { this.filters.push([f, op, v]); return this; }
-  orderBy() { return this; }
+  private order: { field: string; dir: 'asc' | 'desc' } | null = null;
+  orderBy(field?: string, dir: 'asc' | 'desc' = 'asc') { if (typeof field === 'string') this.order = { field, dir }; return this; }
   select() { return this; }
   startAfter() { return this; }
   startAt(v: string) { this.lo = v; return this; }
@@ -37,12 +39,18 @@ class Q {
     let rows = [...this.docs.entries()].filter(([p]) => p.startsWith(prefix)).map(([p, d]) => ({ id: p.slice(prefix.length), data: d }));
     for (const [f, op, v] of this.filters) {
       rows = rows.filter((r) => {
-        const x = r.data[f] as number;
-        return op === '==' ? x === v : op === '>=' ? x >= (v as number) : op === '<=' ? x <= (v as number) : true;
+        const num = (value: unknown) => (value && typeof (value as { toMillis?: unknown }).toMillis === 'function' ? (value as { toMillis(): number }).toMillis() : (value as number));
+        const x = num(r.data[f]);
+        return op === '==' ? r.data[f] === v : op === '>=' ? x >= num(v) : op === '<=' ? x <= num(v) : true;
       });
     }
     if (this.lo != null) rows = rows.filter((r) => r.id >= this.lo!);
     if (this.hi != null) rows = rows.filter((r) => r.id <= this.hi!);
+    if (this.order) {
+      const { field, dir } = this.order;
+      const num = (value: unknown) => (value && typeof (value as { toMillis?: unknown }).toMillis === 'function' ? (value as { toMillis(): number }).toMillis() : (value as number));
+      rows.sort((a, b) => (num(a.data[field]) - num(b.data[field])) * (dir === 'desc' ? -1 : 1));
+    }
     rows = rows.slice(0, this.cap);
     return { size: rows.length, docs: rows.map((r) => ({ id: r.id, exists: true, data: () => r.data })) };
   }
@@ -168,12 +176,64 @@ describe('/api/mobile-leads ownership fields', () => {
     const { body } = await t.call('mode=personal&field=claimedBy');
     assert.deepEqual(body.knockEvents, [{ leadId: 'l1', at: NOW - 2 * DAY, dispositionId: 'not-home' }]);
     assert.equal(body.popupExempt, false);
+    assert.equal('knockEventsTruncated' in body, false, 'no truncated key under the cap');
     assert.equal(body.ownership, 'territory');
     const events = t.log.filter((l) => l === 'query fieldKnockEvents');
     assert.equal(events.length, 1);
     // Later pages do not re-read events.
     const page2 = await t.call('mode=personal&field=claimedBy&after=abc');
     assert.equal('knockEvents' in page2.body, false);
+  });
+});
+
+describe('own knockEvents read: newest first, capped, truncated', () => {
+  const many = (n: number): Array<[string, Doc]> =>
+    Array.from({ length: n }, (_, i) => [`me_d${String(i).padStart(4, '0')}`, { uid: 'me', leadId: `l${i}`, actionAt: ts(NOW - (n - i) * 60_000), dispositionId: 'not-home' }]);
+
+  it('more rows than the cap: keeps the NEWEST, returns them newest-first, and says truncated', async () => {
+    const t = setup({ flag: true, events: [...many(700), ['sawyer_x', { uid: 'sawyer', leadId: 'lx', actionAt: ts(NOW - 1000), dispositionId: 'not-home' }]] });
+    const { body } = await t.call('mode=personal&field=claimedBy');
+    assert.equal(body.knockEventsTruncated, true);
+    assert.equal(body.knockEvents.length, 500, 'return limit');
+    assert.equal(body.knockEvents[0].leadId, 'l699', 'the newest event is kept');
+    assert.ok(body.knockEvents.every((e: { at: number }, i: number, all: Array<{ at: number }>) => i === 0 || all[i - 1].at >= e.at));
+    assert.ok(!body.knockEvents.some((e: { leadId: string }) => e.leadId === 'lx'), 'only the caller own events');
+    assert.ok(!body.knockEvents.some((e: { leadId: string }) => e.leadId === 'l0'), 'the oldest fall off, not the newest');
+  });
+
+  it('the 45-day window is part of the query, so old rows never use up the cap', async () => {
+    const old: Array<[string, Doc]> = Array.from({ length: 650 }, (_, i) => [`me_old${i}`, { uid: 'me', leadId: `o${i}`, actionAt: ts(NOW - 60 * DAY - i * 1000), dispositionId: 'not-home' }]);
+    const t = setup({ flag: true, events: [...old, ['me_new', { uid: 'me', leadId: 'fresh', actionAt: ts(NOW - DAY), dispositionId: 'not-home' }]] });
+    const { body } = await t.call('mode=personal&field=claimedBy');
+    assert.deepEqual(body.knockEvents.map((e: { leadId: string }) => e.leadId), ['fresh']);
+    assert.equal('knockEventsTruncated' in body, false);
+  });
+
+  it('a failed events read (e.g. index not deployed yet) still returns the leads, with no events', async () => {
+    const t = setup({ flag: true, events: many(3) });
+    // Make only the fieldKnockEvents query throw.
+    const proto = Object.getPrototypeOf(new Q(new Map(), 'x', []));
+    const get = proto.get;
+    proto.get = async function (this: { name: string }) {
+      if (this.name === 'fieldKnockEvents') throw new Error('9 FAILED_PRECONDITION: The query requires an index');
+      return get.call(this);
+    };
+    try {
+      const out = await t.call('mode=personal&field=claimedBy');
+      assert.equal(out.status, 200);
+      assert.deepEqual(out.body.knockEvents, []);
+      assert.ok(Array.isArray(out.body.leads));
+    } finally {
+      proto.get = get;
+    }
+  });
+
+  it('firestore.indexes.json carries the (uid ASC, actionAt DESC) index for fieldKnockEvents', () => {
+    const indexes = JSON.parse(readFileSync(new URL('../firestore.indexes.json', import.meta.url), 'utf8')).indexes as Array<{ collectionGroup: string; queryScope: string; fields: Array<{ fieldPath: string; order: string }> }>;
+    const hit = indexes.filter((index) => index.collectionGroup === 'fieldKnockEvents');
+    assert.equal(hit.length, 1);
+    assert.equal(hit[0].queryScope, 'COLLECTION');
+    assert.deepEqual(hit[0].fields, [{ fieldPath: 'uid', order: 'ASCENDING' }, { fieldPath: 'actionAt', order: 'DESCENDING' }]);
   });
 });
 

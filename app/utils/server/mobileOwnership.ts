@@ -1,4 +1,4 @@
-import { FieldPath, type Firestore } from 'firebase-admin/firestore';
+import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import {
   effectiveOwner,
   goBackSetter,
@@ -158,21 +158,36 @@ export function popupExemptForRole(role: unknown): boolean {
   return popupExemptFor(role);
 }
 
-/** The caller's own counts-only knocks, last 45 days. One doc-id range read, no index. */
-export async function loadOwnKnockEvents(db: Firestore, uid: string, now: number): Promise<MobileKnockEvent[]> {
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return [];
+/**
+ * The caller's own counts-only knocks, last 45 days, NEWEST first, capped at MOBILE_EVENT_READ_LIMIT.
+ * where uid == caller AND actionAt >= window start, orderBy actionAt desc: needs the composite index
+ * fieldKnockEvents (uid ASC, actionAt DESC) in firestore.indexes.json. When the cap is hit the OLDEST
+ * rows are the ones left out, and `truncated` is true.
+ */
+export async function loadOwnKnockEventsPage(
+  db: Firestore,
+  uid: string,
+  now: number,
+): Promise<{ events: MobileKnockEvent[]; truncated: boolean }> {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return { events: [], truncated: false };
+  const since = now - MOBILE_EVENT_WINDOW_MS;
   const snap = await db
     .collection('fieldKnockEvents')
-    .orderBy(FieldPath.documentId())
-    .startAt(`${uid}_`)
-    .endAt(`${uid}_\uf8ff`)
+    .where('uid', '==', uid)
+    .where('actionAt', '>=', Timestamp.fromMillis(since))
+    .orderBy('actionAt', 'desc')
     .select('uid', 'leadId', 'actionAt', 'dispositionId', 'status', 'disposition')
     .limit(MOBILE_EVENT_READ_LIMIT)
     .get();
-  if (snap.size >= MOBILE_EVENT_READ_LIMIT) console.log('[mobile/leads] knock_events_capped 1');
-  const since = now - MOBILE_EVENT_WINDOW_MS;
-  return mobileKnockEvents(snap.docs.map((d) => d.data()))
+  const truncated = snap.size >= MOBILE_EVENT_READ_LIMIT;
+  if (truncated) console.log('[mobile/leads] knock_events_capped 1');
+  const events = mobileKnockEvents(snap.docs.map((d) => d.data()))
     .filter((event) => event.at >= since)
     .sort((a, b) => b.at - a.at)
     .slice(0, MOBILE_EVENT_RETURN_LIMIT);
+  return { events, truncated };
+}
+
+export async function loadOwnKnockEvents(db: Firestore, uid: string, now: number): Promise<MobileKnockEvent[]> {
+  return (await loadOwnKnockEventsPage(db, uid, now)).events;
 }

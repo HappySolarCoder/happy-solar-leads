@@ -5,7 +5,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { insideTerritory, territoryBounds } from '@/app/utils/territoryManager';
 import { isOwnFollowUp } from '@/app/mobile/_lib/followUps';
 import type { Lead } from '@/app/types';
-import { loadOwnKnockEvents, loadOwnershipContext, ownershipForRows, popupExemptForRole } from './mobileOwnership';
+import { loadOwnKnockEventsPage, loadOwnershipContext, ownershipForRows, popupExemptForRole } from './mobileOwnership';
 
 // No new index or writes. Queries use existing single-field indexes (fieldKnockEvents is a doc-id range).
 const PAGE = 500;
@@ -59,7 +59,17 @@ return async function GET(request: NextRequest) {
         ((l.claimedBy === uid || l.assignedTo === uid) && Date.parse(String(l.ghlLastUpdatedAt || '')) >= since));
       const now = Date.now();
       const ctx = await loadOwnershipContext(db, now);
-      const extra = { ownership: ctx.mode, popupExempt: popupExemptForRole(user?.role), ...(after ? {} : { knockEvents: await loadOwnKnockEvents(db, uid, now) }) };
+      // Events are additive: if the read fails (e.g. the composite index is not deployed yet) the phone
+      // still gets its leads, just without counts-only events.
+      const eventPage = after ? null : await loadOwnKnockEventsPage(db, uid, now).catch((error) => {
+        console.log('[mobile/leads] knock_events_failed 1', error instanceof Error ? error.message.slice(0, 120) : '');
+        return { events: [], truncated: false };
+      });
+      const extra = {
+        ownership: ctx.mode,
+        popupExempt: popupExemptForRole(user?.role),
+        ...(eventPage ? { knockEvents: eventPage.events, ...(eventPage.truncated ? { knockEventsTruncated: true } : {}) } : {}),
+      };
       return NextResponse.json({leads, ...extra, nextCursor:snapshot.size === PAGE ? snapshot.docs.at(-1)!.id : null, ...(recent && snapshot.size === PAGE ? {afterSeconds:snapshot.docs.at(-1)!.data().dispositionedAt.seconds,afterNanos:snapshot.docs.at(-1)!.data().dispositionedAt.nanoseconds} : {})}, { headers:{'Cache-Control':'private, no-store'} });
     }
     if (mode !== 'map') throw Error('Choose a lead view.');
