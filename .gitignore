@@ -45,3 +45,15 @@ next-env.d.ts
 *.needs-review.csv
 
 .vercel
+
+# Scratch scripts and pages that hardcoded a Google API key (leaked Feb 2026). Never commit these;
+# read keys from process.env.GOOGLE_API_KEY instead.
+/test-solar-api-fields.js
+/test-route.js
+/test-solar.html
+/debug-console.html
+/quick-test.html
+/react-path-test.html
+/simple-test.html
+/test-upload.html
+/upload-diagnostic.html
