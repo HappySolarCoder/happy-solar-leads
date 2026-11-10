@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { MAX_ADDRESS_CHARS, MAX_ROUTE_STOPS } from '../app/utils/googleProxyLimits';
 import { makeAuthedFetch } from '../app/utils/authedFetchCore';
 import {
+  DEFAULT_AUTH_LIMIT,
+  DEFAULT_ROUTE_AUTH_LIMIT,
   DEFAULT_UNAUTH_LIMIT,
+  authLimitFor,
   MinuteLimiter,
   geocodeGet,
   geocodePost,
@@ -27,14 +30,17 @@ type Call = { url: string; init?: RequestInit };
 let logs: string[] = [];
 const realLog = console.log;
 const realError = console.error;
+const realWarn = console.warn;
 beforeEach(() => {
   logs = [];
   console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
   console.error = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+  console.warn = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
 });
 afterEach(() => {
   console.log = realLog;
   console.error = realError;
+  console.warn = realWarn;
 });
 
 function setup(options: {
@@ -111,6 +117,60 @@ describe('per-route enforcement', () => {
     assert.equal((await ALL.route(deps)).status, 401);
     assert.equal((await ALL.solar(deps)).status, 200);
     assert.equal(calls.length, 1);
+  });
+});
+
+describe('unknown names in GOOGLE_PROXY_ENFORCE_ROUTES', () => {
+  it('are ignored with one warning per name, in either mode; known names do not warn', () => {
+    const warnings = () => logs.filter((l) => l.includes('GOOGLE_PROXY_ENFORCE_ROUTES has unknown route'));
+    const env = { ...ENFORCE, GOOGLE_PROXY_ENFORCE_ROUTES: 'geocode, geocod3-typo ,Route' };
+    assert.equal(routeMode('geocode', env), 'enforce');
+    assert.equal(routeMode('route', env), 'enforce');
+    assert.equal(routeMode('solar', env), 'log-only');
+    assert.equal(warnings().length, 1);
+    assert.match(warnings()[0], /"geocod3-typo" \(ignored\)/);
+    assert.match(warnings()[0], /Known: geocode, route, solar/);
+    routeMode('geocode', env);
+    routeMode('route', env);
+    assert.equal(warnings().length, 1, 'once per name, not once per request');
+    routeMode('solar', { GOOGLE_PROXY_ENFORCE_ROUTES: 'sol4r-typo' });
+    assert.equal(warnings().length, 2, 'warns in log-only mode too, so a typo is seen before enforcing');
+    routeMode('solar', { ...ENFORCE, GOOGLE_PROXY_ENFORCE_ROUTES: 'geocode,route,solar' });
+    assert.equal(warnings().length, 2);
+  });
+});
+
+describe('signed-in limits', () => {
+  it('/api/route is 60 per minute, geocode and solar 5000', () => {
+    assert.equal(DEFAULT_ROUTE_AUTH_LIMIT, 60);
+    assert.equal(DEFAULT_AUTH_LIMIT, 5000);
+    assert.equal(authLimitFor('route', {}), 60);
+    assert.equal(authLimitFor('geocode', {}), 5000);
+    assert.equal(authLimitFor('solar', {}), 5000);
+    assert.equal(authLimitFor('route', { GOOGLE_PROXY_AUTH_LIMIT_PER_MIN: '7' }), 7, 'env overrides every route');
+  });
+
+  it('the 61st signed-in /api/route call in a minute is a 429; another user and other routes are unaffected; the window resets', async () => {
+    let now = 9_000_000;
+    const { deps, calls } = setup({
+      now: () => now,
+      google: async (url) => url.includes('routes.googleapis')
+        ? Response.json({ routes: [{ waypointOrder: [0], legs: [{ endAddress: 'x', distanceMeters: 1, duration: '1s' }] }] })
+        : url.includes('solar.googleapis')
+          ? Response.json({ name: 'b' })
+          : Response.json({ status: 'OK', results: [{ formatted_address: 'x', types: [], geometry: { location: { lat: 1, lng: 2 } } }] }),
+    });
+    const one = { waypoints: [{ lat: 43.1, lng: -77.6 }], startAddress: 'S', endAddress: 'E' };
+    for (let i = 0; i < 60; i += 1) assert.equal((await routePost(post('/api/route', one, WEB), deps)).status, 200, `call ${i + 1}`);
+    const limited = await routePost(post('/api/route', one, WEB), deps);
+    assert.equal(limited.status, 429);
+    assert.deepEqual(await limited.json(), { error: 'rate_limited' });
+    assert.equal(calls.filter((c) => c.url.includes('routes.googleapis')).length, 60, 'the limited call never reached Google');
+    assert.equal((await routePost(post('/api/route', one, MOBILE), deps)).status, 200, 'another user');
+    for (let i = 0; i < 100; i += 1) assert.equal((await ALL.solar(deps, WEB)).status, 200);
+    assert.equal((await ALL.geocodePost(deps, WEB)).status, 200);
+    now += 61_000;
+    assert.equal((await routePost(post('/api/route', one, WEB), deps)).status, 200);
   });
 });
 
@@ -215,6 +275,21 @@ describe('log-only mode (the default)', () => {
     assert.equal((await ALL.solar(deps)).status, 200);
     assert.equal((await ALL.solar(deps)).status, 200);
     assert.equal((await ALL.solar(deps)).status, 429);
+  });
+});
+
+describe('Google error logging', () => {
+  it('logs only the status, never the upstream response body (geocode, solar, route chunks)', async () => {
+    const SECRET_BODY = 'UPSTREAM-BODY-MARKER restricted key details';
+    const google = async () => new Response(JSON.stringify({ error: { message: SECRET_BODY } }), { status: 403, statusText: 'Forbidden' });
+    for (const [name, run] of Object.entries(ALL)) {
+      logs = [];
+      const { deps } = setup({ google });
+      const res = await run(deps, WEB);
+      assert.ok(!(await res.text()).includes('UPSTREAM-BODY-MARKER'), `${name} response`);
+      assert.ok(!logs.join('\n').includes('UPSTREAM-BODY-MARKER'), `${name} logs`);
+      assert.ok(logs.some((l) => /Google error status 403/.test(l)), `${name} logs the status`);
+    }
   });
 });
 
@@ -433,5 +508,21 @@ describe('Google proxy call sites use the app transport', () => {
     } else {
       assert.match(apiFetchFile, /import[^;]*\bCapacitorHttp\b[^;]*from/);
     }
+  });
+
+  // Skips on main (web-only stub). On the mobile line the native apiFetch.ts must be the 14.24/168+ one: the
+  // bearer for /api/geocode and /api/route is added inside nativeApiFetch. 167 and earlier send no token.
+  it('a native apiFetch.ts must contain the bearer logic for /api/geocode and /api/route (14.24/168+)', async (t) => {
+    const all = await readTracked();
+    const apiFetchFile = all.find((f) => f.file === 'app/utils/apiFetch.ts')!.text;
+    if (apiFetchFile.includes('WEB-ONLY STUB')) {
+      t.skip('web-only stub (main): the mobile apiFetch.ts is not merged yet');
+      return;
+    }
+    const code = apiFetchFile.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    assert.match(code, /\bgetIdToken\b/, 'native apiFetch must read the Firebase ID token (build 167 and earlier did not)');
+    assert.match(code, /\bAuthorization\b/i, 'native apiFetch must set an Authorization header');
+    assert.match(code, /\bgeocode\b/, 'bearer logic must cover /api/geocode');
+    assert.match(code, /\broute\b/, 'bearer logic must cover /api/route');
   });
 });

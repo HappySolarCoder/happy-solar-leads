@@ -31,6 +31,16 @@ export const AUTH_LIMIT_ENV = 'GOOGLE_PROXY_AUTH_LIMIT_PER_MIN';
 export const DEFAULT_UNAUTH_LIMIT = 600;
 /** Signed-in calls per user, per route, per instance, per minute. High on purpose: CSV upload geocodes in parallel batches. */
 export const DEFAULT_AUTH_LIMIT = 5000;
+/**
+ * /api/route is expensive (up to 60 Routes API calls per request, 1500 stops is close to the 60 s
+ * maxDuration if RouteBuilder is ever mounted), so signed-in users get far fewer of those per minute.
+ */
+export const DEFAULT_ROUTE_AUTH_LIMIT = 60;
+
+/** Signed-in limit for a route: GOOGLE_PROXY_AUTH_LIMIT_PER_MIN overrides every route, else the route's default. */
+export function authLimitFor(route: GoogleRoute, env: Env = process.env): number {
+  return limitFrom(env, AUTH_LIMIT_ENV, route === 'route' ? DEFAULT_ROUTE_AUTH_LIMIT : DEFAULT_AUTH_LIMIT);
+}
 const WINDOW_MS = 60_000;
 const NATIVE_PLATFORMS = new Set(['ios', 'android']);
 const MAX_TRACKED = 5000;
@@ -49,9 +59,24 @@ export function googleProxyMode(env: Env = process.env): GoogleProxyMode {
  * stay log-only. This lets geocode/route be enforced while /api/solar (not covered by native build 168) is not.
  */
 export function routeMode(route: GoogleRoute, env: Env = process.env): GoogleProxyMode {
+  const listed = enforcedRoutes(env); // also warns about typos while still in log-only
   if (googleProxyMode(env) !== 'enforce') return 'log-only';
-  const listed = (env[ENFORCE_ROUTES_ENV] ?? '').split(',').map((r) => r.trim().toLowerCase()).filter(Boolean);
   return listed.length === 0 || listed.includes(route) ? 'enforce' : 'log-only';
+}
+
+const KNOWN_ROUTES: readonly string[] = ['geocode', 'route', 'solar'];
+const warnedUnknown = new Set<string>();
+
+/** Names listed in GOOGLE_PROXY_ENFORCE_ROUTES. Unknown names are ignored, with one warning per name. */
+function enforcedRoutes(env: Env): string[] {
+  const listed = (env[ENFORCE_ROUTES_ENV] ?? '').split(',').map((r) => r.trim().toLowerCase()).filter(Boolean);
+  for (const name of listed) {
+    if (!KNOWN_ROUTES.includes(name) && !warnedUnknown.has(name)) {
+      warnedUnknown.add(name);
+      console.warn(`[google-proxy] ${ENFORCE_ROUTES_ENV} has unknown route "${name.slice(0, 40)}" (ignored). Known: ${KNOWN_ROUTES.join(', ')}. A route that is not listed stays log-only.`);
+    }
+  }
+  return listed;
 }
 
 function limitFrom(env: Env, name: string, fallback: number): number {
@@ -137,7 +162,7 @@ export async function guardGoogleProxy(
   }
 
   if (uid) {
-    if (!limiter.take(`u|${route}|${uid}`, limitFrom(env, AUTH_LIMIT_ENV, DEFAULT_AUTH_LIMIT), now)) {
+    if (!limiter.take(`u|${route}|${uid}`, authLimitFor(route, env), now)) {
       return json({ error: 'rate_limited' }, 429);
     }
     return null;
@@ -178,10 +203,10 @@ function validAddress(value: unknown): string | null {
   return typeof value === 'string' && value.trim() && value.length <= MAX_ADDRESS_CHARS ? value : null;
 }
 
-async function googleError(response: Response, label: string, key: string): Promise<Response> {
-  const text = scrubKey(await response.text().catch(() => ''), key);
-  console.error(`[${label}] Google error ${response.status}:`, text.slice(0, 300));
-  // The upstream body is logged (scrubbed) but not returned: it can describe the key.
+async function googleError(response: Response, label: string): Promise<Response> {
+  // Log only the status. The upstream body can describe the key and is never logged or returned.
+  console.error(`[${label}] Google error status ${response.status}`);
+  await response.body?.cancel().catch(() => undefined);
   return json({ error: response.statusText || 'Upstream error' }, response.status);
 }
 
@@ -203,7 +228,7 @@ export async function geocodeGet(request: Request, deps: GoogleProxyDeps): Promi
       const address = validAddress(addressParam);
       if (!address) return json({ error: 'Invalid address' }, 400);
       const response = await deps.fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${key}`);
-      if (!response.ok) return googleError(response, 'Geocode API', key);
+      if (!response.ok) return googleError(response, 'Geocode API');
       const data = await response.json();
       if (data.status !== 'OK') return json({ error: `Geocoding failed: ${String(data.status).slice(0, 40)}` }, 400);
       return NextResponse.json({ results: data.results });
@@ -214,7 +239,7 @@ export async function geocodeGet(request: Request, deps: GoogleProxyDeps): Promi
     const point = validPoint(lat, lng);
     if (!point) return json({ error: 'Invalid lat/lng' }, 400);
     const response = await deps.fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${point.lat},${point.lng}&key=${key}`);
-    if (!response.ok) return googleError(response, 'Reverse Geocode API', key);
+    if (!response.ok) return googleError(response, 'Reverse Geocode API');
     const data = await response.json();
     if (data.status !== 'OK') return json({ error: `Reverse geocoding failed: ${String(data.status).slice(0, 40)}` }, 400);
     return NextResponse.json({ results: data.results, formattedAddress: data.results[0]?.formatted_address });
@@ -237,7 +262,7 @@ export async function geocodePost(request: Request, deps: GoogleProxyDeps): Prom
     if (typeof resolved !== 'string') return resolved;
     key = resolved;
     const response = await deps.fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${key}`);
-    if (!response.ok) return googleError(response, 'Geocode API', key);
+    if (!response.ok) return googleError(response, 'Geocode API');
     const data = await response.json();
     if (data.status !== 'OK') return json({ error: `Geocoding failed: ${String(data.status).slice(0, 40)}` }, 400);
     const result = data.results[0];
@@ -271,7 +296,7 @@ export async function solarPost(request: Request, deps: GoogleProxyDeps): Promis
     const url = `https://solar.googleapis.com/v1/buildingInsights:findClosest?location.latitude=${point.lat}&location.longitude=${point.lng}&requiredQuality=HIGH&key=${key}`;
     const response = await deps.fetch(url, { headers: { Accept: 'application/json' } });
     console.log('[Solar] Response status:', response.status);
-    if (!response.ok) return googleError(response, 'Solar', key);
+    if (!response.ok) return googleError(response, 'Solar');
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error) {
@@ -332,7 +357,8 @@ export async function routePost(request: Request, deps: GoogleProxyDeps): Promis
         }),
       });
       if (!response.ok) {
-        console.log(`[Route API] Chunk ${c + 1} error:`, scrubKey(await response.text().catch(() => ''), key).slice(0, 300));
+        console.log(`[Route API] Chunk ${c + 1} Google error status ${response.status}`);
+        await response.body?.cancel().catch(() => undefined);
         return;
       }
       const data = await response.json();
