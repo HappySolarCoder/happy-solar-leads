@@ -1,5 +1,5 @@
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
-import type { GoogleProxyDeps } from './googleProxy';
+import { geocodeGet, geocodePost, proxyRoute, routePost, solarPost, type GoogleProxyDeps } from './googleProxy';
 
 /** Production wiring: Admin SDK token check, real fetch, the server-only GOOGLE_API_KEY. */
 export function liveGoogleProxyDeps(): GoogleProxyDeps {
@@ -13,3 +13,8 @@ export function liveGoogleProxyDeps(): GoogleProxyDeps {
     apiKey: () => process.env.GOOGLE_API_KEY,
   };
 }
+
+export const geocodeGetLive = proxyRoute(geocodeGet, liveGoogleProxyDeps);
+export const geocodePostLive = proxyRoute(geocodePost, liveGoogleProxyDeps);
+export const solarPostLive = proxyRoute(solarPost, liveGoogleProxyDeps);
+export const routePostLive = proxyRoute(routePost, liveGoogleProxyDeps);

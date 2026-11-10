@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { HttpError, requireApprovedUser, type RequireApprovedUserDeps } from './requireApprovedUser';
+import { MAX_ADDRESS_CHARS, MAX_ROUTE_STOPS } from '../googleProxyLimits';
 
 /**
  * Auth, rate limits and Google calls for /api/geocode, /api/route and /api/solar.
@@ -22,11 +23,16 @@ export type GoogleRoute = 'geocode' | 'route' | 'solar';
 export const GOOGLE_PROXY_MODE_ENV = 'GOOGLE_PROXY_AUTH';
 export const UNAUTH_LIMIT_ENV = 'GOOGLE_PROXY_UNAUTH_LIMIT_PER_MIN';
 export const AUTH_LIMIT_ENV = 'GOOGLE_PROXY_AUTH_LIMIT_PER_MIN';
-/** Unauthenticated calls per client IP, per route, per instance, per minute. */
-export const DEFAULT_UNAUTH_LIMIT = 120;
+/**
+ * Unauthenticated calls per client IP, per route, per instance, per minute. Carrier CGNAT puts many
+ * phones behind one IP, so native callers (X-Raydar-Platform ios/android) are never limited by IP in
+ * log-only mode; they are only logged. The limit applies to web/unknown callers.
+ */
+export const DEFAULT_UNAUTH_LIMIT = 600;
 /** Signed-in calls per user, per route, per instance, per minute. High on purpose: CSV upload geocodes in parallel batches. */
 export const DEFAULT_AUTH_LIMIT = 5000;
 const WINDOW_MS = 60_000;
+const NATIVE_PLATFORMS = new Set(['ios', 'android']);
 const MAX_TRACKED = 5000;
 
 type Env = Record<string, string | undefined>;
@@ -131,6 +137,7 @@ export async function guardGoogleProxy(
   if (mode === 'enforce') {
     return json({ error: failure?.error ?? 'unauthenticated' }, failure?.status ?? 401);
   }
+  if (NATIVE_PLATFORMS.has(platform.toLowerCase())) return null;
   if (!limiter.take(`i|${route}|${clientIp(request)}`, limitFrom(env, UNAUTH_LIMIT_ENV, DEFAULT_UNAUTH_LIMIT), now)) {
     return json({ error: 'rate_limited' }, 429);
   }
@@ -154,7 +161,6 @@ function validPoint(lat: unknown, lng: unknown): { lat: number; lng: number } | 
   return { lat: a, lng: b };
 }
 
-const MAX_ADDRESS_CHARS = 300;
 function validAddress(value: unknown): string | null {
   return typeof value === 'string' && value.trim() && value.length <= MAX_ADDRESS_CHARS ? value : null;
 }
@@ -168,6 +174,53 @@ async function googleError(response: Response, label: string, key: string): Prom
 
 function safeMessage(error: unknown, key: string | undefined): string {
   return scrubKey(error instanceof Error ? error.message : 'Internal error', key).slice(0, 200);
+}
+
+// ---------------------------------------------------------------- CORS
+
+/**
+ * The native app sends requests through CapacitorHttp (no preflight). If a build ever uses the
+ * webview's fetch instead, `Authorization` and the X-Raydar-* headers make the browser preflight, so
+ * OPTIONS must answer 204 without auth (in both modes) and the real responses must carry the allow
+ * headers. Only the Capacitor webview origins are allowed; the web app is same-origin and needs none.
+ * Credentials (cookies) are never allowed: auth is the bearer token.
+ */
+export const CORS_ALLOWED_ORIGINS = ['capacitor://localhost', 'https://localhost', 'http://localhost'] as const;
+export const CORS_ALLOWED_HEADERS = 'Authorization, Content-Type, X-Raydar-Build, X-Raydar-Platform';
+export const CORS_ALLOWED_METHODS = 'GET, POST, OPTIONS';
+
+function corsOrigin(request: Request): string | null {
+  const origin = request.headers.get('origin');
+  return origin && (CORS_ALLOWED_ORIGINS as readonly string[]).includes(origin) ? origin : null;
+}
+
+/** OPTIONS handler: always 2xx, never needs auth, never touches Google or the rate limiter. */
+export function proxyPreflight(request: Request): Response {
+  const headers = new Headers({ Vary: 'Origin, Access-Control-Request-Headers', 'Cache-Control': 'private, no-store' });
+  const origin = corsOrigin(request);
+  if (origin) {
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Methods', CORS_ALLOWED_METHODS);
+    headers.set('Access-Control-Allow-Headers', CORS_ALLOWED_HEADERS);
+    headers.set('Access-Control-Max-Age', '86400');
+  }
+  return new Response(null, { status: 204, headers });
+}
+
+/** Adds the allow-origin header to a real response (401/429 included) for allowed origins. */
+export function withCors(request: Request, response: Response): Response {
+  response.headers.append('Vary', 'Origin');
+  const origin = corsOrigin(request);
+  if (origin) response.headers.set('Access-Control-Allow-Origin', origin);
+  return response;
+}
+
+/** Route handler = guard + Google call, with CORS headers on every response. */
+export function proxyRoute(
+  handler: (request: Request, deps: GoogleProxyDeps) => Promise<Response>,
+  makeDeps: () => GoogleProxyDeps,
+): (request: Request) => Promise<Response> {
+  return async (request) => withCors(request, await handler(request, makeDeps()));
 }
 
 // ---------------------------------------------------------------- geocode
@@ -264,7 +317,7 @@ export async function solarPost(request: Request, deps: GoogleProxyDeps): Promis
 // ---------------------------------------------------------------- route
 
 const MAX_WAYPOINTS = 25;
-const MAX_ROUTE_STOPS = 500;
+const ROUTE_CHUNK_CONCURRENCY = 4;
 
 type Waypoint = { lat: number; lng: number; address?: string };
 
@@ -292,18 +345,11 @@ export async function routePost(request: Request, deps: GoogleProxyDeps): Promis
     const chunks: Waypoint[][] = [];
     for (let i = 0; i < stops.length; i += MAX_WAYPOINTS) chunks.push(stops.slice(i, i + MAX_WAYPOINTS));
 
-    const optimized: Array<Record<string, unknown>> = [];
-    let totalDistance = 0;
-    let totalDuration = 0;
-    let order = 0;
-    const fallback = (chunk: Waypoint[]) => {
-      for (const wp of chunk) {
-        order += 1;
-        optimized.push({ order, lat: wp.lat, lng: wp.lng, address: wp.address || `Stop ${order}`, distanceMeters: 0, duration: '0s' });
-      }
-    };
-
-    for (let c = 0; c < chunks.length; c += 1) {
+    // Chunks do not depend on each other (origin/destination come from the request), so a few run
+    // at a time to keep large lists inside the function time limit. Results are assembled in order.
+    type ChunkResult = { ordered: Waypoint[]; legs: Array<Record<string, unknown> | undefined> } | null;
+    const results: ChunkResult[] = new Array(chunks.length).fill(null);
+    const runChunk = async (c: number) => {
       const chunk = chunks[c];
       const origin = c === 0 ? startAddress : chunk[0].address || startAddress;
       const destination = c === chunks.length - 1 ? endAddress : chunk[chunk.length - 1].address || endAddress;
@@ -321,30 +367,51 @@ export async function routePost(request: Request, deps: GoogleProxyDeps): Promis
       });
       if (!response.ok) {
         console.log(`[Route API] Chunk ${c + 1} error:`, scrubKey(await response.text().catch(() => ''), key).slice(0, 300));
-        fallback(chunk);
-        continue;
+        return;
       }
       const data = await response.json();
       const route = data.routes?.[0];
       if (route && route.waypointOrder) {
-        const ordered = (route.waypointOrder as number[]).map((index) => chunk[index]);
-        ordered.forEach((wp, index) => {
-          const leg = route.legs?.[index];
-          order += 1;
-          optimized.push({
-            order,
-            lat: wp.lat,
-            lng: wp.lng,
-            address: leg?.endAddress || `Stop ${order}`,
-            distanceMeters: leg?.distanceMeters || 0,
-            duration: leg?.duration || '0s',
-          });
-          if (leg?.distanceMeters) totalDistance += leg.distanceMeters;
-          if (leg?.duration) totalDuration += parseInt(String(leg.duration).replace('s', ''), 10) || 0;
-        });
-      } else {
-        fallback(chunk);
+        results[c] = { ordered: (route.waypointOrder as number[]).map((index) => chunk[index]), legs: route.legs ?? [] };
       }
+    };
+    let next = 0;
+    const workers = Array.from({ length: Math.min(ROUTE_CHUNK_CONCURRENCY, chunks.length) }, async () => {
+      while (next < chunks.length) {
+        const c = next;
+        next += 1;
+        await runChunk(c);
+      }
+    });
+    await Promise.all(workers);
+
+    const optimized: Array<Record<string, unknown>> = [];
+    let totalDistance = 0;
+    let totalDuration = 0;
+    let order = 0;
+    for (let c = 0; c < chunks.length; c += 1) {
+      const result = results[c];
+      if (!result) {
+        for (const wp of chunks[c]) {
+          order += 1;
+          optimized.push({ order, lat: wp.lat, lng: wp.lng, address: wp.address || `Stop ${order}`, distanceMeters: 0, duration: '0s' });
+        }
+        continue;
+      }
+      result.ordered.forEach((wp, index) => {
+        const leg = result.legs[index] as { endAddress?: string; distanceMeters?: number; duration?: string } | undefined;
+        order += 1;
+        optimized.push({
+          order,
+          lat: wp.lat,
+          lng: wp.lng,
+          address: leg?.endAddress || `Stop ${order}`,
+          distanceMeters: leg?.distanceMeters || 0,
+          duration: leg?.duration || '0s',
+        });
+        if (leg?.distanceMeters) totalDistance += leg.distanceMeters;
+        if (leg?.duration) totalDuration += parseInt(String(leg.duration).replace('s', ''), 10) || 0;
+      });
     }
 
     return NextResponse.json({

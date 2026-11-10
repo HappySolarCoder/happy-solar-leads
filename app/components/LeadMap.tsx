@@ -8,6 +8,7 @@ import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.markercluster';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
 import { auth } from '@/app/utils/firebase';
+import { authedFetch } from '@/app/utils/authedFetch';
 import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync, isKnockStatus } from '@/app/utils/dispositions';
 import AddLeadModal from './AddLeadModal';
@@ -17,7 +18,6 @@ import { formatTimeEST } from '@/app/utils/timezone';
 import { colorForTerritory, shouldRenderTerritoryOverlay, type TeamAreaMember } from '@/app/utils/teamAreas';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 import { isAppointmentSetOrSoldLead, pastPinPopupLines } from '@/app/utils/historicalTerritoryPins';
-import { authedFetch } from '@/app/utils/authedFetch';
 
 interface UserRoute {
   userId: string;

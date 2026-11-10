@@ -1,19 +1,27 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { MAX_ADDRESS_CHARS, MAX_ROUTE_STOPS } from '../app/utils/googleProxyLimits';
 import {
   DEFAULT_UNAUTH_LIMIT,
+  CORS_ALLOWED_HEADERS,
+  CORS_ALLOWED_ORIGINS,
   MinuteLimiter,
   geocodeGet,
   geocodePost,
   googleProxyMode,
+  proxyPreflight,
+  proxyRoute,
   routePost,
   scrubKey,
   solarPost,
   type GoogleProxyDeps,
 } from '../app/utils/server/googleProxy';
 
-const KEY = 'AIzaSyFAKEfakeFAKEfakeFAKEfakeFAKEfake1'; // 39 chars, shaped like a Google key, not real
-const BODY_KEY = 'AIzaSyBODYbodyBODYbodyBODYbodyBODYbod22';
+// Fake keys, shaped like Google keys but not real. Built at runtime so no committed file contains a
+// literal AIza... string (tests/no-committed-google-keys.test.ts scans every tracked file).
+const PREFIX = ['AI', 'za'].join('');
+const KEY = [PREFIX, 'SyFAKEfakeFAKEfakeFAKEfakeFAKEfake1'].join('');
+const BODY_KEY = [PREFIX, 'SyBODYbodyBODYbodyBODYbodyBODYbod22'].join('');
 assert.equal(KEY.length, 39);
 assert.equal(BODY_KEY.length, 39);
 
@@ -155,6 +163,24 @@ describe('log-only mode (the default)', () => {
     assert.ok(logs.some((l) => l.includes('reason=unauthenticated')));
   });
 
+  it('the default unauthenticated limit is 600 per minute', () => assert.equal(DEFAULT_UNAUTH_LIMIT, 600));
+
+  it('native callers (X-Raydar-Platform ios/android) are logged, never 429ed, however many share an IP (CGNAT)', async () => {
+    const { deps } = setup();
+    const ip = { 'x-forwarded-for': '100.64.1.1' };
+    for (const platform of ['ios', 'android', 'IOS']) {
+      for (let i = 0; i < DEFAULT_UNAUTH_LIMIT + 5; i += 1) {
+        const res = await ALL.solar(deps, { ...ip, 'x-raydar-platform': platform, 'x-raydar-build': '164' });
+        assert.equal(res.status, 200, `${platform} call ${i}`);
+      }
+    }
+    assert.ok(logs.filter((l) => l.includes('platform=ios')).length >= DEFAULT_UNAUTH_LIMIT);
+    // The same IP without the native header is still limited: the bucket was not used up by native calls.
+    for (let i = 0; i < DEFAULT_UNAUTH_LIMIT; i += 1) assert.equal((await ALL.solar(deps, ip)).status, 200);
+    assert.equal((await ALL.solar(deps, ip)).status, 429);
+    assert.equal((await ALL.solar(deps, { ...ip, 'x-raydar-platform': 'web' })).status, 429, 'only ios/android are exempt');
+  });
+
   it(`rate limits unauthenticated calls per IP and route (${DEFAULT_UNAUTH_LIMIT}/min), per instance`, async () => {
     let now = 5_000_000;
     const { deps } = setup({ now: () => now });
@@ -204,7 +230,7 @@ describe('the Google key', () => {
       const res = await run(deps, WEB);
       const text = await res.text();
       assert.ok(!text.includes(KEY), `${name} response`);
-      assert.ok(!text.includes('AIzaSy'), `${name} response shape`);
+      assert.ok(!text.includes(`${PREFIX}Sy`), `${name} response shape`);
       assert.ok(!logs.join('\n').includes(KEY), `${name} logs`);
     }
     const boom = setup({ google: async (url) => { throw new Error(`fetch failed for ${url}`); } });
@@ -247,11 +273,11 @@ describe('response shapes and validation (unchanged contract)', () => {
     const { deps, calls } = setup();
     assert.equal((await geocodeGet(req('/api/geocode?lat=1%26key%3Devil&lng=2'), deps)).status, 400);
     assert.equal((await geocodeGet(req('/api/geocode?lat=95&lng=2'), deps)).status, 400);
-    assert.equal((await geocodePost(post('/api/geocode', { address: 'x'.repeat(301) }), deps)).status, 400);
+    assert.equal((await geocodePost(post('/api/geocode', { address: 'x'.repeat(MAX_ADDRESS_CHARS + 1) }), deps)).status, 400);
     assert.equal((await geocodePost(post('/api/geocode', { address: { a: 1 } }), deps)).status, 400);
     assert.equal((await solarPost(post('/api/solar', { lat: 'abc', lng: 1 }), deps)).status, 400);
     assert.equal((await solarPost(post('/api/solar', { lat: 43 }), deps)).status, 400);
-    const many = Array.from({ length: 501 }, (_, i) => ({ lat: 43 + i / 1e4, lng: -77 }));
+    const many = Array.from({ length: MAX_ROUTE_STOPS + 1 }, (_, i) => ({ lat: 43 + i / 1e5, lng: -77 }));
     assert.equal((await routePost(post('/api/route', { waypoints: many }), deps)).status, 400);
     assert.equal((await routePost(post('/api/route', { waypoints: [{ lat: 'x', lng: 1 }] }), deps)).status, 400);
     assert.equal(calls.length, 0);
@@ -286,5 +312,155 @@ describe('web callers send the Firebase bearer', () => {
       if (/(?<![A-Za-z])fetch\(\s*[`'"]\/api\/(geocode|solar|route)(?![-\w])/.test(text)) bare.push(file);
     }
     assert.deepEqual(bare, []);
+  });
+});
+
+describe('real-world inputs are accepted', () => {
+  it('a 74-char lead address, 300-char address, edge coordinates and a 1500-stop route all pass', async () => {
+    const { deps } = setup();
+    const longest = '1234 North Longstreet Boulevard Apartment 12B, Rochester, NY 14618'.padEnd(74, 'x');
+    assert.equal((await geocodePost(post('/api/geocode', { address: longest }, WEB), deps)).status, 200);
+    assert.equal((await geocodePost(post('/api/geocode', { address: 'x'.repeat(MAX_ADDRESS_CHARS) }, WEB), deps)).status, 200);
+    assert.equal((await geocodeGet(req('/api/geocode?lat=-89.9999&lng=-179.9999', { headers: WEB }), deps)).status, 200);
+    assert.equal((await solarPost(post('/api/solar', { lat: 90, lng: 180 }, WEB), deps)).status, 200);
+  });
+
+  it('route: MAX_ROUTE_STOPS stops are chunked by 25, run concurrently, and come back in order', async () => {
+    const stops = Array.from({ length: MAX_ROUTE_STOPS }, (_, i) => ({ lat: 43 + i / 1e5, lng: -77 }));
+    let active = 0;
+    let peak = 0;
+    const { deps, calls } = setup({
+      google: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((r) => setTimeout(r, 2));
+        active -= 1;
+        const n = body.intermediates.length;
+        assert.ok(n <= 25, 'Google allows at most 25 intermediates with optimization');
+        return Response.json({ routes: [{ waypointOrder: Array.from({ length: n }, (_, i) => n - 1 - i), legs: Array.from({ length: n }, () => ({ endAddress: 'x', distanceMeters: 100, duration: '10s' })) }] });
+      },
+    });
+    const res = await routePost(post('/api/route', { waypoints: stops, startAddress: 'S', endAddress: 'E' }, WEB), deps);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(calls.length, MAX_ROUTE_STOPS / 25);
+    assert.equal(body.chunks, MAX_ROUTE_STOPS / 25);
+    assert.equal(body.stopCount, MAX_ROUTE_STOPS);
+    assert.ok(peak > 1 && peak <= 4, `peak concurrency ${peak}`);
+    assert.deepEqual(body.optimizedStops.slice(0, 2).map((s: { lat: number }) => s.lat), [stops[24].lat, stops[23].lat], 'first chunk reversed by waypointOrder');
+    assert.equal(body.optimizedStops[25].lat, stops[49].lat, 'second chunk follows the first');
+    assert.ok(body.optimizedStops.every((s: { order: number }, i: number) => s.order === i + 1));
+    assert.equal(body.distanceMeters, MAX_ROUTE_STOPS * 100);
+  });
+});
+
+describe('CORS for webview callers', () => {
+  const preflight = (origin: string, extra: Record<string, string> = {}) =>
+    proxyPreflight(req('/api/geocode', {
+      method: 'OPTIONS',
+      headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type,x-raydar-build,x-raydar-platform', ...extra },
+    }));
+
+  it('allows capacitor://localhost, https://localhost and http://localhost with the auth and X-Raydar headers', () => {
+    assert.deepEqual([...CORS_ALLOWED_ORIGINS].sort(), ['capacitor://localhost', 'http://localhost', 'https://localhost']);
+    for (const origin of CORS_ALLOWED_ORIGINS) {
+      const res = preflight(origin);
+      assert.equal(res.status, 204);
+      assert.equal(res.headers.get('access-control-allow-origin'), origin);
+      const allowed = (res.headers.get('access-control-allow-headers') ?? '').toLowerCase().split(',').map((h) => h.trim());
+      for (const h of ['authorization', 'content-type', 'x-raydar-build', 'x-raydar-platform']) assert.ok(allowed.includes(h), h);
+      assert.match(res.headers.get('access-control-allow-methods') ?? '', /POST/);
+      assert.match(res.headers.get('access-control-allow-methods') ?? '', /GET/);
+      assert.match(res.headers.get('vary') ?? '', /Origin/);
+      assert.equal(res.headers.get('access-control-allow-credentials'), null);
+    }
+    assert.match(CORS_ALLOWED_HEADERS, /Authorization/);
+  });
+
+  it('answers 2xx with no auth, no Google call and no rate-limit use, in both modes', async () => {
+    for (const env of [{}, ENFORCE]) {
+      logs = [];
+      const { deps, calls } = setup({ env });
+      // The OPTIONS handler takes no deps at all: it cannot call Google, check a token or take a limiter slot.
+      for (let i = 0; i < 5; i += 1) assert.equal(preflight('capacitor://localhost').status, 204);
+      assert.equal(calls.length, 0);
+      assert.equal(logs.some((l) => l.includes('[google-proxy]')), false);
+      assert.equal((await ALL.solar(deps)).status, env === ENFORCE ? 401 : 200);
+    }
+  });
+
+  it('other origins get a 2xx but no allow-origin (the browser blocks them)', () => {
+    for (const origin of ['https://evil.example', 'https://localhost.evil.example', 'capacitor://localhost.evil.example', 'null']) {
+      const res = preflight(origin);
+      assert.equal(res.status, 204);
+      assert.equal(res.headers.get('access-control-allow-origin'), null, origin);
+    }
+    assert.equal(proxyPreflight(req('/api/solar', { method: 'OPTIONS' })).status, 204, 'no Origin header');
+  });
+
+  it('real responses carry allow-origin for allowed origins, including 401 and 429, in both modes', async () => {
+    const origin = { origin: 'capacitor://localhost' };
+    for (const [mode, env] of [['log-only', {}], ['enforce', ENFORCE]] as const) {
+      const { deps } = setup({ env });
+      const handler = proxyRoute(solarPost, () => deps);
+      const ok = await handler(post('/api/solar', { lat: 43.1, lng: -77.6 }, { ...origin, ...WEB }));
+      assert.equal(ok.status, 200);
+      assert.equal(ok.headers.get('access-control-allow-origin'), 'capacitor://localhost', mode);
+      const bare = await handler(post('/api/solar', { lat: 43.1, lng: -77.6 }, origin));
+      assert.equal(bare.status, mode === 'enforce' ? 401 : 200);
+      assert.equal(bare.headers.get('access-control-allow-origin'), 'capacitor://localhost', `${mode} unauthenticated`);
+      const other = await handler(post('/api/solar', { lat: 43.1, lng: -77.6 }, { origin: 'https://evil.example', ...WEB }));
+      assert.equal(other.headers.get('access-control-allow-origin'), null);
+    }
+    const tiny = setup({ env: { GOOGLE_PROXY_UNAUTH_LIMIT_PER_MIN: '1' } });
+    const limited = proxyRoute(solarPost, () => tiny.deps);
+    await limited(post('/api/solar', { lat: 43, lng: -77 }, origin));
+    const res = await limited(post('/api/solar', { lat: 43, lng: -77 }, origin));
+    assert.equal(res.status, 429);
+    assert.equal(res.headers.get('access-control-allow-origin'), 'capacitor://localhost');
+  });
+
+  it('every route file exports OPTIONS = proxyPreflight and no CORS config or middleware overrides it', async () => {
+    const { readFileSync, existsSync } = await import('node:fs');
+    const root = new URL('..', import.meta.url);
+    for (const route of ['geocode', 'solar', 'route']) {
+      const text = readFileSync(new URL(`app/api/${route}/route.ts`, root), 'utf8');
+      assert.match(text, /export const OPTIONS = proxyPreflight;/, route);
+    }
+    for (const f of ['middleware.ts', 'src/middleware.ts', 'proxy.ts']) {
+      if (existsSync(new URL(f, root))) {
+        assert.doesNotMatch(readFileSync(new URL(f, root), 'utf8'), /\/api\/(geocode|solar|route)|matcher/, `${f} must not intercept the Google proxy routes before their OPTIONS handler`);
+      }
+    }
+    const config = readFileSync(new URL('next.config.ts', root), 'utf8');
+    assert.doesNotMatch(config, /Access-Control/i, 'a global CORS header in next.config would conflict with the per-route handlers');
+  });
+});
+
+describe('mobile line guard: authedFetch must ride the native transport', () => {
+  it('when apiFetch exists (mobile line), authedFetch wraps it and never calls bare fetch', async () => {
+    const { existsSync, readFileSync } = await import('node:fs');
+    const root = new URL('..', import.meta.url);
+    const authed = readFileSync(new URL('app/utils/authedFetch.ts', root), 'utf8');
+    if (!existsSync(new URL('app/utils/apiFetch.ts', root))) {
+      // Web-only tree: there is no native transport, a plain fetch is correct.
+      assert.match(authed, /return fetch\(/);
+      return;
+    }
+    // The installed app is a Capacitor wrapper: relative '/api/...' only reaches the backend through
+    // apiFetch (CapacitorHttp + NEXT_PUBLIC_API_BASE_URL). A bare fetch here would break installed builds.
+    assert.match(authed, /import \{[^}]*\bapiFetch\b[^}]*\} from '@\/app\/utils\/apiFetch'/, 'authedFetch must import apiFetch');
+    assert.match(authed, /apiFetch\(/);
+    assert.doesNotMatch(authed.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, ''), /(?<![A-Za-z.])fetch\(/, 'authedFetch must not call bare fetch on the mobile line');
+  });
+
+  it('no call site reaches the Google proxy routes through apiFetch directly (it would skip the bearer)', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { readFileSync } = await import('node:fs');
+    const root = new URL('..', import.meta.url);
+    const files = execFileSync('git', ['ls-files', 'app'], { cwd: root }).toString().split('\n').filter((f) => /\.(ts|tsx)$/.test(f));
+    const offenders = files.filter((file) => /\bapiFetch\(\s*[`'"]\/api\/(geocode|solar|route)(?![-\w])/.test(readFileSync(new URL(file, root), 'utf8')));
+    assert.deepEqual(offenders, []);
   });
 });

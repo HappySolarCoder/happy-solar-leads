@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Lead, User } from '@/app/types';
 import { MapPin, Navigation, X, Clock, Route } from 'lucide-react';
 import { authedFetch } from '@/app/utils/authedFetch';
+import { MAX_ROUTE_STOPS } from '@/app/utils/googleProxyLimits';
 
 interface RouteBuilderProps {
   leads: Lead[];
@@ -61,9 +62,12 @@ export default function RouteBuilder({ leads, users, onGenerateRoute, onClearRou
     setRouteInfo(null);
 
     try {
-      const waypoints = filteredLeads
-        .filter(l => l.lat && l.lng)
-        .map(l => ({ lat: l.lat, lng: l.lng }));
+      // The server accepts at most MAX_ROUTE_STOPS stops per route; send that many rather than being rejected.
+      const located = filteredLeads.filter(l => l.lat && l.lng);
+      const waypoints = located.slice(0, MAX_ROUTE_STOPS).map(l => ({ lat: l.lat, lng: l.lng }));
+      if (located.length > MAX_ROUTE_STOPS) {
+        setError(`Routing the first ${MAX_ROUTE_STOPS} of ${located.length} leads. Filter the list to route the rest.`);
+      }
 
       const response = await authedFetch('/api/route', {
         method: 'POST',
