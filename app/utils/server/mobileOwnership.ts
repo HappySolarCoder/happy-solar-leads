@@ -31,16 +31,55 @@ export const MOBILE_EVENT_WINDOW_MS = 45 * 24 * 60 * 60 * 1000;
 export const MOBILE_EVENT_READ_LIMIT = 600;
 export const MOBILE_EVENT_RETURN_LIMIT = 500;
 const OWNERS_MAX = 5;
+/** Mode flag: re-read every 60 s so a flag flip reaches phones within a minute. */
 const CACHE_MS = 60_000;
+/**
+ * Territory polygons: ~1.8 MB / 73 docs / ~1 s per cold read (measured Nov 10), re-read at most every
+ * 5 min per instance. Reassignments are rare and the server refusal gate has its own 60 s cache and is the
+ * authority (a stale display can only mis-show a label or popup; a knock is never lost, it is counted_only).
+ * Territory writes through /api/territory-management clear it on the instance that handled them.
+ */
+export const TERRITORY_CACHE_MS = 5 * 60_000;
 const DIRECTORY_CACHE_MS = 10 * 60_000;
 
 type Ctx = { mode: 'legacy' | 'territory'; territories: PreparedTerritory[] | null };
 let ctxCache: { at: number; value: Ctx } | null = null;
+let territoryCache: { at: number; territories: PreparedTerritory[] } | null = null;
 const directory = new Map<string, { at: number; name: string | null; active: boolean }>();
 
 export function resetMobileOwnershipCaches(): void {
   ctxCache = null;
+  territoryCache = null;
   directory.clear();
+}
+
+/** A territory was written on this instance: re-read polygons on the next request. */
+export function invalidateMobileTerritoryCache(): void {
+  territoryCache = null;
+  ctxCache = null;
+}
+
+async function loadTerritories(db: Firestore, now: number): Promise<PreparedTerritory[] | null> {
+  if (territoryCache && now >= territoryCache.at && now - territoryCache.at < TERRITORY_CACHE_MS) return territoryCache.territories;
+  try {
+    const snap = await db
+      .collection('territories')
+      .select('userId', 'userIds', 'userName', 'userColor', 'polygon', 'archived', 'assignedAt', 'createdAt')
+      .limit(MOBILE_ALL_TERRITORIES_LIMIT)
+      .get();
+    if (snap.size >= MOBILE_ALL_TERRITORIES_LIMIT) {
+      console.log('[mobile/leads] all_territories_truncated 1');
+      territoryCache = null;
+      return null;
+    }
+    const territories = prepareTerritories(snap.docs.map((d) => ({ id: d.id, data: d.data() })));
+    territoryCache = { at: now, territories };
+    return territories;
+  } catch (error) {
+    // A failed re-read keeps serving the last good list rather than dropping every phone to legacy.
+    if (territoryCache) return territoryCache.territories;
+    throw error;
+  }
 }
 
 export async function loadOwnershipContext(db: Firestore, now: number): Promise<Ctx> {
@@ -49,16 +88,8 @@ export async function loadOwnershipContext(db: Firestore, now: number): Promise<
   try {
     const flag = await db.collection('adminSettings').doc('fieldOwnership').get();
     if (flag.exists && flag.data()?.mode === 'territory') {
-      const snap = await db
-        .collection('territories')
-        .select('userId', 'userIds', 'userName', 'userColor', 'polygon', 'archived', 'assignedAt', 'createdAt')
-        .limit(MOBILE_ALL_TERRITORIES_LIMIT)
-        .get();
-      if (snap.size < MOBILE_ALL_TERRITORIES_LIMIT) {
-        value = { mode: 'territory', territories: prepareTerritories(snap.docs.map((d) => ({ id: d.id, data: d.data() }))) };
-      } else {
-        console.log('[mobile/leads] all_territories_truncated 1');
-      }
+      const territories = await loadTerritories(db, now);
+      if (territories) value = { mode: 'territory', territories };
     }
   } catch {
     value = { mode: 'legacy', territories: null };
