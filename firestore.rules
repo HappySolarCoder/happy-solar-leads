@@ -740,6 +740,13 @@ service cloud.firestore {
       allow get, create, update, delete: if false;
     }
 
+    // ====================== FIELD KNOCK EVENTS ======================
+    // Counts-only knocks written by /api/field/dispo (Admin SDK) when a rep
+    // knocks a pin another rep owns. Server-only: no client read or write.
+    match /fieldKnockEvents/{eventId} {
+      allow read, write: if false;
+    }
+
     // ====================== DEFAULT DENY (critical security rule) ======================
     match /{document=**} {
       allow read, write: if false;

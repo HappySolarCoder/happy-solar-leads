@@ -5,8 +5,9 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { insideTerritory, territoryBounds } from '@/app/utils/territoryManager';
 import { isOwnFollowUp } from '@/app/mobile/_lib/followUps';
 import type { Lead } from '@/app/types';
+import { loadOwnKnockEventsPage, loadOwnershipContext, ownershipForRows, popupExemptForRole } from './mobileOwnership';
 
-// No new index, collection or writes. Queries use existing single-field indexes.
+// No new index or writes. Queries use existing single-field indexes (fieldKnockEvents is a doc-id range).
 const PAGE = 500;
 export const MOBILE_TERRITORY_LIMIT = 200;
 const SUMMARY_FIELDS = ['name','phone','email','address','city','state','status','disposition','dispositionedAt','dispositionHistory','claimedBy','assignedTo','createdAt','goBackScheduledBy','goBackScheduledDate','goBackScheduledTime','appointmentOutcome','appointmentOutcomeAt','appointmentDateTime','ghlLastUpdatedAt','ghlAppointmentStatus','ghlOpportunityStatus','ghlContactId','ghlAppointmentId','leadType','lat','lng','solarScore','solarCategory','source','setterId','claimedAt','assignedAt','fieldDoor','fieldHandoff','estimatedBill','hasSouthFacingRoof','solarMaxPanels','zip','objectionType','objectionNotes','goBackNotes','tags','ghlStatus','ghlOpportunityId','pipelineStageId','dispositionNotes','notes'];
@@ -56,7 +57,20 @@ return async function GET(request: NextRequest) {
       const leads = snapshot.docs.map(d => summary(d.id, d.data(), true)).filter((l: Lead) =>
         isOwnFollowUp(l, uid) || ((!recent || (l.dispositionHistory?.[0]?.userId || l.claimedBy || l.assignedTo) === uid) && Date.parse(String(l.dispositionedAt || '')) >= since) ||
         ((l.claimedBy === uid || l.assignedTo === uid) && Date.parse(String(l.ghlLastUpdatedAt || '')) >= since));
-      return NextResponse.json({leads, nextCursor:snapshot.size === PAGE ? snapshot.docs.at(-1)!.id : null, ...(recent && snapshot.size === PAGE ? {afterSeconds:snapshot.docs.at(-1)!.data().dispositionedAt.seconds,afterNanos:snapshot.docs.at(-1)!.data().dispositionedAt.nanoseconds} : {})}, { headers:{'Cache-Control':'private, no-store'} });
+      const now = Date.now();
+      const ctx = await loadOwnershipContext(db, now);
+      // Events are additive: if the read fails (e.g. the composite index is not deployed yet) the phone
+      // still gets its leads, just without counts-only events.
+      const eventPage = after ? null : await loadOwnKnockEventsPage(db, uid, now).catch((error) => {
+        console.log('[mobile/leads] knock_events_failed 1', error instanceof Error ? error.message.slice(0, 120) : '');
+        return { events: [], truncated: false };
+      });
+      const extra = {
+        ownership: ctx.mode,
+        popupExempt: popupExemptForRole(user?.role),
+        ...(eventPage ? { knockEvents: eventPage.events, ...(eventPage.truncated ? { knockEventsTruncated: true } : {}) } : {}),
+      };
+      return NextResponse.json({leads, ...extra, nextCursor:snapshot.size === PAGE ? snapshot.docs.at(-1)!.id : null, ...(recent && snapshot.size === PAGE ? {afterSeconds:snapshot.docs.at(-1)!.data().dispositionedAt.seconds,afterNanos:snapshot.docs.at(-1)!.data().dispositionedAt.nanoseconds} : {})}, { headers:{'Cache-Control':'private, no-store'} });
     }
     if (mode !== 'map') throw Error('Choose a lead view.');
     const [south,north,west,east] = ['south','north','west','east'].map(key => Number(p.get(key)));
@@ -75,9 +89,13 @@ return async function GET(request: NextRequest) {
     const after = p.get('after'), afterLat = Number(p.get('afterLat'));
     if (after) { if (!validId(after) || !Number.isFinite(afterLat) || afterLat < south || afterLat > north) throw Error('Invalid map cursor.'); q=q.startAfter(afterLat,after); }
     const snapshot = await q.get();
-    const leads = snapshot.docs.filter(d=>{const l=d.data(); return typeof l.lng==='number' && l.lng>=west && l.lng<=east && (!overlapping || overlapping.some(t=>insideTerritory(l.lat,l.lng,t.polygon)));}).map(d=>summary(d.id,d.data()));
+    const kept = snapshot.docs.filter(d=>{const l=d.data(); return typeof l.lng==='number' && l.lng>=west && l.lng<=east && (!overlapping || overlapping.some(t=>insideTerritory(l.lat,l.lng,t.polygon)));});
+    const now = Date.now();
+    const ctx = await loadOwnershipContext(db, now);
+    const owned = await ownershipForRows(db, ctx, kept.map(d=>d.data()), uid, now);
+    const leads = kept.map((d,i)=>({...summary(d.id,d.data()), ...(owned[i] || {})}));
     const last = snapshot.docs.at(-1);
-    return NextResponse.json({leads, scanned:snapshot.size, nextCursor:snapshot.size===PAGE ? {id:last!.id,lat:last!.data().lat}:null, ...truncatedBody}, {headers:{'Cache-Control':'private, no-store'}});
+    return NextResponse.json({leads, ownership: ctx.mode, popupExempt: popupExemptForRole(user?.role), scanned:snapshot.size, nextCursor:snapshot.size===PAGE ? {id:last!.id,lat:last!.data().lat}:null, ...truncatedBody}, {headers:{'Cache-Control':'private, no-store'}});
   } catch (e: any) {
     const unauthorized = String(e?.code||'').startsWith('auth/');
     return NextResponse.json({error:unauthorized ? 'Sign in again to load leads.' : 'Leads could not load. Please retry.'},{status:unauthorized ? 401 : 400});

@@ -2,6 +2,7 @@ import type { TerritoryPoint } from '@/app/types/territory';
 import { FieldPath, type Firestore, type DocumentSnapshot, type Query } from 'firebase-admin/firestore';
 import { createHash } from 'node:crypto';
 import { assignableTerritoryLead, inManagerTeam, insideTerritory, mayManageTerritories, mayReceiveTerritory, polygonsOverlap, territoryBounds, validateTerritoryPolygon, type TerritoryMember } from '../territoryManager';
+import { assignmentStamp } from '../territoryAssigneeHistory';
 // Work limits are per request, never per territory. No unbounded leadIds array.
 export const TERRITORY_PAGE_SIZE = 200;
 type Cursor = {
@@ -97,7 +98,7 @@ export async function territoryV2(db: Firestore, actor: TerritoryMember, body: R
             const operation: Operation = { id: body.requestId, kind: body.kind, actorId: actor.id, targetId: target.id, fromId: body.kind === 'transfer' ? data!.userId : '', cursor: null, changed: 0, skipped: 0, scanned: 0, done: false };
             const metadata = { assignment: operation, assignmentHash: fingerprint, updatedAt: new Date().toISOString(), updatedBy: actor.id };
             if (body.kind === 'create')
-                tx.create(ref, { ...metadata, name, polygon, userId: target.id, userName: target.name, userColor: target.color, leadIds: [], leadCount: 0, createdAt: new Date().toISOString(), createdBy: actor.id });
+                tx.create(ref, { ...metadata, name, polygon, userId: target.id, userName: target.name, userColor: target.color, leadIds: [], leadCount: 0, createdAt: new Date().toISOString(), createdBy: actor.id, ...assignmentStamp(undefined, target.id, actor.id) });
             else
                 tx.update(ref, metadata);
             return progress(id, operation);
@@ -146,7 +147,7 @@ export async function territoryV2(db: Firestore, actor: TerritoryMember, body: R
         }
         const next: Operation = { ...current, cursor: nextCursor(page.docs) || current.cursor, changed: current.changed + changed, skipped: current.skipped + skipped, scanned: current.scanned + page.size, done: page.size < TERRITORY_PAGE_SIZE };
         const metadata = { assignment: next, updatedAt: new Date().toISOString(), updatedBy: actor.id };
-        tx.update(ref, next.done ? { ...metadata, userId: target.id, userName: target.name, userColor: target.color, leadIds: [], leadCount: next.changed, lastChangedCount: next.changed } : metadata);
+        tx.update(ref, next.done ? { ...metadata, userId: target.id, userName: target.name, userColor: target.color, leadIds: [], leadCount: next.changed, lastChangedCount: next.changed, ...(next.kind === 'transfer' && data!.userId !== target.id ? assignmentStamp(data!.assignmentHistory, target.id, actor.id) : {}) } : metadata);
         return progress(id, next);
     });
 }

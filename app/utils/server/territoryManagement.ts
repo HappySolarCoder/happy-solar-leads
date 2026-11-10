@@ -4,6 +4,7 @@ import { territoryV2, validTerritoryId } from "./territoryManagementV2";
 import { createHash } from "node:crypto";
 import { type DocumentSnapshot } from "firebase-admin/firestore";
 import type { adminAuth, adminDb } from "../firebase-admin";
+import { assignmentStamp } from "../territoryAssigneeHistory";
 import {
   MAX_TERRITORY_LEADS,
   MAX_TERRITORY_SCAN,
@@ -504,8 +505,15 @@ export function createTerritoryHandlers(dependencies: {
             ...update,
             createdAt: new Date().toISOString(),
             createdBy: actor.id,
+            ...assignmentStamp(undefined, target.id, actor.id),
           });
-        else tx.update(ref, update);
+        else
+          tx.update(ref, {
+            ...update,
+            ...(action === "transfer" && data?.userId !== target.id
+              ? assignmentStamp(data?.assignmentHistory, target.id, actor.id)
+              : {}),
+          });
         return {
           id,
           changed: changed.length,

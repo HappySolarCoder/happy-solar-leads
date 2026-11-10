@@ -14,12 +14,16 @@ import {
   type KnockFix,
   type LatLng,
 } from '@/app/utils/gpsRule';
+import { effectiveOwner, goBackSetter, type EffectiveOwner } from '@/app/utils/effectiveOwner';
+import { dispositionSlug } from '@/app/utils/knockCount';
 import { isTestAccount } from './discordNotification';
+import { goBackSetterActive, loadLiveTerritories, readOwnershipMode } from './fieldOwnership';
 import { FIELD_REASON_CODES, type FieldReasonCode } from './fieldReasonCodes';
 import { isHotLeadId, isHotLeadRole } from './hotLeadContract';
 import { HOT_LEAD_DISPOSITION_READ_LIMIT, hotStatusAfterKnock } from './hotLeadStatus';
 import {
   countedPolygons,
+  decidePinTerritory,
   loadTerritories,
   pinTerritoryGate,
   polygonOf,
@@ -43,6 +47,10 @@ export const FIELD_DISPO_MAX_BYTES = 32 * 1024;
 export const FIELD_DISPO_NOTES_BODY_MAX = 256 * 1024;
 const NOTES_TEXT_MAX = 100_000;
 export const HISTORY_CAP = 500;
+/** Server-only collection of counts-only knocks. Rules deny every client. */
+export const FIELD_KNOCK_EVENTS = 'fieldKnockEvents';
+/** Owners named in a counted_only body. `owner` is the first, `owners` the list. */
+const COUNTED_ONLY_OWNERS_MAX = 5;
 const RECEIPT_RESPONSE_MAX_BYTES = 2048;
 const ACTION_PAST_MS = 30 * 24 * 60 * 60 * 1000;
 const ACTION_FUTURE_MS = 10 * 60 * 1000;
@@ -640,7 +648,9 @@ async function territoryOwnedByDirectRead(
   if (typeof territoryId !== 'string' || !validLeadId(territoryId)) return false;
   const snap = await tx.get(db.collection('territories').doc(territoryId));
   if (!snap.exists) return false;
-  return (snap.data() ?? {}).userId === uid;
+  const data = snap.data() ?? {};
+  if (data.userId === uid) return true;
+  return Array.isArray(data.userIds) && data.userIds.includes(uid);
 }
 
 function insideCallerPolygon(docs: DispoSnap[], lat: number, lng: number, uid: string): boolean {
@@ -925,14 +935,29 @@ async function applyDraft(input: {
   if (!staff && !owned) {
     const territoryMine = await territoryOwnedByDirectRead(input.db, input.tx, lead.territoryId, input.uid);
     if (!territoryMine) {
-      if (isOther(lead.claimedBy, input.uid) || isOther(lead.assignedTo, input.uid)) {
-        return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: 'owned_by_other' } };
+      const legacyRefusal = async (): Promise<OwnershipRefusal | null> => {
+        if (isOther(lead.claimedBy, input.uid) || isOther(lead.assignedTo, input.uid)) {
+          return { reasonCode: 'owned_by_other', ownerId: null, ownerSource: 'stamp' };
+        }
+        const coords = leadCoords(lead);
+        const loaded = await loadCallerTerritories();
+        const inside = coords ? insideCallerPolygon(loaded.docs, coords.lat, coords.lng, input.uid) : false;
+        return inside ? null : { reasonCode: 'out_of_territory', ownerId: null, ownerSource: 'none' };
+      };
+      const now = input.deps.now?.() ?? Date.now();
+      const mode = await readOwnershipMode(input.db, input.tx, now);
+      let refusal: OwnershipRefusal | null;
+      if (mode === 'territory') {
+        refusal = await territoryRefusal(input, lead, now, legacyRefusal);
+      } else {
+        refusal = await legacyRefusal();
       }
-      const coords = leadCoords(lead);
-      const loaded = await loadCallerTerritories();
-      const inside = coords ? insideCallerPolygon(loaded.docs, coords.lat, coords.lng, input.uid) : false;
-      if (!inside) {
-        return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: 'out_of_territory' } };
+      if (refusal) {
+        // Territory mode never drops a knock: it is counted, the pin is untouched.
+        if (mode === 'territory' && input.draft.kind === 'knock') {
+          return await applyCountedOnly(input, input.draft, receiptRef, refusal);
+        }
+        return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: refusal.reasonCode } };
       }
     }
   }
@@ -941,6 +966,106 @@ async function applyDraft(input: {
   const homeowner = await loadHomeowner(input.db, input.tx, input.draft);
   const polygons = await areaPolygonsFor(input, loadCallerTerritories);
   return applyKnock(input, input.draft, leadRef, receiptRef, lead, homeowner, polygons);
+}
+
+type OwnershipRefusal = {
+  reasonCode: 'owned_by_other' | 'out_of_territory';
+  ownerId: string | null;
+  ownerIds?: string[];
+  ownerSource: EffectiveOwner['source'];
+  /** 3PL only: why the territory gate blocked the knock. */
+  dispoBlock?: string;
+};
+
+/**
+ * Territory mode (adminSettings/fieldOwnership). The caller may work the pin
+ * when they are its effective owner (newest assigned rep of the territory that
+ * contains it, or the Go Back setter inside 90 days). A pin in no live
+ * territory keeps the stamp rule: another rep's stamp refuses, an unstamped
+ * pin outside every territory is out_of_territory. A truncated or missing
+ * territory list falls back to the legacy gate.
+ */
+async function territoryRefusal(
+  input: { tx: DispoTransaction; db: DispoDb; uid: string },
+  lead: Record<string, unknown>,
+  now: number,
+  legacyRefusal: () => Promise<OwnershipRefusal | null>,
+): Promise<OwnershipRefusal | null> {
+  const territories = await loadLiveTerritories(input.db, input.tx, now);
+  if (!territories) return legacyRefusal();
+  const setter = goBackSetter(lead);
+  let setterIsActive = true;
+  if (setter && setter !== input.uid) {
+    setterIsActive = await goBackSetterActive(input.db, input.tx, setter);
+  }
+  const owner = effectiveOwner(lead, territories, now, { setterActive: () => setterIsActive });
+  if (owner.ownerIds.includes(input.uid)) return null;
+  if (owner.ownerId) {
+    return { reasonCode: 'owned_by_other', ownerId: owner.ownerId, ownerIds: owner.ownerIds, ownerSource: owner.source };
+  }
+  return { reasonCode: 'out_of_territory', ownerId: null, ownerSource: 'none' };
+}
+
+/**
+ * Counts-only knock: one create-only event doc plus the receipt, same
+ * transaction, no write to the lead. The event id equals the receipt id
+ * (uid_draftId), so a replay or a backfill cannot create a second event.
+ * Response is 200 with no `lead`, like stale_history_only:
+ *   { ok, draftId, result:'counted_only', duplicate, eventId, actionAt,
+ *     owner: {uid,name}|null, owners: [{uid,name}] }
+ * `owner` is the FIRST owner (newest-assigned territory first; the Go Back
+ * setter or the stamped rep for those sources); `owners` lists up to 5 for
+ * dual owners. Both are null/[] when nobody owns the pin (out_of_territory).
+ * The same shape comes back on every replay, with duplicate:true.
+ */
+async function applyCountedOnly(
+  input: { tx: DispoTransaction; db: DispoDb; deps: FieldDispoDeps; uid: string },
+  draft: ParsedKnock,
+  receiptRef: DispoDocRef,
+  refusal: OwnershipRefusal,
+): Promise<TxOutcome> {
+  // Display names for the mobile toast. Reads come before any write in this transaction.
+  const ownerIds = refusal.ownerIds ?? (refusal.ownerId ? [refusal.ownerId] : []);
+  const owners: Array<{ uid: string; name: string | null }> = [];
+  for (const ownerUid of ownerIds.slice(0, COUNTED_ONLY_OWNERS_MAX)) {
+    let name: string | null = null;
+    if (validLeadId(ownerUid)) {
+      const snap = await input.tx.get(input.db.collection('users').doc(ownerUid));
+      const value = snap.exists ? (snap.data() ?? {}).name : null;
+      name = typeof value === 'string' && value.trim() ? value.trim().slice(0, 80) : null;
+    }
+    owners.push({ uid: ownerUid, name });
+  }
+  const eventRef = input.db.collection(FIELD_KNOCK_EVENTS).doc(`${input.uid}_${draft.draftId}`);
+  // A backfill may already have created this event (same id). Read it before any write
+  // and skip the create: tx.create on an existing doc would fail the whole dispo.
+  const existingEvent = await input.tx.get(eventRef);
+  if (!existingEvent.exists) input.tx.create(eventRef, {
+    uid: input.uid,
+    userName: draft.userName,
+    draftId: draft.draftId,
+    leadId: draft.leadId,
+    collection: draft.collection,
+    disposition: draft.disposition,
+    dispositionId: dispositionSlug(draft.status),
+    status: draft.status,
+    actionAt: input.deps.Timestamp.fromMillis(draft.actionAtMs),
+    createdAt: input.deps.serverTimestamp(),
+    reason: refusal.reasonCode,
+    effectiveOwnerId: refusal.ownerId,
+    effectiveOwnerIds: refusal.ownerIds ?? (refusal.ownerId ? [refusal.ownerId] : []),
+    ownerSource: refusal.ownerSource,
+    source: 'live',
+    ...(refusal.dispoBlock ? { dispoBlock: refusal.dispoBlock } : {}),
+  });
+  const body = receiptBody(draft, 'counted_only', {
+    eventId: eventRef.id,
+    actionAt: new Date(draft.actionAtMs).toISOString(),
+    owner: owners[0] ?? null,
+    owners,
+  });
+  writeReceipt(input.tx, receiptRef, input.deps, input.uid, draft, 'counted_only', body);
+  return { status: 200, body };
 }
 
 /**
@@ -1148,6 +1273,18 @@ async function applyHotLead(
     lng: lead.lng,
   });
   if (!gate.allowed) {
+    // Territory mode: the pin stays untouched but a knock still counts (counts-only event).
+    if (input.draft.kind === 'knock') {
+      const mode = await readOwnershipMode(input.db, input.tx, input.deps.now?.() ?? Date.now());
+      if (mode === 'territory') {
+        return await applyCountedOnly(input, input.draft, receiptRef, {
+          reasonCode: 'out_of_territory',
+          ownerId: null,
+          ownerSource: 'none',
+          dispoBlock: gate.dispoBlock,
+        });
+      }
+    }
     return {
       status: 403,
       body: {
@@ -1245,7 +1382,42 @@ async function applyHotKnock(
     patch.updatedAt = input.deps.serverTimestamp();
   }
   assertHotKnockPatch(patch);
+  // Territory mode: an accepted 3PL knock also gets a counts-only event, because nothing
+  // reads hotLeads history (web counters, mobile, and the reporting mirror all read
+  // fieldKnockEvents). Reads first (flag, existing event), writes after.
+  const eventRef = input.db.collection(FIELD_KNOCK_EVENTS).doc(`${input.uid}_${draft.draftId}`);
+  // reason 'in_territory' = the knocker owns a territory containing the pin. 'staff' = an admin/manager the
+  // gate let through everywhere (pinTerritoryGate bypasses staff) whose own territories do not contain it.
+  // The label is informational only: both count identically.
+  let writeEvent = false;
+  let eventReason: 'in_territory' | 'staff' = 'in_territory';
+  if ((await readOwnershipMode(input.db, input.tx, input.deps.now?.() ?? Date.now())) === 'territory') {
+    writeEvent = !(await input.tx.get(eventRef)).exists;
+    if (writeEvent && (input.role === 'admin' || input.role === 'manager')) {
+      const loaded = await loadTerritories(input.db, input.tx, input.uid);
+      if (!decidePinTerritory(loaded, { uid: input.uid, lat: lead.lat, lng: lead.lng }).allowed) eventReason = 'staff';
+    }
+  }
   if (Object.keys(patch).length > 0) input.tx.update(leadRef, patch);
+  if (writeEvent) {
+    input.tx.create(eventRef, {
+      uid: input.uid,
+      userName: draft.userName,
+      draftId: draft.draftId,
+      leadId: draft.leadId,
+      collection: draft.collection,
+      disposition: draft.disposition,
+      dispositionId: dispositionSlug(draft.status),
+      status: draft.status,
+      actionAt: input.deps.Timestamp.fromMillis(draft.actionAtMs),
+      createdAt: input.deps.serverTimestamp(),
+      reason: eventReason,
+      effectiveOwnerId: input.uid,
+      effectiveOwnerIds: [input.uid],
+      ownerSource: 'gate',
+      source: 'live',
+    });
+  }
   const body = stale
     ? receiptBody(draft, 'stale_history_only', {
       reasonCode: 'stale_tap',
