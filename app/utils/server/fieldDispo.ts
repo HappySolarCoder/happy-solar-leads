@@ -1036,7 +1036,10 @@ async function applyCountedOnly(
     owners.push({ uid: ownerUid, name });
   }
   const eventRef = input.db.collection(FIELD_KNOCK_EVENTS).doc(`${input.uid}_${draft.draftId}`);
-  input.tx.create(eventRef, {
+  // A backfill may already have created this event (same id). Read it before any write
+  // and skip the create: tx.create on an existing doc would fail the whole dispo.
+  const existingEvent = await input.tx.get(eventRef);
+  if (!existingEvent.exists) input.tx.create(eventRef, {
     uid: input.uid,
     userName: draft.userName,
     draftId: draft.draftId,

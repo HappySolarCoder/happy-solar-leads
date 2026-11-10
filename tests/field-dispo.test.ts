@@ -1830,6 +1830,16 @@ describe('field dispo territory ownership', { concurrency: 1 }, () => {
     assert.equal(events(other.db)[0].path, 'fieldKnockEvents/uid-other-rep_draft-1');
   });
 
+  it('a backfilled event with the same uid_draftId does not fail the live counts-only dispo', async () => {
+    const test = harness({ lead: stamped(), territories: [territory('t-other', 'uid-sawyer')], ownershipFlag: TERRITORY_ON });
+    test.db.put(`fieldKnockEvents/${ME}_draft-1`, { uid: ME, draftId: 'draft-1', source: 'backfill', backfillRunId: 'bf-test' });
+    const result = await test.run(knockBody());
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.body.result, 'counted_only');
+    assert.equal(events(test.db).length, 0, 'the existing event is not re-created');
+    assert.ok(creates(test.db).find((op) => op.path === `fieldDispoReceipts/${ME}_draft-1`));
+  });
+
   it('a replay with a different lead or kind is still the existing 409, not an event', async () => {
     const test = harness({ lead: stamped(), territories: [territory('t-other', 'uid-sawyer')], ownershipFlag: TERRITORY_ON });
     await test.run(knockBody());
