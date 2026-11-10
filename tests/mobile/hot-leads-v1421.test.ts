@@ -272,11 +272,19 @@ test("403, 404, 405, 401 and 5xx are silent: no pins, no sign-in copy, no lead-c
     assert.deepEqual(first.pins, []);
     assert.equal(first.error, "");
     assert.equal(JSON.stringify(first).includes("Sign in"), false);
-    const second = await fetchHotLeadMap({
-      user: person("closer"), view: view(), token: "tok", fetcher, enabled: true, now: 1_000 + 60_000,
+    const windowMs = status === 404 || status === 405 ? 15 * 60 * 1000 : 60 * 1000;
+    const during = await fetchHotLeadMap({
+      user: person("closer"), view: view(), token: "tok", fetcher, enabled: true, now: 1_000 + windowMs - 1,
     });
-    assert.deepEqual(second.pins, []);
+    assert.deepEqual(during.pins, []);
+    assert.equal(during.error, "");
     assert.equal(calls, 1);
+    const after = await fetchHotLeadMap({
+      user: person("closer"), view: view(), token: "tok", fetcher, enabled: true, now: 1_000 + windowMs,
+    });
+    assert.equal(after.error, "");
+    assert.equal(JSON.stringify(after).toLowerCase().includes("sign in"), false);
+    assert.equal(calls, 2);
     assert.equal(leadCache.clears, 0);
   }
 });

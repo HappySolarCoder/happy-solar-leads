@@ -43,6 +43,7 @@ import { useHotLeads } from "@/app/hooks/useHotLeads";
 import { hotLeadFilterVisible, readHotFilter, writeHotFilter, HOT_FILTER_BADGE, type HotPinFilter } from "@/app/hotLeads/filter";
 import { HotLeadFilterSection } from "@/app/hotLeads/HotLeadFilterSection";
 import { hotLeadParkNotice } from "@/app/hotLeads/save";
+import { HOT_PINS_UNAVAILABLE } from "@/app/hotLeads/fetch";
 import { inPinScope } from "../_lib/pinScope";
 import type { View } from "@/app/homeowners/model";
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
@@ -947,6 +948,7 @@ export default function KnockingPage() {
           {gpsError && <div className="rm-gps-notice" role="status">{gpsError.code === 1 ? "Enable Raydar location access in your phone Settings, then tap GPS to retry." : "Location unavailable. Tap GPS to try again."}</div>}
           {currentUser && !dataLoading && !dataUnavailable && <DoorCoach key={`focus:${currentUser.id}`} leads={leads} userId={currentUser.id} dispositions={dispositions} />}
           {currentUser && !isRefreshing && !dataUnavailable && !showLeadDetail && <ReturnVisitReminder key={`reminder:${currentUser.id}`} leads={leads} userId={currentUser.id} position={gpsError ? null : gpsPosition} onLead={handleLeadSelect} />}
+          {hotLeads.unavailable && <div className="rm-map-loading" role="status"><button type="button" onClick={() => hotLeads.retry()}>{HOT_PINS_UNAVAILABLE}</button></div>}
           {viewportPins.loading && <div className="rm-map-loading" role="status">Loading nearby pins…</div>}
           {viewportPins.error && <div className="rm-map-loading" role="status">{viewportPins.error} <button onClick={viewportPins.retry}>Retry pins</button></div>}
           {hotLeadParkNotice(field.drafts) && <div className="rm-map-loading" role="status">{hotLeadParkNotice(field.drafts)}</div>}
