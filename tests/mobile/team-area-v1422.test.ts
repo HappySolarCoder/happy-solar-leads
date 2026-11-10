@@ -60,6 +60,50 @@ test("T2 team focus stays on the nearby cluster and leaves the far outlier out",
   assert.equal(plan.notice.includes("outlier"), false);
 });
 
+test("an Arizona view with 71 New York territories and one Bay Area territory fits the larger cluster", () => {
+  const territories: AreaFocusTerritory[] = [];
+  for (let i = 0; i < 71; i += 1) {
+    const row = Math.floor(i / 8);
+    const col = i % 8;
+    territories.push({ userId: `ny-${i}`, polygon: box(43.1 + row * 0.02, -78.9 + col * 0.02, 0.01) });
+  }
+  territories.push({ userId: "bay", polygon: box(37.6, -122.3, 0.04) });
+  const plan = planAreaFocus({ mode: "team", userId: "bay", territories, view: arizona });
+  assert.ok(plan.fit);
+  assert.equal(plan.fit?.length, 71 * 4);
+  assert.ok(plan.fit?.every((point) => point[1] > -80 && point[1] < -70));
+  assert.match(plan.notice, /71 team territories/);
+});
+
+test("equal-size clusters fit the one nearer to the user", () => {
+  const territories: AreaFocusTerritory[] = [];
+  for (let i = 0; i < 3; i += 1) {
+    territories.push({ userId: `ny-${i}`, polygon: box(43.1 + i * 0.01, -78.85, 0.008) });
+    territories.push({ userId: `bay-${i}`, polygon: box(37.7 + i * 0.01, -122.25, 0.008) });
+  }
+  const plan = planAreaFocus({ mode: "team", userId: "bay-0", territories, view: arizona });
+  assert.equal(plan.fit?.length, 3 * 4);
+  assert.ok(plan.fit?.every((point) => point[1] < -120));
+  assert.match(plan.notice, /3 team territories/);
+});
+
+test("a view that already contains any territory does not fit", () => {
+  const territories: AreaFocusTerritory[] = [];
+  for (let i = 0; i < 71; i += 1) {
+    territories.push({ userId: `ny-${i}`, polygon: box(43.15, -78.8 + i * 0.001, 0.008) });
+  }
+  const bay = box(37.6, -122.3, 0.04);
+  territories.push({ userId: "bay", polygon: bay });
+  const plan = planAreaFocus({
+    mode: "team",
+    userId: "bay",
+    territories,
+    view: { south: 37.59, north: 37.66, west: -122.32, east: -122.24 },
+  });
+  assert.equal(plan.fit, null);
+  assert.equal(plan.notice, "");
+});
+
 test("T3 an empty team list explains that nothing was returned", () => {
   const plan = planAreaFocus({
     mode: "team",
@@ -141,9 +185,13 @@ test("choosing Team or My remembers a pending focus and Off or a refresh does no
   assert.match(handler, /mode === 'off'/);
   assert.match(handler, /setPendingAreaFocus\(null\)/);
   assert.match(handler, /setPendingAreaFocus\(\{ mode, token: areaFocusToken\.current \}\)/);
-  const effect = page.slice(page.indexOf("if (!pendingAreaFocus"), page.indexOf("function onAreaMode"));
+  const effect = page.slice(page.indexOf("if (!pendingAreaFocus)"), page.indexOf("function onAreaMode"));
   assert.ok(effect.indexOf("return") < effect.indexOf("setFitAreaBounds"));
+  assert.match(effect, /if \(areasError\) \{\s*setPendingAreaFocus\(null\);/);
   assert.match(effect, /planAreaFocus\(/);
+  assert.match(effect, /holdGpsRecentreUntil\.current = Date\.now\(\) \+ 10_000/);
+  const gps = page.slice(page.indexOf("const key = `${currentUser?.id}:${gpsActivation}`"), page.indexOf("if (!zoomMinePending"));
+  assert.match(gps, /Date\.now\(\) < holdGpsRecentreUntil\.current/);
   assert.match(page, /onZoomMine=\{onZoomMine\}/);
   assert.match(page.slice(page.indexOf("function onZoomMine"), page.indexOf("// Fetch weather")), /setZoomMinePending\(true\)/);
   const hook = read("app/hooks/useTeamAreasOverlay.ts");

@@ -98,6 +98,7 @@ export default function KnockingPage() {
   const [viewMode] = useState<'map' | 'list'>('map');
   const [mapCenter, setMapCenter] = useState<[number, number] | undefined>(undefined);
   const centeredActivation = useRef('');
+  const holdGpsRecentreUntil = useRef(0);
   const [cameraRevision,setCameraRevision] = useState(0);
   const [fitAreaBounds, setFitAreaBounds] = useState<[number, number][] | undefined>();
   const [zoomMinePending, setZoomMinePending] = useState(false);
@@ -189,6 +190,10 @@ export default function KnockingPage() {
   useEffect(() => {
     const key = `${currentUser?.id}:${gpsActivation}`;
     if (!currentUser || !gpsPosition || !gpsActivation || centeredActivation.current === key) return;
+    if (Date.now() < holdGpsRecentreUntil.current) {
+      centeredActivation.current = key;
+      return;
+    }
     centeredActivation.current = key;
     setFitAreaBounds(undefined);
     setCameraRevision(v=>v+1);
@@ -202,14 +207,22 @@ export default function KnockingPage() {
     setZoomMinePending(false);
   }, [zoomMinePending, areasReady, areasLoading, areasError, overlayTerritories, currentUser?.id]);
   useEffect(() => {
-    if (!pendingAreaFocus || !areasReady || areasLoading || areasError || !viewport) return;
+    if (!pendingAreaFocus) return;
+    if (areasError) {
+      setPendingAreaFocus(null);
+      return;
+    }
+    if (!areasReady || areasLoading || !viewport) return;
     const plan = planAreaFocus({
       mode: pendingAreaFocus.mode,
       userId: currentUser?.id,
       territories: overlayTerritories,
       view: viewport,
     });
-    if (plan.fit?.length) setFitAreaBounds(plan.fit);
+    if (plan.fit?.length) {
+      setFitAreaBounds(plan.fit);
+      holdGpsRecentreUntil.current = Date.now() + 10_000;
+    }
     setAreaNotice(plan.notice);
     setPendingAreaFocus(null);
   }, [pendingAreaFocus, areasReady, areasLoading, areasError, overlayTerritories, currentUser?.id, viewport]);

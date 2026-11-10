@@ -147,16 +147,18 @@ export function planAreaFocus(input: {
   if (displayed.some((box) => boxesIntersect(box, input.view))) {
     return { fit: null, notice: "" };
   }
-  const center = viewCenter(input.view);
-  let nearest = displayed[0];
-  let nearestKm = haversineKm(center, displayed[0].center);
-  for (const box of displayed.slice(1)) {
-    const km = haversineKm(center, box.center);
-    if (km < nearestKm) {
-      nearest = box;
-      nearestKm = km;
+  const user = viewCenter(input.view);
+  let focus = displayed;
+  let focusCount = 0;
+  let focusKm = Number.POSITIVE_INFINITY;
+  for (const seed of displayed) {
+    const cluster = displayed.filter((box) => haversineKm(box.center, seed.center) <= CLUSTER_KM);
+    const km = cluster.reduce((nearest, box) => Math.min(nearest, haversineKm(user, box.center)), Number.POSITIVE_INFINITY);
+    if (cluster.length > focusCount || (cluster.length === focusCount && km < focusKm)) {
+      focus = cluster;
+      focusCount = cluster.length;
+      focusKm = km;
     }
   }
-  const focus = displayed.filter((box) => haversineKm(box.center, nearest.center) <= CLUSTER_KM);
   return { fit: focus.flatMap(corners), notice: movedNotice(focus.length, input.mode) };
 }
