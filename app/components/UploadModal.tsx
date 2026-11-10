@@ -10,6 +10,7 @@ import { getCurrentAuthUser } from '@/app/utils/auth';
 import { canManageUsers } from '@/app/types';
 import { getTerritoriesAsync } from '@/app/utils/territories';
 import { autoAssignLeadsByTerritories } from '@/app/utils/territoryAssignment';
+import { authedFetch } from '@/app/utils/authedFetch';
 
 // Client-side logger that sends to server
 function logToFile(level: string, component: string, message: string, data: any = {}) {
@@ -231,7 +232,7 @@ export default function UploadModal({ isOpen, onClose, onComplete }: UploadModal
           }
 
           // Fetch solar data
-          const solarResp = await fetch('/api/solar', {
+          const solarResp = await authedFetch('/api/solar', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lat: result.lat, lng: result.lng })

@@ -8,6 +8,7 @@ import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.markercluster';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
 import { auth } from '@/app/utils/firebase';
+import { authedFetch } from '@/app/utils/authedFetch';
 import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync, isKnockStatus } from '@/app/utils/dispositions';
 import AddLeadModal from './AddLeadModal';
@@ -1276,7 +1277,7 @@ export default function LeadMap({
 
     // Reverse geocode to get address
     try {
-      const response = await fetch(
+      const response = await authedFetch(
         `/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`
       );
       const data = await response.json();
@@ -1443,7 +1444,7 @@ export default function LeadMap({
 
       // Run Solar API in background
       if (newLead.lat && newLead.lng) {
-        fetch('/api/solar', {
+        authedFetch('/api/solar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

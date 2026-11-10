@@ -17,6 +17,7 @@ import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 import { useHistoricalTerritoryPins } from '@/app/hooks/useHistoricalTerritoryPins';
 import { mergeHistoricalTerritoryPins } from '@/app/utils/historicalTerritoryPins';
 import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
+import { authedFetch } from '@/app/utils/authedFetch';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -213,7 +214,7 @@ export default function KnockingPage() {
     
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const response = await fetch(`/api/geocode?address=${encodeURIComponent(query)}`);
+        const response = await authedFetch(`/api/geocode?address=${encodeURIComponent(query)}`);
         const data = await response.json();
         
         if (data.results && data.results.length > 0) {
