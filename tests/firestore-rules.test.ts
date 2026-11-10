@@ -206,6 +206,10 @@ async function seed(env: RulesTestEnvironment): Promise<void> {
     await bareLead('gpsOutOfArea');
     await bareLead('ownerGpsBad', { status: 'claimed', claimedBy: 'realSetter' });
     await bareLead('ownerGpsOk', { status: 'claimed', claimedBy: 'realSetter' });
+    // Territory ownership PR: a stamped owner's direct knock write must keep working unchanged.
+    for (const id of ['ownerKnockExact', 'ownerKnockAddsClaim', 'ownerKnockAddsAssign', 'ownerKnockAddsTerritory', 'ownerKnockAddsSetter']) {
+      await bareLead(id, { status: 'claimed', claimedBy: 'realSetter', lat: 33.45, lng: -112.07 });
+    }
     await bareLead('ownerGpsClear', {
       status: 'claimed', claimedBy: 'realSetter',
       gpsVerified: false, gpsUnverifiedReason: 'stale', gpsDistanceM: 40,
@@ -729,6 +733,27 @@ function cases(): RuleCase[] {
     { id: 'anon history create', uid: 'anon', provider: 'anonymous', run: (db) => db.collection('disposition_history').doc('hist-anon').set({ userId: 'anon' }), expectTight: 'deny' },
     { id: 'anon session', uid: 'anon', provider: 'anonymous', run: (db) => db.collection('userSessions').doc('anon').set({ step: 1 }), expectTight: 'deny' },
     { id: 'anon territory', uid: 'anon', provider: 'anonymous', run: (db) => db.collection('territories').doc('realTerritory').get(), expectTight: 'deny' },
+
+    // Direct path contract (exact owner knock payload). The server-side territory rule changes
+    // nothing here: the stamped owner's write is allowed unchanged, and no client may add or move ownership.
+    { id: 'owner direct knock exact payload', uid: 'realSetter', run: (db) => lead('ownerKnockExact')(db).update({ status: 'not-home', disposition: 'Not Home', dispositionedAt: at, dispositionHistory: [{ disposition: 'Not Home', timestamp: at, userId: 'realSetter', userName: 'Real Setter' }], gpsVerified: false, gpsUnverifiedReason: 'low_accuracy', gpsDistanceM: 0 }), expectTight: 'allow' },
+    { id: 'owner direct knock plus claimedBy', uid: 'realSetter', run: (db) => lead('ownerKnockAddsClaim')(db).update({ status: 'not-home', dispositionedAt: at, claimedBy: 'manager' }), expectTight: 'deny' },
+    { id: 'owner direct knock plus assignedTo', uid: 'realSetter', run: (db) => lead('ownerKnockAddsAssign')(db).update({ status: 'not-home', dispositionedAt: at, assignedTo: 'realSetter' }), expectTight: 'deny' },
+    { id: 'owner direct knock plus territoryId', uid: 'realSetter', run: (db) => lead('ownerKnockAddsTerritory')(db).update({ status: 'not-home', dispositionedAt: at, territoryId: 'realTerritory' }), expectTight: 'deny' },
+    // Pinned as-is: today's rules do not treat setterId as an ownership field. Not changed here.
+    { id: 'owner direct knock plus setterId (unchanged behavior)', uid: 'realSetter', run: (db) => lead('ownerKnockAddsSetter')(db).update({ status: 'not-home', dispositionedAt: at, setterId: 'realSetter' }), expectTight: 'allow' },
+
+    // fieldKnockEvents is server-only (counts-only knocks from /api/field/dispo).
+    ...['realSetter', 'closer', 'manager', 'admin', 'demo'].flatMap((uid) => {
+      const who = uid === 'realSetter' ? 'setter' : uid === 'demo' ? 'test account' : uid;
+      return [
+        { id: `${who} fieldKnockEvents get`, uid, run: (db: Firestore) => db.collection('fieldKnockEvents').doc(`${uid}_d1`).get(), expectTight: 'deny' as const },
+        { id: `${who} fieldKnockEvents list`, uid, run: (db: Firestore) => db.collection('fieldKnockEvents').limit(5).get(), expectTight: 'deny' as const },
+        { id: `${who} fieldKnockEvents create`, uid, run: (db: Firestore) => db.collection('fieldKnockEvents').doc(`${uid}_d1`).set({ uid, leadId: 'lead-1', disposition: 'Not Home' }), expectTight: 'deny' as const },
+        { id: `${who} fieldKnockEvents update`, uid, run: (db: Firestore) => db.collection('fieldKnockEvents').doc(`${uid}_d1`).update({ reason: 'x' }), expectTight: 'deny' as const },
+        { id: `${who} fieldKnockEvents delete`, uid, run: (db: Firestore) => db.collection('fieldKnockEvents').doc(`${uid}_d1`).delete(), expectTight: 'deny' as const },
+      ];
+    }),
 
     // fieldSyncReports stays client-closed (default deny). No match block.
     { id: 'setter fieldSyncReports create', uid: 'realSetter', run: (db) => db.collection('fieldSyncReports').doc('x').set({ reasonCode: 'other' }), expectTight: 'deny' },

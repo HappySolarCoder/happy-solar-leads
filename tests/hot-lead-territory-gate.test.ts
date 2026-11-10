@@ -806,8 +806,9 @@ describe('3PL territory gate', () => {
   it('leaves knock count, rules, and indexes byte-identical, and does not read the feature flag', () => {
     const knock = readFileSync(new URL('../app/utils/knockCount.ts', import.meta.url));
     assert.equal(createHash('sha256').update(knock).digest('hex'), 'a00be3335708b5b54605b08f11bd37fb9fa5ada20e3c0cb428d57b58bf1dd226');
+    // Re-pinned for the fieldKnockEvents deny-all match (field owner territory PR). Nothing else in the rules changed.
     const rules = readFileSync(new URL('../firestore.rules', import.meta.url));
-    assert.equal(createHash('sha256').update(rules).digest('hex'), 'c1b9488d55df6ac34519f4f1c070cd5d665edd89fafadf6c6b1687dd5dd34825');
+    assert.equal(createHash('sha256').update(rules).digest('hex'), 'd526c61dbfdd733359b4b3a69012e060f84d401a31dd92f731771e6dc13808b7');
     const indexes = readFileSync(new URL('../firestore.indexes.json', import.meta.url));
     assert.equal(createHash('sha256').update(indexes).digest('hex'), '1020c4a7360e838be82004129460c912e5eb19c4f9ec24e057c7d1bc515e45ea');
     for (const rel of [

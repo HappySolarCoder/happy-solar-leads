@@ -14,7 +14,10 @@ import {
   type KnockFix,
   type LatLng,
 } from '@/app/utils/gpsRule';
+import { effectiveOwner, goBackSetter, type EffectiveOwner } from '@/app/utils/effectiveOwner';
+import { dispositionSlug } from '@/app/utils/knockCount';
 import { isTestAccount } from './discordNotification';
+import { goBackSetterActive, loadLiveTerritories, readOwnershipMode } from './fieldOwnership';
 import { FIELD_REASON_CODES, type FieldReasonCode } from './fieldReasonCodes';
 import { isHotLeadId, isHotLeadRole } from './hotLeadContract';
 import { HOT_LEAD_DISPOSITION_READ_LIMIT, hotStatusAfterKnock } from './hotLeadStatus';
@@ -43,6 +46,8 @@ export const FIELD_DISPO_MAX_BYTES = 32 * 1024;
 export const FIELD_DISPO_NOTES_BODY_MAX = 256 * 1024;
 const NOTES_TEXT_MAX = 100_000;
 export const HISTORY_CAP = 500;
+/** Server-only collection of counts-only knocks. Rules deny every client. */
+export const FIELD_KNOCK_EVENTS = 'fieldKnockEvents';
 const RECEIPT_RESPONSE_MAX_BYTES = 2048;
 const ACTION_PAST_MS = 30 * 24 * 60 * 60 * 1000;
 const ACTION_FUTURE_MS = 10 * 60 * 1000;
@@ -925,14 +930,29 @@ async function applyDraft(input: {
   if (!staff && !owned) {
     const territoryMine = await territoryOwnedByDirectRead(input.db, input.tx, lead.territoryId, input.uid);
     if (!territoryMine) {
-      if (isOther(lead.claimedBy, input.uid) || isOther(lead.assignedTo, input.uid)) {
-        return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: 'owned_by_other' } };
+      const legacyRefusal = async (): Promise<OwnershipRefusal | null> => {
+        if (isOther(lead.claimedBy, input.uid) || isOther(lead.assignedTo, input.uid)) {
+          return { reasonCode: 'owned_by_other', ownerId: null, ownerSource: 'stamp' };
+        }
+        const coords = leadCoords(lead);
+        const loaded = await loadCallerTerritories();
+        const inside = coords ? insideCallerPolygon(loaded.docs, coords.lat, coords.lng, input.uid) : false;
+        return inside ? null : { reasonCode: 'out_of_territory', ownerId: null, ownerSource: 'none' };
+      };
+      const now = input.deps.now?.() ?? Date.now();
+      const mode = await readOwnershipMode(input.db, input.tx, now);
+      let refusal: OwnershipRefusal | null;
+      if (mode === 'territory') {
+        refusal = await territoryRefusal(input, lead, now, legacyRefusal);
+      } else {
+        refusal = await legacyRefusal();
       }
-      const coords = leadCoords(lead);
-      const loaded = await loadCallerTerritories();
-      const inside = coords ? insideCallerPolygon(loaded.docs, coords.lat, coords.lng, input.uid) : false;
-      if (!inside) {
-        return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: 'out_of_territory' } };
+      if (refusal) {
+        // Territory mode never drops a knock: it is counted, the pin is untouched.
+        if (mode === 'territory' && input.draft.kind === 'knock') {
+          return applyCountedOnly(input, input.draft, receiptRef, refusal);
+        }
+        return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: refusal.reasonCode } };
       }
     }
   }
@@ -941,6 +961,73 @@ async function applyDraft(input: {
   const homeowner = await loadHomeowner(input.db, input.tx, input.draft);
   const polygons = await areaPolygonsFor(input, loadCallerTerritories);
   return applyKnock(input, input.draft, leadRef, receiptRef, lead, homeowner, polygons);
+}
+
+type OwnershipRefusal = {
+  reasonCode: 'owned_by_other' | 'out_of_territory';
+  ownerId: string | null;
+  ownerSource: EffectiveOwner['source'];
+};
+
+/**
+ * Territory mode (adminSettings/fieldOwnership). The caller may work the pin
+ * when they are its effective owner (newest assigned rep of the territory that
+ * contains it, or the Go Back setter inside 90 days). A pin in no live
+ * territory keeps the stamp rule: another rep's stamp refuses, an unstamped
+ * pin outside every territory is out_of_territory. A truncated or missing
+ * territory list falls back to the legacy gate.
+ */
+async function territoryRefusal(
+  input: { tx: DispoTransaction; db: DispoDb; uid: string },
+  lead: Record<string, unknown>,
+  now: number,
+  legacyRefusal: () => Promise<OwnershipRefusal | null>,
+): Promise<OwnershipRefusal | null> {
+  const territories = await loadLiveTerritories(input.db, input.tx, now);
+  if (!territories) return legacyRefusal();
+  const setter = goBackSetter(lead);
+  let setterIsActive = true;
+  if (setter && setter !== input.uid) {
+    setterIsActive = await goBackSetterActive(input.db, input.tx, setter);
+  }
+  const owner = effectiveOwner(lead, territories, now, { setterActive: () => setterIsActive });
+  if (owner.ownerId === input.uid) return null;
+  if (owner.ownerId) return { reasonCode: 'owned_by_other', ownerId: owner.ownerId, ownerSource: owner.source };
+  return { reasonCode: 'out_of_territory', ownerId: null, ownerSource: 'none' };
+}
+
+/**
+ * Counts-only knock: one create-only event doc plus the receipt, same
+ * transaction, no write to the lead. The event id equals the receipt id
+ * (uid_draftId), so a replay or a backfill cannot create a second event.
+ * Response is 200 with no lead, like stale_history_only.
+ */
+function applyCountedOnly(
+  input: { tx: DispoTransaction; db: DispoDb; deps: FieldDispoDeps; uid: string },
+  draft: ParsedKnock,
+  receiptRef: DispoDocRef,
+  refusal: OwnershipRefusal,
+): TxOutcome {
+  const eventRef = input.db.collection(FIELD_KNOCK_EVENTS).doc(`${input.uid}_${draft.draftId}`);
+  input.tx.create(eventRef, {
+    uid: input.uid,
+    userName: draft.userName,
+    draftId: draft.draftId,
+    leadId: draft.leadId,
+    collection: draft.collection,
+    disposition: draft.disposition,
+    dispositionId: dispositionSlug(draft.status),
+    status: draft.status,
+    actionAt: input.deps.Timestamp.fromMillis(draft.actionAtMs),
+    createdAt: input.deps.serverTimestamp(),
+    reason: refusal.reasonCode,
+    effectiveOwnerId: refusal.ownerId,
+    ownerSource: refusal.ownerSource,
+    source: 'live',
+  });
+  const body = receiptBody(draft, 'counted_only', {});
+  writeReceipt(input.tx, receiptRef, input.deps, input.uid, draft, 'counted_only', body);
+  return { status: 200, body };
 }
 
 /**
