@@ -16,14 +16,20 @@ Code: `app/utils/server/googleProxy.ts`. Live wiring: `googleProxyLive.ts`. The 
 
 Rate limits are per serverless instance, so they cap abuse, not exact usage.
 
+## Builds
+- **14.24 / build 168 is the first native build that sends the bearer** (from `apiFetch`). 14.11 through 14.23
+  (151 to 167) do not.
+- `/api/solar` native coverage is **out of scope for 168**. Its callers (LeadMap background solar, UploadModal,
+  test-solar) keep sending no bearer from native until a later build. So enforce `geocode` and `route` only:
+  set `GOOGLE_PROXY_ENFORCE_ROUTES=geocode,route` together with `GOOGLE_PROXY_AUTH=enforce`; `/api/solar` stays
+  log-only (still rate limited, still logged). Without that variable, enforce applies to all three routes.
+
 ## Before flipping to enforce
 1. Web: this PR deployed (every web caller sends the bearer).
-2. Native: every installed build must send the bearer on `/api/geocode` (mobile knocking search,
-   territory PlaceSearch, reverse geocode on pin drop) and `/api/route` (RouteBuilder). Builds 14.11
-   (151) through 14.23 (167) call without a token. 14.18+ send `X-Raydar-Build`, so the log line shows which
-   build numbers are still unauthenticated. 14.11 and 14.12 send no build header.
-3. Watch the log for a week: no `unauth` lines from real builds, then set `GOOGLE_PROXY_AUTH=enforce`
-   (env change + redeploy). Rolling back is unsetting it.
+2. Native: enforce waits until **168 is the minimum field build** (older builds retired or force-updated) and the
+   `[google-proxy] unauth … build=` logs show no older builds. 14.11 (151) and 14.12 (152) send no build header, so
+   they log as `build=-`. A `build=-` line from a native user means one of those is still in the field.
+3. Watch the log for a week, then set `GOOGLE_PROXY_AUTH=enforce` and `GOOGLE_PROXY_ENFORCE_ROUTES=geocode,route` (env change + redeploy). Rolling back is unsetting it.
 4. Rotate the exposed key and restrict the new one (Geocoding, Routes, Solar APIs).
 
 ## Limits (checked against real data)
@@ -32,14 +38,11 @@ Rate limits are per serverless instance, so they cap abuse, not exact usage.
   waypoint optimization), four at a time, `maxDuration = 60`. `RouteBuilder` sends at most 1500 and tells the user when it truncates.
   (RouteBuilder is not mounted anywhere today.)
 
-## CORS
-Native builds use CapacitorHttp (no preflight). If a build uses the webview's `fetch`, `Authorization` and the
-`X-Raydar-*` headers force a preflight. Each route exports `OPTIONS = proxyPreflight`: 204 with no auth in both modes,
-allowing origins `capacitor://localhost`, `https://localhost`, `http://localhost`; headers `Authorization, Content-Type,
-X-Raydar-Build, X-Raydar-Platform`; methods `GET, POST, OPTIONS`. Real responses (including 401/429) carry
-`Access-Control-Allow-Origin` for those origins. No credentials are allowed.
-
 ## Merging with the mobile line
-On the mobile line `authedFetch` must call `apiFetch` (CapacitorHttp + `NEXT_PUBLIC_API_BASE_URL`), not bare
-`fetch`, or installed builds cannot reach the backend. `tests/google-proxy.test.ts` fails when `app/utils/apiFetch.ts`
-exists and `authedFetch` does not wrap it.
+The native app sends `/api/*` through `apiFetch` (CapacitorHttp to `NEXT_PUBLIC_API_BASE_URL`), never the webview's
+`fetch`, so no CORS headers or OPTIONS handlers are added or needed. `authedFetch` always goes through `apiFetch`
+and never overwrites an `Authorization` header the caller supplied. This tree carries a **web-only stub** of
+`app/utils/apiFetch.ts`; when the mobile line is merged, take the mobile version of that file (add/add conflict).
+The six mobile call sites (knocking `page.tsx`, `PlaceSearch.tsx`, `LeadMap.tsx` reverse geocode, `RouteBuilder.tsx`,
+`utils/geocode.ts`, `app/page.tsx`) stay `apiFetch`. `tests/google-proxy.test.ts` fails if any call site uses a bare
+`fetch`, if `authedFetch` stops delegating to `apiFetch`, or if the stub survives next to CapacitorHttp code.

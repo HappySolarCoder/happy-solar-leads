@@ -37,8 +37,21 @@ const MAX_TRACKED = 5000;
 
 type Env = Record<string, string | undefined>;
 
+export const ENFORCE_ROUTES_ENV = 'GOOGLE_PROXY_ENFORCE_ROUTES';
+
 export function googleProxyMode(env: Env = process.env): GoogleProxyMode {
   return (env[GOOGLE_PROXY_MODE_ENV] ?? '').trim().toLowerCase() === 'enforce' ? 'enforce' : 'log-only';
+}
+
+/**
+ * Mode for one route. With GOOGLE_PROXY_AUTH=enforce every route enforces, unless
+ * GOOGLE_PROXY_ENFORCE_ROUTES lists some (e.g. "geocode,route"): then only those enforce and the rest
+ * stay log-only. This lets geocode/route be enforced while /api/solar (not covered by native build 168) is not.
+ */
+export function routeMode(route: GoogleRoute, env: Env = process.env): GoogleProxyMode {
+  if (googleProxyMode(env) !== 'enforce') return 'log-only';
+  const listed = (env[ENFORCE_ROUTES_ENV] ?? '').split(',').map((r) => r.trim().toLowerCase()).filter(Boolean);
+  return listed.length === 0 || listed.includes(route) ? 'enforce' : 'log-only';
 }
 
 function limitFrom(env: Env, name: string, fallback: number): number {
@@ -104,7 +117,7 @@ export async function guardGoogleProxy(
   deps: GoogleProxyDeps,
 ): Promise<Response | null> {
   const env = deps.env ?? process.env;
-  const mode = googleProxyMode(env);
+  const mode = routeMode(route, env);
   const now = deps.now?.() ?? Date.now();
   const limiter = deps.limiter ?? sharedLimiter;
   const authorization = request.headers.get('authorization');
@@ -174,53 +187,6 @@ async function googleError(response: Response, label: string, key: string): Prom
 
 function safeMessage(error: unknown, key: string | undefined): string {
   return scrubKey(error instanceof Error ? error.message : 'Internal error', key).slice(0, 200);
-}
-
-// ---------------------------------------------------------------- CORS
-
-/**
- * The native app sends requests through CapacitorHttp (no preflight). If a build ever uses the
- * webview's fetch instead, `Authorization` and the X-Raydar-* headers make the browser preflight, so
- * OPTIONS must answer 204 without auth (in both modes) and the real responses must carry the allow
- * headers. Only the Capacitor webview origins are allowed; the web app is same-origin and needs none.
- * Credentials (cookies) are never allowed: auth is the bearer token.
- */
-export const CORS_ALLOWED_ORIGINS = ['capacitor://localhost', 'https://localhost', 'http://localhost'] as const;
-export const CORS_ALLOWED_HEADERS = 'Authorization, Content-Type, X-Raydar-Build, X-Raydar-Platform';
-export const CORS_ALLOWED_METHODS = 'GET, POST, OPTIONS';
-
-function corsOrigin(request: Request): string | null {
-  const origin = request.headers.get('origin');
-  return origin && (CORS_ALLOWED_ORIGINS as readonly string[]).includes(origin) ? origin : null;
-}
-
-/** OPTIONS handler: always 2xx, never needs auth, never touches Google or the rate limiter. */
-export function proxyPreflight(request: Request): Response {
-  const headers = new Headers({ Vary: 'Origin, Access-Control-Request-Headers', 'Cache-Control': 'private, no-store' });
-  const origin = corsOrigin(request);
-  if (origin) {
-    headers.set('Access-Control-Allow-Origin', origin);
-    headers.set('Access-Control-Allow-Methods', CORS_ALLOWED_METHODS);
-    headers.set('Access-Control-Allow-Headers', CORS_ALLOWED_HEADERS);
-    headers.set('Access-Control-Max-Age', '86400');
-  }
-  return new Response(null, { status: 204, headers });
-}
-
-/** Adds the allow-origin header to a real response (401/429 included) for allowed origins. */
-export function withCors(request: Request, response: Response): Response {
-  response.headers.append('Vary', 'Origin');
-  const origin = corsOrigin(request);
-  if (origin) response.headers.set('Access-Control-Allow-Origin', origin);
-  return response;
-}
-
-/** Route handler = guard + Google call, with CORS headers on every response. */
-export function proxyRoute(
-  handler: (request: Request, deps: GoogleProxyDeps) => Promise<Response>,
-  makeDeps: () => GoogleProxyDeps,
-): (request: Request) => Promise<Response> {
-  return async (request) => withCors(request, await handler(request, makeDeps()));
 }
 
 // ---------------------------------------------------------------- geocode
