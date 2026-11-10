@@ -47,9 +47,38 @@ export function useTeamAreasOverlay(enabled: boolean, userId?: string) {
       return;
     }
     setState({ uid: userId, value: saved?.value, loading: true, error: '' });
-    void readAreas(userId).then(value => { if (active) setState({ uid: userId, value, loading: false, error: '' }); })
-      .catch(e => { if (active) setState({ uid: userId, loading: false, error: e.message }); });
-    return () => { active = false; };
+    let authRetryUsed = false;
+    let unsubAuth: (() => void) | undefined;
+    const finish = (value: Areas) => { if (active) setState({ uid: userId, value, loading: false, error: '' }); };
+    const fail = (e: unknown) => {
+      if (!active) return;
+      const message = e instanceof Error ? e.message : '';
+      setState({
+        uid: userId,
+        loading: false,
+        error: message === 'Sign in to load territories.' || message === 'Account changed.'
+          ? message
+          : 'Territories could not load. Tap Retry areas.',
+      });
+    };
+    const load = () => {
+      void readAreas(userId).then(finish).catch((e: unknown) => {
+        fail(e);
+        // One automatic retry after a signed-out read. A later failure does not subscribe again.
+        if (!active || authRetryUsed) return;
+        if (!(e instanceof Error) || e.message !== 'Sign in to load territories.' || !auth?.onAuthStateChanged) return;
+        authRetryUsed = true;
+        unsubAuth = auth.onAuthStateChanged((user) => {
+          if (!active || user?.uid !== userId) return;
+          unsubAuth?.();
+          unsubAuth = undefined;
+          setState({ uid: userId, value: cache.get(userId)?.value, loading: true, error: '' });
+          void readAreas(userId).then(finish).catch(fail);
+        });
+      });
+    };
+    load();
+    return () => { active = false; unsubAuth?.(); };
   }, [enabled, userId, attempt]);
   const value = enabled && state.uid === userId ? state.value : undefined;
   return { territories: value?.territories || EMPTY_TERRITORIES, members: value?.members || EMPTY_MEMBERS,
