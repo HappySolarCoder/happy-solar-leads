@@ -62,7 +62,16 @@ export function liveStore(db: Firestore): HotLeadStore {
       if (spec.select.length !== expected.select.length || spec.select.some((field, index) => field !== expected.select[index])) {
         throw new Error('Hot lead points select is fixed');
       }
-      const snap = await db.collection('hotLeads').select(...spec.select).limit(spec.limit).get();
+      if (spec.orderBy !== expected.orderBy) {
+        throw new Error('Hot lead points order is fixed');
+      }
+      // Document id order: the same 2,000 pins on every call when the collection outgrows the cap.
+      const snap = await db
+        .collection('hotLeads')
+        .orderBy(FieldPath.documentId())
+        .select(...spec.select)
+        .limit(spec.limit)
+        .get();
       return snap.docs.map((doc) => ({ id: doc.id, data: (doc.data() ?? {}) as Record<string, unknown> }));
     },
   };

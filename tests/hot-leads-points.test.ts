@@ -509,6 +509,48 @@ describe('GET /api/hot-leads?mode=points', () => {
     assertPointsContract(overBody as unknown as Record<string, unknown>);
   });
 
+  it('orders by document id so a truncated result is the same 2,000 pins every time', async () => {
+    const spec = describePointsQuery();
+    assert.equal(spec.orderBy, '__name__');
+    // A store that honors the spec (orders by id, then limits) and returns rows in scrambled storage order.
+    const all = Array.from({ length: 2500 }, (_, index) => row(`ghl_${String(index).padStart(4, '0')}`, pin({ lat: 43 + index / 100000 })));
+    const scrambled = [...all].sort((a, b) => (a.id < b.id ? 1 : -1));
+    const orderedStore = (rows: typeof all): HotLeadStore => ({
+      ...store(rows),
+      async pointsOverview(call) {
+        assert.equal(call.orderBy, '__name__');
+        return [...rows].sort((a, b) => (a.id < b.id ? -1 : 1)).slice(0, call.limit);
+      },
+    });
+    const ids = async (rows: typeof all) => {
+      clearHotLeadsPointsMemo();
+      const result = await handleHotLeadsGet({ user: user('admin'), params: new URLSearchParams('mode=points'), store: orderedStore(rows) });
+      const body = result.body as { points: Array<{ id: string }>; truncated: boolean };
+      assert.equal(body.truncated, true);
+      return body.points.map((point) => point.id);
+    };
+    const first = await ids(all);
+    assert.deepEqual(await ids(scrambled), first);
+    assert.equal(first.length, 2000);
+    assert.equal(first[0], 'ghl_0000');
+    assert.equal(first.at(-1), 'ghl_1999');
+  });
+
+  it('the Firestore query orders by document id (no composite index) before select/limit', async () => {
+    const calls: string[] = [];
+    const chain: Record<string, unknown> = {
+      orderBy(field: unknown) { calls.push(`orderBy:${String(field)}`); return chain; },
+      select(...fields: string[]) { calls.push(`select:${fields.join(',')}`); return chain; },
+      limit(n: number) { calls.push(`limit:${n}`); return chain; },
+      async get() { calls.push('get'); return { docs: [] }; },
+    };
+    const db = { collection: (name: string) => { calls.push(`collection:${name}`); return chain; } } as unknown as Firestore;
+    await liveStore(db).pointsOverview(describePointsQuery());
+    assert.equal(calls[0], 'collection:hotLeads');
+    assert.match(calls[1], /^orderBy:/);
+    assert.deepEqual(calls.slice(2), ['select:lat,lng,hotStatus,testData', 'limit:2001', 'get']);
+  });
+
   it('does not read territories and leaves mode=map and ?id= unchanged', async () => {
     const calls: { lat?: LatQueryCall[]; points?: PointsQueryCall[]; ids?: string[] } = {};
     const territories: string[] = [];

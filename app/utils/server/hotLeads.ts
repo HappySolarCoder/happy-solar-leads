@@ -55,6 +55,8 @@ export type HotLeadRow = { id: string; data: Record<string, unknown> };
 export type PointsQueryCall = {
   limit: number;
   select: readonly string[];
+  /** Document id ascending: deterministic when truncated, and needs no composite index. */
+  orderBy: '__name__';
 };
 
 export type HotLeadPoint = {
@@ -137,6 +139,7 @@ export function describePointsQuery(): PointsQueryCall {
   return {
     limit: HOT_LEADS_POINTS_QUERY_LIMIT,
     select: [...HOT_LEADS_POINTS_FIELDS],
+    orderBy: '__name__',
   };
 }
 
