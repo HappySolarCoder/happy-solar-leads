@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FieldPath, type Query } from 'firebase-admin/firestore';
+import { FieldPath, type Firestore, type Query } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
-import { requireApprovedRequestUser } from '@/app/utils/server/requireApprovedUser';
+import { requireApprovedRequestUser, requireApprovedUser, type RequireApprovedUserDeps } from '@/app/utils/server/requireApprovedUser';
 import {
   applyLatBand,
+  describePointsQuery,
   serveHotLeads,
   type HotLeadResult,
   type HotLeadStore,
   type LatQueryCall,
+  type PointsQueryCall,
   type TerritoryRead,
 } from '@/app/utils/server/hotLeads';
 import { TERRITORY_QUERY_LIMIT } from '@/app/utils/server/territoryGate';
@@ -22,8 +24,14 @@ type LatChain = {
   startAfter(lat: number, id: string): LatChain;
 };
 
-async function loadCallerTerritories(uid: string): Promise<TerritoryRead> {
-  const snap = await adminDb()
+export type HotLeadsRouteDeps = RequireApprovedUserDeps & {
+  store: HotLeadStore;
+  territories?: (uid: string) => Promise<TerritoryRead>;
+  now?: () => number;
+};
+
+async function loadCallerTerritories(db: Firestore, uid: string): Promise<TerritoryRead> {
+  const snap = await db
     .collection('territories')
     .where('userId', '==', uid)
     .limit(TERRITORY_QUERY_LIMIT)
@@ -34,8 +42,7 @@ async function loadCallerTerritories(uid: string): Promise<TerritoryRead> {
   };
 }
 
-function liveStore(): HotLeadStore {
-  const db = adminDb();
+export function liveStore(db: Firestore): HotLeadStore {
   return {
     async latBand(spec: LatQueryCall) {
       const query = applyLatBand(db.collection('hotLeads') as unknown as LatChain, spec, FieldPath.documentId());
@@ -47,11 +54,43 @@ function liveStore(): HotLeadStore {
       if (!doc.exists) return null;
       return { id: doc.id, data: (doc.data() ?? {}) as Record<string, unknown> };
     },
+    async pointsOverview(spec: PointsQueryCall) {
+      const expected = describePointsQuery();
+      if (spec.limit !== expected.limit) {
+        throw new Error('Hot lead points page size is fixed');
+      }
+      if (spec.select.length !== expected.select.length || spec.select.some((field, index) => field !== expected.select[index])) {
+        throw new Error('Hot lead points select is fixed');
+      }
+      if (spec.orderBy !== expected.orderBy) {
+        throw new Error('Hot lead points order is fixed');
+      }
+      // Document id order: the same 2,000 pins on every call when the collection outgrows the cap.
+      const snap = await db
+        .collection('hotLeads')
+        .orderBy(FieldPath.documentId())
+        .select(...spec.select)
+        .limit(spec.limit)
+        .get();
+      return snap.docs.map((doc) => ({ id: doc.id, data: (doc.data() ?? {}) as Record<string, unknown> }));
+    },
   };
 }
 
 function respond(result: HotLeadResult) {
   return NextResponse.json(result.body, { status: result.status, headers: result.headers });
+}
+
+export function createHotLeadsGet(deps: HotLeadsRouteDeps) {
+  return async function GET(request: NextRequest) {
+    const result = await serveHotLeads({
+      authorization: request.headers.get('authorization'),
+      params: request.nextUrl.searchParams,
+      loadApprovedUser: () => requireApprovedUser(request.headers.get('authorization'), deps),
+      deps,
+    });
+    return respond(result);
+  };
 }
 
 export async function GET(request: NextRequest) {
@@ -66,8 +105,8 @@ export async function GET(request: NextRequest) {
         const doc = await db.collection('users').doc(uid).get();
         return { exists: doc.exists, data: doc.data() };
       },
-      store: liveStore(),
-      territories: loadCallerTerritories,
+      store: liveStore(db),
+      territories: (uid) => loadCallerTerritories(db, uid),
     },
   });
   return respond(result);

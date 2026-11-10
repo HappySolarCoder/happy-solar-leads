@@ -68,6 +68,10 @@ describe('hot lead role variant', () => {
               reads += 1;
               return { id, data: { lat: 43.1, lng: -77.6, address: '10 Main Street', state: 'NY', hotStatus: 'active', contacts: [{ name: 'Test Person' }] } };
             },
+            async pointsOverview() {
+              reads += 1;
+              return [{ id: 'ghl_a', data: { lat: 43.1, lng: -77.6, hotStatus: 'active', testData: false } }];
+            },
           };
           const map = await handleHotLeadsGet({
             user: profile(role),
