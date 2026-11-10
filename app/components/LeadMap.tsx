@@ -17,6 +17,7 @@ import { formatTimeEST } from '@/app/utils/timezone';
 import { colorForTerritory, shouldRenderTerritoryOverlay, type TeamAreaMember } from '@/app/utils/teamAreas';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 import { isAppointmentSetOrSoldLead, pastPinPopupLines } from '@/app/utils/historicalTerritoryPins';
+import { authedFetch } from '@/app/utils/authedFetch';
 
 interface UserRoute {
   userId: string;
@@ -1276,7 +1277,7 @@ export default function LeadMap({
 
     // Reverse geocode to get address
     try {
-      const response = await fetch(
+      const response = await authedFetch(
         `/api/geocode?lat=${latlng.lat}&lng=${latlng.lng}&reverse=true`
       );
       const data = await response.json();
@@ -1443,7 +1444,7 @@ export default function LeadMap({
 
       // Run Solar API in background
       if (newLead.lat && newLead.lng) {
-        fetch('/api/solar', {
+        authedFetch('/api/solar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
