@@ -11,7 +11,7 @@
 ```
 
 **Root Cause:**
-The Google Geocoding API (`maps/api/geocode/json`) is **not enabled** for the API key `AIzaSyCVbiweX65EncP7RyF6HZk0Y1_1ZosX_D8`.
+The Google Geocoding API (`maps/api/geocode/json`) is **not enabled** for the API key `[REDACTED - rotate; never commit API keys]`.
 
 ## ✅ Fix Instructions
 
