@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { Timestamp } from 'firebase-admin/firestore';
 import { NextRequest } from 'next/server';
 import { createMobileLeadHandler } from '../app/utils/server/mobileLeads';
-import { resetMobileOwnershipCaches } from '../app/utils/server/mobileOwnership';
+import {
+  TERRITORY_CACHE_MS,
+  invalidateMobileTerritoryCache,
+  loadOwnershipContext,
+  resetMobileOwnershipCaches,
+} from '../app/utils/server/mobileOwnership';
 
 const NOW = Date.now();
 const DAY = 86_400_000;
@@ -169,5 +174,55 @@ describe('/api/mobile-leads ownership fields', () => {
     // Later pages do not re-read events.
     const page2 = await t.call('mode=personal&field=claimedBy&after=abc');
     assert.equal('knockEvents' in page2.body, false);
+  });
+});
+
+describe('territory polygon cache (5 min) and flag cache (60 s)', () => {
+  const terr: Array<[string, Doc]> = [['t1', { userId: 'me', polygon: box(33.45, -112.07), createdAt: ts(NOW) }]];
+  const territoryReads = (log: string[]) => log.filter((line) => line === 'query territories').length;
+  const T = 1_000_000_000_000;
+
+  it('polygons are read once per 5 minutes per instance, not once a minute', async () => {
+    const { log, docs } = setup({ flag: true, territories: terr });
+    const db = fakeDb(docs, log) as never;
+    assert.equal((await loadOwnershipContext(db, T)).mode, 'territory');
+    for (const minutes of [1, 2, 3, 4]) await loadOwnershipContext(db, T + minutes * 60_000);
+    assert.equal(territoryReads(log), 1);
+    assert.equal(TERRITORY_CACHE_MS, 5 * 60_000);
+    await loadOwnershipContext(db, T + TERRITORY_CACHE_MS + 1);
+    assert.equal(territoryReads(log), 2);
+  });
+
+  it('a flag flip still shows up within 60 s while the polygons stay cached', async () => {
+    const { log, docs } = setup({ flag: false, territories: terr });
+    const db = fakeDb(docs, log) as never;
+    assert.equal((await loadOwnershipContext(db, T)).mode, 'legacy');
+    docs.set('adminSettings/fieldOwnership', { mode: 'territory' });
+    assert.equal((await loadOwnershipContext(db, T + 30_000)).mode, 'legacy');
+    assert.equal((await loadOwnershipContext(db, T + 61_000)).mode, 'territory');
+    await loadOwnershipContext(db, T + 130_000);
+    assert.equal(territoryReads(log), 1, 'second look at a flag that stayed on does not re-read polygons');
+  });
+
+  it('a territory write on this instance invalidates the cache immediately', async () => {
+    const { log, docs } = setup({ flag: true, territories: terr });
+    const db = fakeDb(docs, log) as never;
+    const first = await loadOwnershipContext(db, T);
+    docs.set('territories/t1', { userId: 'sawyer', polygon: box(33.45, -112.07), createdAt: ts(NOW) });
+    assert.equal((await loadOwnershipContext(db, T + 61_000)).territories?.[0].userIds[0], first.territories?.[0].userIds[0], 'stale until invalidated');
+    invalidateMobileTerritoryCache();
+    assert.equal((await loadOwnershipContext(db, T + 62_000)).territories?.[0].userIds[0], 'sawyer');
+    assert.equal(territoryReads(log), 2);
+  });
+
+  it('a failed re-read keeps serving the last good polygons instead of dropping to legacy', async () => {
+    const { log, docs } = setup({ flag: true, territories: terr });
+    const real = fakeDb(docs, log);
+    const db = real as never;
+    await loadOwnershipContext(db, T);
+    const failing = { ...real, collection: (name: string) => (name === 'territories' ? { select: () => ({ limit: () => ({ get: async () => { throw new Error('unavailable'); } }) }) } : real.collection(name)) } as never;
+    const ctx = await loadOwnershipContext(failing, T + TERRITORY_CACHE_MS + 5);
+    assert.equal(ctx.mode, 'territory');
+    assert.equal(ctx.territories?.length, 1);
   });
 });

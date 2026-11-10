@@ -13,6 +13,7 @@ import {
   type FieldDispoDeps,
 } from '../app/utils/server/fieldDispo';
 import { resetFieldOwnershipCaches } from '../app/utils/server/fieldOwnership';
+import { ledgerFromFieldEvents } from '../app/utils/fieldKnockEvents';
 import { handleHotLeadClaim, handleHotLeadsGet, type ClaimDb, type ClaimSnap, type ClaimTx } from '../app/utils/server/hotLeads';
 import { TERRITORY_QUERY_LIMIT } from '../app/utils/server/territoryGate';
 import { insideTerritory } from '../app/utils/territoryManager';
@@ -298,7 +299,13 @@ function installTerritories(db: { put: (path: string, data: Record<string, unkno
   for (const territory of scenario.territories(uid)) db.put(`territories/${territory.id}`, territory.data);
 }
 
-async function runDispo(role: string, scenario: Scenario, body: Record<string, unknown>, ownershipFlag?: Record<string, unknown>) {
+async function runDispo(
+  role: string,
+  scenario: Scenario,
+  body: Record<string, unknown>,
+  ownershipFlag?: Record<string, unknown>,
+  extra: { seed?: (db: Mem) => void; times?: number } = {},
+) {
   resetFieldOwnershipCaches();
   const db = new Mem();
   if (ownershipFlag) db.put('adminSettings/fieldOwnership', ownershipFlag);
@@ -307,6 +314,7 @@ async function runDispo(role: string, scenario: Scenario, body: Record<string, u
   db.put('dispositions/not-home', { name: 'Not Home' });
   installTerritories(db, uid, scenario);
   db.put('hotLeads/ghl_opp1', leadFor(uid, scenario));
+  extra.seed?.(db);
   const deps: FieldDispoDeps = {
     verifyIdToken: async () => ({ uid, email: 'rep@company.com' }),
     getUser: async (id) => {
@@ -320,7 +328,10 @@ async function runDispo(role: string, scenario: Scenario, body: Record<string, u
     serverTimestamp: () => SERVER_TS,
     deleteField: () => DELETED,
   };
-  const result = await handleFieldDispo({ authorization: 'Bearer good-token', body, deps });
+  let result = await handleFieldDispo({ authorization: 'Bearer good-token', body, deps });
+  for (let i = 1; i < (extra.times ?? 1); i += 1) {
+    result = await handleFieldDispo({ authorization: 'Bearer good-token', body, deps });
+  }
   return { result, db };
 }
 
@@ -883,11 +894,71 @@ describe('3PL counts-only knocks (territory mode)', () => {
     assert.equal(notes.db.creates.length, 0);
   });
 
-  it('an allowed 3PL knock inside the territory is still applied, not counts-only', async () => {
+  it('an allowed 3PL knock inside the territory is still applied (same response), and also counts once as an event', async () => {
     const scenario = scenarios[0];
-    const { result, db } = await runDispo('closer', scenario, knockBody('closer', scenario), { mode: 'territory' });
+    const body = knockBody('closer', scenario);
+    const { result, db } = await runDispo('closer', scenario, body, { mode: 'territory' });
     assert.equal(result.status, 200);
     assert.equal(result.body.result, 'applied');
-    assert.equal(db.creates.some((row) => row.path.startsWith('fieldKnockEvents/')), false);
+    assert.equal('eventId' in result.body, false, 'response shape is unchanged');
+    assert.equal(db.patches.length, 1, 'the pin is still updated');
+    const events = db.creates.filter((row) => row.path.startsWith('fieldKnockEvents/'));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].path, `fieldKnockEvents/uid-closer_${body.draftId}`);
+    const data = events[0].data as Record<string, unknown>;
+    assert.equal(data.reason, 'in_territory');
+    assert.equal(data.collection, 'hotLeads');
+    assert.equal(data.leadId, 'ghl_opp1');
+    assert.equal(data.uid, 'uid-closer');
+    // The reader turns it into the shared ledger key: leadId|userId|dispositionId|actionAt.
+    const ledger = ledgerFromFieldEvents([{ ...data, actionAt: { toMillis: () => Date.parse(ACTION) } }]);
+    assert.deepEqual(ledger.map((e) => e.key), [`ghl_opp1|uid-closer|not-home|${Date.parse(ACTION)}`]);
+  });
+
+  it('flag OFF (no doc or legacy): an in-territory 3PL knock writes no event, exactly as today', async () => {
+    const scenario = scenarios[0];
+    for (const flag of [undefined, { mode: 'legacy' }] as const) {
+      const { result, db } = await runDispo('closer', scenario, knockBody('closer', scenario), flag);
+      assert.equal(result.body.result, 'applied');
+      assert.equal(db.creates.some((row) => row.path.startsWith('fieldKnockEvents/')), false);
+    }
+  });
+
+  it('a replayed draft never creates a second event; an existing (backfilled) event is skipped, not an error', async () => {
+    const scenario = scenarios[0];
+    const body = knockBody('closer', scenario);
+    const replay = await runDispo('closer', scenario, body, { mode: 'territory' }, { times: 2 });
+    assert.equal(replay.result.status, 200);
+    assert.equal(replay.result.body.duplicate, true);
+    assert.equal(replay.db.creates.filter((row) => row.path.startsWith('fieldKnockEvents/')).length, 1);
+    const seeded = await runDispo('closer', scenario, body, { mode: 'territory' }, {
+      seed: (db) => db.put(`fieldKnockEvents/uid-closer_${body.draftId}`, { uid: 'uid-closer', leadId: 'ghl_opp1' }),
+    });
+    assert.equal(seeded.result.status, 200);
+    assert.equal(seeded.result.body.result, 'applied');
+    assert.equal(seeded.db.creates.some((row) => row.path.startsWith('fieldKnockEvents/')), false);
+  });
+
+  it('a draft is either applied or counted_only, so one draft is one event id', async () => {
+    const inside = scenarios.find((item) => item.name === 'inside') as Scenario;
+    const outside = scenarios.find((item) => item.name === 'outside') as Scenario;
+    for (const scenario of [inside, outside]) {
+      const body = knockBody('closer', scenario);
+      const { db } = await runDispo('closer', scenario, body, { mode: 'territory' });
+      const events = db.creates.filter((row) => row.path.startsWith('fieldKnockEvents/'));
+      assert.deepEqual(events.map((row) => row.path), [`fieldKnockEvents/uid-closer_${body.draftId}`]);
+    }
+  });
+
+  it('Shade DQ and Already Has Solar knocks are stored but never counted (same readers as counts-only)', async () => {
+    const scenario = scenarios[0];
+    for (const status of ['shade-dq', 'already-has-solar']) {
+      const body = knockBody('closer', scenario, { status, disposition: status });
+      const { db } = await runDispo('closer', scenario, body, { mode: 'territory' });
+      const event = db.creates.find((row) => row.path.startsWith('fieldKnockEvents/'));
+      assert.ok(event, `${status} is stored for audit`);
+      const row = { ...(event.data as Record<string, unknown>), actionAt: { toMillis: () => Date.parse(ACTION) } };
+      assert.deepEqual(ledgerFromFieldEvents([row]), []);
+    }
   });
 });

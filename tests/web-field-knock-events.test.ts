@@ -14,6 +14,7 @@ import { ledgerFromFieldEvents, knockLedgerKey } from '../app/utils/fieldKnockEv
 import {
   FIELD_EVENTS_STAFF_LIMIT,
   handleFieldKnockEventsGet,
+  staffEventsQuery,
 } from '../app/utils/server/fieldKnockEventsRead.ts';
 import { EXP_GO_BACK, ownerDisplayColor } from '../app/utils/effectiveOwner.ts';
 
@@ -128,6 +129,51 @@ describe('/api/field-knock-events handler', () => {
     const { calls } = await run('admin', [], '0');
     assert.equal(Number(calls[0].split(':')[1]), NOW.getTime() - 400 * 86_400_000);
     assert.equal((await run('admin', [], 'abc')).result.status, 400);
+  });
+
+  it('staff query is newest-first, so the cap drops the OLDEST events', async () => {
+    // Fake Firestore: honors where/orderBy/limit over 3,500 events.
+    const all = Array.from({ length: 3500 }, (_, i) => ev('u1', `l${i}`, T0 + i * 1000, 'not-home'));
+    const log: string[] = [];
+    const run2 = (sinceMs: number, limit: number) => {
+      let dir: 'asc' | 'desc' = 'asc';
+      let cap = Infinity;
+      const chain = {
+        orderBy: (f: string, d: 'asc' | 'desc') => { log.push(`orderBy:${f}:${d}`); dir = d; return chain; },
+        select: () => chain,
+        limit: (n: number) => { cap = n; return chain; },
+        get: () => {
+          const rows = all.filter((r) => (r.actionAt as { toMillis(): number }).toMillis() >= sinceMs);
+          rows.sort((a, b) => ((a.actionAt as { toMillis(): number }).toMillis() - (b.actionAt as { toMillis(): number }).toMillis()) * (dir === 'desc' ? -1 : 1));
+          return rows.slice(0, cap);
+        },
+      };
+      const root = { where: (f: string, op: string) => { log.push(`where:${f}:${op}`); return chain; } };
+      return staffEventsQuery<{ get(): Array<Record<string, unknown>> }>(root, stamp(sinceMs), ['uid'], limit);
+    };
+    const result = await handleFieldKnockEventsGet({
+      authorization: 'Bearer t',
+      sinceParam: String(T0),
+      deps: {
+        verifyIdToken: async () => ({ uid: 'admin1' }),
+        getUser: async () => user('admin'),
+        now: () => NOW.getTime(),
+        loadSince: async (since, limit) => run2(since, limit).get(),
+        loadOwn: async () => [],
+      },
+    });
+    const events = result.body.events as Array<{ leadId: string; at: number }>;
+    assert.deepEqual(log, ['where:actionAt:>=', 'orderBy:actionAt:desc']);
+    assert.equal(events.length, FIELD_EVENTS_STAFF_LIMIT);
+    assert.equal(result.body.truncated, true);
+    assert.equal(events[0].leadId, 'l3499', 'the newest event is kept');
+    assert.equal(events[events.length - 1].leadId, 'l500', 'the 500 oldest were dropped');
+    assert.ok(events.every((e, i) => i === 0 || events[i - 1].at >= e.at), 'response is newest-first');
+  });
+
+  it('under the cap there is no truncated flag', async () => {
+    const { result } = await run('admin', rows);
+    assert.equal('truncated' in result.body, false);
   });
 
   it('401 without a token', async () => {
