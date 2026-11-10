@@ -15,6 +15,7 @@ import {
   FIELD_EVENTS_STAFF_LIMIT,
   handleFieldKnockEventsGet,
   staffEventsQuery,
+  ownEventsQuery,
 } from '../app/utils/server/fieldKnockEventsRead.ts';
 import { EXP_GO_BACK, ownerDisplayColor } from '../app/utils/effectiveOwner.ts';
 
@@ -169,6 +170,51 @@ describe('/api/field-knock-events handler', () => {
     assert.equal(events[0].leadId, 'l3499', 'the newest event is kept');
     assert.equal(events[events.length - 1].leadId, 'l500', 'the 500 oldest were dropped');
     assert.ok(events.every((e, i) => i === 0 || events[i - 1].at >= e.at), 'response is newest-first');
+  });
+
+  it('a rep own query is where uid == caller + since, newest first; the cap drops the OLDEST', async () => {
+    const mine = Array.from({ length: 700 }, (_, i) => ev('u1', `l${i}`, T0 + i * 1000, 'not-home'));
+    const others = Array.from({ length: 50 }, (_, i) => ev('u2', `x${i}`, T0 + 10_000_000 + i, 'not-home'));
+    const all = [...mine, ...others];
+    const log: string[] = [];
+    const ms = (r: Record<string, unknown>) => (r.actionAt as { toMillis(): number }).toMillis();
+    const loadOwn = async (uid: string, limit: number, sinceMs: number) => {
+      let filters: Array<(r: Record<string, unknown>) => boolean> = [];
+      let dir: 'asc' | 'desc' = 'asc';
+      let cap = Infinity;
+      const chain = {
+        where: (f: string, op: string, v: unknown) => {
+          log.push(`where:${f}:${op}`);
+          filters = [...filters, f === 'uid' ? (r) => r.uid === v : (r) => ms(r) >= (v as { toMillis(): number }).toMillis()];
+          return chain;
+        },
+        orderBy: (f: string, d: 'asc' | 'desc') => { log.push(`orderBy:${f}:${d}`); dir = d; return chain; },
+        select: () => chain,
+        limit: (n: number) => { cap = n; return chain; },
+        get: () => all.filter((r) => filters.every((f) => f(r))).sort((a, b) => (ms(a) - ms(b)) * (dir === 'desc' ? -1 : 1)).slice(0, cap),
+      };
+      return ownEventsQuery<{ get(): Array<Record<string, unknown>> }>(chain as never, uid, stamp(sinceMs), ['uid'], limit).get();
+    };
+    const result = await handleFieldKnockEventsGet({
+      authorization: 'Bearer t',
+      sinceParam: String(T0),
+      deps: {
+        verifyIdToken: async () => ({ uid: 'u1' }),
+        getUser: async () => user('setter'),
+        now: () => NOW.getTime(),
+        loadSince: async () => [],
+        loadOwn,
+      },
+    });
+    const events = result.body.events as Array<{ leadId: string; uid: string; at: number }>;
+    assert.deepEqual(log, ['where:uid:==', 'where:actionAt:>=', 'orderBy:actionAt:desc']);
+    assert.equal(result.body.scope, 'own');
+    assert.equal(result.body.truncated, true);
+    assert.equal(events.length, 600);
+    assert.ok(events.every((e) => e.uid === 'u1'));
+    assert.equal(events[0].leadId, 'l699', 'newest kept');
+    assert.equal(events.at(-1)?.leadId, 'l100', 'the 100 oldest were dropped');
+    assert.ok(events.every((e, i) => i === 0 || events[i - 1].at >= e.at), 'response stays newest-first');
   });
 
   it('under the cap there is no truncated flag', async () => {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FieldPath, Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
-import { handleFieldKnockEventsGet, staffEventsQuery } from '@/app/utils/server/fieldKnockEventsRead';
+import { handleFieldKnockEventsGet, ownEventsQuery, staffEventsQuery } from '@/app/utils/server/fieldKnockEventsRead';
 
 export const runtime = 'nodejs';
 
@@ -28,17 +28,22 @@ export async function GET(request: NextRequest) {
           ).get();
           return snap.docs.map((d) => d.data());
         },
-        loadOwn: async (uid, limit) => {
+        loadOwn: async (uid, limit, sinceMs) => {
           if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) return [];
-          const snap = await db
-            .collection('fieldKnockEvents')
-            .orderBy(FieldPath.documentId())
-            .startAt(`${uid}_`)
-            .endAt(`${uid}_\uf8ff`)
-            .select(...SELECT)
-            .limit(limit)
-            .get();
-          return snap.docs.map((d) => d.data());
+          try {
+            const snap = await ownEventsQuery<FirebaseFirestore.Query>(
+              db.collection('fieldKnockEvents') as never,
+              uid,
+              Timestamp.fromMillis(sinceMs),
+              SELECT,
+              limit,
+            ).get();
+            return snap.docs.map((d) => d.data());
+          } catch (error) {
+            // Fail open (e.g. the composite index is not deployed yet): the rep's counters fall back to history only.
+            console.error('[field-knock-events] own read failed:', error instanceof Error ? error.message.slice(0, 160) : '');
+            return [];
+          }
         },
       },
     });
