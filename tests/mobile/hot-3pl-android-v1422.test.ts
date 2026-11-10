@@ -40,6 +40,7 @@ import {
   suppressLeadCall,
   type HotLeadPin,
 } from "../../app/hotLeads/model";
+import release from "../../app/mobile/_lib/release.json";
 import { MOBILE_BUILD_LABEL } from "../../app/mobile/_lib/startupDiagnostics";
 import { MobileDataContext } from "../../app/mobile/_components/MobileDataProvider";
 import { fieldPinArtwork, HOT_RING_COLOR, withLegacyHotPin } from "../../app/utils/fieldPin";
@@ -377,4 +378,8 @@ test("knock count and the save-payload fixture stay byte-identical", () => {
   assert.equal(knock, "a00be3335708b5b54605b08f11bd37fb9fa5ada20e3c0cb428d57b58bf1dd226");
   const fixture = createHash("sha256").update(readFileSync(path.join(root, "tests/mobile/fixtures/save-payloads-05037a3.json"))).digest("hex");
   assert.equal(fixture, "5edf564aae7aa546fc2b8a479ea4ed2c63453ebf39679c546ab050734b0aaa51");
+  assert.equal(release.version, "14.22");
+  assert.equal(release.build, 165);
+  assert.match(read("android/app/build.gradle"), /versionCode 165\b/);
+  assert.match(read("ios/App/App.xcodeproj/project.pbxproj"), /MARKETING_VERSION = 14\.22;/);
 });
