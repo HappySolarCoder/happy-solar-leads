@@ -6,6 +6,7 @@ import {
   TrendingUp, DoorClosed, Calendar, DollarSign, Target,
   Users, Clock, CheckCircle, ArrowLeft, BarChart3
 } from 'lucide-react';
+import { loadFieldKnockEventLedger } from '@/app/utils/fieldKnockEventsClient';
 import { getLeadsAsync, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { dashboardTodayKnocks } from '@/app/utils/webKnockCounts';
@@ -37,6 +38,7 @@ export default function DashboardPage() {
       const allUsers = await getUsersAsync();
       const allDispositions = await getDispositionsAsync();
       
+      await loadFieldKnockEventLedger();
       setLeads(allLeads);
       setUsers(allUsers);
       setDispositions(allDispositions);

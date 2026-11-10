@@ -252,3 +252,23 @@ export const STAFF_POPUP_EXEMPT = true;
 export function popupExemptFor(role: unknown): boolean {
   return STAFF_POPUP_EXEMPT && (role === 'admin' || role === 'manager');
 }
+
+/** System-only pin type for a Go Back older than 90 days. Derived, never stored, never selectable. */
+export const EXP_GO_BACK = { id: 'exp-go-back', label: 'Exp. Go-Back', color: '#a16207', icon: '\u21ba' } as const;
+
+/** Pin color for an owned pin: the viewer's own color when they are an owner, else the first owner's. */
+export function ownerDisplayColor(
+  ownerIds: readonly string[],
+  viewerId: string | undefined,
+  colorOf: (uid: string) => string | undefined,
+): string | undefined {
+  if (viewerId && ownerIds.includes(viewerId)) {
+    const mine = colorOf(viewerId);
+    if (mine) return mine;
+  }
+  for (const id of ownerIds) {
+    const color = colorOf(id);
+    if (color) return color;
+  }
+  return undefined;
+}

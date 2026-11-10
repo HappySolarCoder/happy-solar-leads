@@ -17,6 +17,12 @@ import { formatTimeEST } from '@/app/utils/timezone';
 import { colorForTerritory, shouldRenderTerritoryOverlay, type TeamAreaMember } from '@/app/utils/teamAreas';
 import { isProximityRequired, PROXIMITY_MAX_DISTANCE_METERS } from '@/app/utils/proximityEnforcement';
 import { isAppointmentSetOrSoldLead, pastPinPopupLines } from '@/app/utils/historicalTerritoryPins';
+import { EXP_GO_BACK, effectiveOwner, isExpiredGoBack, ownerDisplayColor } from '@/app/utils/effectiveOwner';
+import { useFieldOwnership } from '@/app/utils/useFieldOwnership';
+import { confirmForeignTerritory } from '@/app/utils/confirmForeignTerritory';
+
+/** Display-only ownership for one pin. Present only when fieldOwnership mode is 'territory'. */
+type PinDisplay = { expGoBack: boolean; ownerColor?: string; ownerNames?: string[] };
 
 interface UserRoute {
   userId: string;
@@ -53,10 +59,13 @@ interface LeadMapProps {
   onToggleTeamAreas?: (next: boolean) => void;
 }
 
+// Stable default: a fresh `[]` per render would rebuild every pin (users is a marker-effect dependency).
+const NO_USERS: User[] = [];
+
 export default function LeadMap({ 
   leads: leadsProp, 
   currentUser,
-  users = [],
+  users = NO_USERS,
   onLeadClick, 
   selectedLeadId,
   routeWaypoints,
@@ -80,6 +89,7 @@ export default function LeadMap({
   teamMembers = [],
   onToggleTeamAreas,
 }: LeadMapProps) {
+  const fieldOwnership = useFieldOwnership();
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
@@ -653,6 +663,18 @@ export default function LeadMap({
       const disposition = dispositions.find(d => d.id === lead.status)
         || dispositions.find(d => String(d.name || '').toLowerCase() === latestHistoryDisposition);
 
+      let display: PinDisplay | undefined;
+      if (fieldOwnership.mode === 'territory' && !isHistorical) {
+        const nowMs = Date.now();
+        const owner = effectiveOwner(lead as unknown as Record<string, unknown>, fieldOwnership.territories, nowMs);
+        const colorOf = (id: string) => users.find((u) => u.id === id)?.color;
+        display = {
+          expGoBack: isExpiredGoBack(lead as unknown as Record<string, unknown>, nowMs),
+          ownerColor: ownerDisplayColor(owner.ownerIds, currentUser?.id, colorOf),
+          ownerNames: owner.ownerIds.map((id) => users.find((u) => u.id === id)?.name || '').filter(Boolean),
+        };
+      }
+
       const icon = createCustomIcon(
         lead,
         users,
@@ -666,7 +688,8 @@ export default function LeadMap({
         isSelectedForAssignment,
         disposition,
         currentZoom,
-        lead.tags // Pass tags for special styling
+        lead.tags, // Pass tags for special styling
+        display
       );
 
       const marker = L.marker([lead.lat!, lead.lng!], {
@@ -687,7 +710,7 @@ export default function LeadMap({
         });
       } else {
         // Prevent Leaflet from auto-panning the map to keep popups in view (this causes "snap back" / lock feeling on mobile).
-        marker.bindPopup(createPopupContent(lead), { maxWidth: 300, autoPan: false });
+        marker.bindPopup(createPopupContent(lead, display), { maxWidth: 300, autoPan: false });
         marker.on('click', () => {
           if (persistentPopupRef.current?.isOpen()) persistentPopupRef.current.close();
           onLeadClick(lead);
@@ -736,7 +759,7 @@ export default function LeadMap({
     // Performance: Log completion time
     const duration = Date.now() - startTime;
     console.log(`[LeadMap] Rendered ${visibleLeads.length} markers in ${duration}ms (zoom tier: ${zoomTier})`);
-  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey, userPosition]);
+  }, [leads, selectedLeadId, currentUser, onLeadClick, routeWaypoints, isClient, dispositions, zoomTier, viewportKey, userPosition, fieldOwnership, users, viewMode]);
   // Note: Using zoomTier instead of direct mapZoom - only re-renders when crossing zoom thresholds
   // This prevents constant re-renders on every zoom event (just 4 tiers: <12, 12-14, 14-16, >16)
 
@@ -1339,6 +1362,9 @@ export default function LeadMap({
   // Handle saving new lead from dropped pin
   const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
     try {
+      // Foreign-territory warning, every time a rep places a pin (flag-gated).
+      const place = { lat: leadData.lat ?? dropPinLocation?.lat, lng: leadData.lng ?? dropPinLocation?.lng };
+      if (!(await confirmForeignTerritory(place, currentUser))) return;
       if (isProximityRequired(currentUser) && navigator.geolocation) {
         try {
           const position = await new Promise<GeolocationPosition>((resolve, reject) => {
@@ -1770,7 +1796,8 @@ function createCustomIcon(
   isSelectedForAssignment: boolean = false,
   disposition?: Disposition,
   zoom: number = 12,
-  tags?: string[]
+  tags?: string[],
+  display?: PinDisplay
 ): L.DivIcon {
   // Other reps' past Appointment Set / Sold pins. Own pins never take this path.
   if (lead.historicalTerritoryPin) {
@@ -1884,12 +1911,15 @@ function createCustomIcon(
       const assignedUser = lead.assignedTo ? users.find(u => u.id === lead.assignedTo) : null;
       const claimedUser = lead.claimedBy ? users.find(u => u.id === lead.claimedBy) : null;
       territoryColor = assignedUser?.color || claimedUser?.color;
+      // Territory mode: color by the effective owner(s), not the stale stamp.
+      if (display?.ownerColor) territoryColor = display.ownerColor;
     }
     
     // Solar data leads (or no tags): colorful pins as before.
     // House for Sale keeps its sky pin so it stays distinct from Go Back / solar colors.
     const preferDispositionColor = disposition?.id === 'house-for-sale';
     color = territoryColor
+      || (display?.expGoBack ? EXP_GO_BACK.color : undefined)
       || (preferDispositionColor ? disposition?.color : undefined)
       || (solarCategory ? solarColors[solarCategory] : undefined)
       || disposition?.color 
@@ -1906,7 +1936,9 @@ function createCustomIcon(
   const opacity = isClaimed && !canClaim ? 0.7 : 1;
   
   // Use disposition icon if available, otherwise fallback to default
-  const icon = disposition 
+  const icon = display?.expGoBack
+    ? EXP_GO_BACK.icon
+    : disposition 
     ? (ICON_TO_UNICODE[disposition.icon] || '●')
     : '●';
   
@@ -1945,7 +1977,7 @@ function pastPinDetailHtml(lead: Lead, alreadyShown?: string): string {
     .join('');
 }
 
-function createPopupContent(lead: Lead): string {
+function createPopupContent(lead: Lead, display?: PinDisplay): string {
   if (lead.historicalTerritoryPin) {
     const statusLabel = STATUS_LABELS[lead.status] || lead.disposition || lead.status || 'Past pin';
     return `
@@ -1981,8 +2013,12 @@ function createPopupContent(lead: Lead): string {
     `;
   }
 
-  const statusColor = STATUS_COLORS[lead.status] || '#6b7280';
-  const statusLabel = STATUS_LABELS[lead.status] || lead.disposition || lead.status;
+  const expGoBack = display?.expGoBack === true;
+  const statusColor = expGoBack ? EXP_GO_BACK.color : STATUS_COLORS[lead.status] || '#6b7280';
+  const statusLabel = expGoBack ? EXP_GO_BACK.label : STATUS_LABELS[lead.status] || lead.disposition || lead.status;
+  const ownerLine = display?.ownerNames?.length
+    ? `<p style="margin:8px 0 0 0;font-size:12px;color:#4b5563;">Owner${display.ownerNames.length > 1 ? 's' : ''}: ${escapePopupText(display.ownerNames.join(', '))}</p>`
+    : '';
   
   return `
     <div data-pin-id="${escapePopupText(lead.id)}" style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
@@ -1991,6 +2027,7 @@ function createPopupContent(lead: Lead): string {
       <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${escapePopupText(lead.city)}, ${escapePopupText(lead.state)} ${escapePopupText(lead.zip)}</p>
       <div style="display:inline-block;padding:4px 10px;background:${statusColor}20;color:${statusColor};border-radius:9999px;font-size:12px;font-weight:500;">${escapePopupText(statusLabel)}</div>
       ${pastPinDetailHtml(lead, statusLabel)}
+      ${ownerLine}
       ${lead.phone ? `<p style="margin:8px 0 0 0;font-size:13px;color:#4b5563;">📞 ${escapePopupText(lead.phone)}</p>` : ''}
     </div>
   `;

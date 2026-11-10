@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { TrendingUp, Target, DollarSign, Award, ArrowLeft, Users, Calendar, Trophy, BarChart3 } from 'lucide-react';
+import { loadFieldKnockEventLedger } from '@/app/utils/fieldKnockEventsClient';
 import { getLeads, getLeadsAsync, getUsers, getUsersAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { getCurrentAuthUser } from '@/app/utils/auth';
@@ -116,6 +117,7 @@ export default function DataDashboard() {
       }
       if (loadedUsers.length === 0) loadedUsers = [user];
       const loadedDispositions = await getDispositionsAsync();
+      await loadFieldKnockEventLedger(user.role === 'admin' ? 0 : undefined);
       setLeads(loadedLeads);
       setUsers(loadedUsers);
       setDispositions(loadedDispositions);

@@ -1,5 +1,6 @@
 'use client';
 
+import { confirmForeignTerritory } from '@/app/utils/confirmForeignTerritory';
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { Lead, User, ObjectionType, LeadDispositionHistoryEntry } from '@/app/types';
@@ -185,6 +186,8 @@ export default function LeadDetail({ lead, currentUser, onClose, onUpdate }: Lea
 
   const handleStatusChange = async (newStatus: string) => {
     if (!currentUser) return;
+    // Foreign-territory warning, every time (flag-gated; skipped for owners/assignees and exempt staff).
+    if (!(await confirmForeignTerritory(lead, currentUser))) return;
     
     // Check for special behavior dispositions
     const disposition = dispositions.find(d => d.id === newStatus);

@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/app/utils/firebase';
 import { getCurrentAuthUser } from '@/app/utils/auth';
+import { loadFieldKnockEventLedger } from '@/app/utils/fieldKnockEventsClient';
 import { getLeadsAsync } from '@/app/utils/storage';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import { Disposition } from '@/app/types/disposition';
@@ -60,6 +61,7 @@ export default function TeamMapPage() {
         getLeadsAsync(),
         getDispositionsAsync(),
       ]);
+      await loadFieldKnockEventLedger();
       setLeads(loadedLeads);
       setDispositions(loadedDispositions);
     }
