@@ -1,4 +1,5 @@
 import type { Lead, LeadDispositionHistoryEntry } from '@/app/types';
+import { anyTerritoryOwnership } from '@/app/mobile/_lib/ownerCounts';
 import { DEFAULT_DISPOSITIONS, type Disposition } from '@/app/types/disposition';
 
 const aliases: Record<string, string> = { STREET:'ST', ROAD:'RD', AVENUE:'AVE', DRIVE:'DR', LANE:'LN', COURT:'CT', PLACE:'PL', BOULEVARD:'BLVD', CIRCLE:'CIR', TERRACE:'TER', PARKWAY:'PKWY', HIGHWAY:'HWY', NORTH:'N', SOUTH:'S', EAST:'E', WEST:'W' };
@@ -39,6 +40,7 @@ export function latestKnockDisplay(lead: Lead, dispositions: Disposition[] = DEF
  * Arrival order is not event order. Equal versions prefer a full document. */
 const OWNERSHIP_KEEP = ["ownedByMe", "owners", "ownerSource", "expiredGoBack", "inOtherUsersTerritory"] as const;
 function keepOwnershipFields(winner: Lead, other: Lead): Lead {
+  if (!anyTerritoryOwnership()) return winner;
   let next: Lead | null = null;
   for (const key of OWNERSHIP_KEEP) {
     if (winner[key] === undefined && other[key] !== undefined) {

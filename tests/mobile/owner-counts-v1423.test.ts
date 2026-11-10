@@ -27,6 +27,7 @@ import {
   countedToastText,
   EXP_GO_BACK,
   KNOCK_EVENT_CAP,
+  noteMobileLeadsMeta,
   ownershipBadge,
   parseMobileKnockEvents,
   pinIsMine,
@@ -406,10 +407,10 @@ test("the counted toast names the owner, joins extras, and shows once per draft"
   assert.equal(countedToastText(null, []), "Counted.");
   assert.equal(countedToastText({ uid: "owner-1", name: null }, []), "Counted. This pin belongs to another rep.");
   assert.equal(countedToastText({ uid: "owner-1", name: "Ada" }, []).includes("owner-1"), false);
-  assert.equal(takeCountedToast("draft-1", false), true);
-  assert.equal(takeCountedToast("draft-1", false), false);
-  assert.equal(takeCountedToast("draft-2", true), true);
-  assert.equal(takeCountedToast("draft-2", false), false);
+  assert.equal(takeCountedToast("draft-1"), true);
+  assert.equal(takeCountedToast("draft-1"), false);
+  assert.equal(takeCountedToast("draft-2"), true);
+  assert.equal(takeCountedToast("draft-2"), false);
   assert.match(read("app/mobile/_lib/ownerCounts.ts"), /raydar:knock-counted/);
   assert.match(read("app/field/useFieldData.ts"), /KNOCK_COUNTED_EVENT/);
   assert.match(read("app/mobile/knocking/page.tsx"), /KNOCK_COUNTED_EVENT/);
@@ -433,6 +434,8 @@ test("ownedByMe false badges the owner, true is mine, and merge keeps the fields
     dispositionedAt: new Date(atMs - 1000),
   });
   const newer = lead({ dispositionedAt: new Date(atMs) });
+  resetOwnerCountsForTests();
+  noteMobileLeadsMeta("rep", { ownership: "territory", popupExempt: false });
   const [merged] = mergeLeadSnapshots([older], [newer]);
   assert.equal(merged.ownedByMe, false);
   assert.equal(merged.owners?.[0]?.name, "Ada");
@@ -480,7 +483,7 @@ test("the territory warning follows the server flags and keeps the original tap"
   const save = detail.indexOf("await recordField('knock', { status: newStatus }");
   assert.equal(tap >= 0 && tap < warn && warn < save, true);
   assert.match(detail, /!allowTerritory\(knockedAt\)\) return/);
-  assert.match(read("app/components/LeadMap.tsx"), /territoryWarningCancelled\(\)/);
+  assert.match(read("app/field/territoryCheck.ts"), /territoryWarningCancelled\(\)/);
   assert.match(read("app/components/AddLeadModal.tsx"), /isTerritoryWarningCancelled/);
 });
 
@@ -526,18 +529,18 @@ test("resume requeues only owned_by_other, once an hour, per account, under the 
   assert.equal(send.indexOf("settleCountedOnly") < send.indexOf("acknowledgeMobileLead(actor"), true);
 });
 
-test("release 14.23 build 167 is wired and knockCount.ts is unchanged", () => {
+test("release 14.24 build 168 is wired and knockCount.ts is unchanged", () => {
   const hash = createHash("sha256").update(readFileSync(path.join(root, "app/utils/knockCount.ts"))).digest("hex");
   assert.equal(hash, "a00be3335708b5b54605b08f11bd37fb9fa5ada20e3c0cb428d57b58bf1dd226");
-  assert.equal(release.version, "14.23");
-  assert.equal(release.build, 167);
+  assert.equal(release.version, "14.24");
+  assert.equal(release.build, 168);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.23", "14.23"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["167", "167"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.24", "14.24"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["168", "168"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.23"/);
-  assert.match(gradle, /versionCode 167\b/);
-  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "167"/);
+  assert.match(gradle, /versionName "14\.24"/);
+  assert.match(gradle, /versionCode 168\b/);
+  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "168"/);
   for (const file of [
     "app/mobile/_lib/ownerCounts.ts",
     "app/field/useFieldData.ts",
