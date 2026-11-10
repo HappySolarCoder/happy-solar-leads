@@ -48,6 +48,8 @@ const NOTES_TEXT_MAX = 100_000;
 export const HISTORY_CAP = 500;
 /** Server-only collection of counts-only knocks. Rules deny every client. */
 export const FIELD_KNOCK_EVENTS = 'fieldKnockEvents';
+/** Owners named in a counted_only body. `owner` is the first, `owners` the list. */
+const COUNTED_ONLY_OWNERS_MAX = 5;
 const RECEIPT_RESPONSE_MAX_BYTES = 2048;
 const ACTION_PAST_MS = 30 * 24 * 60 * 60 * 1000;
 const ACTION_FUTURE_MS = 10 * 60 * 1000;
@@ -645,7 +647,9 @@ async function territoryOwnedByDirectRead(
   if (typeof territoryId !== 'string' || !validLeadId(territoryId)) return false;
   const snap = await tx.get(db.collection('territories').doc(territoryId));
   if (!snap.exists) return false;
-  return (snap.data() ?? {}).userId === uid;
+  const data = snap.data() ?? {};
+  if (data.userId === uid) return true;
+  return Array.isArray(data.userIds) && data.userIds.includes(uid);
 }
 
 function insideCallerPolygon(docs: DispoSnap[], lat: number, lng: number, uid: string): boolean {
@@ -950,7 +954,7 @@ async function applyDraft(input: {
       if (refusal) {
         // Territory mode never drops a knock: it is counted, the pin is untouched.
         if (mode === 'territory' && input.draft.kind === 'knock') {
-          return applyCountedOnly(input, input.draft, receiptRef, refusal);
+          return await applyCountedOnly(input, input.draft, receiptRef, refusal);
         }
         return { status: 403, body: { ok: false, error: 'forbidden', reasonCode: refusal.reasonCode } };
       }
@@ -966,7 +970,10 @@ async function applyDraft(input: {
 type OwnershipRefusal = {
   reasonCode: 'owned_by_other' | 'out_of_territory';
   ownerId: string | null;
+  ownerIds?: string[];
   ownerSource: EffectiveOwner['source'];
+  /** 3PL only: why the territory gate blocked the knock. */
+  dispoBlock?: string;
 };
 
 /**
@@ -991,8 +998,10 @@ async function territoryRefusal(
     setterIsActive = await goBackSetterActive(input.db, input.tx, setter);
   }
   const owner = effectiveOwner(lead, territories, now, { setterActive: () => setterIsActive });
-  if (owner.ownerId === input.uid) return null;
-  if (owner.ownerId) return { reasonCode: 'owned_by_other', ownerId: owner.ownerId, ownerSource: owner.source };
+  if (owner.ownerIds.includes(input.uid)) return null;
+  if (owner.ownerId) {
+    return { reasonCode: 'owned_by_other', ownerId: owner.ownerId, ownerIds: owner.ownerIds, ownerSource: owner.source };
+  }
   return { reasonCode: 'out_of_territory', ownerId: null, ownerSource: 'none' };
 }
 
@@ -1000,14 +1009,32 @@ async function territoryRefusal(
  * Counts-only knock: one create-only event doc plus the receipt, same
  * transaction, no write to the lead. The event id equals the receipt id
  * (uid_draftId), so a replay or a backfill cannot create a second event.
- * Response is 200 with no lead, like stale_history_only.
+ * Response is 200 with no `lead`, like stale_history_only:
+ *   { ok, draftId, result:'counted_only', duplicate, eventId, actionAt,
+ *     owner: {uid,name}|null, owners: [{uid,name}] }
+ * `owner` is the FIRST owner (newest-assigned territory first; the Go Back
+ * setter or the stamped rep for those sources); `owners` lists up to 5 for
+ * dual owners. Both are null/[] when nobody owns the pin (out_of_territory).
+ * The same shape comes back on every replay, with duplicate:true.
  */
-function applyCountedOnly(
+async function applyCountedOnly(
   input: { tx: DispoTransaction; db: DispoDb; deps: FieldDispoDeps; uid: string },
   draft: ParsedKnock,
   receiptRef: DispoDocRef,
   refusal: OwnershipRefusal,
-): TxOutcome {
+): Promise<TxOutcome> {
+  // Display names for the mobile toast. Reads come before any write in this transaction.
+  const ownerIds = refusal.ownerIds ?? (refusal.ownerId ? [refusal.ownerId] : []);
+  const owners: Array<{ uid: string; name: string | null }> = [];
+  for (const ownerUid of ownerIds.slice(0, COUNTED_ONLY_OWNERS_MAX)) {
+    let name: string | null = null;
+    if (validLeadId(ownerUid)) {
+      const snap = await input.tx.get(input.db.collection('users').doc(ownerUid));
+      const value = snap.exists ? (snap.data() ?? {}).name : null;
+      name = typeof value === 'string' && value.trim() ? value.trim().slice(0, 80) : null;
+    }
+    owners.push({ uid: ownerUid, name });
+  }
   const eventRef = input.db.collection(FIELD_KNOCK_EVENTS).doc(`${input.uid}_${draft.draftId}`);
   input.tx.create(eventRef, {
     uid: input.uid,
@@ -1022,10 +1049,17 @@ function applyCountedOnly(
     createdAt: input.deps.serverTimestamp(),
     reason: refusal.reasonCode,
     effectiveOwnerId: refusal.ownerId,
+    effectiveOwnerIds: refusal.ownerIds ?? (refusal.ownerId ? [refusal.ownerId] : []),
     ownerSource: refusal.ownerSource,
     source: 'live',
+    ...(refusal.dispoBlock ? { dispoBlock: refusal.dispoBlock } : {}),
   });
-  const body = receiptBody(draft, 'counted_only', {});
+  const body = receiptBody(draft, 'counted_only', {
+    eventId: eventRef.id,
+    actionAt: new Date(draft.actionAtMs).toISOString(),
+    owner: owners[0] ?? null,
+    owners,
+  });
   writeReceipt(input.tx, receiptRef, input.deps, input.uid, draft, 'counted_only', body);
   return { status: 200, body };
 }
@@ -1235,6 +1269,18 @@ async function applyHotLead(
     lng: lead.lng,
   });
   if (!gate.allowed) {
+    // Territory mode: the pin stays untouched but a knock still counts (counts-only event).
+    if (input.draft.kind === 'knock') {
+      const mode = await readOwnershipMode(input.db, input.tx, input.deps.now?.() ?? Date.now());
+      if (mode === 'territory') {
+        return await applyCountedOnly(input, input.draft, receiptRef, {
+          reasonCode: 'out_of_territory',
+          ownerId: null,
+          ownerSource: 'none',
+          dispoBlock: gate.dispoBlock,
+        });
+      }
+    }
     return {
       status: 403,
       body: {

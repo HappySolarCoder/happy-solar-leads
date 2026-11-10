@@ -7,7 +7,10 @@ import {
   ownerInstant,
   prepareTerritories,
   stampedOwner,
-  territoryFor,
+  territoriesFor,
+  isExpiredGoBack,
+  foreignTerritoryWarning,
+  FOREIGN_TERRITORY_WARNING,
 } from '../app/utils/effectiveOwner';
 import { ASSIGNMENT_HISTORY_CAP, assignmentStamp } from '../app/utils/territoryAssigneeHistory';
 
@@ -28,21 +31,40 @@ const pin = (extra: Record<string, unknown> = {}) => ({ lat: 33.45, lng: -112.07
 describe('effective owner', () => {
   it('territory rep beats a stale stamp (the Aug 3/10 stamps stop mattering)', () => {
     const terr = prepareTerritories([T('a', 'sawyer')]);
-    assert.deepEqual(effectiveOwner(pin({ claimedBy: 'jordan' }), terr, NOW), { ownerId: 'sawyer', source: 'territory', territoryId: 'a' });
+    assert.deepEqual(effectiveOwner(pin({ claimedBy: 'jordan' }), terr, NOW), {
+      ownerId: 'sawyer',
+      ownerIds: ['sawyer'],
+      source: 'territory',
+      territoryId: 'a',
+      territoryIds: ['a'],
+    });
   });
 
-  it('newest assignedAt wins; createdAt is the fallback; ties go to the larger id; overlap is flagged', () => {
+  it('overlap = dual owners: both reps own the pin, newest assignment listed first', () => {
     const terr = prepareTerritories([
       T('a', 'old-rep', { createdAt: '2026-08-03T00:00:00.000Z' }),
       T('b', 'new-rep', { createdAt: '2026-08-01T00:00:00.000Z', assignedAt: '2026-11-09T00:00:00.000Z' }),
     ]);
     const owner = effectiveOwner(pin(), terr, NOW);
+    assert.deepEqual(owner.ownerIds, ['new-rep', 'old-rep']);
     assert.equal(owner.ownerId, 'new-rep');
-    assert.equal(owner.overlap, true);
+    assert.equal(owner.dual, true);
+    assert.deepEqual(owner.territoryIds, ['b', 'a']);
     const tie = prepareTerritories([T('a', 'x', { assignedAt: '2026-11-01T00:00:00.000Z' }), T('z', 'y', { assignedAt: '2026-11-01T00:00:00.000Z' })]);
-    assert.equal(effectiveOwner(pin(), tie, NOW).ownerId, 'y');
+    assert.deepEqual(effectiveOwner(pin(), tie, NOW).ownerIds, ['y', 'x']);
     const same = prepareTerritories([T('a', 'x'), T('b', 'x')]);
-    assert.equal(effectiveOwner(pin(), same, NOW).overlap, undefined);
+    assert.deepEqual(effectiveOwner(pin(), same, NOW).ownerIds, ['x']);
+    assert.equal(effectiveOwner(pin(), same, NOW).dual, undefined);
+  });
+
+  it('a territory with several assignees (userIds) gives every one of them the pin; userId stays first', () => {
+    const terr = prepareTerritories([T('a', 'lead-rep', { userIds: ['second-rep', 'lead-rep', '', 7 as unknown as string] })]);
+    assert.deepEqual(terr[0].userIds, ['lead-rep', 'second-rep']);
+    const owner = effectiveOwner(pin(), terr, NOW);
+    assert.deepEqual(owner.ownerIds, ['lead-rep', 'second-rep']);
+    assert.equal(owner.dual, true);
+    // A doc without userIds is [userId]: today's single-assignee territories are unchanged.
+    assert.deepEqual(prepareTerritories([T('b', 'solo')])[0].userIds, ['solo']);
   });
 
   it('reassignment: the next assignee takes over', () => {
@@ -60,15 +82,15 @@ describe('effective owner', () => {
       T('d', 'x', { polygon: [{ lat: 'a', lng: 1 }, { lat: 2, lng: 2 }, { lat: 3, lng: 3 }] }),
     ]);
     assert.equal(terr.length, 0);
-    assert.deepEqual(effectiveOwner(pin({ assignedTo: 'rep' }), terr, NOW), { ownerId: 'rep', source: 'stamp' });
-    assert.deepEqual(effectiveOwner(pin(), terr, NOW), { ownerId: null, source: 'none' });
+    assert.deepEqual(effectiveOwner(pin({ assignedTo: 'rep' }), terr, NOW), { ownerId: 'rep', ownerIds: ['rep'], source: 'stamp' });
+    assert.deepEqual(effectiveOwner(pin(), terr, NOW), { ownerId: null, ownerIds: [], source: 'none' });
   });
 
   it('pins outside every territory, or without coordinates, fall back to the stamp', () => {
     const terr = prepareTerritories([T('a', 'sawyer')]);
     assert.equal(effectiveOwner({ lat: 10, lng: 10, claimedBy: 'jordan' }, terr, NOW).ownerId, 'jordan');
     assert.equal(effectiveOwner({ claimedBy: 'jordan' }, terr, NOW).source, 'stamp');
-    assert.equal(territoryFor(NaN, 1, terr), null);
+    assert.deepEqual(territoriesFor(NaN, 1, terr), []);
   });
 
   it('stamp order: claimedBy, assignedTo, manual creator', () => {
@@ -127,7 +149,49 @@ describe('effective owner', () => {
     it('a go-back in no territory still follows the window, then the stamp', () => {
       const none = prepareTerritories([]);
       assert.equal(effectiveOwner(goBack(DAY), none, NOW).ownerId, 'jordan');
-      assert.deepEqual(effectiveOwner(goBack(200 * DAY, { claimedBy: 'old' }), none, NOW), { ownerId: 'old', source: 'stamp' });
+      assert.deepEqual(effectiveOwner(goBack(200 * DAY, { claimedBy: 'old' }), none, NOW), { ownerId: 'old', ownerIds: ['old'], source: 'stamp' });
+    });
+  });
+
+  describe('Exp. Go-Back (derived, never stored)', () => {
+    const at = (ageMs: number) => new Date(NOW - ageMs).toISOString();
+    it('is go-back older than 90 days and nothing else', () => {
+      assert.equal(isExpiredGoBack({ status: 'go-back', dispositionedAt: at(GO_BACK_OWNER_MS + 1) }, NOW), true);
+      assert.equal(isExpiredGoBack({ status: 'go-back', dispositionedAt: at(GO_BACK_OWNER_MS) }, NOW), false);
+      assert.equal(isExpiredGoBack({ status: 'go-back', dispositionedAt: at(5 * DAY) }, NOW), false);
+      assert.equal(isExpiredGoBack({ status: 'not-home', dispositionedAt: at(500 * DAY) }, NOW), false);
+      assert.equal(isExpiredGoBack({ status: 'go-back' }, NOW), false);
+    });
+    it('a new dispo ends it: the next status is what is stored and shown', () => {
+      const lead = { status: 'go-back', dispositionedAt: at(120 * DAY) };
+      assert.equal(isExpiredGoBack(lead, NOW), true);
+      assert.equal(isExpiredGoBack({ ...lead, status: 'interested', dispositionedAt: at(0) }, NOW), false);
+      // A fresh go-back restarts the clock.
+      assert.equal(isExpiredGoBack({ ...lead, dispositionedAt: at(0) }, NOW), false);
+    });
+    it('its owners are the territory owners', () => {
+      const terr = prepareTerritories([T('a', 'sawyer')]);
+      const lead = pin({ status: 'go-back', goBackScheduledBy: 'jordan', dispositionedAt: at(120 * DAY) });
+      assert.deepEqual(effectiveOwner(lead, terr, NOW).ownerIds, ['sawyer']);
+    });
+  });
+
+  describe('foreign territory warning', () => {
+    const terr = prepareTerritories([T('a', 'sawyer'), T('b', 'jordan')]);
+    it('warns a rep who is in nobody-of-theirs territory, every time', () => {
+      const r = foreignTerritoryWarning(33.45, -112.07, 'steven', terr);
+      assert.equal(r.warn, true);
+      assert.deepEqual(r.ownerIds.sort(), ['jordan', 'sawyer']);
+      assert.equal(foreignTerritoryWarning(33.45, -112.07, 'steven', terr).warn, true);
+    });
+    it('skips dual owners, assignees and pins in no territory', () => {
+      assert.equal(foreignTerritoryWarning(33.45, -112.07, 'sawyer', terr).warn, false);
+      assert.equal(foreignTerritoryWarning(33.45, -112.07, 'jordan', terr).warn, false);
+      assert.equal(foreignTerritoryWarning(10, 10, 'steven', terr).warn, false);
+      assert.equal(foreignTerritoryWarning(undefined, undefined, 'steven', terr).warn, false);
+    });
+    it('uses the exact text from Evan', () => {
+      assert.equal(FOREIGN_TERRITORY_WARNING, "Warning: You are in another user's territory. Do you wish to place this pin?");
     });
   });
 

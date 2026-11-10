@@ -2,9 +2,13 @@ import { insideTerritory, territoryBounds } from './territoryManager';
 
 /**
  * Evan's ownership rule (Nov 10 2026):
- *  1. The rep most recently assigned the territory that contains the pin owns it.
+ *  1. Every rep assigned to a live territory that contains the pin owns it.
+ *     Overlapping territories and territories with several assignees give a
+ *     pin DUAL owners: any of them may knock, dispo and claim it, and each sees
+ *     it as theirs. A knock is credited to whoever knocked.
  *  2. Exception: a Go Back stays with the rep who set it for 90 days from that
- *     dispo, then reverts to the territory rep.
+ *     dispo, then reverts to the territory owners and is shown as the
+ *     system-only 'Exp. Go-Back' pin type (derived, never written).
  *  3. A pin in no (live) territory keeps its stamped owner (claimedBy, assignedTo,
  *     or the rep who added it by hand).
  *
@@ -18,7 +22,10 @@ export type OwnerSource = 'go-back' | 'territory' | 'stamp' | 'none';
 
 export type PreparedTerritory = {
   id: string;
+  /** Primary assignee (the legacy single-owner field). */
   userId: string;
+  /** Every assignee: userId first, then any extra userIds on the doc. */
+  userIds: string[];
   userName?: string;
   userColor?: string;
   /** Epoch ms of the latest assignment. assignedAt, else createdAt, else 0. */
@@ -28,11 +35,15 @@ export type PreparedTerritory = {
 };
 
 export type EffectiveOwner = {
+  /** First owner, kept for single-owner callers. Null when nobody owns the pin. */
   ownerId: string | null;
+  /** Every owner. Dual owners are equal: any of them may work the pin. */
+  ownerIds: string[];
   source: OwnerSource;
   territoryId?: string;
-  /** More than one live territory contains the pin and they name different reps. */
-  overlap?: boolean;
+  territoryIds?: string[];
+  /** The pin has more than one owner because territories overlap or are shared. */
+  dual?: boolean;
 };
 
 export type EffectiveOwnerOptions = {
@@ -108,9 +119,11 @@ export function prepareTerritories(
     if (!userId) continue;
     const polygon = polygonFrom(data.polygon);
     if (!polygon) continue;
+    const extra = Array.isArray(data.userIds) ? data.userIds.map(str).filter(Boolean) : [];
     out.push({
       id: row.id,
       userId,
+      userIds: [...new Set([userId, ...extra])],
       userName: typeof data.userName === 'string' ? data.userName : undefined,
       userColor: typeof data.userColor === 'string' ? data.userColor : undefined,
       assignedAtMs: ownerInstant(data.assignedAt) ?? ownerInstant(data.createdAt) ?? 0,
@@ -121,32 +134,21 @@ export function prepareTerritories(
   return out;
 }
 
-/** Most recently assigned live territory containing the point. Ties go to the larger id. */
-export function territoryFor(
+/** Every live territory containing the point, newest assignment first (ties: larger id first). */
+export function territoriesFor(
   lat: unknown,
   lng: unknown,
   territories: readonly PreparedTerritory[],
-): { territory: PreparedTerritory; overlap: boolean } | null {
-  if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  let best: PreparedTerritory | null = null;
-  let overlap = false;
+): PreparedTerritory[] {
+  if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+  const hits: PreparedTerritory[] = [];
   for (const territory of territories) {
     const b = territory.bounds;
     if (lat < b.south || lat > b.north || lng < b.west || lng > b.east) continue;
-    if (!insideTerritory(lat, lng, territory.polygon)) continue;
-    if (!best) {
-      best = territory;
-      continue;
-    }
-    if (best.userId !== territory.userId) overlap = true;
-    if (
-      territory.assignedAtMs > best.assignedAtMs ||
-      (territory.assignedAtMs === best.assignedAtMs && territory.id > best.id)
-    ) {
-      best = territory;
-    }
+    if (insideTerritory(lat, lng, territory.polygon)) hits.push(territory);
   }
-  return best ? { territory: best, overlap } : null;
+  hits.sort((x, y) => y.assignedAtMs - x.assignedAtMs || (x.id < y.id ? 1 : x.id > y.id ? -1 : 0));
+  return hits;
 }
 
 function isGoBackKey(value: unknown): boolean {
@@ -178,6 +180,13 @@ export function stampedOwner(lead: Record<string, unknown>): string | null {
   return null;
 }
 
+/** Go Back older than 90 days from its dispo. Derived at read time; nothing is written. */
+export function isExpiredGoBack(lead: Record<string, unknown>, nowMs: number): boolean {
+  if (!isGoBackKey(lead.status)) return false;
+  const at = ownerInstant(lead.dispositionedAt);
+  return at != null && nowMs - at > GO_BACK_OWNER_MS;
+}
+
 export function effectiveOwner(
   lead: Record<string, unknown>,
   territories: readonly PreparedTerritory[],
@@ -190,18 +199,56 @@ export function effectiveOwner(
     const active = options.setterActive ? options.setterActive(setter) : true;
     // age < 0 (clock skew) still counts as inside the window.
     if (at != null && active && nowMs - at <= GO_BACK_OWNER_MS) {
-      return { ownerId: setter, source: 'go-back' };
+      return { ownerId: setter, ownerIds: [setter], source: 'go-back' };
     }
   }
-  const hit = territoryFor(lead.lat, lead.lng, territories);
-  if (hit) {
+  const hits = territoriesFor(lead.lat, lead.lng, territories);
+  if (hits.length > 0) {
+    const ownerIds = [...new Set(hits.flatMap((territory) => territory.userIds))];
     return {
-      ownerId: hit.territory.userId,
+      ownerId: ownerIds[0],
+      ownerIds,
       source: 'territory',
-      territoryId: hit.territory.id,
-      ...(hit.overlap ? { overlap: true } : {}),
+      territoryId: hits[0].id,
+      territoryIds: hits.map((territory) => territory.id),
+      ...(ownerIds.length > 1 ? { dual: true } : {}),
     };
   }
   const stamp = stampedOwner(lead);
-  return stamp ? { ownerId: stamp, source: 'stamp' } : { ownerId: null, source: 'none' };
+  return stamp
+    ? { ownerId: stamp, ownerIds: [stamp], source: 'stamp' }
+    : { ownerId: null, ownerIds: [], source: 'none' };
+}
+
+/**
+ * Warning popup rule. A rep placing or dispositioning a pin inside live
+ * territories that none of them is assigned to gets the warning every time.
+ * No territory at the point, or the rep is an assignee of any containing
+ * territory (dual owner), means no warning.
+ */
+export const FOREIGN_TERRITORY_WARNING =
+  "Warning: You are in another user's territory. Do you wish to place this pin?";
+
+export function foreignTerritoryWarning(
+  lat: unknown,
+  lng: unknown,
+  uid: string,
+  territories: readonly PreparedTerritory[],
+): { warn: boolean; ownerIds: string[] } {
+  const hits = territoriesFor(lat, lng, territories);
+  if (hits.length === 0) return { warn: false, ownerIds: [] };
+  const ownerIds = [...new Set(hits.flatMap((territory) => territory.userIds))];
+  return { warn: !ownerIds.includes(uid), ownerIds };
+}
+
+/**
+ * Whether managers and admins skip the foreign-territory warning popup.
+ * TBD: Evan has not decided. Default true matches today's territory-gate
+ * exemption for staff. Single switch, read server-side (mobile-leads
+ * `popupExempt`) and by the web popup.
+ */
+export const STAFF_POPUP_EXEMPT = true;
+
+export function popupExemptFor(role: unknown): boolean {
+  return STAFF_POPUP_EXEMPT && (role === 'admin' || role === 'manager');
 }

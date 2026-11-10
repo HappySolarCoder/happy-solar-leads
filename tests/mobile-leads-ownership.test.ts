@@ -1,0 +1,173 @@
+import { beforeEach, describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { Timestamp } from 'firebase-admin/firestore';
+import { NextRequest } from 'next/server';
+import { createMobileLeadHandler } from '../app/utils/server/mobileLeads';
+import { resetMobileOwnershipCaches } from '../app/utils/server/mobileOwnership';
+
+const NOW = Date.now();
+const DAY = 86_400_000;
+const box = (lat: number, lng: number, d = 0.004) => [
+  { lat: lat - d, lng: lng - d }, { lat: lat - d, lng: lng + d }, { lat: lat + d, lng: lng + d }, { lat: lat + d, lng: lng - d },
+];
+const ts = (ms: number) => Timestamp.fromMillis(ms);
+
+type Doc = Record<string, unknown>;
+class Q {
+  private filters: Array<[string, string, unknown]> = [];
+  private lo: string | null = null;
+  private hi: string | null = null;
+  private cap = Infinity;
+  constructor(private docs: Map<string, Doc>, private name: string, private log: string[]) {}
+  where(f: string, op: string, v: unknown) { this.filters.push([f, op, v]); return this; }
+  orderBy() { return this; }
+  select() { return this; }
+  startAfter() { return this; }
+  startAt(v: string) { this.lo = v; return this; }
+  endAt(v: string) { this.hi = v; return this; }
+  limit(n: number) { this.cap = n; return this; }
+  async get() {
+    this.log.push(`query ${this.name}`);
+    const prefix = `${this.name}/`;
+    let rows = [...this.docs.entries()].filter(([p]) => p.startsWith(prefix)).map(([p, d]) => ({ id: p.slice(prefix.length), data: d }));
+    for (const [f, op, v] of this.filters) {
+      rows = rows.filter((r) => {
+        const x = r.data[f] as number;
+        return op === '==' ? x === v : op === '>=' ? x >= (v as number) : op === '<=' ? x <= (v as number) : true;
+      });
+    }
+    if (this.lo != null) rows = rows.filter((r) => r.id >= this.lo!);
+    if (this.hi != null) rows = rows.filter((r) => r.id <= this.hi!);
+    rows = rows.slice(0, this.cap);
+    return { size: rows.length, docs: rows.map((r) => ({ id: r.id, exists: true, data: () => r.data })) };
+  }
+}
+function fakeDb(docs: Map<string, Doc>, log: string[]) {
+  const ref = (name: string, id: string) => ({ __ref: `${name}/${id}`, get: async () => snap(`${name}/${id}`) });
+  const snap = (path: string) => ({ exists: docs.has(path), id: path.split('/')[1], data: () => docs.get(path) });
+  return {
+    collection: (name: string) => Object.assign(new Q(docs, name, log), { doc: (id: string) => ref(name, id) }),
+    getAll: async (...args: unknown[]) => {
+      const refs = args.filter((a): a is { __ref: string } => Boolean(a) && typeof a === 'object' && '__ref' in (a as object));
+      log.push(`getAll ${refs.length}`);
+      return refs.map((r) => snap(r.__ref));
+    },
+  };
+}
+
+function setup(opts: { role?: string; flag?: boolean; territories?: Array<[string, Doc]>; leads?: Array<[string, Doc]>; events?: Array<[string, Doc]> }) {
+  resetMobileOwnershipCaches();
+  const docs = new Map<string, Doc>();
+  const log: string[] = [];
+  docs.set('users/me', { name: 'Me Rep', role: opts.role ?? 'setter', isActive: true });
+  docs.set('users/sawyer', { name: 'Sawyer V', isActive: true });
+  docs.set('users/jordan', { name: 'Jordan M', isActive: true });
+  docs.set('users/gone', { name: 'Gone Rep', isActive: false });
+  if (opts.flag) docs.set('adminSettings/fieldOwnership', { mode: 'territory' });
+  for (const [id, d] of opts.territories ?? []) docs.set(`territories/${id}`, d);
+  for (const [id, d] of opts.leads ?? []) docs.set(`leads/${id}`, d);
+  for (const [id, d] of opts.events ?? []) docs.set(`fieldKnockEvents/${id}`, d);
+  const GET = createMobileLeadHandler({
+    adminAuth: () => ({ verifyIdToken: async () => ({ uid: 'me' }) }) as never,
+    adminDb: () => fakeDb(docs, log) as never,
+  });
+  const call = async (query: string) => {
+    const res = await GET(new NextRequest(`http://localhost/api/mobile-leads?${query}`, { headers: { authorization: 'Bearer t' } }));
+    return { status: res.status, body: (await res.json()) as Record<string, any> };
+  };
+  return { call, log, docs };
+}
+const MAP = 'mode=map&south=33.44&north=33.46&west=-112.08&east=-112.06&zoom=16';
+const T = (userId: string, extra: Doc = {}): Doc => ({ userId, polygon: box(33.45, -112.07), createdAt: '2026-08-03T00:00:00.000Z', ...extra });
+const pin = (extra: Doc = {}): Doc => ({ lat: 33.45, lng: -112.07, status: 'not-home', claimedBy: 'jordan', ...extra });
+
+describe('/api/mobile-leads ownership fields', () => {
+  beforeEach(() => resetMobileOwnershipCaches());
+
+  it('flag OFF (no doc): rows are unchanged, ownership is legacy, no extra reads', async () => {
+    const t = setup({ territories: [['mine', T('me')]], leads: [['l1', pin()]] });
+    const { body } = await t.call(MAP);
+    assert.equal(body.ownership, 'legacy');
+    assert.equal(body.leads.length, 1);
+    for (const key of ['ownedByMe', 'owners', 'ownerSource', 'expiredGoBack', 'inOtherUsersTerritory']) assert.equal(key in body.leads[0], false, key);
+    assert.equal(t.log.some((l) => l.startsWith('getAll')), false);
+  });
+
+  it('flag ON: ownedByMe, owners [{uid,name}], expiredGoBack, inOtherUsersTerritory per row', async () => {
+    const t = setup({
+      flag: true,
+      territories: [['mine', T('me')], ['theirs', T('sawyer', { assignedAt: '2026-11-09T00:00:00.000Z' })]],
+      leads: [
+        ['dual', pin({ claimedBy: 'jordan' })],
+        ['expired', pin({ lat: 33.4501, status: 'go-back', goBackScheduledBy: 'jordan', dispositionedAt: ts(NOW - 120 * DAY) })],
+        ['goback', pin({ lat: 33.4502, status: 'go-back', goBackScheduledBy: 'jordan', dispositionedAt: ts(NOW - 10 * DAY) })],
+        ['departed', pin({ lat: 33.4503, status: 'go-back', goBackScheduledBy: 'gone', dispositionedAt: ts(NOW - 10 * DAY) })],
+      ],
+    });
+    const { body } = await t.call(MAP);
+    assert.equal(body.ownership, 'territory');
+    assert.equal(body.popupExempt, false);
+    const by = Object.fromEntries(body.leads.map((l: any) => [l.id, l]));
+    // I and Sawyer both have a territory over this pin: dual owners, newest assignment first.
+    assert.equal(by.dual.ownedByMe, true);
+    assert.deepEqual(by.dual.owners, [{ uid: 'sawyer', name: 'Sawyer V' }, { uid: 'me', name: 'Me Rep' }]);
+    assert.equal(by.dual.ownerSource, 'territory');
+    assert.equal(by.dual.inOtherUsersTerritory, false);
+    assert.equal(by.dual.expiredGoBack, false);
+    // Go Back older than 90 d: flagged, owned by the territory owners (not the setter).
+    assert.equal(by.expired.expiredGoBack, true);
+    assert.equal(by.expired.ownedByMe, true);
+    assert.deepEqual(by.expired.owners.map((o: any) => o.uid), ['sawyer', 'me']);
+    assert.equal(by.expired.status, 'go-back', 'the stored status is never rewritten');
+    // Inside 90 d the setter owns it, I do not, and it sits in my territory.
+    assert.equal(by.goback.expiredGoBack, false);
+    assert.equal(by.goback.ownedByMe, false);
+    assert.deepEqual(by.goback.owners, [{ uid: 'jordan', name: 'Jordan M' }]);
+    assert.equal(by.goback.ownerSource, 'go-back');
+    // A setter who left reverts to the territory owners.
+    assert.equal(by.departed.ownerSource, 'territory');
+    assert.equal(by.departed.ownedByMe, true);
+  });
+
+  it('inOtherUsersTerritory: true when the pin is in someone else\'s territory only; false in no territory', async () => {
+    const t = setup({
+      flag: true,
+      territories: [['mine', T('me', { polygon: box(33.45, -112.07, 0.004) })], ['theirs', T('sawyer', { polygon: box(33.45, -112.0705, 0.0004) })]],
+      leads: [['both', pin({ lat: 33.45, lng: -112.0705 })], ['mineOnly', pin({ lat: 33.4535, lng: -112.07 })]],
+    });
+    const rows = Object.fromEntries((await t.call(MAP)).body.leads.map((l: any) => [l.id, l]));
+    assert.equal(rows.both.inOtherUsersTerritory, false, 'dual owner: no popup');
+    assert.equal(rows.mineOnly.inOtherUsersTerritory, false);
+    const staff = setup({
+      role: 'admin',
+      flag: true,
+      territories: [['theirs', T('sawyer')]],
+      leads: [['x', pin()]],
+    });
+    const out = await staff.call(MAP);
+    assert.equal(out.body.leads[0].inOtherUsersTerritory, true);
+    assert.equal(out.body.popupExempt, true, 'staff default exempt (TBD with Evan)');
+  });
+
+  it('personal mode returns popupExempt and own knockEvents {leadId, at, dispositionId} for 45 days, bounded', async () => {
+    const t = setup({
+      flag: true,
+      events: [
+        ['me_d1', { uid: 'me', leadId: 'l1', actionAt: ts(NOW - 2 * DAY), dispositionId: 'not-home', disposition: 'Not Home' }],
+        ['me_d2', { uid: 'me', leadId: 'l2', actionAt: ts(NOW - 50 * DAY), dispositionId: 'not-home' }],
+        ['me_d3', { uid: 'me', leadId: 'l3', actionAt: ts(NOW - DAY), dispositionId: 'shade-dq' }],
+        ['sawyer_d1', { uid: 'sawyer', leadId: 'l9', actionAt: ts(NOW - DAY), dispositionId: 'not-home' }],
+        ['mea_d1', { uid: 'mea', leadId: 'l8', actionAt: ts(NOW - DAY), dispositionId: 'not-home' }],
+      ],
+    });
+    const { body } = await t.call('mode=personal&field=claimedBy');
+    assert.deepEqual(body.knockEvents, [{ leadId: 'l1', at: NOW - 2 * DAY, dispositionId: 'not-home' }]);
+    assert.equal(body.popupExempt, false);
+    assert.equal(body.ownership, 'territory');
+    const events = t.log.filter((l) => l === 'query fieldKnockEvents');
+    assert.equal(events.length, 1);
+    // Later pages do not re-read events.
+    const page2 = await t.call('mode=personal&field=claimedBy&after=abc');
+    assert.equal('knockEvents' in page2.body, false);
+  });
+});

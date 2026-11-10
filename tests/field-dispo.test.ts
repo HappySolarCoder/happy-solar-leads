@@ -20,6 +20,8 @@ import {
   type FieldDispoDeps,
 } from '../app/utils/server/fieldDispo';
 import { FIELD_REASON_CODES } from '../app/utils/server/fieldReasonCodes';
+import { countKnocks, collectKnockEvents } from '../app/utils/knockCount';
+import { ledgerFromFieldEvents, mobileKnockEvents } from '../app/utils/fieldKnockEvents';
 import { resetFieldOwnershipCaches } from '../app/utils/server/fieldOwnership';
 
 const NOW = Date.parse('2026-10-25T16:31:04.120Z');
@@ -1758,7 +1760,16 @@ describe('field dispo territory ownership', { concurrency: 1 }, () => {
     const result = await test.run(knockBody());
     assert.equal(result.status, 200, JSON.stringify(result.body));
     // Older-build compatibility: a plain 200 ok body, no lead, nothing a 14.20/164/165 client has to parse.
-    assert.deepEqual(result.body, { ok: true, draftId: 'draft-1', result: 'counted_only', duplicate: false });
+    assert.deepEqual(result.body, {
+      ok: true,
+      draftId: 'draft-1',
+      result: 'counted_only',
+      duplicate: false,
+      eventId: `${ME}_draft-1`,
+      actionAt: ACTION,
+      owner: { uid: 'uid-sawyer', name: null },
+      owners: [{ uid: 'uid-sawyer', name: null }],
+    });
     assert.equal('lead' in result.body, false);
     assert.equal(leadUpdates(test.db).length, 0);
     const written = events(test.db);
@@ -1773,6 +1784,7 @@ describe('field dispo territory ownership', { concurrency: 1 }, () => {
       'disposition',
       'draftId',
       'effectiveOwnerId',
+      'effectiveOwnerIds',
       'leadId',
       'ownerSource',
       'reason',
@@ -1803,11 +1815,14 @@ describe('field dispo territory ownership', { concurrency: 1 }, () => {
       territories: [territory('t-other', 'uid-sawyer')],
       ownershipFlag: TERRITORY_ON,
     });
-    await test.run(knockBody());
+    const first = await test.run(knockBody());
     const before = creates(test.db).length;
     const replay = await test.run(knockBody());
     assert.equal(replay.status, 200);
-    assert.deepEqual(replay.body, { ok: true, draftId: 'draft-1', result: 'counted_only', duplicate: true });
+    assert.deepEqual(replay.body, { ...first.body, duplicate: true });
+    assert.deepEqual(Object.keys(replay.body), Object.keys(first.body));
+    const again = await test.run(knockBody());
+    assert.deepEqual(again.body, replay.body);
     assert.equal(creates(test.db).length, before);
     // The same draft id from another rep is a different event id.
     const other = harness({ uid: 'uid-other-rep', lead: stamped(), territories: [territory('t-other', 'uid-sawyer')], ownershipFlag: TERRITORY_ON });
@@ -1823,27 +1838,35 @@ describe('field dispo territory ownership', { concurrency: 1 }, () => {
     assert.equal(events(test.db).length, 1);
   });
 
-  it('overlap: the newest assignment wins, ties go to the larger territory id', async () => {
-    const newestMine = harness({
+  it('overlap = dual owners: either rep may knock, the other is counts-only only for a third rep', async () => {
+    const both = [territory('t-a', ME, { assignedAt: OLD }), territory('t-b', 'uid-sawyer', { assignedAt: NEW })];
+    // I am the older assignee of an overlapping pair: I own it too.
+    const mine = harness({ lead: stamped(), territories: both, ownershipFlag: TERRITORY_ON });
+    assert.equal((await mine.run(knockBody())).body.result, 'applied');
+    assert.equal(events(mine.db).length, 0);
+    // The newer assignee is a dual owner as well.
+    const sawyer = harness({ uid: 'uid-sawyer', lead: stamped(), territories: both, ownershipFlag: TERRITORY_ON });
+    assert.equal((await sawyer.run(knockBody())).body.result, 'applied');
+    // A third rep is counts-only and the body names both owners, newest assignment first.
+    const third = harness({
+      uid: 'uid-third',
       lead: stamped(),
-      territories: [territory('t-a', 'uid-sawyer', { assignedAt: OLD }), territory('t-b', ME, { assignedAt: NEW })],
+      territories: [territory('t-a', 'uid-first', { assignedAt: OLD }), territory('t-b', 'uid-sawyer', { assignedAt: NEW })],
       ownershipFlag: TERRITORY_ON,
+      extraUsers: [{ id: 'uid-sawyer', data: approvedUser({ name: 'Sawyer V' }) }, { id: 'uid-first', data: approvedUser({ name: '  Evan  ' }) }],
     });
-    assert.equal((await newestMine.run(knockBody())).body.result, 'applied');
-    const newestTheirs = harness({
-      lead: stamped(),
-      territories: [territory('t-a', ME, { assignedAt: OLD }), territory('t-b', 'uid-sawyer', { assignedAt: NEW })],
-      ownershipFlag: TERRITORY_ON,
-    });
-    const refused = await newestTheirs.run(knockBody());
+    const refused = await third.run(knockBody());
     assert.equal(refused.body.result, 'counted_only');
-    assert.equal(events(newestTheirs.db)[0].data.effectiveOwnerId, 'uid-sawyer');
-    const tie = harness({
-      lead: stamped(),
-      territories: [territory('t-a', ME, { assignedAt: NEW }), territory('t-b', 'uid-sawyer', { assignedAt: NEW })],
-      ownershipFlag: TERRITORY_ON,
-    });
-    assert.equal((await tie.run(knockBody())).body.result, 'counted_only');
+    assert.deepEqual(refused.body.owners, [{ uid: 'uid-sawyer', name: 'Sawyer V' }, { uid: 'uid-first', name: 'Evan' }]);
+    assert.deepEqual(refused.body.owner, { uid: 'uid-sawyer', name: 'Sawyer V' });
+    assert.deepEqual(events(third.db)[0].data.effectiveOwnerIds, ['uid-sawyer', 'uid-first']);
+    assert.equal(events(third.db)[0].data.effectiveOwnerId, 'uid-sawyer');
+  });
+
+  it('one territory with several assignees (userIds) is dual-owned too', async () => {
+    const shared = territory('t-shared', 'uid-sawyer', { userIds: ['uid-sawyer', ME] });
+    const test = harness({ lead: stamped(), territories: [shared], ownershipFlag: TERRITORY_ON });
+    assert.equal((await test.run(knockBody())).body.result, 'applied');
   });
 
   it('territories without assignedAt order by createdAt; a later transfer stamp beats an older create', async () => {
@@ -1909,6 +1932,35 @@ describe('field dispo territory ownership', { concurrency: 1 }, () => {
     const result = await test.run(knockBody());
     assert.equal(result.body.result, 'counted_only');
     assert.equal(events(test.db)[0].data.effectiveOwnerId, 'uid-jordan');
+  });
+
+  it('Exp. Go-Back is derived, never stored: the knock on it saves the chosen dispo through the normal path', async () => {
+    const expired = () => stamped({ status: 'go-back', goBackScheduledBy: 'uid-jordan', dispositionedAt: new FakeTimestamp(NOW - 120 * DAY) });
+    for (const [status, disposition] of [['not-home', 'Not Home'], ['interested', 'Interested'], ['go-back', 'Go Back']]) {
+      const test = harness({
+        lead: expired(),
+        territories: [territory('t-me', ME)],
+        ownershipFlag: TERRITORY_ON,
+        extraUsers: [{ id: 'uid-jordan', data: approvedUser() }],
+      });
+      const result = await test.run(knockBody({ status, disposition, gps: undefined }));
+      assert.equal(result.body.result, 'applied', status);
+      const written = patch(test.db);
+      assert.equal(written.status, status);
+      assert.equal(written.disposition, disposition);
+      // No system status is ever written.
+      for (const op of updates(test.db)) assert.equal(JSON.stringify(op.patch).includes('exp-go-back'), false);
+      assert.equal(JSON.stringify(test.db.docs.get('leads/lead-1')).includes('exp-go-back'), false);
+      // The setter no longer owns it: they are counts-only on it.
+    }
+    const setter = harness({
+      uid: 'uid-jordan',
+      lead: expired(),
+      territories: [territory('t-me', ME)],
+      ownershipFlag: TERRITORY_ON,
+    });
+    // Jordan is also the stamped owner (claimedBy), so the legacy path still accepts him.
+    assert.equal((await setter.run(knockBody({ gps: undefined }))).body.result, 'applied');
   });
 
   it('an archived territory is no territory: the stamp rule applies', async () => {
@@ -2033,6 +2085,52 @@ describe('field dispo territory ownership', { concurrency: 1 }, () => {
     const result = await test.run(knockBody());
     assert.equal(result.body.result, 'counted_only');
     assert.equal(events(test.db)[0].data.reason, 'owned_by_other');
+  });
+
+  it('counts once when the same draft is first counts-only and later accepted (shared ledger key)', async () => {
+    const actionMs = NOW - 5 * 60 * 1000;
+    const body = knockBody({ actionAt: ISO(actionMs), status: 'not-home', disposition: 'Not Home', gps: undefined });
+    const test = harness({ lead: stamped(), territories: [territory('t-other', 'uid-sawyer')], ownershipFlag: TERRITORY_ON });
+    const refused = await test.run(body);
+    assert.equal(refused.body.result, 'counted_only');
+    const event = test.db.docs.get(`fieldKnockEvents/${ME}_draft-1`);
+    assert.ok(event);
+    // `at` is the draft's original actionAt, never the server time.
+    assert.equal((event.actionAt as FakeTimestamp).toMillis(), actionMs);
+    assert.notEqual((event.actionAt as FakeTimestamp).toMillis(), NOW);
+
+    const ledger = ledgerFromFieldEvents([event]);
+    assert.equal(ledger.length, 1);
+    assert.equal(ledger[0].key, `lead-1|${ME}|not-home|${actionMs}`);
+    assert.equal(countKnocks([], [], { userId: ME, ledger }), 1, 'event alone counts');
+
+    // Later the rep owns the pin and the same knock lands in history (server or direct write).
+    const accepted = {
+      id: 'lead-1',
+      status: 'not-home',
+      dispositionHistory: [{ disposition: 'Not Home', timestamp: new FakeTimestamp(actionMs), userId: ME, userName: 'Jane Rep' }],
+    };
+    assert.equal(countKnocks([accepted as never], [], { userId: ME }), 1, 'history alone counts');
+    assert.equal(countKnocks([accepted as never], [], { userId: ME, ledger }), 1, 'both sources count once');
+    assert.equal(collectKnockEvents([accepted as never], [], { ledger }).length, 1);
+    // A second, genuinely later knock on the same door still counts.
+    const later = { ...accepted, dispositionHistory: [
+      { disposition: 'Not Home', timestamp: new FakeTimestamp(actionMs + 5 * 60 * 1000), userId: ME },
+      ...accepted.dispositionHistory,
+    ] };
+    assert.equal(countKnocks([later as never], [], { userId: ME, ledger }), 2);
+    // Wire shape for /api/mobile-leads.
+    assert.deepEqual(mobileKnockEvents([event]), [{ leadId: 'lead-1', at: actionMs, dispositionId: 'not-home' }]);
+  });
+
+  it('Shade DQ and Already Has Solar events never reach the ledger', async () => {
+    for (const [status, disposition] of [['shade-dq', 'Shade DQ'], ['has-solar', 'Already Has Solar']]) {
+      const test = harness({ lead: stamped(), territories: [territory('t-other', 'uid-sawyer')], ownershipFlag: TERRITORY_ON });
+      await test.run(knockBody({ status, disposition, gps: undefined }));
+      const event = test.db.docs.get(`fieldKnockEvents/${ME}_draft-1`);
+      assert.ok(event);
+      assert.deepEqual(ledgerFromFieldEvents([event]), []);
+    }
   });
 
   it('writes only the allowlisted collections', async () => {

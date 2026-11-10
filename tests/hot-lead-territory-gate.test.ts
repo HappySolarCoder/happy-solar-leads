@@ -12,6 +12,7 @@ import {
   type DispoTransaction,
   type FieldDispoDeps,
 } from '../app/utils/server/fieldDispo';
+import { resetFieldOwnershipCaches } from '../app/utils/server/fieldOwnership';
 import { handleHotLeadClaim, handleHotLeadsGet, type ClaimDb, type ClaimSnap, type ClaimTx } from '../app/utils/server/hotLeads';
 import { TERRITORY_QUERY_LIMIT } from '../app/utils/server/territoryGate';
 import { insideTerritory } from '../app/utils/territoryManager';
@@ -297,8 +298,10 @@ function installTerritories(db: { put: (path: string, data: Record<string, unkno
   for (const territory of scenario.territories(uid)) db.put(`territories/${territory.id}`, territory.data);
 }
 
-async function runDispo(role: string, scenario: Scenario, body: Record<string, unknown>) {
+async function runDispo(role: string, scenario: Scenario, body: Record<string, unknown>, ownershipFlag?: Record<string, unknown>) {
+  resetFieldOwnershipCaches();
   const db = new Mem();
+  if (ownershipFlag) db.put('adminSettings/fieldOwnership', ownershipFlag);
   const uid = `uid-${role}`;
   db.put(`users/${uid}`, approved(role));
   db.put('dispositions/not-home', { name: 'Not Home' });
@@ -829,5 +832,62 @@ describe('3PL territory gate', () => {
     assert.match(getRoute, /where\('userId', '==', uid\)/);
     assert.match(getRoute, /limit\(TERRITORY_QUERY_LIMIT\)/);
     assert.equal(TERRITORY_QUERY_LIMIT, 200);
+  });
+});
+
+describe('3PL counts-only knocks (territory mode)', () => {
+  const blocked: Array<[string, string]> = [
+    ['outside', 'outside_territory'],
+    ['no-territory', 'no_territory'],
+    ['truncated', 'territory_unknown'],
+    ['no-coords', 'no_coords'],
+  ];
+  for (const [name, block] of blocked) {
+    it(`${block}: the pin is untouched, the knock is a counts-only event`, async () => {
+      const scenario = scenarios.find((item) => item.name === name) as Scenario;
+      const body = knockBody('closer', scenario);
+      const { result, db } = await runDispo('closer', scenario, body, { mode: 'territory' });
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      assert.deepEqual(result.body, {
+        ok: true,
+        draftId: body.draftId,
+        result: 'counted_only',
+        duplicate: false,
+        eventId: `uid-closer_${body.draftId}`,
+        actionAt: ACTION,
+        owner: null,
+        owners: [],
+      });
+      assert.equal(db.patches.length, 0);
+      const event = db.creates.find((row) => row.path.startsWith('fieldKnockEvents/'));
+      assert.ok(event);
+      const data = event.data as Record<string, unknown>;
+      assert.equal(data.collection, 'hotLeads');
+      assert.equal(data.reason, 'out_of_territory');
+      assert.equal(data.dispoBlock, block);
+      assert.equal(data.leadId, 'ghl_opp1');
+      assert.equal(data.uid, 'uid-closer');
+      assert.ok(db.creates.some((row) => row.path === `fieldDispoReceipts/uid-closer_${body.draftId}`));
+    });
+  }
+
+  it('legacy (no flag doc) keeps the 403 and writes nothing; notes stay 403 in territory mode', async () => {
+    const scenario = scenarios.find((item) => item.name === 'outside') as Scenario;
+    const legacy = await runDispo('closer', scenario, knockBody('closer', scenario));
+    assert.equal(legacy.result.status, 403);
+    assert.equal(legacy.db.creates.length, 0);
+    const notes = await runDispo('closer', scenario, {
+      draftId: 'draft-notes-x', leadId: 'ghl_opp1', kind: 'notes', actionAt: ACTION, collection: 'hotLeads', notes: 'n', baseNotes: 'server copy',
+    }, { mode: 'territory' });
+    assert.equal(notes.result.status, 403);
+    assert.equal(notes.db.creates.length, 0);
+  });
+
+  it('an allowed 3PL knock inside the territory is still applied, not counts-only', async () => {
+    const scenario = scenarios[0];
+    const { result, db } = await runDispo('closer', scenario, knockBody('closer', scenario), { mode: 'territory' });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.result, 'applied');
+    assert.equal(db.creates.some((row) => row.path.startsWith('fieldKnockEvents/')), false);
   });
 });
