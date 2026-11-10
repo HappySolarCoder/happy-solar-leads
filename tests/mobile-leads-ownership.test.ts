@@ -146,7 +146,7 @@ describe('/api/mobile-leads ownership fields', () => {
     });
     const out = await staff.call(MAP);
     assert.equal(out.body.leads[0].inOtherUsersTerritory, true);
-    assert.equal(out.body.popupExempt, true, 'staff default exempt (TBD with Evan)');
+    assert.equal(out.body.popupExempt, true, 'staff exempt (final per Evan)');
   });
 
   it('personal mode returns popupExempt and own knockEvents {leadId, at, dispositionId} for 45 days, bounded', async () => {

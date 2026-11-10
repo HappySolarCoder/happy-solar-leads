@@ -243,8 +243,8 @@ export function foreignTerritoryWarning(
 
 /**
  * Whether managers and admins skip the foreign-territory warning popup.
- * TBD: Evan has not decided. Default true matches today's territory-gate
- * exemption for staff. Single switch, read server-side (mobile-leads
+ * FINAL (Evan, Nov 10 2:21 PM): managers and admins skip the popup. Matches
+ * today's territory-gate exemption for staff. Single switch, read server-side (mobile-leads
  * `popupExempt`) and by the web popup.
  */
 export const STAFF_POPUP_EXEMPT = true;
