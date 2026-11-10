@@ -217,6 +217,29 @@ describe('/api/field-knock-events handler', () => {
     assert.ok(events.every((e, i) => i === 0 || events[i - 1].at >= e.at), 'response stays newest-first');
   });
 
+  // Same boundary table as /api/mobile-leads: the web read returns every row it read, flags truncated only at the cap.
+  for (const [stored, returned, truncated] of [[499, 499, false], [500, 500, false], [501, 501, false], [550, 550, false], [599, 599, false], [600, 600, true], [601, 600, true]] as const) {
+    it(`own read, ${stored} events stored: returns ${returned}, truncated ${truncated}`, async () => {
+      const all = Array.from({ length: stored }, (_, i) => ev('u1', `l${i}`, T0 + i * 60_000));
+      const result = await handleFieldKnockEventsGet({
+        authorization: 'Bearer t',
+        sinceParam: String(T0),
+        deps: {
+          verifyIdToken: async () => ({ uid: 'u1' }),
+          getUser: async () => user('setter'),
+          now: () => NOW.getTime(),
+          loadSince: async () => [],
+          loadOwn: async (_uid, limit) => [...all].reverse().slice(0, limit),
+        },
+      });
+      const events = result.body.events as Array<{ leadId: string }>;
+      assert.equal(events.length, returned);
+      assert.equal('truncated' in result.body, truncated);
+      assert.equal(events[0].leadId, `l${stored - 1}`);
+      if (stored < 600) assert.ok(events.some((e) => e.leadId === 'l0'), 'nothing read is dropped');
+    });
+  }
+
   it('under the cap there is no truncated flag', async () => {
     const { result } = await run('admin', rows);
     assert.equal('truncated' in result.body, false);
