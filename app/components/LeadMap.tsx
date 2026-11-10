@@ -58,10 +58,13 @@ interface LeadMapProps {
   onToggleTeamAreas?: (next: boolean) => void;
 }
 
+// Stable default: a fresh `[]` per render would rebuild every pin (users is a marker-effect dependency).
+const NO_USERS: User[] = [];
+
 export default function LeadMap({ 
   leads: leadsProp, 
   currentUser,
-  users = [],
+  users = NO_USERS,
   onLeadClick, 
   selectedLeadId,
   routeWaypoints,

@@ -5,13 +5,35 @@ import { HttpError, requireApprovedUser, type RequireApprovedUserDeps } from './
  * GET /api/field-knock-events?since=<epoch ms>
  * Web dashboards read counts-only knocks here (the collection is closed to
  * every client). Admin and manager get everyone in the window (one range read
- * on actionAt, single-field index, limit 3000). Everyone else gets only their
+ * on actionAt, NEWEST first, single-field index, limit 3000; when the window
+ * holds more, the oldest rows fall off and `truncated` is true; a rep's own read
+ * is by doc-id prefix, limit 600, and sets `truncated` at the cap too). Everyone else gets only their
  * own rows (doc-id range `{uid}_`, limit 600). Excluded dispositions (Shade DQ,
  * Already Has Solar) are dropped. Read-only.
  */
 export const FIELD_EVENTS_STAFF_LIMIT = 3000;
 export const FIELD_EVENTS_OWN_LIMIT = 600;
 export const FIELD_EVENTS_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
+
+export type Chain = {
+  orderBy(field: string, dir: 'asc' | 'desc'): Chain;
+  select(...fields: string[]): Chain;
+  limit(n: number): Chain;
+};
+
+/**
+ * Staff window query: newest rows first, so a cap drops the OLDEST events, never
+ * the newest ones that today's counters need. actionAt single-field index (either
+ * direction is automatic), no composite index. Returns the query to `.get()`.
+ */
+export function staffEventsQuery<T>(
+  collection: { where(field: string, op: '>=', value: unknown): Chain },
+  sinceTimestamp: unknown,
+  fields: readonly string[],
+  limit: number,
+): T {
+  return collection.where('actionAt', '>=', sinceTimestamp).orderBy('actionAt', 'desc').select(...fields).limit(limit) as unknown as T;
+}
 
 export type FieldEventsDeps = RequireApprovedUserDeps & {
   now?: () => number;
@@ -50,5 +72,6 @@ export async function handleFieldKnockEventsGet(input: {
     events.push({ uid: event.userId, leadId: event.leadId, at: event.at, dispositionId: event.dispositionId });
   }
   events.sort((a, b) => b.at - a.at);
-  return { status: 200, body: { events, scope: staff ? 'all' : 'own' } };
+  const truncated = rows.length >= (staff ? FIELD_EVENTS_STAFF_LIMIT : FIELD_EVENTS_OWN_LIMIT);
+  return { status: 200, body: { events, scope: staff ? 'all' : 'own', ...(truncated ? { truncated: true } : {}) } };
 }

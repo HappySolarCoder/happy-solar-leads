@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FieldPath, Timestamp } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
-import { handleFieldKnockEventsGet } from '@/app/utils/server/fieldKnockEventsRead';
+import { handleFieldKnockEventsGet, staffEventsQuery } from '@/app/utils/server/fieldKnockEventsRead';
 
 export const runtime = 'nodejs';
 
@@ -20,13 +20,12 @@ export async function GET(request: NextRequest) {
           return { exists: doc.exists, data: doc.data() };
         },
         loadSince: async (sinceMs, limit) => {
-          const snap = await db
-            .collection('fieldKnockEvents')
-            .where('actionAt', '>=', Timestamp.fromMillis(sinceMs))
-            .orderBy('actionAt')
-            .select(...SELECT)
-            .limit(limit)
-            .get();
+          const snap = await staffEventsQuery<FirebaseFirestore.Query>(
+            db.collection('fieldKnockEvents') as never,
+            Timestamp.fromMillis(sinceMs),
+            SELECT,
+            limit,
+          ).get();
           return snap.docs.map((d) => d.data());
         },
         loadOwn: async (uid, limit) => {
