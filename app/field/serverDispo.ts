@@ -14,6 +14,7 @@ import type { PendingMutation } from "./types";
 import { hotDispoBlockMessage } from "@/app/hotLeads/copy";
 import { confirmHotServerPin, isDispoBlock, rollbackHotLead } from "@/app/hotLeads/model";
 import { HOT_CLAIM_PATH, HOT_LEAD_MISSING_NOTICE, HOT_LEAD_OLD_SERVER_NOTICE, HOT_LEAD_OWNED_MESSAGE, hotClaimBody, isHotLeadDraft } from "@/app/hotLeads/save";
+import { readCountedOnly } from "@/app/mobile/_lib/ownerCounts";
 
 export { rebaseNotes } from "./notesRebase";
 
@@ -501,11 +502,24 @@ function isHotTerritoryDenial(error: unknown): boolean {
   return row?.status === 403 && row.reasonCode === SYNC_REASON.outOfTerritory;
 }
 
+export type FieldDispoResult = {
+  replayed: boolean;
+  lead?: Lead;
+  appliedNotes?: string;
+  notice?: string;
+  countedOnly?: boolean;
+  duplicate?: boolean;
+  owner?: { uid: string; name: string | null } | null;
+  owners?: Array<{ uid: string; name: string | null }>;
+  eventId?: string;
+  actionAt?: string;
+};
+
 export async function postFieldDispo(
   m: PendingMutation,
   user: User,
   deps: FieldDispoDeps = {},
-): Promise<{ replayed: boolean; lead?: Lead; appliedNotes?: string; notice?: string }> {
+): Promise<FieldDispoResult> {
   const post = deps.post ?? apiFetch;
   const getToken = deps.getToken ?? (async (forceRefresh = false) => {
     const current = auth?.currentUser;
@@ -644,7 +658,28 @@ export async function postFieldDispo(
     const data = await readJson(response);
     const appliedNotes = draft.kind === "notes" && typeof draft.notes === "string" ? draft.notes : undefined;
     const notice = clearNotice ? { notice: clearNotice } : {};
+    const counted = readCountedOnly(data);
+    if (counted && draft.kind !== "knock") {
+      const error = routeError("Disposition route rejected this save.", 400, SYNC_REASON.invalidPayload);
+      if (rebasedDraft) (error as Error & { rebasedDraft?: PendingMutation }).rebasedDraft = rebasedDraft;
+      throw error;
+    }
     if (typeof appliedNotes === "string") rememberLandedNotes(draft, appliedNotes, localNow());
+    if (counted) {
+      // A knock, including a 3PL knock, is done: no lead and no plain patch.
+      return {
+        replayed: counted.duplicate,
+        countedOnly: true,
+        duplicate: counted.duplicate,
+        lead: undefined,
+        owner: counted.owner,
+        owners: counted.owners,
+        ...(counted.eventId ? { eventId: counted.eventId } : {}),
+        ...(counted.actionAt ? { actionAt: counted.actionAt } : {}),
+        appliedNotes,
+        ...notice,
+      };
+    }
     if (data?.duplicate === true) return { replayed: true, appliedNotes, ...notice };
     if (data?.gps?.outcome === "flagged_accepted") {
       try {
@@ -1004,7 +1039,7 @@ async function deliverHotLead(
   m: PendingMutation,
   user: User,
   deps: FieldDispoDeps,
-): Promise<{ replayed: boolean; lead?: Lead; notice?: string }> {
+): Promise<FieldDispoResult> {
   try {
     if (m.kind === "claim") {
       const claimed = await postHotClaim(m, user, deps);
@@ -1103,7 +1138,7 @@ export async function deliverFieldDispo(
   m: PendingMutation,
   user: User,
   deps: FieldDispoDeps = {},
-): Promise<{ replayed: boolean; lead?: Lead; notice?: string }> {
+): Promise<FieldDispoResult> {
   const commit = deps.commit ?? ((mutation: PendingMutation, actor: User) => commitDirectMutation(
     mutation,
     actor,

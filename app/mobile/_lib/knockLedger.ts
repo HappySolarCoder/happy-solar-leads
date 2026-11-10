@@ -4,6 +4,7 @@ import {
   knockEvents,
   type KnockEvent,
 } from "@/app/utils/knockCount";
+import { countedLedgerKey, type ParsedKnockEvent } from "./ownerCounts";
 
 export const KNOCK_LEDGER_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
 export const KNOCK_LEDGER_MAX_ROWS = 20_000;
@@ -243,6 +244,51 @@ export async function rememberAcknowledgedKnocks(
 ): Promise<void> {
   if (!uid || !lead?.id) return;
   const rows = rowsFor(uid, lead, now);
+  if (!rows.length) return;
+  await store().put(uid, rows);
+  try {
+    await trimLedger(uid, now);
+  } catch {
+    /* The next read trims retention and the row cap. */
+  }
+  notify(uid);
+}
+
+/**
+ * One counted_only or server knockEvents row. The key is the history fallback
+ * key, so a later accepted replay of the same tap replaces this row.
+ */
+export async function rememberCountedKnocks(
+  uid: string,
+  events: readonly ParsedKnockEvent[],
+  now = Date.now(),
+): Promise<void> {
+  if (!uid || !events.length) return;
+  const rows: LedgerRow[] = [];
+  for (const event of events) {
+    if (!event.leadId || event.userId !== uid || !Number.isFinite(event.at)) continue;
+    const [counted] = knockEvents(
+      {
+        id: event.leadId,
+        dispositionHistory: [{
+          disposition: event.dispositionId,
+          timestamp: new Date(event.at),
+          userId: event.userId,
+          userName: "",
+        }],
+      } as Lead,
+      dispositions,
+    );
+    if (!counted || counted.userId !== uid) continue;
+    const key = countedLedgerKey(counted.leadId, counted.userId, counted.dispositionId, counted.at);
+    rows.push({
+      key,
+      leadId: counted.leadId,
+      userId: counted.userId,
+      at: counted.at,
+      dispositionId: counted.dispositionId,
+    });
+  }
   if (!rows.length) return;
   await store().put(uid, rows);
   try {

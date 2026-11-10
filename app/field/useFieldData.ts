@@ -15,12 +15,16 @@ import { cleanConfig } from "./config";
 import { pilotFlags } from "./analysis";
 import { DIRECT_MOBILE_WRITES, directPatch, rejectCombinedKnockAndNotes } from './directWrites';
 import { acceptDisposition, collapseLegacyNotesQueue, supersededNotesIds } from './draftQueue';
-import { migrateDraft, reopenDeniedParked } from './draftMigration';
+import { migrateDraft, reopenDeniedParked, reopenOwnedByOtherOnResume } from './draftMigration';
 import { schedulingHold } from './draftState';
 import { deliverFieldDispo, leadOwnedBy, prefersServerDispo, releaseFieldDispoHolds } from './serverDispo';
 import { HOT_LEADS_ENABLED } from '@/app/hotLeads/flag';
 import { isHotLeadDraft } from '@/app/hotLeads/save';
-import { rememberAcknowledgedKnocks } from '@/app/mobile/_lib/knockLedger';
+import { rememberAcknowledgedKnocks, rememberCountedKnocks } from '@/app/mobile/_lib/knockLedger';
+import { countedToastText, KNOCK_COUNTED_EVENT, takeCountedToast } from '@/app/mobile/_lib/ownerCounts';
+import { knockInstant } from '@/app/utils/knockCount';
+import { App } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { enqueueDirectSave } from './enqueueDirectSave';
 import { CONTACT_NOT_SENT_MESSAGE, assertContactReadyForSend, contactDraftBlocksSendInfo, parkContactDeniedDrafts, sendInfoMayWriteContact } from './sendInfoGate';
 import { cachedTerritoryIds } from '@/app/hooks/useTeamAreasOverlay';
@@ -179,6 +183,27 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
     if (!followUp) heldNotesPending.delete(uid);
     const held = heldNotesPending.get(uid) ?? new Set<string>();
     heldNotesPending.set(uid, held);
+    const settleCountedOnly = async (
+      m: PendingMutation,
+      result: { countedOnly?: boolean; duplicate?: boolean; owner?: { uid: string; name: string | null } | null; owners?: Array<{ uid: string; name: string | null }> },
+    ) => {
+      if (!result?.countedOnly) return false;
+      const at = knockInstant(m.createdAt);
+      if (m.kind === 'knock' && at != null) {
+        await rememberCountedKnocks(uid, [{
+          leadId: m.leadId,
+          userId: uid,
+          dispositionId: m.status || m.disposition || '',
+          at,
+        }]).catch(() => {});
+      }
+      if (takeCountedToast(m.id, result.duplicate === true) && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(KNOCK_COUNTED_EVENT, {
+          detail: { owner: countedToastText(result.owner, result.owners) },
+        }));
+      }
+      return true;
+    };
     const task = (async () => {
     try {
       const queued = await readDrafts(uid);
@@ -199,6 +224,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
               getToken: async () => (await auth?.currentUser?.getIdToken()) || '',
               persistDraft: putDraft,
             });
+            if (await settleCountedOnly(m, result)) return result;
             if (HOT_LEADS_ENABLED && m.collection === 'hotLeads' && m.kind === 'knock' && active.current === uid) {
               const source = result.lead?.dispositionHistory?.length ? result.lead : { id: m.leadId, ...m.direct?.patch };
               // Keep the hot pin id. Promotion dedupes later through linkedLeadId.
@@ -212,6 +238,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
               persistDraft: putDraft,
             })
             : await fieldRequest('/api/field-work', m);
+          if (await settleCountedOnly(m, result)) return result;
           if (DIRECT_MOBILE_WRITES && result.lead && active.current === uid) acknowledgeMobileLead(actor, result.lead);
           // NOTES-MERGE-SPEC V4: a clear that kept other people's new notes says so.
           const notice = (result as { notice?: string }).notice;
@@ -311,6 +338,22 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       if (document.visibilityState === "visible") online();
     };
     document.addEventListener("visibilitychange", visible);
+    const resume = Capacitor.isNativePlatform()
+      ? App.addListener("appStateChange", ({ isActive }) => {
+          if (!isActive || active.current !== uid || auth?.currentUser?.uid !== uid) return;
+          void (async () => {
+            const drafts = await readDrafts(uid);
+            const opened = reopenOwnedByOtherOnResume(drafts, uid, Date.now());
+            if (opened === drafts || active.current !== uid) return;
+            for (let index = 0; index < opened.length; index += 1) {
+              if (opened[index] !== drafts[index]) await putDraft(opened[index]);
+            }
+            if (active.current !== uid) return;
+            await reloadDrafts();
+            void sync();
+          })().catch((error) => console.warn("[raydar-sync]", (error as Error).message));
+        })
+      : null;
     // The app retries transient failures while open. No reads when the queue is empty.
     const retryTimer = setInterval(() => { if (isDeviceOnline()) void sync(); }, 30000);
     return () => {
@@ -319,6 +362,7 @@ export function useFieldData(user: User | null, liveLeads: Lead[]) {
       window.removeEventListener("raydar-network-change", online);
       window.removeEventListener("offline", online);
       document.removeEventListener("visibilitychange", visible);
+      void resume?.then((handle) => handle.remove()).catch(() => {});
       clearInterval(retryTimer);
     };
   }, [uid, update, loadConfig, sync]);

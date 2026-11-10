@@ -84,6 +84,12 @@ export interface Lead {
   status: LeadStatus;
   claimedBy?: string;
   claimedAt?: Date;
+  /** Present only on /api/mobile-leads rows while ownership mode is territory. */
+  ownedByMe?: boolean;
+  owners?: Array<{ uid: string; name: string | null }>;
+  ownerSource?: string;
+  expiredGoBack?: boolean;
+  inOtherUsersTerritory?: boolean;
   disposition?: string;       // Disposition name (from dispositions collection)
   dispositionedAt?: Date;
   notes?: string;

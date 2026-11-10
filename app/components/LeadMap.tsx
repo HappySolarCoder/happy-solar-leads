@@ -38,6 +38,7 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.markercluster';
 import { Lead, STATUS_COLORS, STATUS_LABELS, User } from '@/app/types';
+import { callerPopupExempt, EXP_GO_BACK, isTerritoryWarningCancelled, leadAtPoint, ownershipBadge, pinIsMine, shouldWarnTerritory, territoryOwnershipOn, territoryWarningCancelled, TERRITORY_WARNING } from '@/app/mobile/_lib/ownerCounts';
 import { auth } from '@/app/utils/firebase';
 import { RouteWaypoint } from './RouteBuilder';
 import { Disposition, getDispositionsAsync, isKnockStatus } from '@/app/utils/dispositions';
@@ -862,7 +863,7 @@ export default function LeadMap({
       const added: L.Marker[] = [];
       while (offset < eligible.length && performance.now() - start < 8 && added.length < 75) {
         const lead = eligible[offset++];
-        const isClaimedByMe = !!currentUser && lead.claimedBy === currentUser.id;
+        const isClaimedByMe = pinIsMine(lead, currentUser?.id);
         const canClaim = lead.claimedBy == null || isClaimedByMe;
         const selectedForAssignment = assignedIds.has(lead.id);
         const selected = selectedForAssignment;
@@ -1573,6 +1574,17 @@ export default function LeadMap({
   const handleSaveDroppedLead = async (leadData: Partial<Lead>) => {
     try {
       const pinLat = typeof leadData.lat === 'number' ? leadData.lat : dropPinLocation?.lat;
+      const pinLngEarly = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
+      const placedAt = leadData.createdAt instanceof Date ? leadData.createdAt : new Date();
+      const territoryRow = leadAtPoint(leads, pinLat, pinLngEarly);
+      const warnTerritory = shouldWarnTerritory({
+        active: territoryOwnershipOn(currentUser?.id),
+        popupExempt: callerPopupExempt(currentUser?.id),
+        row: territoryRow,
+      });
+      if (warnTerritory && (typeof window === 'undefined' || !window.confirm(TERRITORY_WARNING))) {
+        throw territoryWarningCancelled();
+      }
       const pinLng = typeof leadData.lng === 'number' ? leadData.lng : dropPinLocation?.lng;
       let gpsFields: Partial<Lead> = {};
       const id = manualDraftId.current || (manualDraftId.current = crypto.randomUUID());
@@ -1633,7 +1645,7 @@ export default function LeadMap({
         disposition: manualDisposition,
         dispositionedAt: manualDisposition ? (leadData.dispositionedAt || new Date()) : leadData.dispositionedAt,
         dispositionHistory: (leadData.dispositionHistory as any) || historyEntry,
-        createdAt: new Date(),
+        createdAt: warnTerritory ? placedAt : new Date(),
         // Manual lead ownership: must match Firestore rules (setterId == request.auth.uid)
         setterId: firebaseUid,
         // Also set claimedBy so rep-safe map queries (claimedBy/assignedTo) include it
@@ -1717,7 +1729,7 @@ export default function LeadMap({
         onLeadAdded(newLead);
       }
     } catch (error: any) {
-      if (isProximityWarningCancelled(error)) throw error;
+      if (isProximityWarningCancelled(error) || isTerritoryWarningCancelled(error)) throw error;
       if (error?.message === AREA_BLOCK_MESSAGE) throw error;
       console.error('Error saving dropped lead:', error);
       // Surface the real reason up to UI (permission-denied vs auth-not-ready)
@@ -2152,10 +2164,14 @@ function createCustomIcon(
       : isSimpleDot ? 'none' : '2px solid white';
   }
   
+  const expGoBack = lead.expiredGoBack === true;
+  if (expGoBack) color = EXP_GO_BACK.color;
   const opacity = isClaimed && !canClaim ? 0.7 : 1;
   
   // Use disposition icon if available, otherwise fallback to default
-  const icon = disposition 
+  const icon = expGoBack
+    ? EXP_GO_BACK.icon
+    : disposition 
     ? (ICON_TO_UNICODE[disposition.icon] || '●')
     : '●';
   
@@ -2234,8 +2250,10 @@ function createPopupContent(lead: Lead): string {
     `;
   }
 
-  const statusColor = STATUS_COLORS[lead.status] || '#6b7280';
-  const statusLabel = STATUS_LABELS[lead.status] || lead.disposition || lead.status;
+  const expGoBack = lead.expiredGoBack === true;
+  const statusColor = expGoBack ? EXP_GO_BACK.color : STATUS_COLORS[lead.status] || '#6b7280';
+  const statusLabel = expGoBack ? EXP_GO_BACK.label : STATUS_LABELS[lead.status] || lead.disposition || lead.status;
+  const ownedLine = ownershipBadge(lead);
   
   return `
     <div data-pin-id="${escapePopupText(lead.id)}" style="padding:8px;font-family:system-ui,-apple-system,sans-serif;">
@@ -2243,6 +2261,7 @@ function createPopupContent(lead: Lead): string {
       <p style="margin:0 0 4px 0;font-size:14px;color:#4b5563;">${escapePopupText(lead.address)}</p>
       <p style="margin:0 0 12px 0;font-size:12px;color:#6b7280;">${escapePopupText(lead.city)}, ${escapePopupText(lead.state)} ${escapePopupText(lead.zip)}</p>
       <div style="display:inline-block;padding:4px 10px;background:${statusColor}20;color:${statusColor};border-radius:9999px;font-size:12px;font-weight:500;">${escapePopupText(statusLabel)}</div>
+      ${ownedLine ? `<p style="margin:8px 0 0 0;font-size:12px;font-weight:600;color:#92400e;">${escapePopupText(ownedLine)}</p>` : ''}
       ${outcomeHtml}${pastPinDetailHtml(lead, statusLabel)}
       ${lead.phone ? `<p style="margin:8px 0 0 0;font-size:13px;color:#4b5563;">📞 ${escapePopupText(lead.phone)}</p>` : ''}
     </div>

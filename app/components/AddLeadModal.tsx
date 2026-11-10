@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { X, MapPin, Loader, Home, Phone, Mail, DollarSign } from 'lucide-react';
 import { AREA_BLOCK_MESSAGE } from '@/app/field/areaGate';
 import { isProximityWarningCancelled } from '@/app/field/proximityWarning';
+import { EXP_GO_BACK, isTerritoryWarningCancelled } from '@/app/mobile/_lib/ownerCounts';
 import { Lead } from '@/app/types';
 import { getDispositionsAsync } from '@/app/utils/dispositions';
 import type { Disposition } from '@/app/types/disposition';
@@ -77,7 +78,7 @@ export default function AddLeadModal({
     getDispositionsAsync()
       .then((rows) => {
         const options = rows
-          .filter((d) => d.id !== 'claimed' && d.id !== 'unclaimed')
+          .filter((d) => d.id !== 'claimed' && d.id !== 'unclaimed' && d.id !== EXP_GO_BACK.id)
           .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
         setDispositions(options);
         if (!selectedDisposition && options.length > 0) {
@@ -133,7 +134,7 @@ export default function AddLeadModal({
       setSelectedDisposition(dispositions[0]?.id || selectedDisposition);
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
-      if (isProximityWarningCancelled(error)) return;
+      if (isProximityWarningCancelled(error) || isTerritoryWarningCancelled(error)) return;
       if (message === AREA_BLOCK_MESSAGE) {
         setAreaMessage(message);
         return;

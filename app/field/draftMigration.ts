@@ -56,6 +56,43 @@ export function resetParkedReopenForTests() {
   reopenedSessions.clear();
 }
 
+/** Same cap acceptDisposition uses before it refuses another pending change. */
+const PENDING_DRAFT_LIMIT = 500;
+export const RESUME_REOPEN_MS = 60 * 60 * 1000;
+const resumeReopenedAt = new Map<string, number>();
+
+/**
+ * App resume only. Parked owned_by_other drafts are tried again, at most once
+ * an hour per account, and only while the pending queue still has room.
+ * Other park reasons stay parked. The original draft id and action time stay.
+ */
+export function reopenOwnedByOtherOnResume(
+  drafts: PendingMutation[],
+  uid: string,
+  now: number,
+): PendingMutation[] {
+  if (!uid) return drafts;
+  const last = resumeReopenedAt.get(uid);
+  if (last != null && now - last < RESUME_REOPEN_MS) return drafts;
+  let room = PENDING_DRAFT_LIMIT - drafts.reduce((count, row) => count + (row.syncState !== "parked" ? 1 : 0), 0);
+  if (room <= 0) return drafts;
+  let changed = false;
+  const next = drafts.map((row) => {
+    if (room <= 0) return row;
+    if (row.userId !== uid || row.syncState !== "parked" || row.parkedReason !== SYNC_REASON.ownedByOther) return row;
+    room -= 1;
+    changed = true;
+    return { ...row, syncState: "queued" as const, nextAttemptAt: undefined };
+  });
+  if (!changed) return drafts;
+  resumeReopenedAt.set(uid, now);
+  return next;
+}
+
+export function resetResumeReopenForTests() {
+  resumeReopenedAt.clear();
+}
+
 /**
  * Upgrade a draft saved by 14.17 or earlier. Running this again returns the same object.
  * GPS holds and blocks are re-queued as flagged dispos with their original action time.

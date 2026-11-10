@@ -6,6 +6,7 @@ import { mapLeadDoc } from '@/app/utils/firestore';
 import { isDeviceOnline } from '@/app/utils/connectivity';
 import { inPinScope, scopedViews, type PinScope } from '@/app/mobile/_lib/pinScope';
 import { mergeLeadSnapshots } from '@/app/homeowners/houseIdentity';
+import { rowsForOwnership } from '@/app/mobile/_lib/ownerCounts';
 import { inView, type View } from '@/app/homeowners/model';
 import type { Lead, User } from '@/app/types';
 
@@ -60,7 +61,7 @@ export function useViewportLeads(user:User|null, view:View|null, polygons:PinSco
         }
         if(!res.ok)throw Error(res.status===404 ? 'The company server needs the v14.8 map update.' : 'Pins could not refresh. Saved pins remain visible.');
         const data=await res.json();if(!active || auth?.currentUser?.uid!==uid)return;
-        const incoming:Lead[]=(data.leads||[]).filter((l:Lead)=>inPinScope(l.lat,l.lng,polygons)).map((l:Lead)=>mapLeadDoc({id:l.id,data:()=>l}));
+        const incoming:Lead[]=rowsForOwnership<Lead>(uid, data).filter((l:Lead)=>inPinScope(l.lat,l.lng,polygons)).map((l:Lead)=>mapLeadDoc({id:l.id,data:()=>l}));
         found=mergeLeadSnapshots(found,incoming);
         cursor=data.nextCursor||null;
         const known=current.current.value.leads;
