@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Lead } from "../../app/types";
-import type { HotLeadPin } from "../../app/hotLeads/model";
+import { hotLeadCallAllowed, mergeHotLeads, suppressLeadCall, type HotLeadPin } from "../../app/hotLeads/model";
 import { fieldPinArtwork, HOT_RING_COLOR, withLegacyHotPin } from "../../app/utils/fieldPin";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -111,4 +111,29 @@ test("every 3PL pin uses the gold outline and a dashed ring means view only", ()
     true,
   ).url);
   assert.match(warm, /data-hot-lead="true" transform="translate\(20 0\)"/);
+});
+
+test("a 3PL doNotCall flag does not hide Call or transfer onto a merged house", () => {
+  const flagged = pin({ doNotCall: true });
+  assert.equal(hotLeadCallAllowed(flagged), true);
+  assert.equal(hotLeadCallAllowed(null), true);
+  const detail = read("app/hotLeads/HotLeadDetail.tsx");
+  assert.doesNotMatch(detail, /DO_NOT_CALL_WARNING/);
+  assert.doesNotMatch(detail, /Do not call/);
+  const houseLead = house({ phone: "555-0101", address: "100 Example Ave", lat: 43.16, lng: -77.61 });
+  const merged = mergeHotLeads([houseLead], [pin({
+    id: "ghl_house_a",
+    linkedLeadId: "house-1",
+    doNotCall: true,
+    address: "100 Example Ave",
+    lat: 43.16,
+    lng: -77.61,
+  })]);
+  assert.equal(merged.leads.length, 1);
+  assert.equal((merged.leads[0] as { hotPin?: { doNotCall?: boolean } }).hotPin?.doNotCall, undefined);
+  assert.equal(suppressLeadCall(merged.leads[0]), false);
+  const ordinary = fieldPinArtwork(house({ status: "do-not-contact" }), undefined, 18, false, false);
+  assert.equal(svg(ordinary.url).includes(HOT_RING_COLOR), false);
+  assert.match(read("app/utils/fieldPin.ts"), /do-not-contact/);
+  assert.match(read("app/field/analysis.ts"), /donotcontact/);
 });

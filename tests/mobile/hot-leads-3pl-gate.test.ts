@@ -204,10 +204,10 @@ test("the rendered 3PL detail hides knock, claim, notes save and Call for each b
   }
   const dncOpen = renderDetail(pin({ doNotCall: true }));
   const dncLocked = renderDetail(pin({ doNotCall: true, canDispo: false, dispoBlock: "no_territory" }));
-  assert.match(dncOpen, /Do not call/);
-  assert.match(dncLocked, /Do not call/);
-  assert.equal(dncOpen.includes("tel:"), false);
-  assert.equal(dncLocked.includes("tel:"), false);
+  assert.equal(dncOpen.includes("Do not call"), false);
+  assert.equal(dncLocked.includes("Do not call"), false);
+  assert.match(dncOpen, /tel:555-0199/);
+  assert.match(dncLocked, /tel:555-0199/);
   assert.match(dncOpen, /Claim/);
   assert.equal(dncLocked.includes(">Claim<"), false);
   assert.match(dncLocked, new RegExp(HOT_DISPO_BLOCK_COPY.no_territory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

@@ -73,12 +73,12 @@ export function hotLeadViewOnly(lead: object | null | undefined): boolean {
   return row.hotLead === true && row.hotPin?.canDispo === false;
 }
 
-/** Shown on the 3PL lead detail when the route set doNotCall. */
+/** Kept for the ordinary-lead detail path. 3PL rows do not render it. */
 export const DO_NOT_CALL_WARNING = "Do not call";
 
-/** A call control is only offered when the route did not set doNotCall. */
-export function hotLeadCallAllowed(pin: { doNotCall?: boolean } | null | undefined): boolean {
-  return pin?.doNotCall !== true;
+/** Every 3PL pin can be called. Dead and Do-not-contact rows are normal pins. */
+export function hotLeadCallAllowed(_pin: { doNotCall?: boolean } | null | undefined): boolean {
+  return true;
 }
 
 export type HotCapabilities = { dispo: boolean; claim: boolean };
@@ -170,10 +170,9 @@ export function mergeHotLeads(
     if (previous) {
       consumed.add(hot.id);
       extras.set(hot.id, target);
-      if (hot.doNotCall === true && previous.doNotCall !== true) attached.set(target, { ...previous, doNotCall: true });
       continue;
     }
-    attached.set(target, hot);
+    attached.set(target, withoutDoNotCall(hot));
     consumed.add(hot.id);
   }
   const merged = leads.map((lead) => {
@@ -195,10 +194,7 @@ export function mergeHotLeads(
     if (mateIndex >= 0) {
       const mate = merged[mateIndex] as HotDisplayLead;
       const current = mate.hotPin;
-      const doNotCall = hot.doNotCall === true || current?.doNotCall === true;
-      const hotPin: HotLeadPin = current
-        ? { ...current, ...(doNotCall ? { doNotCall: true as const } : {}) }
-        : hot;
+      const hotPin: HotLeadPin = withoutDoNotCall(current ? { ...current } : hot);
       const next: HotDisplayLead = { ...mate, hotLead: true, hotLeadId: mate.hotLeadId || hot.id, hotPin };
       if (!mate.hotOnly) delete next.hotOnly;
       merged[mateIndex] = next;
@@ -224,6 +220,13 @@ let onLocalPins: ((pins: HotLeadPin[]) => void) | null = null;
 let serverPins = new Map<string, HotLeadPin>();
 const detailListeners = new Set<(pin: HotLeadPin) => void>();
 let refreshHotLead: ((id: string) => Promise<HotLeadPin | null>) | null = null;
+
+function withoutDoNotCall(pin: HotLeadPin): HotLeadPin {
+  if (pin.doNotCall !== true) return pin;
+  const next = { ...pin };
+  delete next.doNotCall;
+  return next;
+}
 
 function clonePin(pin: HotLeadPin): HotLeadPin {
   return {
@@ -351,7 +354,7 @@ export function loadedHotPins(): HotLeadPin[] {
   return [...byId.values()];
 }
 
-/** Display only. A merged house hides Call when its 3PL lead is doNotCall. */
+/** Display only. A merged 3PL house does not inherit doNotCall, so Call stays available. */
 export function suppressLeadCall(lead: { id: string; hotPin?: HotLeadPin | null } | null | undefined): boolean {
   if (!lead) return false;
   const pin = lead.hotPin ?? hotPinForLead(lead.id);

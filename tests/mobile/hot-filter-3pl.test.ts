@@ -279,13 +279,13 @@ test("zoom below 15 with 3PL only shows the banner and does not fetch", async ()
   assert.match(map, /filter === 'only' && hotLeadZoomBanner/);
 });
 
-test("a do-not-call 3PL pin hides Call, shows the chip, and still allows a knock", () => {
+test("a do-not-call 3PL pin still allows Call and a knock", () => {
   const flagged = pin({ doNotCall: true });
-  assert.equal(hotLeadCallAllowed(flagged), false);
+  assert.equal(hotLeadCallAllowed(flagged), true);
   const detail = read("app/hotLeads/HotLeadDetail.tsx");
   assert.match(detail, /role="status"/);
-  assert.match(detail, /DO_NOT_CALL_WARNING/);
-  assert.match(detail, /!noCall \? <a href=\{`tel:/);
+  assert.doesNotMatch(detail, /DO_NOT_CALL_WARNING/);
+  assert.match(detail, /contact\.phone \? <a href=\{`tel:/);
   assert.match(detail, /stageHotKnock/);
   assert.doesNotMatch(detail, /noCall \? null : [\s\S]{0,80}knock\(/);
   const leadDetail = read("app/components/LeadDetail.tsx");
