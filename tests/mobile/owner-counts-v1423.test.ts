@@ -6,6 +6,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { reopenOwnedByOtherOnResume, resetResumeReopenForTests, RESUME_REOPEN_MS } from "../../app/field/draftMigration";
 import { deliverFieldDispo, fieldDispoBody, FIELD_DISPO_PATH, postFieldDispo } from "../../app/field/serverDispo";
+import {
+  hotPinForLead,
+  noteHotDispo,
+  publishHotLeadIndex,
+  rememberServerHotPin,
+  resetHotLeadStore,
+  serverHotPin,
+  type HotLeadPin,
+} from "../../app/hotLeads/model";
 import { SYNC_REASON } from "../../app/field/syncReasons";
 import { syncOutbox } from "../../app/field/syncOutbox";
 import type { PendingMutation } from "../../app/field/types";
@@ -250,6 +259,73 @@ test("notes and a hot-lead note treat counted_only as unexpected; a 3PL knock is
   assert.equal(hot.owner, null);
 });
 
+test("a 3PL counted_only knock clears, rolls the pin back, and counts once", async () => {
+  resetHotLeadStore();
+  resetKnockLedgerForTests();
+  const id = "ghl_pin_1";
+  const original: HotLeadPin = {
+    id,
+    lat: 33.4,
+    lng: -112,
+    address: "1 Test St",
+    state: "AZ",
+    contacts: [],
+    hotStatus: "active",
+    claimedBy: null,
+    claimedByName: null,
+    claimedAt: null,
+    status: null,
+    disposition: null,
+    dispositionedAt: null,
+    notes: "server copy",
+    linkedLeadId: null,
+    homeownerId: null,
+  };
+  rememberServerHotPin(original);
+  publishHotLeadIndex(new Map([[id, { ...original }]]));
+  noteHotDispo(id, "not-home", "Not Home");
+  assert.equal(hotPinForLead(id)?.status, "not-home");
+  const row = knock({
+    id: "draft-hot",
+    leadId: id,
+    collection: "hotLeads",
+    direct: { patch: { status: "not-home" } },
+  });
+  let rows = [row];
+  await syncOutbox({
+    read: async () => rows,
+    send: async (current) => {
+      const result = await deliverFieldDispo(current, user, {
+        getToken: async () => "token",
+        post: async () => json(200, countedBody({ draftId: current.id, eventId: `rep_${current.id}` })),
+      });
+      assert.equal(result.countedOnly, true);
+      assert.equal(result.lead, undefined);
+      await rememberCountedKnocks(user.id, [{
+        leadId: current.leadId,
+        userId: user.id,
+        dispositionId: current.status || "",
+        at: Date.parse(current.createdAt),
+      }]);
+      return result;
+    },
+    remove: async () => {
+      rows = [];
+    },
+    update: async (next) => {
+      rows = [next];
+    },
+    active: () => true,
+  });
+  assert.equal(rows.length, 0);
+  assert.equal(hotPinForLead(id)?.status, null);
+  assert.equal(hotPinForLead(id)?.notes, "server copy");
+  assert.equal(serverHotPin(id)?.status, null);
+  const ledger = await readKnockLedger(user.id, DEFAULT_DISPOSITIONS, atMs + 1000);
+  assert.equal(ledger.length, 1);
+  resetHotLeadStore();
+});
+
 test("the ledger key is leadId|userId|dispositionId|epoch ms and both sources count once", async () => {
   resetKnockLedgerForTests();
   resetOwnerCountsForTests();
@@ -332,7 +408,7 @@ test("the counted toast names the owner, joins extras, and shows once per draft"
   assert.equal(countedToastText({ uid: "owner-1", name: "Ada" }, []).includes("owner-1"), false);
   assert.equal(takeCountedToast("draft-1", false), true);
   assert.equal(takeCountedToast("draft-1", false), false);
-  assert.equal(takeCountedToast("draft-2", true), false);
+  assert.equal(takeCountedToast("draft-2", true), true);
   assert.equal(takeCountedToast("draft-2", false), false);
   assert.match(read("app/mobile/_lib/ownerCounts.ts"), /raydar:knock-counted/);
   assert.match(read("app/field/useFieldData.ts"), /KNOCK_COUNTED_EVENT/);

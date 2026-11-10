@@ -1050,6 +1050,10 @@ async function deliverHotLead(
       throw routeError(HOT_LEAD_OLD_SERVER_NOTICE, 400, SYNC_REASON.invalidPayload);
     }
     const saved = await postFieldDispo(m, user, deps);
+    if (saved.countedOnly) {
+      await rollbackHotLead(m.leadId);
+      return saved;
+    }
     confirmHotServerPin(m.leadId);
     return saved;
   } catch (error) {

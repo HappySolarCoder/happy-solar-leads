@@ -103,11 +103,11 @@ export function countedToastText(
   return `Counted. This pin belongs to ${first}`;
 }
 
-/** True the first time this draft should toast. Duplicate replays and repeats stay quiet. */
-export function takeCountedToast(draftId: string, duplicate: boolean): boolean {
+/** True the first time this draft should toast this session, including a duplicate replay. */
+export function takeCountedToast(draftId: string, _duplicate = false): boolean {
   if (!draftId || toasted.has(draftId)) return false;
   toasted.add(draftId);
-  return duplicate !== true;
+  return true;
 }
 
 /** Same fallback key knockCount derives. `at` must already be epoch ms. */
