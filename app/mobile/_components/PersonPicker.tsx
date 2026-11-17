@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Search, X, ChevronDown, Check } from "lucide-react";
 import MobileDialog from "./MobileDialog";
@@ -59,21 +59,9 @@ export default function PersonPicker({
     setPage(0);
     setOpen(next.open);
   };
-  // A focused search field on a phone dismisses the keyboard on pointerdown
-  // and shifts the dialog before click, so the tap misses the name and the X.
-  // Run the action here, and keep click for keyboard activation only.
-  const tap = (event: PointerEvent<HTMLButtonElement>, action: () => void) => {
-    if (!event.isPrimary || event.button !== 0) return;
-    event.preventDefault();
-    action();
-  };
-  const activateFromKeyboard = (
-    event: MouseEvent<HTMLButtonElement>,
-    action: () => void
-  ) => {
-    if (event.detail !== 0) return;
-    action();
-  };
+  // pointerdown only keeps the search field focused. The action runs on
+  // click for every detail. Running it on pointerdown closes the dialog
+  // before the tap's click, and that click lands on whatever is underneath.
   const dialog =
     open && host ? (
       <MobileDialog title={label} onClose={close}>
@@ -83,8 +71,10 @@ export default function PersonPicker({
             <button
               type="button"
               aria-label={`Close ${label}`}
-              onPointerDown={(event) => tap(event, close)}
-              onClick={(event) => activateFromKeyboard(event, close)}
+              onPointerDown={(e) => {
+                if (e.isPrimary) e.preventDefault();
+              }}
+              onClick={close}
             >
               <X size={22} />
             </button>
@@ -106,8 +96,10 @@ export default function PersonPicker({
             {allowAll && page === 0 && !query && (
               <button
                 type="button"
-                onPointerDown={(event) => tap(event, () => choose(""))}
-                onClick={(event) => activateFromKeyboard(event, () => choose(""))}
+                onPointerDown={(e) => {
+                  if (e.isPrimary) e.preventDefault();
+                }}
+                onClick={() => choose("")}
               >
                 {emptyLabel}
                 {!value && <Check size={18} />}
@@ -117,8 +109,10 @@ export default function PersonPicker({
               <button
                 key={x.id}
                 type="button"
-                onPointerDown={(event) => tap(event, () => choose(x.id))}
-                onClick={(event) => activateFromKeyboard(event, () => choose(x.id))}
+                onPointerDown={(e) => {
+                  if (e.isPrimary) e.preventDefault();
+                }}
+                onClick={() => choose(x.id)}
                 aria-label={`Select ${x.name}`}
               >
                 <span>
@@ -134,10 +128,10 @@ export default function PersonPicker({
             <button
               type="button"
               disabled={!page}
-              onPointerDown={(event) => tap(event, () => setPage((p) => p - 1))}
-              onClick={(event) =>
-                activateFromKeyboard(event, () => setPage((p) => p - 1))
-              }
+              onPointerDown={(e) => {
+                if (e.isPrimary) e.preventDefault();
+              }}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
             >
               Previous
             </button>
@@ -152,9 +146,11 @@ export default function PersonPicker({
             <button
               type="button"
               disabled={(page + 1) * 25 >= matches.length}
-              onPointerDown={(event) => tap(event, () => setPage((p) => p + 1))}
-              onClick={(event) =>
-                activateFromKeyboard(event, () => setPage((p) => p + 1))
+              onPointerDown={(e) => {
+                if (e.isPrimary) e.preventDefault();
+              }}
+              onClick={() =>
+                setPage((p) => ((p + 1) * 25 >= matches.length ? p : p + 1))
               }
             >
               Next
