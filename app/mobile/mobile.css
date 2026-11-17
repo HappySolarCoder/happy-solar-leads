@@ -1690,8 +1690,21 @@
 }
 
 .rm-dialog > section:has(> .rm-coach-panel),
-.rm-dialog > section:has(> .rm-mobile-filters) {
+.rm-dialog > section:has(> .rm-mobile-filters),
+.rm-dialog > section:has(> .rm-person-picker) {
   padding: 0;
+}
+/* Keep the X on screen. The sheet used to scroll the whole picker, so a
+   focused search field pushed Close above the dialog. */
+.rm-dialog:has(> section > .rm-person-picker) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.rm-dialog > section:has(> .rm-person-picker) {
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
 }
 
 .rm-return-reminder { position:absolute; left:12px; right:12px; bottom:86px; z-index:26; max-width:390px; padding:12px; border:1px solid #B3C9D8; border-radius:18px; background:#F4F8FB; color:#304B5E; box-shadow:0 5px 22px #304B5E26; }
@@ -1845,7 +1858,7 @@ html[data-native] .raydar-mobile .rt-shell { height: var(--app-height); padding-
 .raydar-mobile .rm-person-trigger { display:flex; align-items:center; justify-content:space-between; width:100%; min-width:0; min-height:44px; padding:9px 11px; background:white; border:1px solid #B3C9D8; border-radius:11px; color:#304B5E; }
 .rm-person-trigger span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rm-person-trigger svg { flex:none; }
-.rm-person-picker { display:flex; flex-direction:column; height:min(620px,80dvh); padding:18px; gap:12px; color:#304B5E; }
+.rm-person-picker { display:flex; flex-direction:column; height:min(620px,80dvh); max-height:100%; min-height:0; flex:1 1 auto; padding:18px; gap:12px; color:#304B5E; }
 .rm-person-picker h2 { font-size:20px; font-weight:700; }
 .rm-person-picker .rm-search,.rm-users-page .rm-search { flex:none; width:100%; min-height:44px; }
 .rm-person-picker input,.rm-users-page .rm-search input { width:100%; min-width:0; font-size:16px; outline:none; }
