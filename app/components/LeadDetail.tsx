@@ -23,6 +23,7 @@ import { overlayDrafts } from '@/app/field/deviceStore';
 import { useOptionalMobileData } from '@/app/mobile/_components/MobileDataProvider';
 import type { FieldMutation, FieldObservation } from '@/app/field/types';
 import { localParts } from '@/app/field/analysis';
+import { REDACTED_DOOR_NOTICE } from '@/app/field/closerScope';
 import { callerPopupExempt, ownershipBadge, pinIsMine, selectableDispositions, shouldWarnTerritory, territoryOwnershipOn, TERRITORY_WARNING } from '@/app/mobile/_lib/ownerCounts';
 
 import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
@@ -145,7 +146,24 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   if (shared && !(shared as Lead & {mobileSummary?:boolean}).mobileSummary) lead = shared;
   if (field?.drafts.length) lead = overlayDrafts([lead], field.drafts)[0];
   const summaryOnly = Boolean((lead as Lead & {mobileSummary?:boolean}).mobileSummary);
-  homeowner = homeowner || lead.homeowner;
+  const contactRedacted = lead.contactRedacted === true;
+  if (contactRedacted) {
+    homeowner = undefined;
+    lead = {
+      ...lead,
+      name: lead.address,
+      phone: undefined,
+      email: undefined,
+      notes: undefined,
+      dispositionNotes: undefined,
+      objectionType: undefined,
+      objectionNotes: undefined,
+      goBackNotes: undefined,
+      homeowner: undefined,
+    };
+  } else {
+    homeowner = homeowner || lead.homeowner;
+  }
   const hasPendingFieldWork = !!field?.drafts.some(d => d.leadId === lead.id);
   const pausedWithDrafts = !DIRECT_MOBILE_WRITES && hasPendingFieldWork && !field?.flags.capture;
   const capture = !DIRECT_MOBILE_WRITES && !!field?.flags.capture;
@@ -1166,7 +1184,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
               </div>
             )}
           </div>
-          {summaryOnly && <p role="status">Saved door summary. You can log a knock offline. Reconnect and reopen this door to edit notes and details.</p>}
+          {contactRedacted ? <p role="status">{REDACTED_DOOR_NOTICE}</p> : summaryOnly && <p role="status">Saved door summary. You can log a knock offline. Reconnect and reopen this door to edit notes and details.</p>}
           {/* Notes Section */}
           <div className="mt-6 pt-6 border-t border-[#E2E8F0]">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Notes</h3>
@@ -1334,11 +1352,13 @@ function formatTimeAgo(date: Date): string {
  * selected door before editing so saving notes cannot erase existing content. */
 export default function LeadDetail(props: LeadDetailProps) {
   const summary = Boolean((props.lead as Lead & {mobileSummary?:boolean}).mobileSummary);
+  const redacted = props.lead.contactRedacted === true;
   const [full,setFull] = useState<Lead | null>(null);
   const [error,setError] = useState('');
   const [attempt,setAttempt] = useState(0);
   const uid=props.currentUser?.id, id=props.lead.id;
   useEffect(() => {
+    if (redacted) return;
     if (!summary || !uid || !db) return;
     let active=true;
     setFull(null);setError('');
@@ -1348,7 +1368,8 @@ export default function LeadDetail(props: LeadDetailProps) {
       setFull(mapLeadDoc(snapshot));
     }).catch(()=>{if(active)setError('Full door details could not load. Reconnect and retry. Your saved knocks are safe.');});
     return()=>{active=false;};
-  },[id,uid,summary,attempt]);
+  },[id,uid,summary,attempt,redacted]);
+  if (redacted) return <LeadDetailContent {...props} homeowner={undefined} lead={props.lead} />;
   if(summary && (!full || full.id!==id) && !error && isDeviceOnline())return <MobileDialog title="Door details" onClose={props.onClose}>
     <p role="status">{error || 'Loading door details…'}</p><button className="rm-secondary" onClick={() => props.onClose()}>Close door details</button>
     {error && <button className="rm-primary" onClick={()=>setAttempt(v=>v+1)}>Retry</button>}

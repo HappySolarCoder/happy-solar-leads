@@ -46,7 +46,7 @@ import { hotLeadFilterVisible, hotOnlyLayers, readHotFilter, writeHotFilter, HOT
 import { HotLeadFilterSection } from "@/app/hotLeads/HotLeadFilterSection";
 import { hotLeadParkNotice } from "@/app/hotLeads/save";
 import { HOT_PINS_UNAVAILABLE } from "@/app/hotLeads/fetch";
-import { knockMapPins } from "../_lib/pinScope";
+import { homeScopeFor, knockMapPins, pinScopeFor } from "../_lib/pinScope";
 import type { View } from "@/app/homeowners/model";
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
@@ -162,7 +162,8 @@ export default function KnockingPage() {
   });
   const { territories: overlayTerritories, members: overlayMembers, loading: areasLoading, ready: areasReady, error: areasError, retry: retryAreas } = useTeamAreasOverlay(true, currentUser?.id);
   const [viewport, setViewport] = useState<View | null>(null);
-  const pinPolygons = useMemo(() => currentUser && ['admin','manager'].includes(currentUser.role) ? undefined : overlayTerritories.filter(t => t.userId === currentUser?.id).map(t => t.polygon), [currentUser?.id, currentUser?.role, overlayTerritories]);
+  const pinPolygons = useMemo(() => pinScopeFor(currentUser, overlayTerritories), [currentUser, overlayTerritories]);
+  const homePolygons = useMemo(() => homeScopeFor(currentUser, overlayTerritories), [currentUser, overlayTerritories]);
   const viewportPins = useViewportLeads(currentUser, viewport, pinPolygons, areasReady);
   const hotLeads = useHotLeads(currentUser, viewport);
   const showHotFilter = hotLeadFilterVisible(currentUser);
@@ -188,7 +189,7 @@ export default function KnockingPage() {
   };
   const mapSource = useMemo(() => {
     return knockMapPins(mergeLeadSnapshots(viewportPins.leads, leads), pinPolygons, currentUser);
-  }, [viewportPins.leads,leads,pinPolygons,currentUser?.id,currentUser?.role]);
+  }, [viewportPins.leads,leads,pinPolygons,currentUser]);
   const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
   const teamAreaTerritories = useMemo(
     () => colorTerritories(areaPolygonsFor(areaMode, overlayTerritories, currentUser?.id), coloredUsers),
@@ -951,7 +952,7 @@ export default function KnockingPage() {
         <main className="rm-knocking-map flex-1 relative overflow-hidden" aria-label="Knocking map">
           <LeadMap
             leads={mapLeads}
-            pinPolygons={pinPolygons}
+            pinPolygons={homePolygons}
             onViewportChange={setViewport}
             showHomeowners={areasReady && showHomeowners && !outcomesOnly && dispositionFilter.length === 0 && leadTypeFilter !== "customers" && knockPeriod === 'all' && !freshPinsOnly && setterFilter === "all" && !only}
             homeownerLeads={homeownerLeads}

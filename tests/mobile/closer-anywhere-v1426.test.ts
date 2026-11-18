@@ -5,17 +5,26 @@ import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { knocksAnywhere } from "../../app/field/closerScope";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import LeadDetail from "../../app/components/LeadDetail";
+import { knocksAnywhere, REDACTED_DOOR_NOTICE } from "../../app/field/closerScope";
 import { guardNewPinTerritory, resetTerritoryCheckForTests, type TerritoryCheckDeps } from "../../app/field/territoryCheck";
+import { canSeeHotLeads } from "../../app/hotLeads/access";
+import { applyHotFilter, hotOnlyLayers } from "../../app/hotLeads/filter";
 import { areaPolygonsFor } from "../../app/mobile/_lib/areaFocus";
 import {
   callerPopupExempt,
   isTerritoryWarningCancelled,
   noteMobileLeadsMeta,
   resetOwnerCountsForTests,
+  rowsForOwnership,
   territoryCheckNeeded,
 } from "../../app/mobile/_lib/ownerCounts";
-import { knockMapPins } from "../../app/mobile/_lib/pinScope";
+import { homeScopeFor, inPinScope, knockMapPins, pinScopeFor, scopedViews } from "../../app/mobile/_lib/pinScope";
+import type { Lead, User } from "../../app/types";
+import { DEFAULT_DISPOSITIONS } from "../../app/types/disposition";
+import { mapLeadDoc } from "../../app/utils/firestore";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const BASE = "17dfd28c2d1a41ce25eeddfc4d25db118019594c";
@@ -192,23 +201,14 @@ test("K6 a closer keeps their own out-of-scope pins and everyone else stays scop
     { id: "out-other", ...OUTSIDE, claimedBy: "other", assignedTo: "other", setterId: "other", source: "manually-added" },
   ];
   const closer = { id: "closer-1", role: "closer" };
-  assert.deepEqual(knockMapPins(leads, [SQUARE], closer).map((lead) => lead.id), [
-    "in-other",
-    "out-claimed",
-    "out-assigned",
-    "out-manual",
-  ]);
-  assert.deepEqual(knockMapPins(leads, [], closer).map((lead) => lead.id), [
-    "out-claimed",
-    "out-assigned",
-    "out-manual",
-  ]);
+  assert.deepEqual(knockMapPins(leads, [SQUARE], closer).map((lead) => lead.id), leads.map((lead) => lead.id));
+  assert.deepEqual(knockMapPins(leads, [], closer).map((lead) => lead.id), leads.map((lead) => lead.id));
   assert.deepEqual(knockMapPins(leads, [SQUARE], { id: "closer-1", role: "setter" }).map((lead) => lead.id), ["in-other"]);
   assert.deepEqual(knockMapPins(leads, undefined, { id: "admin-1", role: "admin" }).map((lead) => lead.id), leads.map((lead) => lead.id));
   const page = read("app/mobile/knocking/page.tsx");
   assert.match(page, /knockMapPins\(mergeLeadSnapshots\(viewportPins\.leads, leads\), pinPolygons, currentUser\)/);
-  assert.match(page, /\[viewportPins\.leads,leads,pinPolygons,currentUser\?\.id,currentUser\?\.role\]/);
-  assert.match(page, /const pinPolygons = useMemo\(\(\) => currentUser && \['admin','manager'\]\.includes\(currentUser\.role\) \? undefined : overlayTerritories\.filter\(t => t\.userId === currentUser\?\.id\)\.map\(t => t\.polygon\)/);
+  assert.match(page, /\[viewportPins\.leads,leads,pinPolygons,currentUser\]/);
+  assert.match(page, /pinScopeFor\(currentUser, overlayTerritories\)/);
 });
 
 test("K7 the diff adds no sales role and leaves the gates and knock counter untouched", () => {
@@ -259,6 +259,219 @@ test("T2 team polygons follow the area mode and 3PL only no longer replaces them
   assert.match(page, /teamMembers=\{only \? \[\] : teamMembersForMap\}/);
   assert.match(page, /heatCells=\{only \? \[\] : heatCells\}/);
   assert.match(page, /useState<'off'\|'mine'\|'team'>\('mine'\)/);
+});
+
+const FAR = { lat: 43.5, lng: -77 };
+const VIEW_OUTSIDE = { south: 43.9, north: 44, west: -77.05, east: -76.95, zoom: 16 };
+const HIDDEN_LEAD_KEYS = [
+  "name", "phone", "email", "notes", "dispositionNotes", "objectionType", "objectionNotes", "goBackNotes",
+  "estimatedBill", "hasSouthFacingRoof", "solarMaxPanels", "solarScore", "appointmentDateTime",
+  "appointmentOutcome", "appointmentOutcomeAt", "ghlContactId", "ghlOpportunityId", "ghlStatus",
+  "pipelineStageId", "tags", "goBackScheduledBy", "goBackScheduledDate", "goBackScheduledTime",
+  "fieldDoor", "fieldHandoff", "claimedBy", "assignedTo", "setterId", "claimedAt", "assignedAt", "homeowner",
+  "knockGpsLat", "knockGpsLng", "gpsVerified", "gpsUnverifiedReason", "gpsDistanceM",
+];
+
+function person(role: User["role"], id: string): User {
+  return {
+    id,
+    name: role,
+    email: `${role}@example.test`,
+    color: "#476E88",
+    role,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  };
+}
+
+function redactedRow(): Record<string, unknown> {
+  return {
+    id: "far-1",
+    lat: FAR.lat,
+    lng: FAR.lng,
+    address: "100 Far St",
+    city: "Town",
+    state: "AZ",
+    zip: "85001",
+    status: "not-home",
+    disposition: "Not Home",
+    dispositionedAt: "2026-11-01T18:00:00.000Z",
+    dispositionHistory: [{
+      disposition: "Not Home",
+      timestamp: "2026-11-01T18:00:00.000Z",
+      userId: "other-1",
+      userName: "M.",
+      field: { eventId: "evt-1" },
+    }],
+    leadType: "prospect",
+    source: "import",
+    solarCategory: "good",
+    createdAt: "2026-11-01T00:00:00.000Z",
+    ownedByMe: false,
+    owners: [{ uid: "other-1", name: "M." }],
+    ownerSource: "territory",
+    inOtherUsersTerritory: true,
+    mobileSummary: true,
+    contactRedacted: true,
+  };
+}
+
+test("D1-1 pin scope opens the map for a closer and homeowner scope stays on their polygons", () => {
+  const territories = [{ userId: "closer-1", polygon: SQUARE }, { userId: "setter-1", polygon: SQUARE }];
+  const closer = person("closer", "closer-1");
+  const setter = person("setter", "setter-1");
+  assert.equal(pinScopeFor(closer, territories), undefined);
+  assert.deepEqual(pinScopeFor(setter, territories), [SQUARE]);
+  assert.deepEqual(pinScopeFor(person("setter", "nobody"), territories), []);
+  assert.equal(pinScopeFor(person("admin", "admin-1"), territories), undefined);
+  assert.equal(pinScopeFor(person("manager", "manager-1"), territories), undefined);
+  assert.deepEqual(homeScopeFor(closer, territories), [SQUARE]);
+  assert.deepEqual(homeScopeFor(setter, territories), [SQUARE]);
+  assert.equal(homeScopeFor(person("admin", "admin-1"), territories), undefined);
+  assert.equal(homeScopeFor(person("manager", "manager-1"), territories), undefined);
+});
+
+test("D1-2 a closer keeps another rep's pin far outside their polygons and the view still requests", () => {
+  const territories = [{ userId: "closer-1", polygon: SQUARE }];
+  const closer = person("closer", "closer-1");
+  const leads = [
+    { id: "inside-other", ...INSIDE, claimedBy: "other-1" },
+    { id: "far-other", ...FAR, claimedBy: "other-1", assignedTo: "other-1" },
+  ];
+  assert.deepEqual(knockMapPins(leads, pinScopeFor(closer, territories), closer).map((lead) => lead.id), ["inside-other", "far-other"]);
+  assert.equal(scopedViews(VIEW_OUTSIDE, undefined).length, 1);
+  const rows = rowsForOwnership<Record<string, unknown>>(UID, { ownership: "territory", leads: [redactedRow()] });
+  const mapped = rows.map((row) => mapLeadDoc({ id: row.id, data: () => row }));
+  assert.equal(mapped.length, 1);
+  assert.equal(mapped[0]?.contactRedacted, true);
+  assert.equal(inPinScope(mapped[0]?.lat, mapped[0]?.lng, pinScopeFor(closer, territories)), true);
+});
+
+test("D1-3 a setter keeps only in-polygon pins and makes no request outside them", () => {
+  const territories = [{ userId: "setter-1", polygon: SQUARE }];
+  const setter = person("setter", "setter-1");
+  const leads = [
+    { id: "inside-other", ...INSIDE, claimedBy: "other-1" },
+    { id: "far-other", ...FAR, claimedBy: "other-1", assignedTo: "other-1" },
+  ];
+  const polygons = pinScopeFor(setter, territories);
+  assert.deepEqual(knockMapPins(leads, polygons, setter).map((lead) => lead.id), ["inside-other"]);
+  assert.equal(scopedViews(VIEW_OUTSIDE, polygons).length, 0);
+});
+
+test("D1-4 a closer viewport cache key carries no polygons and differs from the setter key", () => {
+  const territories = [{ userId: "closer-1", polygon: SQUARE }, { userId: "setter-1", polygon: SQUARE }];
+  const closerKey = JSON.stringify(["closer-1", "closer", pinScopeFor(person("closer", "closer-1"), territories)]);
+  const setterKey = JSON.stringify(["setter-1", "setter", pinScopeFor(person("setter", "setter-1"), territories)]);
+  assert.equal(closerKey, '["closer-1","closer",null]');
+  assert.equal(closerKey.includes("lat"), false);
+  assert.notEqual(closerKey, setterKey);
+  assert.equal(setterKey.includes("43"), true);
+});
+
+test("D1-5 3PL visibility stays variant A and 3PL only still drops ordinary pins", () => {
+  assert.equal(canSeeHotLeads(person("setter", "setter-1")), false);
+  assert.equal(canSeeHotLeads(person("closer", "closer-1")), true);
+  assert.deepEqual(hotOnlyLayers("only", true), {
+    homeowners: false,
+    heat: false,
+    teamMembers: false,
+    otherTerritories: false,
+  });
+  const widened = [
+    { id: "ordinary", lat: FAR.lat, lng: FAR.lng, address: "100 Far St", city: "Town", state: "AZ", zip: "85001", status: "not-home", createdAt: new Date(), name: "" } as Lead,
+    { id: "hot-1", lat: FAR.lat, lng: FAR.lng, address: "100 Far St", city: "Town", state: "AZ", zip: "85001", status: "not-home", createdAt: new Date(), name: "", hotLead: true } as Lead,
+  ];
+  assert.deepEqual(applyHotFilter(widened, "only").map((lead) => lead.id), ["hot-1"]);
+});
+
+test("D1-6 a redacted door renders no contact data and does not read the lead", () => {
+  const secretName = "Hidden Name";
+  const secretPhone = "555-0199";
+  const secretEmail = "door@example.test";
+  const lead = {
+    ...redactedRow(),
+    name: secretName,
+    phone: secretPhone,
+    email: secretEmail,
+    notes: "private note",
+    createdAt: new Date("2026-11-01T00:00:00.000Z"),
+  } as Lead;
+  const homeowner = {
+    id: "home-1",
+    address: "100 Far St",
+    addressNorm: "100 FAR ST",
+    municipality: "Town",
+    state: "AZ",
+    ownerName: secretName,
+    occupancyStatus: "owner",
+    mailingCity: "Town",
+    mailingZip: "85001",
+    propertyType: "house",
+    lat: FAR.lat,
+    lng: FAR.lng,
+    geohash: "9tbq5",
+    geohash5: "9tbq5",
+  };
+  const markup = renderToStaticMarkup(createElement(LeadDetail, {
+    lead,
+    currentUser: person("closer", "closer-1"),
+    onClose: () => {},
+    onUpdate: () => {},
+    fieldMemory: true,
+    homeowner,
+    dispositionOptions: DEFAULT_DISPOSITIONS,
+  }));
+  assert.equal(markup.includes("tel:"), false);
+  assert.equal(markup.includes("mailto:"), false);
+  assert.equal(markup.includes(secretPhone), false);
+  assert.equal(markup.includes(secretEmail), false);
+  assert.equal(markup.includes(secretName), false);
+  assert.equal(markup.includes("Homeowner record"), false);
+  assert.equal(markup.includes("Homeowner information"), false);
+  assert.equal(markup.includes("Loading door details"), false);
+  assert.equal(markup.replace(/&#x27;/g, "'").includes(REDACTED_DOOR_NOTICE), true);
+  assert.equal(markup.includes("private note"), false);
+  assert.equal(markup.includes("100 Far St"), true);
+  const knock = markup.slice(markup.indexOf('aria-label="NH — Not Home"'), markup.indexOf(">", markup.indexOf('aria-label="NH — Not Home"')));
+  assert.equal(knock.includes("disabled"), false);
+  const wrapper = read("app/components/LeadDetail.tsx");
+  const fn = wrapper.slice(wrapper.indexOf("export default function LeadDetail"));
+  assert.ok(fn.indexOf("if (redacted) return;") < fn.indexOf("getDoc("));
+  assert.match(fn, /void getDoc\(doc\(db,'leads',id\)\)/);
+  assert.match(fn, /if\(summary && \(!full \|\| full\.id!==id\) && !error && isDeviceOnline\(\)\)return <MobileDialog title="Door details"/);
+  assert.match(fn, /Loading door details…/);
+  assert.match(fn, /if \(redacted\) return <LeadDetailContent \{\.\.\.props\} homeowner=\{undefined\} lead=\{props\.lead\} \/>/);
+});
+
+test("D1-7 a redacted viewport row keeps no hidden contact keys for the offline area cache", () => {
+  const rows = rowsForOwnership<Record<string, unknown>>("closer-1", { ownership: "territory", leads: [redactedRow()] });
+  const mapped = mapLeadDoc({ id: rows[0]?.id, data: () => rows[0] });
+  assert.equal(mapped.contactRedacted, true);
+  for (const key of HIDDEN_LEAD_KEYS) assert.equal((mapped as Record<string, unknown>)[key] == null, true, key);
+  const history = mapped.dispositionHistory?.[0] as Record<string, unknown> | undefined;
+  assert.deepEqual(Object.keys(history ?? {}).sort(), ["disposition", "field", "timestamp", "userId", "userName"]);
+  assert.deepEqual(Object.keys((history?.field as object) ?? {}).sort(), ["eventId"]);
+  const stored = JSON.parse(JSON.stringify(mapped)) as Record<string, unknown>;
+  for (const key of HIDDEN_LEAD_KEYS) assert.equal(Object.prototype.hasOwnProperty.call(stored, key), false, key);
+});
+
+test("D1-8 the knock page scopes pins and homeowners separately and canSeeAllLeads stays staff-only", () => {
+  const page = read("app/mobile/knocking/page.tsx");
+  assert.match(page, /const pinPolygons = useMemo\(\(\) => pinScopeFor\(currentUser, overlayTerritories\), \[currentUser, overlayTerritories\]\);/);
+  assert.match(page, /const homePolygons = useMemo\(\(\) => homeScopeFor\(currentUser, overlayTerritories\), \[currentUser, overlayTerritories\]\);/);
+  assert.match(page, /useViewportLeads\(currentUser, viewport, pinPolygons, areasReady\)/);
+  assert.match(page, /pinPolygons=\{homePolygons\}/);
+  const types = read("app/types/index.ts");
+  assert.match(types, /contactRedacted\?: boolean;/);
+  assert.match(types, /export function canSeeAllLeads\(role: UserRole\): boolean \{\n  return role === 'manager' \|\| role === 'admin';\n\}/);
+  const hash = createHash("sha256").update(read("app/utils/knockCount.ts")).digest("hex");
+  assert.equal(hash, KNOCK_COUNT_SHA);
+  const added: string[] = [];
+  const diff = execSync(`git diff -U0 ${BASE} -- app`, { cwd: root, encoding: "utf8" });
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) added.push(line);
+  }
+  assert.equal(added.some((line) => line.includes("'sales'") || line.includes('"sales"')), false);
 });
 
 test("V1 and V2 release 14.26 build 170 matches and the diff stays off the server", () => {
