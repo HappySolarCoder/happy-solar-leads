@@ -208,7 +208,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   function allowTerritory(at: Date): boolean {
     const warn = shouldWarnTerritory({
       active: territoryOwnershipOn(currentUser?.id),
-      popupExempt: callerPopupExempt(currentUser?.id),
+      popupExempt: callerPopupExempt(currentUser?.id, currentUser?.role),
       row: lead,
     });
     if (!warn) {

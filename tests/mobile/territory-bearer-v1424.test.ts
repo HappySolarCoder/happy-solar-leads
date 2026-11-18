@@ -182,7 +182,7 @@ function filesUnder(dir: string): string[] {
   return out;
 }
 
-describe("Raydar 14.25 build 169 territory check and bearer", { concurrency: 1 }, () => {
+describe("Raydar 14.26 build 170 territory check and bearer", { concurrency: 1 }, () => {
   test("TC1 territory warn opens the app popup once and ignores server text", async () => {
     fresh();
     assert.equal(TERRITORY_WARNING, "Warning: You are in another user's territory. Do you wish to place this pin?");
@@ -727,7 +727,7 @@ describe("Raydar 14.25 build 169 territory check and bearer", { concurrency: 1 }
     const provider = async () => TOKEN;
     await nativeApiFetch("/api/geocode?address=x", {}, async (request) => {
       assert.equal(headerValue(request.headers, "authorization"), `Bearer ${TOKEN}`);
-      assert.equal(request.headers?.["X-Raydar-Build"], "169");
+      assert.equal(request.headers?.["X-Raydar-Build"], "170");
       assert.equal(request.headers?.["X-Raydar-Platform"], "ios");
       return nativeOk(request);
     }, "ios", provider);
@@ -737,7 +737,7 @@ describe("Raydar 14.25 build 169 territory check and bearer", { concurrency: 1 }
       body: JSON.stringify({ waypoints: [{ lat: 1, lng: 2 }] }),
     }, async (request) => {
       assert.equal(headerValue(request.headers, "authorization"), `Bearer ${TOKEN}`);
-      assert.equal(request.headers?.["X-Raydar-Build"], "169");
+      assert.equal(request.headers?.["X-Raydar-Build"], "170");
       assert.equal(request.headers?.["X-Raydar-Platform"], "ios");
       assert.equal(request.method, "POST");
       assert.deepEqual(request.data, { waypoints: [{ lat: 1, lng: 2 }] });
@@ -745,7 +745,7 @@ describe("Raydar 14.25 build 169 territory check and bearer", { concurrency: 1 }
     }, "ios", provider);
     await nativeApiFetch("/api/geocode?address=x", {}, async (request) => {
       assert.equal(headerValue(request.headers, "authorization"), `Bearer ${TOKEN}`);
-      assert.equal(request.headers?.["X-Raydar-Build"], "169");
+      assert.equal(request.headers?.["X-Raydar-Build"], "170");
       assert.equal(request.headers?.["X-Raydar-Platform"], "android");
       return nativeOk(request);
     }, "android", provider);
@@ -769,7 +769,7 @@ describe("Raydar 14.25 build 169 territory check and bearer", { concurrency: 1 }
       const response = await nativeApiFetch("/api/geocode?address=x", {}, async (request) => {
         sends += 1;
         assert.equal(headerValue(request.headers, "authorization"), undefined);
-        assert.equal(request.headers?.["X-Raydar-Build"], "169");
+        assert.equal(request.headers?.["X-Raydar-Build"], "170");
         assert.equal(request.headers?.["X-Raydar-Platform"], "ios");
         return nativeOk(request);
       }, "ios", bearer);
@@ -785,7 +785,7 @@ describe("Raydar 14.25 build 169 territory check and bearer", { concurrency: 1 }
       }, async (request) => {
         sends += 1;
         assert.equal(headerValue(request.headers, "authorization"), undefined);
-        assert.equal(request.headers?.["X-Raydar-Build"], "169");
+        assert.equal(request.headers?.["X-Raydar-Build"], "170");
         assert.equal(request.headers?.["X-Raydar-Platform"], "android");
         assert.deepEqual(request.data, {});
         return { status: 200, data: "{}", headers: {}, url: request.url };
@@ -989,6 +989,7 @@ describe("Raydar 14.25 build 169 territory check and bearer", { concurrency: 1 }
     const owner = read("app/mobile/_lib/ownerCounts.ts");
     assert.deepEqual(owner.split("\n").filter((line) => line.startsWith("import ")), [
       'import type { Lead } from "@/app/types";',
+      'import { knocksAnywhere } from "@/app/field/closerScope";',
       'import { isCountedKnock, knockInstant } from "@/app/utils/knockCount";',
     ]);
     assert.equal(read("app/utils/knockCount.ts").includes("houseIdentity"), false);
@@ -1008,16 +1009,16 @@ describe("Raydar 14.25 build 169 territory check and bearer", { concurrency: 1 }
     assert.equal(read("app/mobile/_lib/ownerCounts.ts").includes("_duplicate"), false);
   });
 
-  test("V1 release 14.25 build 169 matches across the app, iOS and Android", () => {
-    assert.equal(release.version, "14.25");
-    assert.equal(release.build, 169);
+  test("V1 release 14.26 build 170 matches across the app, iOS and Android", () => {
+    assert.equal(release.version, "14.26");
+    assert.equal(release.build, 170);
     const project = read("ios/App/App.xcodeproj/project.pbxproj");
-    assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.25", "14.25"]);
-    assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["169", "169"]);
+    assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.26", "14.26"]);
+    assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["170", "170"]);
     const gradle = read("android/app/build.gradle");
-    assert.match(gradle, /versionName "14\.25"/);
-    assert.match(gradle, /versionCode 169\b/);
-    assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "169"/);
+    assert.match(gradle, /versionName "14\.26"/);
+    assert.match(gradle, /versionCode 170\b/);
+    assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "170"/);
   });
 
   test("V2 knockCount.ts is unchanged and the diff stays off the server", () => {

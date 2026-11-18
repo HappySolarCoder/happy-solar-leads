@@ -1583,6 +1583,7 @@ export default function LeadMap({
         uid: actorUid,
         lat: pinLat,
         lng: pinLng,
+        role: currentUser?.role,
         confirm: () => typeof window !== 'undefined' && window.confirm(TERRITORY_WARNING),
       });
       let gpsFields: Partial<Lead> = {};

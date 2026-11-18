@@ -162,3 +162,14 @@ export function planAreaFocus(input: {
   }
   return { fit: focus.flatMap(corners), notice: movedNotice(focus.length, input.mode) };
 }
+
+/** Polygons for the Areas control. Mine is own only, team is every returned polygon, off draws none. */
+export function areaPolygonsFor<T extends { userId?: string }>(
+  mode: "off" | AreaFocusMode,
+  territories: readonly T[],
+  uid?: string | null,
+): T[] {
+  if (mode === "off") return [];
+  if (mode === "mine") return territories.filter((territory) => territory.userId === uid);
+  return [...territories];
+}

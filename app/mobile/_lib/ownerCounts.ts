@@ -1,4 +1,5 @@
 import type { Lead } from "@/app/types";
+import { knocksAnywhere } from "@/app/field/closerScope";
 import { isCountedKnock, knockInstant } from "@/app/utils/knockCount";
 
 /**
@@ -164,12 +165,14 @@ export function anyTerritoryOwnership(): boolean {
   return false;
 }
 
-export function callerPopupExempt(uid: string | null | undefined): boolean {
-  return !!uid && sessions.get(uid)?.popupExempt === true;
+export function callerPopupExempt(uid: string | null | undefined, role?: unknown): boolean {
+  if (!uid) return false;
+  return knocksAnywhere(role) || sessions.get(uid)?.popupExempt === true;
 }
 
-/** False for legacy or an exempt session. True for territory, and when meta has not arrived. */
-export function territoryCheckNeeded(uid: string | null | undefined): boolean {
+/** False for a closer, legacy, or an exempt session. True for territory, and when meta has not arrived. */
+export function territoryCheckNeeded(uid: string | null | undefined, role?: unknown): boolean {
+  if (knocksAnywhere(role)) return false;
   const meta = uid ? sessions.get(uid) : undefined;
   if (!meta) return true;
   if (meta.ownership === "legacy" || meta.popupExempt === true) return false;

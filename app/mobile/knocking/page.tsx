@@ -46,11 +46,11 @@ import { hotLeadFilterVisible, hotOnlyLayers, readHotFilter, writeHotFilter, HOT
 import { HotLeadFilterSection } from "@/app/hotLeads/HotLeadFilterSection";
 import { hotLeadParkNotice } from "@/app/hotLeads/save";
 import { HOT_PINS_UNAVAILABLE } from "@/app/hotLeads/fetch";
-import { inPinScope } from "../_lib/pinScope";
+import { knockMapPins } from "../_lib/pinScope";
 import type { View } from "@/app/homeowners/model";
 import { useTeamAreasOverlay } from '@/app/hooks/useTeamAreasOverlay';
 import { colorTerritories, membersFromTerritories } from '@/app/utils/teamAreas';
-import { planAreaFocus } from '../_lib/areaFocus';
+import { areaPolygonsFor, planAreaFocus } from '../_lib/areaFocus';
 
 // Dynamic import for map (client-side only)
 const LeadMap = dynamic(() => import('@/app/components/LeadMap'), {
@@ -187,12 +187,12 @@ export default function KnockingPage() {
     }
   };
   const mapSource = useMemo(() => {
-    return mergeLeadSnapshots(viewportPins.leads, leads).filter(l => inPinScope(l.lat,l.lng,pinPolygons));
-  }, [viewportPins.leads,leads,pinPolygons]);
+    return knockMapPins(mergeLeadSnapshots(viewportPins.leads, leads), pinPolygons, currentUser);
+  }, [viewportPins.leads,leads,pinPolygons,currentUser?.id,currentUser?.role]);
   const coloredUsers = useMemo(() => ensureUserColors(users), [users]);
   const teamAreaTerritories = useMemo(
-    () => (showTeamAreas ? colorTerritories(areaMode === 'mine' ? overlayTerritories.filter(t=>t.userId===currentUser?.id) : overlayTerritories, coloredUsers) : []),
-    [showTeamAreas, areaMode, currentUser?.id, overlayTerritories, coloredUsers]
+    () => colorTerritories(areaPolygonsFor(areaMode, overlayTerritories, currentUser?.id), coloredUsers),
+    [areaMode, currentUser?.id, overlayTerritories, coloredUsers]
   );
   const teamMembersForMap = useMemo(() => {
     if (areaMode !== 'team') return [];
@@ -204,10 +204,6 @@ export default function KnockingPage() {
     }
     return membersFromTerritories(overlayTerritories, coloredUsers);
   }, [areaMode, overlayTerritories, overlayMembers, coloredUsers]);
-  const ownTerritories = useMemo(
-    () => colorTerritories(overlayTerritories.filter(t=>t.userId===currentUser?.id), coloredUsers),
-    [overlayTerritories, currentUser?.id, coloredUsers],
-  );
 
   // A fresh foreground GPS fix centers every account once. Later fixes move the
   // blue dot only, so a rep can inspect another street without camera snap-back.
@@ -984,7 +980,7 @@ export default function KnockingPage() {
             heatCells={only ? [] : heatCells}
             heatCellRadiusMeters={805}
             showTeamAreas={showTeamAreas}
-            territories={only ? (showTeamAreas ? ownTerritories : []) : (showTeamAreas ? teamAreaTerritories : [])}
+            territories={showTeamAreas ? teamAreaTerritories : []}
             teamMembers={only ? [] : teamMembersForMap}
           />
           <FieldCompass />
