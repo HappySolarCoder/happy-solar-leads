@@ -28,7 +28,7 @@ function summary(id: string, data: Record<string, any>, personal = false) {
 /**
  * Closers see every rep's pins (Evan, Nov 18 2026; Raydar Mobile D1). A map row is CONTACT-REDACTED
  * when the viewer is a closer, does not own the lead (ownsLead: claimedBy / assignedTo / setterId on a
- * manually-added pin) and the pin is not inside one of the closer's own non-archived territories (a
+ * manually-added pin; nor goBackScheduledBy, nor ownedByMe in territory mode) and the pin is not inside one of the closer's own non-archived territories (a
  * truncated territory read counts as outside: fail closed on contact data, never on visibility).
  * Built as an ALLOWLIST: a redacted row carries exactly these keys, plus a trimmed newest history entry,
  * the ownership extras with names cut to an initial, mobileSummary and contactRedacted. Everything else
@@ -36,7 +36,7 @@ function summary(id: string, data: Record<string, any>, personal = false) {
  * assignedTo, setterId, ...) never leaves the server on these rows.
  */
 export const CONTACT_REDACTED_KEYS = ['lat','lng','address','city','state','zip','status','disposition','dispositionedAt','leadType','source','solarCategory','createdAt'] as const;
-const OWNERSHIP_EXTRA_KEYS = ['ownedByMe','owners','ownerSource','inOtherUsersTerritory'] as const;
+const OWNERSHIP_EXTRA_KEYS = ['ownedByMe','owners','ownerSource','expiredGoBack','inOtherUsersTerritory'] as const;
 /** "Jordan Miller" -> "J." (owner-style initial). */
 export function nameInitial(name: unknown): string | null {
   if (typeof name !== 'string') return null;
@@ -147,7 +147,10 @@ return async function GET(request: NextRequest) {
     const owned = await ownershipForRows(db, ctx, kept.map(d=>d.data()), uid, now);
     const leads = kept.map((d,i)=>{
       const l = d.data();
-      const full = !closerView || ownsLeadRow(l, uid) || (!territoriesTruncated && inMine(l));
+      // The closer's own Go Back (or an effective-owner pin in territory mode) keeps the full row too,
+      // so the phone never wipes contact details it already holds for that door.
+      const full = !closerView || ownsLeadRow(l, uid) || owned[i]?.ownedByMe === true || l.goBackScheduledBy === uid
+        || (!territoriesTruncated && inMine(l));
       return full ? {...summary(d.id,l), ...(owned[i] || {})} : contactRedactedRow(d.id, l, owned[i] || null, uid);
     });
     const last = snapshot.docs.at(-1);

@@ -185,7 +185,7 @@ describe('/api/mobile-leads ownership fields', () => {
       };
     };
     const OUT_KEYS = ['id', 'lat', 'lng', 'address', 'city', 'state', 'zip', 'status', 'disposition', 'dispositionedAt', 'leadType', 'source', 'solarCategory', 'createdAt', 'dispositionHistory', 'mobileSummary', 'contactRedacted'];
-    const OWNERSHIP_KEYS = ['ownedByMe', 'owners', 'ownerSource', 'inOtherUsersTerritory'];
+    const OWNERSHIP_KEYS = ['ownedByMe', 'owners', 'ownerSource', 'expiredGoBack', 'inOtherUsersTerritory'];
     // 'mine' covers only the 'inMine' pin at 33.45,-112.07; 'theirs' (Sawyer) covers the 'outside' pin.
     const territories: Array<[string, Doc]> = [
       ['mine', T('me', { polygon: box(33.45, -112.07, 0.001) })],
@@ -216,7 +216,7 @@ describe('/api/mobile-leads ownership fields', () => {
         if (flag) {
           assert.deepEqual(red.owners, [{ uid: 'sawyer', name: 'S.' }]);
           assert.equal(red.ownedByMe, false);
-          assert.equal('expiredGoBack' in red, false);
+          assert.equal(red.expiredGoBack, false);
         }
         assert.equal(out.body.popupExempt, true);
       }
@@ -245,6 +245,30 @@ describe('/api/mobile-leads ownership fields', () => {
         // The closer's in-territory row is byte-identical to the setter's.
         const closerRow = byId((await setup({ role: 'closer', flag, territories, leads }).call(MAP)).body).inMine;
         assert.deepEqual(closerRow, setter.inMine, `flag ${flag}`);
+      }
+    });
+
+    it('a closer\'s own Go Back outside their territory keeps the full row; another rep\'s Go Back stays redacted', async () => {
+      const goBacks: Array<[string, Doc]> = [
+        ['myGoBack', everyField({ lat: 33.4551, status: 'go-back', goBackScheduledBy: 'me', dispositionedAt: ts(NOW - 10 * DAY) })],
+        ['theirGoBack', everyField({ lat: 33.4552, status: 'go-back', goBackScheduledBy: 'jordan', dispositionedAt: ts(NOW - 10 * DAY) })],
+        ['theirOldGoBack', everyField({ lat: 33.4553, status: 'go-back', goBackScheduledBy: 'jordan', dispositionedAt: ts(NOW - 120 * DAY) })],
+      ];
+      for (const flag of [false, true]) {
+        const rows = byId((await setup({ role: 'closer', flag, territories, leads: goBacks }).call(MAP)).body);
+        assert.equal('contactRedacted' in rows.myGoBack, false, `flag ${flag}`);
+        assert.equal(rows.myGoBack.name, 'v-name', `flag ${flag}`);
+        assert.equal(rows.myGoBack.phone, 'v-phone', `flag ${flag}`);
+        for (const id of ['theirGoBack', 'theirOldGoBack']) {
+          assert.equal(rows[id].contactRedacted, true, `${id} flag ${flag}`);
+          assert.equal('name' in rows[id], false, `${id} flag ${flag}`);
+          assert.equal('goBackScheduledBy' in rows[id], false, `${id} flag ${flag}`);
+        }
+        if (flag) {
+          assert.equal(rows.myGoBack.ownedByMe, true);
+          assert.equal(rows.theirGoBack.expiredGoBack, false);
+          assert.equal(rows.theirOldGoBack.expiredGoBack, true, 'Exp. Go-Back flag survives redaction');
+        }
       }
     });
 
