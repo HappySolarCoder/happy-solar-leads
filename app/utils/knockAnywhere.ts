@@ -11,7 +11,7 @@
  * on the pin and its dispositionHistory entry counts for the closer; on a pin
  * the closer does not own an extra fieldKnockEvents row (reason 'closer') is
  * written too. Closers skip the foreign-territory popup (popupExemptFor) and
- * see every rep's pins in the mobile map viewport (others' rows PII-redacted
+ * see every rep's pins in the mobile map viewport (others' rows contact-redacted
  * outside their own territories). Unchanged: the out_of_area GPS flag, claims,
  * the 3PL (`hotLeads`) territory gate, setters, staff.
  *

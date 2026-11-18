@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Timestamp } from 'firebase-admin/firestore';
 import { NextRequest } from 'next/server';
-import { createMobileLeadHandler } from '../app/utils/server/mobileLeads';
+import { createMobileLeadHandler, MOBILE_TERRITORY_LIMIT, nameInitial, SUMMARY_FIELDS } from '../app/utils/server/mobileLeads';
 import {
   MOBILE_EVENT_READ_LIMIT,
   MOBILE_EVENT_RETURN_LIMIT,
@@ -167,48 +167,110 @@ describe('/api/mobile-leads ownership fields', () => {
     assert.equal(out.body.popupExempt, true, 'staff exempt (final per Evan)');
   });
 
-  it('closers see every rep\'s pins in the viewport; others\' pins outside their territories are PII-redacted; setters unchanged', async () => {
-    const contact = { name: 'Home Owner', phone: '555-0100', email: 'h@example.com', notes: 'gate code 1234', goBackNotes: 'after 5', dispositionNotes: 'dog', estimatedBill: 210, ghlContactId: 'c1' };
-    const leads: Array<[string, Doc]> = [
-      ['inMine', pin({ ...contact })],
-      ['othersOutside', pin({ lat: 33.455, lng: -112.065, ...contact, dispositionHistory: [{ disposition: 'Not Home', userId: 'jordan', userName: 'Jordan M', notes: 'free text', timestamp: '2026-11-01T00:00:00.000Z' }] })],
-      ['mineOutside', pin({ lat: 33.456, lng: -112.066, claimedBy: 'me', ...contact })],
+  describe('closers see every rep\'s pins (D1) with contact-redacted rows outside their territory', () => {
+    // A row seeded with EVERY SUMMARY_FIELDS key (plus a homeowner-ish extra that is not selected).
+    const everyField = (extra: Doc = {}): Doc => {
+      const row: Doc = {};
+      for (const key of SUMMARY_FIELDS) row[key] = `v-${key}`;
+      return {
+        ...row,
+        lat: 33.455, lng: -112.065, status: 'not-home', claimedBy: 'jordan', assignedTo: 'jordan', setterId: 'jordan', source: 'import',
+        goBackScheduledBy: 'jordan', dispositionedAt: '2026-11-01T00:00:00.000Z', createdAt: '2026-08-01T00:00:00.000Z',
+        dispositionHistory: [
+          { disposition: 'Not Home', userId: 'jordan', userName: 'Jordan Miller', notes: 'free text', gpsFlag: { gpsVerified: true }, knockGpsLat: 1, timestamp: '2026-11-01T00:00:00.000Z', field: { eventId: 'ev-1', notes: 'x' } },
+          { disposition: 'Go Back', userId: 'jordan', userName: 'Jordan Miller', timestamp: '2026-10-01T00:00:00.000Z' },
+        ],
+        homeowner: { phone: '555' },
+        ...extra,
+      };
+    };
+    const OUT_KEYS = ['id', 'lat', 'lng', 'address', 'city', 'state', 'zip', 'status', 'disposition', 'dispositionedAt', 'leadType', 'source', 'solarCategory', 'createdAt', 'dispositionHistory', 'mobileSummary', 'contactRedacted'];
+    const OWNERSHIP_KEYS = ['ownedByMe', 'owners', 'ownerSource', 'inOtherUsersTerritory'];
+    // 'mine' covers only the 'inMine' pin at 33.45,-112.07; 'theirs' (Sawyer) covers the 'outside' pin.
+    const territories: Array<[string, Doc]> = [
+      ['mine', T('me', { polygon: box(33.45, -112.07, 0.001) })],
+      ['theirs', T('sawyer', { polygon: box(33.455, -112.065, 0.001), assignedAt: '2026-11-09T00:00:00.000Z' })],
     ];
-    // My territory covers only 'inMine'.
-    const territories: Array<[string, Doc]> = [['mine', T('me', { polygon: box(33.45, -112.07, 0.001) })], ['theirs', T('sawyer', { polygon: box(33.455, -112.065, 0.001) })]];
-    for (const flag of [false, true]) {
-      const out = await setup({ role: 'closer', flag, territories, leads }).call(MAP);
-      assert.equal(out.status, 200);
-      const rows = Object.fromEntries(out.body.leads.map((l: { id: string }) => [l.id, l as Record<string, unknown>]));
-      assert.deepEqual(Object.keys(rows).sort(), ['inMine', 'mineOutside', 'othersOutside'], `flag ${flag}`);
-      // Today's exposure: full rows in my territory and on my own pins.
-      for (const id of ['inMine', 'mineOutside']) {
-        assert.equal(rows[id].name, 'Home Owner', id);
-        assert.equal('piiRedacted' in rows[id], false, id);
-      }
-      const red = rows.othersOutside;
-      assert.equal(red.piiRedacted, true);
-      for (const key of ['name', 'phone', 'email', 'notes', 'goBackNotes', 'dispositionNotes', 'estimatedBill', 'ghlContactId']) assert.equal(key in red, false, key);
-      assert.equal(red.status, 'not-home');
-      assert.equal(red.claimedBy, 'jordan');
-      assert.equal(red.lat, 33.455);
-      assert.deepEqual(red.dispositionHistory, [{ disposition: 'Not Home', userId: 'jordan', userName: 'Jordan M', timestamp: '2026-11-01T00:00:00.000Z' }]);
-      if (flag) assert.ok(Array.isArray(red.owners), 'ownership fields still added');
-      assert.equal(out.body.popupExempt, true);
-      // Setters: unchanged, only pins inside their own territories.
-      const setter = await setup({ role: 'setter', flag, territories, leads }).call(MAP);
-      assert.deepEqual(setter.body.leads.map((l: { id: string }) => l.id), ['inMine'], `setter flag ${flag}`);
-      assert.equal(setter.body.leads[0].name, 'Home Owner');
-    }
-  });
+    const leads: Array<[string, Doc]> = [
+      ['inMine', everyField({ lat: 33.45, lng: -112.07 })],
+      ['outside', everyField()],
+      ['mineOutside', everyField({ lat: 33.456, lng: -112.066, claimedBy: 'me' })],
+      ['manualMine', everyField({ lat: 33.457, lng: -112.067, claimedBy: undefined, assignedTo: undefined, setterId: 'me', source: 'manually-added' })],
+    ];
+    const byId = (body: Record<string, unknown>) => Object.fromEntries((body.leads as Array<Record<string, unknown> & { id: string }>).map((l) => [l.id, l]));
 
-  it('a closer with no territory still sees the viewport (all others\' rows redacted)', async () => {
-    const out = await setup({ role: 'closer', leads: [['x', pin({ name: 'Home Owner' })]] }).call(MAP);
-    assert.equal(out.body.leads.length, 1);
-    assert.equal(out.body.leads[0].piiRedacted, true);
-    assert.equal('name' in out.body.leads[0], false);
-    const setter = await setup({ role: 'setter', leads: [['x', pin({ name: 'Home Owner' })]] }).call(MAP);
-    assert.deepEqual(setter.body.leads, []);
+    it('closer outside their territory gets ONLY the allowlisted keys (both flag states); hidden keys never come back', async () => {
+      for (const flag of [false, true]) {
+        const out = await setup({ role: 'closer', flag, territories, leads }).call(MAP);
+        assert.equal(out.status, 200);
+        const rows = byId(out.body);
+        assert.deepEqual(Object.keys(rows).sort(), ['inMine', 'manualMine', 'mineOutside', 'outside'], `flag ${flag}`);
+        const red = rows.outside;
+        const expected = flag ? [...OUT_KEYS, ...OWNERSHIP_KEYS] : OUT_KEYS;
+        assert.deepEqual(Object.keys(red).sort(), [...expected].sort(), `flag ${flag}`);
+        assert.equal(red.contactRedacted, true);
+        assert.equal(red.address, 'v-address');
+        for (const hidden of SUMMARY_FIELDS.filter((k) => !expected.includes(k))) assert.equal(hidden in red, false, hidden);
+        assert.equal(JSON.stringify(red).includes('555'), false, 'no homeowner join');
+        assert.deepEqual(red.dispositionHistory, [{ disposition: 'Not Home', timestamp: '2026-11-01T00:00:00.000Z', userId: 'jordan', userName: 'J.', field: { eventId: 'ev-1' } }]);
+        if (flag) {
+          assert.deepEqual(red.owners, [{ uid: 'sawyer', name: 'S.' }]);
+          assert.equal(red.ownedByMe, false);
+          assert.equal('expiredGoBack' in red, false);
+        }
+        assert.equal(out.body.popupExempt, true);
+      }
+    });
+
+    it('closer keeps the full row inside their territory and on pins they own; admin, manager, setter are unchanged', async () => {
+      const full = (row: Record<string, unknown>, label: string) => {
+        // Today's full summary: every seeded SUMMARY_FIELDS key comes back.
+        for (const key of SUMMARY_FIELDS.filter((k) => !['claimedBy', 'assignedTo'].includes(k))) assert.equal(key in row, true, `${label} ${key}`);
+        assert.equal(row.name, 'v-name', label);
+        assert.equal(row.phone, 'v-phone', label);
+        assert.equal(row.notes, 'v-notes', label);
+        assert.equal('contactRedacted' in row, false, label);
+      };
+      const closer = byId((await setup({ role: 'closer', flag: true, territories, leads }).call(MAP)).body);
+      for (const id of ['inMine', 'mineOutside', 'manualMine']) full(closer[id], `closer ${id}`);
+      for (const role of ['admin', 'manager']) {
+        const rows = byId((await setup({ role, flag: true, territories, leads }).call(MAP)).body);
+        assert.deepEqual(Object.keys(rows).sort(), ['inMine', 'manualMine', 'mineOutside', 'outside'], role);
+        for (const id of Object.keys(rows)) full(rows[id], `${role} ${id}`);
+      }
+      for (const flag of [false, true]) {
+        const setter = byId((await setup({ role: 'setter', flag, territories, leads }).call(MAP)).body);
+        assert.deepEqual(Object.keys(setter), ['inMine'], `setter flag ${flag}: still cut to own territory`);
+        full(setter.inMine, 'setter inMine');
+        // The closer's in-territory row is byte-identical to the setter's.
+        const closerRow = byId((await setup({ role: 'closer', flag, territories, leads }).call(MAP)).body).inMine;
+        assert.deepEqual(closerRow, setter.inMine, `flag ${flag}`);
+      }
+    });
+
+    it('a closer with no territory sees the viewport, every non-owned row redacted; a setter with none sees nothing', async () => {
+      const out = await setup({ role: 'closer', leads: [['x', pin({ name: 'Home Owner' })]] }).call(MAP);
+      assert.equal(out.body.leads.length, 1);
+      assert.equal(out.body.leads[0].contactRedacted, true);
+      assert.equal('name' in out.body.leads[0], false);
+      assert.deepEqual((await setup({ role: 'setter', leads: [['x', pin({ name: 'Home Owner' })]] }).call(MAP)).body.leads, []);
+    });
+
+    it('a truncated territory read fails closed on contact data, never on visibility', async () => {
+      const many: Array<[string, Doc]> = Array.from({ length: MOBILE_TERRITORY_LIMIT }, (_, i) => [`m${i}`, T('me', { polygon: box(33.45, -112.07, 0.001) })]);
+      const out = await setup({ role: 'closer', territories: many, leads: [['inMine', pin({ name: 'Home Owner' })], ['own', pin({ lat: 33.4501, claimedBy: 'me', name: 'Mine' })]] }).call(MAP);
+      const rows = byId(out.body);
+      assert.equal(out.body.truncated, true);
+      assert.equal(rows.inMine.contactRedacted, true, 'inside but the read was capped');
+      assert.equal(rows.own.name, 'Mine', 'owned rows stay full');
+    });
+
+    it('nameInitial', () => {
+      assert.equal(nameInitial('Jordan Miller'), 'J.');
+      assert.equal(nameInitial('  marissa '), 'M.');
+      assert.equal(nameInitial(''), null);
+      assert.equal(nameInitial(null), null);
+    });
   });
 
   it('personal mode returns popupExempt and own knockEvents {leadId, at, dispositionId} for 45 days, bounded', async () => {
