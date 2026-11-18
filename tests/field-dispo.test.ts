@@ -1374,9 +1374,7 @@ describe('field dispo', { concurrency: 1 }, () => {
     const closerResult = await closer.run(knockBody({
       gps: { lat: beyond.lat, lng: beyond.lng, accuracyM: 5, capturedAt: at(1000) },
     }));
-    // Closers knock anywhere (knockAnywhere.ts, Nov 18 2026): never out_of_area, distance still applies.
-    assert.equal((closerResult.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'too_far');
-    assert.equal(closer.db.ops.some((op) => op.op === 'query'), false);
+    assert.equal((closerResult.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'out_of_area');
 
     const admin = harness({
       user: approvedUser({ role: 'admin' }),
@@ -2185,10 +2183,17 @@ describe('field dispo: closers knock outside their territories', { concurrency: 
     assert.equal(result.status, 200, `${label} ${JSON.stringify(result.body)}`);
     assert.equal(result.body.result, 'applied', label);
     assert.equal('reasonCode' in result.body, false, label);
-    assert.equal(events(test.db).length, 0, `${label}: no counts-only event`);
-    // Like staff: no flag read and no territory read for a closer knock.
-    assert.equal(test.db.ops.some((op) => op.op === 'query'), false, label);
+    // Like staff: the ownership flag is never read for a closer.
     assert.equal(test.db.ops.some((op) => op.op === 'get' && op.path.startsWith('adminSettings/')), false, label);
+    // Not the closer's pin: one extra event (reason 'closer') so the closer's own counters see it.
+    const written = events(test.db);
+    assert.equal(written.length, 1, label);
+    assert.equal(written[0].path, `fieldKnockEvents/${CLOSER}_draft-1`, label);
+    assert.equal(written[0].data.reason, 'closer', label);
+    assert.equal(written[0].data.uid, CLOSER, label);
+    assert.equal(written[0].data.leadId, 'lead-1', label);
+    assert.equal(written[0].data.collection, 'leads', label);
+    assert.equal(new Set([...creates(test.db), ...updates(test.db)].map((op) => op.tx)).size, 1, `${label}: one transaction`);
     const lead = test.db.docs.get('leads/lead-1') ?? {};
     const history = lead.dispositionHistory as Array<Record<string, unknown>>;
     assert.equal(history[0].userId, CLOSER, label);
@@ -2257,14 +2262,65 @@ describe('field dispo: closers knock outside their territories', { concurrency: 
     }
   });
 
-  it('notes-only edits keep the ownership gate for closers', async () => {
+  it('notes-only edits on another rep\'s pin land for closers (no event: notes are not knocks)', async () => {
     for (const [label, flag] of FLAGS) {
       const test = closerHarness({ lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan', notes: '' }, flag);
       const result = await test.run({ draftId: 'draft-n', leadId: 'lead-1', kind: 'notes', actionAt: ACTION, notes: 'hi', baseNotes: '' });
-      assert.equal(result.status, 403, label);
-      assert.equal(result.body.reasonCode, 'owned_by_other', label);
-      assert.equal(updates(test.db).length, 0, label);
+      assert.equal(result.status, 200, `${label} ${JSON.stringify(result.body)}`);
+      assert.equal(test.db.docs.get('leads/lead-1')?.notes, 'hi', label);
+      assert.equal(test.db.docs.get('leads/lead-1')?.claimedBy, 'uid-jordan', label);
+      assert.equal(events(test.db).length, 0, label);
     }
+    // Setters are still refused.
+    const setter = setterHarness({ lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan', notes: '' }, { mode: 'territory' });
+    const refused = await setter.run({ draftId: 'draft-n', leadId: 'lead-1', kind: 'notes', actionAt: ACTION, notes: 'hi', baseNotes: '' });
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.reasonCode, 'owned_by_other');
+  });
+
+  it('keeps the out_of_area GPS flag for a closer knocking outside their territory', async () => {
+    const test = closerHarness({ lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan' });
+    const result = await test.run(knockBody());
+    assert.equal(result.body.result, 'applied');
+    assert.equal((result.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'out_of_area');
+  });
+
+  it('a closer\'s own pin gets no extra event (history already reaches their counters)', async () => {
+    const test = closerHarness({ lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: CLOSER });
+    const result = await test.run(knockBody());
+    assert.equal(result.body.result, 'applied');
+    assert.equal(events(test.db).length, 0);
+  });
+
+  it('a backfilled event with the same id is not created twice; a replay writes nothing', async () => {
+    const test = closerHarness({ lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan' });
+    test.db.put(`fieldKnockEvents/${CLOSER}_draft-1`, { uid: CLOSER, reason: 'owned_by_other' });
+    const first = await test.run(knockBody());
+    assert.equal(first.body.result, 'applied');
+    assert.equal(events(test.db).length, 0);
+    const before = test.db.ops.length;
+    const replay = await test.run(knockBody());
+    assert.equal(replay.body.duplicate, true);
+    assert.equal(test.db.ops.slice(before).some((op) => op.op === 'create' || op.op === 'update'), false);
+  });
+
+  it('web and phone counters count the history entry + the event once (same tap, uid_draftId)', async () => {
+    const actionMs = NOW - 60_000;
+    const test = closerHarness({ lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan' }, { mode: 'territory' });
+    await test.run(knockBody({ actionAt: new Date(actionMs).toISOString(), status: 'not-home', disposition: 'Not Home', gps: undefined }));
+    const event = test.db.docs.get(`fieldKnockEvents/${CLOSER}_draft-1`);
+    assert.ok(event);
+    const ledger = ledgerFromFieldEvents([event]);
+    assert.equal(ledger[0].key, `lead-1|${CLOSER}|not-home|${actionMs}`);
+    const lead = { id: 'lead-1', ...(test.db.docs.get('leads/lead-1') ?? {}) };
+    // Fresh phone / web closer: cannot read the lead, sees only its own event.
+    assert.equal(countKnocks([], [], { userId: CLOSER, ledger }), 1, 'event alone');
+    // Admin view or a device that also has the lead: history + event = one knock.
+    assert.equal(countKnocks([lead as never], [], { userId: CLOSER }), 1, 'history alone');
+    assert.equal(countKnocks([lead as never], [], { userId: CLOSER, ledger }), 1, 'both count once');
+    assert.equal(collectKnockEvents([lead as never], [], { ledger }).length, 1);
+    // /api/mobile-leads knockEvents wire shape.
+    assert.deepEqual(mobileKnockEvents([event]), [{ leadId: 'lead-1', at: actionMs, dispositionId: 'not-home' }]);
   });
 
   it('3PL rule is unchanged: a closer outside their territory is still refused on hotLeads (legacy)', async () => {
