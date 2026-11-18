@@ -167,6 +167,50 @@ describe('/api/mobile-leads ownership fields', () => {
     assert.equal(out.body.popupExempt, true, 'staff exempt (final per Evan)');
   });
 
+  it('closers see every rep\'s pins in the viewport; others\' pins outside their territories are PII-redacted; setters unchanged', async () => {
+    const contact = { name: 'Home Owner', phone: '555-0100', email: 'h@example.com', notes: 'gate code 1234', goBackNotes: 'after 5', dispositionNotes: 'dog', estimatedBill: 210, ghlContactId: 'c1' };
+    const leads: Array<[string, Doc]> = [
+      ['inMine', pin({ ...contact })],
+      ['othersOutside', pin({ lat: 33.455, lng: -112.065, ...contact, dispositionHistory: [{ disposition: 'Not Home', userId: 'jordan', userName: 'Jordan M', notes: 'free text', timestamp: '2026-11-01T00:00:00.000Z' }] })],
+      ['mineOutside', pin({ lat: 33.456, lng: -112.066, claimedBy: 'me', ...contact })],
+    ];
+    // My territory covers only 'inMine'.
+    const territories: Array<[string, Doc]> = [['mine', T('me', { polygon: box(33.45, -112.07, 0.001) })], ['theirs', T('sawyer', { polygon: box(33.455, -112.065, 0.001) })]];
+    for (const flag of [false, true]) {
+      const out = await setup({ role: 'closer', flag, territories, leads }).call(MAP);
+      assert.equal(out.status, 200);
+      const rows = Object.fromEntries(out.body.leads.map((l: { id: string }) => [l.id, l as Record<string, unknown>]));
+      assert.deepEqual(Object.keys(rows).sort(), ['inMine', 'mineOutside', 'othersOutside'], `flag ${flag}`);
+      // Today's exposure: full rows in my territory and on my own pins.
+      for (const id of ['inMine', 'mineOutside']) {
+        assert.equal(rows[id].name, 'Home Owner', id);
+        assert.equal('piiRedacted' in rows[id], false, id);
+      }
+      const red = rows.othersOutside;
+      assert.equal(red.piiRedacted, true);
+      for (const key of ['name', 'phone', 'email', 'notes', 'goBackNotes', 'dispositionNotes', 'estimatedBill', 'ghlContactId']) assert.equal(key in red, false, key);
+      assert.equal(red.status, 'not-home');
+      assert.equal(red.claimedBy, 'jordan');
+      assert.equal(red.lat, 33.455);
+      assert.deepEqual(red.dispositionHistory, [{ disposition: 'Not Home', userId: 'jordan', userName: 'Jordan M', timestamp: '2026-11-01T00:00:00.000Z' }]);
+      if (flag) assert.ok(Array.isArray(red.owners), 'ownership fields still added');
+      assert.equal(out.body.popupExempt, true);
+      // Setters: unchanged, only pins inside their own territories.
+      const setter = await setup({ role: 'setter', flag, territories, leads }).call(MAP);
+      assert.deepEqual(setter.body.leads.map((l: { id: string }) => l.id), ['inMine'], `setter flag ${flag}`);
+      assert.equal(setter.body.leads[0].name, 'Home Owner');
+    }
+  });
+
+  it('a closer with no territory still sees the viewport (all others\' rows redacted)', async () => {
+    const out = await setup({ role: 'closer', leads: [['x', pin({ name: 'Home Owner' })]] }).call(MAP);
+    assert.equal(out.body.leads.length, 1);
+    assert.equal(out.body.leads[0].piiRedacted, true);
+    assert.equal('name' in out.body.leads[0], false);
+    const setter = await setup({ role: 'setter', leads: [['x', pin({ name: 'Home Owner' })]] }).call(MAP);
+    assert.deepEqual(setter.body.leads, []);
+  });
+
   it('personal mode returns popupExempt and own knockEvents {leadId, at, dispositionId} for 45 days, bounded', async () => {
     const t = setup({
       flag: true,

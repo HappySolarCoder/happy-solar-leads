@@ -6,6 +6,7 @@ import { insideTerritory, territoryBounds } from '@/app/utils/territoryManager';
 import { isOwnFollowUp } from '@/app/mobile/_lib/followUps';
 import type { Lead } from '@/app/types';
 import { loadOwnKnockEventsPage, loadOwnershipContext, ownershipForRows, popupExemptForRole } from './mobileOwnership';
+import { knocksAnywhereRole } from '@/app/utils/knockAnywhere';
 
 // No new index or writes. Queries use existing single-field indexes (fieldKnockEvents is a doc-id range).
 const PAGE = 500;
@@ -23,6 +24,28 @@ function summary(id: string, data: Record<string, any>, personal = false) {
   // latest marker outcome. Full notes/photos are fetched on selection.
   const history = personal ? data.dispositionHistory : data.dispositionHistory?.slice(0, 1);
   return jsonValue({ ...data, notes: typeof data.notes === 'string' ? data.notes.slice(0, 1000) : undefined, id, dispositionHistory: history, mobileSummary: true });
+}
+/**
+ * Map row for a closer viewing ANOTHER rep's pin outside the closer's own territories (Nov 18 2026:
+ * closers see every rep's pins). Before that change a closer never received these rows at all, so the
+ * homeowner's contact and free-text fields are left out: only what is needed to find, color and knock
+ * the door. MAP_REDACTED_FIELDS lists what is dropped. Rows the closer owns or that sit in the closer's
+ * own territories keep today's full summary.
+ */
+export const MAP_REDACTED_KEEP = ['address','city','state','zip','status','disposition','dispositionedAt','claimedBy','assignedTo','createdAt','goBackScheduledBy','goBackScheduledDate','goBackScheduledTime','leadType','lat','lng','solarScore','solarCategory','source','setterId','claimedAt','assignedAt','hasSouthFacingRoof','solarMaxPanels'] as const;
+export const MAP_REDACTED_FIELDS = SUMMARY_FIELDS.filter((f) => f !== 'dispositionHistory' && !(MAP_REDACTED_KEEP as readonly string[]).includes(f));
+function redactedSummary(id: string, data: Record<string, unknown>) {
+  const row: Record<string, unknown> = {};
+  for (const key of MAP_REDACTED_KEEP) if (data[key] !== undefined) row[key] = data[key];
+  // Latest outcome only, without any free text a client may have stored on the entry.
+  const top = Array.isArray(data.dispositionHistory) ? data.dispositionHistory[0] : undefined;
+  if (top && typeof top === 'object') {
+    row.dispositionHistory = [{ disposition: top.disposition, timestamp: top.timestamp, userId: top.userId, userName: top.userName }];
+  }
+  return jsonValue({ ...row, id, mobileSummary: true, piiRedacted: true });
+}
+function closerOwnsRow(l: Record<string, unknown>, uid: string): boolean {
+  return l.claimedBy === uid || l.assignedTo === uid || l.goBackScheduledBy === uid || (l.setterId === uid && l.source === 'manually-added');
 }
 const validId = (id: string) => id.length > 0 && id.length <= 1500 && !id.includes('/') && id !== '.' && id !== '..';
 export function createMobileLeadHandler(deps: {adminAuth:()=>Auth;adminDb:()=>Firestore}) {
@@ -78,22 +101,30 @@ return async function GET(request: NextRequest) {
     if (![south,north,west,east,zoom].every(Number.isFinite) || zoom < 15 || north <= south || east <= west || north-south > .06 || east-west > .09 || south < -85 || north > 85 || west < -180 || east > 180)
       throw Error('Zoom closer to load this neighborhood.');
     const browseAll = ['admin','manager'].includes(user?.role);
+    // Closers see every rep's pins in the viewport (same bounded read). Their own territories still load,
+    // only to decide which rows keep the full summary (see redactedSummary).
+    const closerView = knocksAnywhereRole(user?.role);
     const territorySnap = browseAll ? null : await db.collection('territories').where('userId','==',uid).select('polygon','archived').limit(MOBILE_TERRITORY_LIMIT).get();
     const territoriesTruncated = Boolean(territorySnap && territorySnap.size >= MOBILE_TERRITORY_LIMIT);
     if (territoriesTruncated) console.log('[mobile/leads] territories truncated');
     const truncatedBody = territoriesTruncated ? { truncated: true as const } : {};
     const territories = territorySnap ? territorySnap.docs.map(d=>d.data()).filter(t=>!t.archived && Array.isArray(t.polygon) && t.polygon.length>=3) : null;
     const overlapping = territories?.filter(t=>{const b=territoryBounds(t.polygon); return b.north>=south && b.south<=north && b.east>=west && b.west<=east;});
-    if (overlapping && !overlapping.length) return NextResponse.json({leads:[],nextCursor:null,...truncatedBody});
+    if (!closerView && overlapping && !overlapping.length) return NextResponse.json({leads:[],nextCursor:null,...truncatedBody});
+    const inMine = (l: { lat?: unknown; lng?: unknown }) => !overlapping || overlapping.some(t=>insideTerritory(l.lat as number,l.lng as number,t.polygon));
     let q = db.collection('leads').where('lat','>=',south).where('lat','<=',north).orderBy('lat').orderBy(FieldPath.documentId()).select(...SUMMARY_FIELDS).limit(PAGE);
     const after = p.get('after'), afterLat = Number(p.get('afterLat'));
     if (after) { if (!validId(after) || !Number.isFinite(afterLat) || afterLat < south || afterLat > north) throw Error('Invalid map cursor.'); q=q.startAfter(afterLat,after); }
     const snapshot = await q.get();
-    const kept = snapshot.docs.filter(d=>{const l=d.data(); return typeof l.lng==='number' && l.lng>=west && l.lng<=east && (!overlapping || overlapping.some(t=>insideTerritory(l.lat,l.lng,t.polygon)));});
+    const kept = snapshot.docs.filter(d=>{const l=d.data(); return typeof l.lng==='number' && l.lng>=west && l.lng<=east && (closerView || inMine(l));});
     const now = Date.now();
     const ctx = await loadOwnershipContext(db, now);
     const owned = await ownershipForRows(db, ctx, kept.map(d=>d.data()), uid, now);
-    const leads = kept.map((d,i)=>({...summary(d.id,d.data()), ...(owned[i] || {})}));
+    const leads = kept.map((d,i)=>{
+      const l = d.data();
+      const full = !closerView || inMine(l) || closerOwnsRow(l, uid);
+      return {...(full ? summary(d.id,l) : redactedSummary(d.id,l)), ...(owned[i] || {})};
+    });
     const last = snapshot.docs.at(-1);
     return NextResponse.json({leads, ownership: ctx.mode, popupExempt: popupExemptForRole(user?.role), scanned:snapshot.size, nextCursor:snapshot.size===PAGE ? {id:last!.id,lat:last!.data().lat}:null, ...truncatedBody}, {headers:{'Cache-Control':'private, no-store'}});
   } catch (e: any) {
