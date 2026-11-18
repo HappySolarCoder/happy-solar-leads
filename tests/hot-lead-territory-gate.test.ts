@@ -600,8 +600,30 @@ describe('3PL territory gate', () => {
       },
       deps: { ...deps, db: unownedDb, rateLimitStore: new Map() },
     });
-    assert.equal(unowned.status, 403);
-    assert.deepEqual(unowned.body, { ok: false, error: 'forbidden', reasonCode: 'out_of_territory' });
+    // Nov 18 2026 (knockAnywhere.ts): a closer's knock on an ordinary lead outside every territory is
+    // applied; the 3PL pin above stays gated. A setter keeps the old out_of_territory refusal.
+    assert.equal(unowned.status, 200, JSON.stringify(unowned.body));
+    assert.equal(unowned.body.result, 'applied');
+
+    const setterDb = new Mem();
+    setterDb.put('users/uid-closer', approved('setter'));
+    setterDb.put('leads/lead-1', { lat: OUTSIDE.lat, lng: OUTSIDE.lng });
+    const setter = await handleFieldDispo({
+      authorization: 'Bearer good-token',
+      body: {
+        draftId: 'draft-unowned',
+        leadId: 'lead-1',
+        kind: 'knock',
+        actionAt: ACTION,
+        status: 'not-home',
+        disposition: 'Not Home',
+        userName: 'Jane Rep',
+        gps: { lat: OUTSIDE.lat, lng: OUTSIDE.lng, accuracyM: 5, capturedAt: ACTION },
+      },
+      deps: { ...deps, getUser: async () => ({ exists: true, data: approved('setter') }), db: setterDb, rateLimitStore: new Map() },
+    });
+    assert.equal(setter.status, 403);
+    assert.deepEqual(setter.body, { ok: false, error: 'forbidden', reasonCode: 'out_of_territory' });
   });
 
   it('matches the map capability to the write decision', async () => {

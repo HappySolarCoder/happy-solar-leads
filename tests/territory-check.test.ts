@@ -201,7 +201,21 @@ describe('POST /api/field/territory-check', () => {
         owners: [{ uid: 'sawyer', name: 'Sawyer V.' }],
       }, role);
     }
-    assert.equal((await setup({ role: 'closer', flag: true, territories: [['t1', T('sawyer')]] }).check(IN)).body.warn, true);
+    assert.equal((await setup({ role: 'setter', flag: true, territories: [['t1', T('sawyer')]] }).check(IN)).body.warn, true);
+  });
+
+  it('closers (solar consultants) knock anywhere: warn false, popupExempt true, in both flag states', async () => {
+    const on = await setup({ role: 'closer', flag: true, territories: [['t1', T('sawyer')]] }).check(IN);
+    assert.deepEqual(on.body, {
+      ok: true, ownership: 'territory', warn: false, popupExempt: true, inOtherUsersTerritory: true,
+      owners: [{ uid: 'sawyer', name: 'Sawyer V.' }],
+    });
+    const off = await setup({ role: 'closer', territories: [['t1', T('sawyer')]] }).check(IN);
+    assert.deepEqual(off.body, { ok: true, ownership: 'legacy', warn: false, popupExempt: true, inOtherUsersTerritory: false, owners: [] });
+    // Setters are unchanged: warned in territory mode, not exempt.
+    const setter = await setup({ role: 'setter', flag: true, territories: [['t1', T('sawyer')]] }).check(IN);
+    assert.equal(setter.body.warn, true);
+    assert.equal(setter.body.popupExempt, false);
   });
 
   it('owner names are FIRST NAME + LAST INITIAL only, at most 5 owners', async () => {

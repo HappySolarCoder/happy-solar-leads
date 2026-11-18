@@ -16,6 +16,7 @@ import {
 } from '@/app/utils/gpsRule';
 import { effectiveOwner, goBackSetter, type EffectiveOwner } from '@/app/utils/effectiveOwner';
 import { dispositionSlug } from '@/app/utils/knockCount';
+import { knocksAnywhereRole } from '@/app/utils/knockAnywhere';
 import { isTestAccount } from './discordNotification';
 import { goBackSetterActive, loadLiveTerritories, readOwnershipMode } from './fieldOwnership';
 import { FIELD_REASON_CODES, type FieldReasonCode } from './fieldReasonCodes';
@@ -926,13 +927,16 @@ async function applyDraft(input: {
   }
 
   const staff = input.role === 'admin' || input.role === 'manager';
+  // Closers (solar consultants) knock any regular lead, like staff: no flag read, no territory read,
+  // never refused or counts-only. Notes-only edits keep the gate. 3PL is applyHotLead, unchanged. knockAnywhere.ts.
+  const closerKnock = knocksAnywhereRole(input.role) && input.draft.kind === 'knock';
   const owned = ownsLead(lead, input.uid);
   let callerTerritories: { docs: DispoSnap[]; truncated: boolean } | null = null;
   const loadCallerTerritories = async () => {
     if (!callerTerritories) callerTerritories = await loadTerritories(input.db, input.tx, input.uid);
     return callerTerritories;
   };
-  if (!staff && !owned) {
+  if (!staff && !closerKnock && !owned) {
     const territoryMine = await territoryOwnedByDirectRead(input.db, input.tx, lead.territoryId, input.uid);
     if (!territoryMine) {
       const legacyRefusal = async (): Promise<OwnershipRefusal | null> => {
@@ -1084,6 +1088,9 @@ async function areaPolygonsFor(
   if (input.draft.kind !== 'knock') return undefined;
   if (input.draft.gps === 'absent' || input.draft.gps === 'malformed') return undefined;
   if (isAreaExemptRole(input.role)) return undefined;
+  // Closers may knock outside their territories, so outside is not out_of_area for them.
+  // Distance and accuracy still apply. (GPS_AREA_EXEMPT_ROLES stays staff-only for /api/field-work.)
+  if (knocksAnywhereRole(input.role)) return undefined;
   const loaded = await loadCallerTerritories();
   if (loaded.truncated) return 'unknown';
   return countedPolygons(loaded.docs, input.uid);

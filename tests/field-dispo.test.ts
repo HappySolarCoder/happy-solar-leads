@@ -1374,7 +1374,9 @@ describe('field dispo', { concurrency: 1 }, () => {
     const closerResult = await closer.run(knockBody({
       gps: { lat: beyond.lat, lng: beyond.lng, accuracyM: 5, capturedAt: at(1000) },
     }));
-    assert.equal((closerResult.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'out_of_area');
+    // Closers knock anywhere (knockAnywhere.ts, Nov 18 2026): never out_of_area, distance still applies.
+    assert.equal((closerResult.body.gps as { gpsUnverifiedReason: string }).gpsUnverifiedReason, 'too_far');
+    assert.equal(closer.db.ops.some((op) => op.op === 'query'), false);
 
     const admin = harness({
       user: approvedUser({ role: 'admin' }),
@@ -2151,5 +2153,145 @@ describe('field dispo territory ownership', { concurrency: 1 }, () => {
       if (op.op === 'update') assert.match(op.path, /^leads\//);
     }
     assert.deepEqual(collections(test.db), ['adminSettings', 'fieldDispoReceipts', 'fieldKnockEvents', 'territories', 'leads', 'users'].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Closers (solar consultants) knock anywhere (Evan, Nov 18 2026; app/utils/knockAnywhere.ts).
+// ---------------------------------------------------------------------------
+describe('field dispo: closers knock outside their territories', { concurrency: 1 }, () => {
+  const CLOSER = 'uid-closer';
+  const OLD = '2026-08-03T00:00:00.000Z';
+  const NEW = '2026-11-02T00:00:00.000Z';
+  const FAR = { lat: 10, lng: 10 };
+  const territory = (id: string, userId: string, at = LEAD_LAT, lng = LEAD_LNG, extra: Record<string, unknown> = {}) => ({
+    id,
+    data: { userId, userName: userId, polygon: square(at, lng), createdAt: OLD, assignedAt: NEW, ...extra },
+  });
+  // The closer owns a territory elsewhere, so the pin is outside every territory of theirs.
+  const closerElsewhere = territory('t-closer', CLOSER, FAR.lat, FAR.lng);
+  const FLAGS: Array<[string, Record<string, unknown> | undefined]> = [
+    ['flag doc missing (legacy)', undefined],
+    ['mode legacy', { mode: 'legacy' }],
+    ['mode territory', { mode: 'territory' }],
+  ];
+  const events = (db: FakeDb) => creates(db).filter((op) => op.path.startsWith('fieldKnockEvents/'));
+  const closerHarness = (lead: Record<string, unknown>, ownershipFlag?: Record<string, unknown>, territories = [closerElsewhere, territory('t-sawyer', 'uid-sawyer')]) =>
+    harness({ uid: CLOSER, user: approvedUser({ role: 'closer', name: 'Cal Closer' }), lead, territories, ownershipFlag });
+  const setterHarness = (lead: Record<string, unknown>, ownershipFlag?: Record<string, unknown>) =>
+    harness({ uid: 'uid-setter', lead, territories: [territory('t-setter', 'uid-setter', FAR.lat, FAR.lng), territory('t-sawyer', 'uid-sawyer')], ownershipFlag });
+
+  function assertAppliedForCloser(test: ReturnType<typeof harness>, result: { status: number; body: Record<string, unknown> }, label: string) {
+    assert.equal(result.status, 200, `${label} ${JSON.stringify(result.body)}`);
+    assert.equal(result.body.result, 'applied', label);
+    assert.equal('reasonCode' in result.body, false, label);
+    assert.equal(events(test.db).length, 0, `${label}: no counts-only event`);
+    // Like staff: no flag read and no territory read for a closer knock.
+    assert.equal(test.db.ops.some((op) => op.op === 'query'), false, label);
+    assert.equal(test.db.ops.some((op) => op.op === 'get' && op.path.startsWith('adminSettings/')), false, label);
+    const lead = test.db.docs.get('leads/lead-1') ?? {};
+    const history = lead.dispositionHistory as Array<Record<string, unknown>>;
+    assert.equal(history[0].userId, CLOSER, label);
+    // Ownership stamps never move.
+    for (const key of ['claimedBy', 'assignedTo', 'territoryId', 'setterId', 'source']) {
+      assert.equal(key in patch(test.db), false, `${label} ${key}`);
+    }
+  }
+
+  it('out_of_territory (unowned pin, outside the closer\'s territories) is applied in every flag state', async () => {
+    for (const [label, flag] of FLAGS) {
+      // Pin in no territory at all, and pin inside another rep's territory but unstamped.
+      for (const territories of [[closerElsewhere], [closerElsewhere, territory('t-sawyer', 'uid-sawyer')]]) {
+        const test = closerHarness({ lat: LEAD_LAT, lng: LEAD_LNG, status: 'not-home' }, flag, territories);
+        assertAppliedForCloser(test, await test.run(knockBody({ userName: 'Cal Closer' })), `${label} t=${territories.length}`);
+      }
+      // A closer with no territory at all.
+      const none = closerHarness({ lat: LEAD_LAT, lng: LEAD_LNG }, flag, []);
+      assertAppliedForCloser(none, await none.run(knockBody()), `${label} no territories`);
+    }
+  });
+
+  it('owned_by_other (pin stamped to another rep / in another rep\'s territory) is applied, never counts-only', async () => {
+    for (const [label, flag] of FLAGS) {
+      for (const stamp of [{ claimedBy: 'uid-jordan' }, { assignedTo: 'uid-jordan' }, { claimedBy: 'uid-sawyer', assignedTo: 'uid-sawyer' }]) {
+        const original = { lat: LEAD_LAT, lng: LEAD_LNG, status: 'not-home', ...stamp };
+        const test = closerHarness(original, flag);
+        assertAppliedForCloser(test, await test.run(knockBody()), `${label} ${JSON.stringify(stamp)}`);
+        const lead = test.db.docs.get('leads/lead-1') ?? {};
+        for (const [key, value] of Object.entries(stamp)) assert.equal(lead[key], value, `${label} ${key} kept`);
+      }
+    }
+  });
+
+  it('the closer\'s accepted knock counts for the closer (knockCount ledger key leadId|userId|dispositionId|at)', async () => {
+    for (const [label, flag] of FLAGS) {
+      const test = closerHarness({ id: 'lead-1', lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan' }, flag);
+      await test.run(knockBody({ status: 'not-home', disposition: 'Not Home' }));
+      const lead = { id: 'lead-1', ...(test.db.docs.get('leads/lead-1') ?? {}) };
+      assert.equal(countKnocks([lead as never], [], { userId: CLOSER }), 1, label);
+      assert.equal(countKnocks([lead as never], [], { userId: 'uid-jordan' }), 0, label);
+      const [event] = collectKnockEvents([lead as never], [], { userId: CLOSER });
+      assert.equal(event.key, `lead-1|${CLOSER}|not-home|${NOW}`, label);
+    }
+  });
+
+  it('setters are unchanged: legacy 403, territory mode counts-only, in both refusal kinds', async () => {
+    const legacy = setterHarness({ lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan' });
+    assert.deepEqual((await legacy.run(knockBody())).body, { ok: false, error: 'forbidden', reasonCode: 'owned_by_other' });
+    assert.equal(updates(legacy.db).length, 0);
+    const legacyOut = setterHarness({ lat: LEAD_LAT, lng: LEAD_LNG });
+    assert.deepEqual((await legacyOut.run(knockBody())).body, { ok: false, error: 'forbidden', reasonCode: 'out_of_territory' });
+    const on = setterHarness({ lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan' }, { mode: 'territory' });
+    const onResult = await on.run(knockBody());
+    assert.equal(onResult.body.result, 'counted_only');
+    assert.equal(events(on.db)[0].data.reason, 'owned_by_other');
+    assert.equal(updates(on.db).filter((op) => op.path.startsWith('leads/')).length, 0);
+  });
+
+  it('staff bypass is unchanged', async () => {
+    for (const role of ['admin', 'manager']) {
+      const test = harness({ user: approvedUser({ role }), lead: { lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan' }, ownershipFlag: { mode: 'territory' } });
+      const result = await test.run(knockBody());
+      assert.equal(result.body.result, 'applied', role);
+      assert.equal(test.db.ops.some((op) => op.op === 'query'), false, role);
+    }
+  });
+
+  it('notes-only edits keep the ownership gate for closers', async () => {
+    for (const [label, flag] of FLAGS) {
+      const test = closerHarness({ lat: LEAD_LAT, lng: LEAD_LNG, claimedBy: 'uid-jordan', notes: '' }, flag);
+      const result = await test.run({ draftId: 'draft-n', leadId: 'lead-1', kind: 'notes', actionAt: ACTION, notes: 'hi', baseNotes: '' });
+      assert.equal(result.status, 403, label);
+      assert.equal(result.body.reasonCode, 'owned_by_other', label);
+      assert.equal(updates(test.db).length, 0, label);
+    }
+  });
+
+  it('3PL rule is unchanged: a closer outside their territory is still refused on hotLeads (legacy)', async () => {
+    const db = new FakeDb();
+    db.put(`users/${CLOSER}`, approvedUser({ role: 'closer' }));
+    db.put('hotLeads/ghl_opp1', { lat: LEAD_LAT, lng: LEAD_LNG, hotStatus: 'active' });
+    db.put(`territories/t-closer`, closerElsewhere.data);
+    resetFieldOwnershipCaches();
+    const result = await handleFieldDispo({
+      authorization: 'Bearer good-token',
+      body: knockBody({ leadId: 'ghl_opp1', collection: 'hotLeads' }),
+      deps: {
+        verifyIdToken: async () => ({ uid: CLOSER, email: 'rep@company.com' }),
+        getUser: async (id) => {
+          const snap = await db.collection('users').doc(id).get();
+          return { exists: snap.exists, data: snap.data() };
+        },
+        db,
+        now: () => NOW,
+        rateLimitStore: new Map(),
+        Timestamp: FakeTimestamp,
+        serverTimestamp: () => SERVER_TS,
+        deleteField: () => ({ marker: 'delete-field' }),
+      },
+    });
+    assert.equal(result.status, 403, JSON.stringify(result.body));
+    assert.equal(result.body.reasonCode, 'out_of_territory');
+    assert.equal(result.body.dispoBlock, 'outside_territory');
   });
 });
