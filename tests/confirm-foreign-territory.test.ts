@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { shouldWarnForeignTerritory } from '../app/utils/confirmForeignTerritory.ts';
-import { FOREIGN_TERRITORY_WARNING, prepareTerritories, STAFF_POPUP_EXEMPT } from '../app/utils/effectiveOwner.ts';
+import { FOREIGN_TERRITORY_WARNING, popupExemptFor, prepareTerritories, STAFF_POPUP_EXEMPT } from '../app/utils/effectiveOwner.ts';
 
 const box = (lat: number, lng: number, d = 0.01) => [
   { lat: lat - d, lng: lng - d }, { lat: lat - d, lng: lng + d }, { lat: lat + d, lng: lng + d }, { lat: lat + d, lng: lng - d },
@@ -38,6 +38,13 @@ describe('foreign territory warning decision', () => {
     assert.equal(STAFF_POPUP_EXEMPT, true);
     assert.equal(shouldWarnForeignTerritory({ ...base, role: 'admin', territories }), !STAFF_POPUP_EXEMPT);
     assert.equal(shouldWarnForeignTerritory({ ...base, role: 'manager', territories }), !STAFF_POPUP_EXEMPT);
+  });
+  it('closers (solar consultants) never see the popup; setters still do', () => {
+    assert.equal(shouldWarnForeignTerritory({ ...base, role: 'closer', territories }), false);
+    assert.equal(shouldWarnForeignTerritory({ ...base, role: 'setter', territories }), true);
+    assert.equal(popupExemptFor('closer'), true);
+    assert.equal(popupExemptFor('setter'), false);
+    assert.equal(popupExemptFor('sales'), false);
   });
   it('uses Evan\'s exact text', () => {
     assert.equal(FOREIGN_TERRITORY_WARNING, "Warning: You are in another user's territory. Do you wish to place this pin?");

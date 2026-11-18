@@ -16,6 +16,7 @@ import {
 } from '@/app/utils/gpsRule';
 import { effectiveOwner, goBackSetter, type EffectiveOwner } from '@/app/utils/effectiveOwner';
 import { dispositionSlug } from '@/app/utils/knockCount';
+import { KNOCK_ANYWHERE_EVENT_REASON, knocksAnywhereRole } from '@/app/utils/knockAnywhere';
 import { isTestAccount } from './discordNotification';
 import { goBackSetterActive, loadLiveTerritories, readOwnershipMode } from './fieldOwnership';
 import { FIELD_REASON_CODES, type FieldReasonCode } from './fieldReasonCodes';
@@ -926,13 +927,16 @@ async function applyDraft(input: {
   }
 
   const staff = input.role === 'admin' || input.role === 'manager';
+  // Closers (solar consultants) skip the leads ownership gate for knocks and notes, like staff:
+  // no flag read, never refused or counts-only. 3PL is applyHotLead, unchanged. knockAnywhere.ts.
+  const closer = knocksAnywhereRole(input.role);
   const owned = ownsLead(lead, input.uid);
   let callerTerritories: { docs: DispoSnap[]; truncated: boolean } | null = null;
   const loadCallerTerritories = async () => {
     if (!callerTerritories) callerTerritories = await loadTerritories(input.db, input.tx, input.uid);
     return callerTerritories;
   };
-  if (!staff && !owned) {
+  if (!staff && !closer && !owned) {
     const territoryMine = await territoryOwnedByDirectRead(input.db, input.tx, lead.territoryId, input.uid);
     if (!territoryMine) {
       const legacyRefusal = async (): Promise<OwnershipRefusal | null> => {
@@ -965,7 +969,16 @@ async function applyDraft(input: {
   if (input.draft.kind === 'notes') return applyNotes(input, leadRef, receiptRef, lead);
   const homeowner = await loadHomeowner(input.db, input.tx, input.draft);
   const polygons = await areaPolygonsFor(input, loadCallerTerritories);
-  return applyKnock(input, input.draft, leadRef, receiptRef, lead, homeowner, polygons);
+  // A closer's knock on a pin they do not own also gets a fieldKnockEvents row (reason 'closer'),
+  // because their own counters (web: rules-scoped lead reads; phone: personal lists) cannot read that
+  // lead's history. Same id as the receipt (uid_draftId) and the same ledger key as the history entry
+  // (leadId|userId|dispositionId|at), so every counter counts the tap once. Read before any write.
+  let closerEvent: { ref: DispoDocRef; exists: boolean } | null = null;
+  if (closer && !owned) {
+    const ref = input.db.collection(FIELD_KNOCK_EVENTS).doc(`${input.uid}_${input.draft.draftId}`);
+    closerEvent = { ref, exists: (await input.tx.get(ref)).exists };
+  }
+  return applyKnock(input, input.draft, leadRef, receiptRef, lead, homeowner, polygons, closerEvent);
 }
 
 type OwnershipRefusal = {
@@ -1167,6 +1180,7 @@ function applyKnock(
   lead: Record<string, unknown>,
   homeowner: Record<string, unknown> | null,
   polygons: AreaPolygons | undefined,
+  closerEvent: { ref: DispoDocRef; exists: boolean } | null = null,
 ): TxOutcome {
   const decision = decideKnockGps({
     fix: draft.gps,
@@ -1226,6 +1240,26 @@ function applyKnock(
 
   assertAllowedPatch(patch);
   if (Object.keys(patch).length > 0) input.tx.update(leadRef, patch);
+  if (closerEvent && !closerEvent.exists) {
+    input.tx.create(closerEvent.ref, {
+      uid: input.uid,
+      userName: draft.userName,
+      draftId: draft.draftId,
+      leadId: draft.leadId,
+      collection: draft.collection,
+      disposition: draft.disposition,
+      dispositionId: dispositionSlug(draft.status),
+      status: draft.status,
+      actionAt: input.deps.Timestamp.fromMillis(draft.actionAtMs),
+      createdAt: input.deps.serverTimestamp(),
+      reason: KNOCK_ANYWHERE_EVENT_REASON,
+      // Informational: the knock was applied to the pin; the closer is not its owner.
+      effectiveOwnerId: null,
+      effectiveOwnerIds: [],
+      ownerSource: 'gate',
+      source: 'live',
+    });
+  }
 
   const body = stale
     ? receiptBody(draft, 'stale_history_only', {

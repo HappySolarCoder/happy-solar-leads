@@ -6,11 +6,12 @@ import { insideTerritory, territoryBounds } from '@/app/utils/territoryManager';
 import { isOwnFollowUp } from '@/app/mobile/_lib/followUps';
 import type { Lead } from '@/app/types';
 import { loadOwnKnockEventsPage, loadOwnershipContext, ownershipForRows, popupExemptForRole } from './mobileOwnership';
+import { knocksAnywhereRole } from '@/app/utils/knockAnywhere';
 
 // No new index or writes. Queries use existing single-field indexes (fieldKnockEvents is a doc-id range).
 const PAGE = 500;
 export const MOBILE_TERRITORY_LIMIT = 200;
-const SUMMARY_FIELDS = ['name','phone','email','address','city','state','status','disposition','dispositionedAt','dispositionHistory','claimedBy','assignedTo','createdAt','goBackScheduledBy','goBackScheduledDate','goBackScheduledTime','appointmentOutcome','appointmentOutcomeAt','appointmentDateTime','ghlLastUpdatedAt','ghlAppointmentStatus','ghlOpportunityStatus','ghlContactId','ghlAppointmentId','leadType','lat','lng','solarScore','solarCategory','source','setterId','claimedAt','assignedAt','fieldDoor','fieldHandoff','estimatedBill','hasSouthFacingRoof','solarMaxPanels','zip','objectionType','objectionNotes','goBackNotes','tags','ghlStatus','ghlOpportunityId','pipelineStageId','dispositionNotes','notes'];
+export const SUMMARY_FIELDS = ['name','phone','email','address','city','state','status','disposition','dispositionedAt','dispositionHistory','claimedBy','assignedTo','createdAt','goBackScheduledBy','goBackScheduledDate','goBackScheduledTime','appointmentOutcome','appointmentOutcomeAt','appointmentDateTime','ghlLastUpdatedAt','ghlAppointmentStatus','ghlOpportunityStatus','ghlContactId','ghlAppointmentId','leadType','lat','lng','solarScore','solarCategory','source','setterId','claimedAt','assignedAt','fieldDoor','fieldHandoff','estimatedBill','hasSouthFacingRoof','solarMaxPanels','zip','objectionType','objectionNotes','goBackNotes','tags','ghlStatus','ghlOpportunityId','pipelineStageId','dispositionNotes','notes'];
 function jsonValue(x: any): any {
   if (x?.toDate) return x.toDate().toISOString();
   if (x instanceof Date) return x.toISOString();
@@ -23,6 +24,53 @@ function summary(id: string, data: Record<string, any>, personal = false) {
   // latest marker outcome. Full notes/photos are fetched on selection.
   const history = personal ? data.dispositionHistory : data.dispositionHistory?.slice(0, 1);
   return jsonValue({ ...data, notes: typeof data.notes === 'string' ? data.notes.slice(0, 1000) : undefined, id, dispositionHistory: history, mobileSummary: true });
+}
+/**
+ * Closers see every rep's pins (Evan, Nov 18 2026; Raydar Mobile D1). A map row is CONTACT-REDACTED
+ * when the viewer is a closer, does not own the lead (ownsLead: claimedBy / assignedTo / setterId on a
+ * manually-added pin; nor goBackScheduledBy, nor ownedByMe in territory mode) and the pin is not inside one of the closer's own non-archived territories (a
+ * truncated territory read counts as outside: fail closed on contact data, never on visibility).
+ * Built as an ALLOWLIST: a redacted row carries exactly these keys, plus a trimmed newest history entry,
+ * the ownership extras with names cut to an initial, mobileSummary and contactRedacted. Everything else
+ * in SUMMARY_FIELDS (name, phone, email, notes, goBack*, objection*, appointment*, ghl*, claimedBy,
+ * assignedTo, setterId, ...) never leaves the server on these rows.
+ */
+export const CONTACT_REDACTED_KEYS = ['lat','lng','address','city','state','zip','status','disposition','dispositionedAt','leadType','source','solarCategory','createdAt'] as const;
+const OWNERSHIP_EXTRA_KEYS = ['ownedByMe','owners','ownerSource','expiredGoBack','inOtherUsersTerritory'] as const;
+/** "Jordan Miller" -> "J." (owner-style initial). */
+export function nameInitial(name: unknown): string | null {
+  if (typeof name !== 'string') return null;
+  const first = Array.from(name.trim())[0];
+  return first ? `${first.toUpperCase()}.` : null;
+}
+function ownsLeadRow(l: Record<string, unknown>, uid: string): boolean {
+  return l.claimedBy === uid || l.assignedTo === uid || (l.setterId === uid && l.source === 'manually-added');
+}
+function contactRedactedRow(id: string, data: Record<string, unknown>, extras: Record<string, unknown> | null, uid: string) {
+  const row: Record<string, unknown> = { id };
+  for (const key of CONTACT_REDACTED_KEYS) if (data[key] !== undefined) row[key] = data[key];
+  const top = Array.isArray(data.dispositionHistory) ? data.dispositionHistory[0] : undefined;
+  if (top && typeof top === 'object') {
+    const e = top as Record<string, unknown>;
+    const entry: Record<string, unknown> = {
+      disposition: e.disposition,
+      timestamp: e.timestamp,
+      userId: e.userId,
+      userName: e.userId === uid ? e.userName : nameInitial(e.userName),
+    };
+    const eventId = e.field && typeof e.field === 'object' ? (e.field as Record<string, unknown>).eventId : undefined;
+    if (typeof eventId === 'string') entry.field = { eventId };
+    row.dispositionHistory = [entry];
+  }
+  if (extras) {
+    for (const key of OWNERSHIP_EXTRA_KEYS) {
+      if (!(key in extras)) continue;
+      row[key] = key === 'owners' && Array.isArray(extras.owners)
+        ? (extras.owners as Array<{ uid: string; name: unknown }>).map((o) => ({ uid: o.uid, name: o.uid === uid ? o.name : nameInitial(o.name) }))
+        : extras[key];
+    }
+  }
+  return jsonValue({ ...row, mobileSummary: true, contactRedacted: true });
 }
 const validId = (id: string) => id.length > 0 && id.length <= 1500 && !id.includes('/') && id !== '.' && id !== '..';
 export function createMobileLeadHandler(deps: {adminAuth:()=>Auth;adminDb:()=>Firestore}) {
@@ -78,22 +126,33 @@ return async function GET(request: NextRequest) {
     if (![south,north,west,east,zoom].every(Number.isFinite) || zoom < 15 || north <= south || east <= west || north-south > .06 || east-west > .09 || south < -85 || north > 85 || west < -180 || east > 180)
       throw Error('Zoom closer to load this neighborhood.');
     const browseAll = ['admin','manager'].includes(user?.role);
+    // Closers see every rep's pins in the viewport (same bounded read). Their own territories still load,
+    // only to decide which rows keep the full summary (see contactRedactedRow).
+    const closerView = knocksAnywhereRole(user?.role);
     const territorySnap = browseAll ? null : await db.collection('territories').where('userId','==',uid).select('polygon','archived').limit(MOBILE_TERRITORY_LIMIT).get();
     const territoriesTruncated = Boolean(territorySnap && territorySnap.size >= MOBILE_TERRITORY_LIMIT);
     if (territoriesTruncated) console.log('[mobile/leads] territories truncated');
     const truncatedBody = territoriesTruncated ? { truncated: true as const } : {};
     const territories = territorySnap ? territorySnap.docs.map(d=>d.data()).filter(t=>!t.archived && Array.isArray(t.polygon) && t.polygon.length>=3) : null;
     const overlapping = territories?.filter(t=>{const b=territoryBounds(t.polygon); return b.north>=south && b.south<=north && b.east>=west && b.west<=east;});
-    if (overlapping && !overlapping.length) return NextResponse.json({leads:[],nextCursor:null,...truncatedBody});
+    if (!closerView && overlapping && !overlapping.length) return NextResponse.json({leads:[],nextCursor:null,...truncatedBody});
+    const inMine = (l: { lat?: unknown; lng?: unknown }) => !overlapping || overlapping.some(t=>insideTerritory(l.lat as number,l.lng as number,t.polygon));
     let q = db.collection('leads').where('lat','>=',south).where('lat','<=',north).orderBy('lat').orderBy(FieldPath.documentId()).select(...SUMMARY_FIELDS).limit(PAGE);
     const after = p.get('after'), afterLat = Number(p.get('afterLat'));
     if (after) { if (!validId(after) || !Number.isFinite(afterLat) || afterLat < south || afterLat > north) throw Error('Invalid map cursor.'); q=q.startAfter(afterLat,after); }
     const snapshot = await q.get();
-    const kept = snapshot.docs.filter(d=>{const l=d.data(); return typeof l.lng==='number' && l.lng>=west && l.lng<=east && (!overlapping || overlapping.some(t=>insideTerritory(l.lat,l.lng,t.polygon)));});
+    const kept = snapshot.docs.filter(d=>{const l=d.data(); return typeof l.lng==='number' && l.lng>=west && l.lng<=east && (closerView || inMine(l));});
     const now = Date.now();
     const ctx = await loadOwnershipContext(db, now);
     const owned = await ownershipForRows(db, ctx, kept.map(d=>d.data()), uid, now);
-    const leads = kept.map((d,i)=>({...summary(d.id,d.data()), ...(owned[i] || {})}));
+    const leads = kept.map((d,i)=>{
+      const l = d.data();
+      // The closer's own Go Back (or an effective-owner pin in territory mode) keeps the full row too,
+      // so the phone never wipes contact details it already holds for that door.
+      const full = !closerView || ownsLeadRow(l, uid) || owned[i]?.ownedByMe === true || l.goBackScheduledBy === uid
+        || (!territoriesTruncated && inMine(l));
+      return full ? {...summary(d.id,l), ...(owned[i] || {})} : contactRedactedRow(d.id, l, owned[i] || null, uid);
+    });
     const last = snapshot.docs.at(-1);
     return NextResponse.json({leads, ownership: ctx.mode, popupExempt: popupExemptForRole(user?.role), scanned:snapshot.size, nextCursor:snapshot.size===PAGE ? {id:last!.id,lat:last!.data().lat}:null, ...truncatedBody}, {headers:{'Cache-Control':'private, no-store'}});
   } catch (e: any) {

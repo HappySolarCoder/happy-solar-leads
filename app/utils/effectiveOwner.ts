@@ -1,3 +1,4 @@
+import { knocksAnywhereRole } from './knockAnywhere';
 import { insideTerritory, territoryBounds } from './territoryManager';
 
 /**
@@ -242,14 +243,17 @@ export function foreignTerritoryWarning(
 }
 
 /**
- * Whether managers and admins skip the foreign-territory warning popup.
+ * Whether a role skips the foreign-territory warning popup.
  * FINAL (Evan, Nov 10 2:21 PM): managers and admins skip the popup. Matches
- * today's territory-gate exemption for staff. Single switch, read server-side (mobile-leads
- * `popupExempt`) and by the web popup.
+ * today's territory-gate exemption for staff. Evan, Nov 18 2026: solar
+ * consultants (role 'closer', see knockAnywhere.ts) knock anywhere, so they skip it too.
+ * Single switch, read server-side (mobile-leads `popupExempt`,
+ * /api/field/territory-check) and by the web popup.
  */
 export const STAFF_POPUP_EXEMPT = true;
 
 export function popupExemptFor(role: unknown): boolean {
+  if (knocksAnywhereRole(role)) return true;
   return STAFF_POPUP_EXEMPT && (role === 'admin' || role === 'manager');
 }
 
