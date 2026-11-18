@@ -133,8 +133,8 @@ test("T2 3PL only hides homeowner dots, heat and other team layers without writi
   assert.match(page, /showHomeowners=\{areasReady && showHomeowners && !outcomesOnly && dispositionFilter\.length === 0 && leadTypeFilter !== "customers" && knockPeriod === 'all' && !freshPinsOnly && setterFilter === "all" && !only\}/);
   assert.match(page, /heatCells=\{only \? \[\] : heatCells\}/);
   assert.match(page, /teamMembers=\{only \? \[\] : teamMembersForMap\}/);
-  assert.match(page, /territories=\{only \? \(showTeamAreas \? ownTerritories : \[\]\) : \(showTeamAreas \? teamAreaTerritories : \[\]\)\}/);
-  assert.match(page, /colorTerritories\(overlayTerritories\.filter\(t=>t\.userId===currentUser\?\.id\), coloredUsers\)/);
+  assert.match(page, /territories=\{showTeamAreas \? teamAreaTerritories : \[\]\}/);
+  assert.match(page, /colorTerritories\(areaPolygonsFor\(areaMode, overlayTerritories, currentUser\?\.id\), coloredUsers\)/);
   assert.match(page, /disabled=\{!!only\}/);
   assert.match(page, /if \(only\) return; setHomePreference/);
   assert.match(page, /Hidden while 3PL only is on\./);
@@ -513,19 +513,19 @@ test("T13 setters never call the overview and the production role set stays A", 
   assert.deepEqual(result.points, []);
 });
 
-test("T14 release 14.25 build 169 is the same number everywhere", () => {
+test("T14 release 14.26 build 170 is the same number everywhere", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
-  assert.equal(release.version, "14.25");
-  assert.equal(release.build, 169);
+  assert.equal(release.version, "14.26");
+  assert.equal(release.build, 170);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.25", "14.25"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["169", "169"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.26", "14.26"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["170", "170"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.25"/);
-  assert.match(gradle, /versionCode 169\b/);
-  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "169"/);
-  assert.match(read("tests/mobile/release-v1418.test.ts"), /build 169/);
-  assert.match(read("tests/mobile/hot-3pl-android-v1422.test.ts"), /release\.build, 169/);
+  assert.match(gradle, /versionName "14\.26"/);
+  assert.match(gradle, /versionCode 170\b/);
+  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "170"/);
+  assert.match(read("tests/mobile/release-v1418.test.ts"), /build 170/);
+  assert.match(read("tests/mobile/hot-3pl-android-v1422.test.ts"), /release\.build, 170/);
 });
 
 test("T15 knockCount.ts is unchanged and this change does not touch the server", () => {

@@ -154,10 +154,11 @@ export async function guardNewPinTerritory(input: {
   uid: string;
   lat?: number;
   lng?: number;
+  role?: string;
   confirm: () => boolean;
   deps?: TerritoryCheckDeps;
 }): Promise<{ checked: boolean; warned: boolean }> {
-  if (!territoryCheckNeeded(input.uid) || typeof input.lat !== 'number' || typeof input.lng !== 'number') {
+  if (!territoryCheckNeeded(input.uid, input.role) || typeof input.lat !== 'number' || typeof input.lng !== 'number') {
     return { checked: false, warned: false };
   }
   const verdict = await checkNewPinTerritory(

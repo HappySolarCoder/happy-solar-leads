@@ -90,6 +90,8 @@ export interface Lead {
   ownerSource?: string;
   expiredGoBack?: boolean;
   inOtherUsersTerritory?: boolean;
+  /** Viewport row for a closer outside their territory: pin fields only. */
+  contactRedacted?: boolean;
   disposition?: string;       // Disposition name (from dispositions collection)
   dispositionedAt?: Date;
   notes?: string;
