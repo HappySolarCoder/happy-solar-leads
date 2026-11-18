@@ -365,6 +365,9 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const ownedByLabel = ownershipBadge(lead);
   const canClaim = !lead.claimedBy || isClaimedByMe;
   const isClaimed = !!lead.claimedBy;
+  const ownerInitial = contactRedacted
+    ? (lead.owners || []).map((owner) => (typeof owner?.name === "string" ? owner.name.trim() : "")).filter(Boolean)[0]
+    : undefined;
 
   // Read the selected lead immediately, including from cache. Supporting settings
   // and the admin-only assignment directory must not block or trap the panel.
@@ -906,10 +909,12 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           {/* Name & Status */}
           <div className={homeowner?.ownerName === lead.name ? 'mb-2' : 'mb-6'}>
             {homeowner?.ownerName !== lead.name && <h2 className="text-xl font-bold text-[#2D3748]">{lead.name}</h2>}
-            {ownedByLabel && (
+            {contactRedacted ? (
+              ownerInitial ? <p className="text-sm font-semibold text-[#92400e] mt-1">Owner: {ownerInitial}</p> : null
+            ) : ownedByLabel && (
               <p className="text-sm font-semibold text-[#92400e] mt-1">{ownedByLabel}</p>
             )}
-            {!unvisitedHome && isClaimed && lead.claimedBy && (
+            {!contactRedacted && !unvisitedHome && isClaimed && lead.claimedBy && (
               <p className="text-sm text-[#718096] mt-1">
                 Claimed by {workedByMe ? 'you' : 'another rep'}
                 {lead.claimedAt && (
@@ -1055,7 +1060,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             )}
             
             <div className="grid grid-cols-2 gap-2">
-              {!unvisitedHome && !isClaimed && (
+              {!contactRedacted && !unvisitedHome && !isClaimed && (
                 <button
                   onClick={() => handleStatusChange('claimed')}
                   disabled={isUpdating || actionsLoading}
@@ -1066,7 +1071,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
                 </button>
               )}
               
-              {!unvisitedHome && isClaimedByMe && (
+              {!contactRedacted && !unvisitedHome && isClaimedByMe && (
                 <button
                   onClick={() => handleStatusChange('unclaimed')}
                   disabled={isUpdating || actionsLoading}
@@ -1104,7 +1109,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             <div className="mb-6">
               <h3 className="text-sm font-semibold text-[#2D3748] mb-3">All Dispositions</h3>
               <div className="space-y-2">
-                {dispositions.filter(dispo => !unvisitedHome || !['claimed', 'unclaimed'].includes(dispo.id)).map(dispo => {
+                {dispositions.filter(dispo => (!contactRedacted && !unvisitedHome) || !['claimed', 'unclaimed'].includes(dispo.id)).map(dispo => {
                   const Icon = ICON_MAP[dispo.icon] || Circle;
                   return (
                     <button

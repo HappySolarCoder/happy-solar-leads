@@ -12,6 +12,7 @@ import { knocksAnywhere, REDACTED_DOOR_NOTICE } from "../../app/field/closerScop
 import { guardNewPinTerritory, resetTerritoryCheckForTests, type TerritoryCheckDeps } from "../../app/field/territoryCheck";
 import { canSeeHotLeads } from "../../app/hotLeads/access";
 import { applyHotFilter, hotOnlyLayers } from "../../app/hotLeads/filter";
+import { mergeLeadSnapshots } from "../../app/homeowners/houseIdentity";
 import { areaPolygonsFor } from "../../app/mobile/_lib/areaFocus";
 import {
   callerPopupExempt,
@@ -24,7 +25,9 @@ import {
 import { homeScopeFor, inPinScope, knockMapPins, pinScopeFor, scopedViews } from "../../app/mobile/_lib/pinScope";
 import type { Lead, User } from "../../app/types";
 import { DEFAULT_DISPOSITIONS } from "../../app/types/disposition";
+import { fieldPinArtwork, fieldPinStyle } from "../../app/utils/fieldPin";
 import { mapLeadDoc } from "../../app/utils/firestore";
+import { countKnocks, type KnockEvent } from "../../app/utils/knockCount";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const BASE = "17dfd28c2d1a41ce25eeddfc4d25db118019594c";
@@ -447,7 +450,8 @@ test("D1-7 a redacted viewport row keeps no hidden contact keys for the offline 
   const rows = rowsForOwnership<Record<string, unknown>>("closer-1", { ownership: "territory", leads: [redactedRow()] });
   const mapped = mapLeadDoc({ id: rows[0]?.id, data: () => rows[0] });
   assert.equal(mapped.contactRedacted, true);
-  for (const key of HIDDEN_LEAD_KEYS) assert.equal((mapped as Record<string, unknown>)[key] == null, true, key);
+  const mappedRow = mapped as unknown as Record<string, unknown>;
+  for (const key of HIDDEN_LEAD_KEYS) assert.equal(mappedRow[key] == null, true, key);
   const history = mapped.dispositionHistory?.[0] as Record<string, unknown> | undefined;
   assert.deepEqual(Object.keys(history ?? {}).sort(), ["disposition", "field", "timestamp", "userId", "userName"]);
   assert.deepEqual(Object.keys((history?.field as object) ?? {}).sort(), ["eventId"]);
@@ -472,6 +476,179 @@ test("D1-8 the knock page scopes pins and homeowners separately and canSeeAllLea
     if (line.startsWith("+") && !line.startsWith("+++")) added.push(line);
   }
   assert.equal(added.some((line) => line.includes("'sales'") || line.includes('"sales"')), false);
+});
+
+function showsClaim(markup: string): boolean {
+  return />\s*Claim\s*</.test(markup);
+}
+
+function showsUnclaim(markup: string): boolean {
+  return />\s*Unclaim\s*</.test(markup);
+}
+
+function doorDetail(lead: Lead, role: User["role"], id: string) {
+  return renderToStaticMarkup(createElement(LeadDetail, {
+    lead,
+    currentUser: person(role, id),
+    onClose: () => {},
+    onUpdate: () => {},
+    fieldMemory: true,
+    dispositionOptions: DEFAULT_DISPOSITIONS,
+  }));
+}
+
+function serverRedacted(withOwnership: boolean): Record<string, unknown> {
+  const row: Record<string, unknown> = {
+    id: "far-1",
+    lat: FAR.lat,
+    lng: FAR.lng,
+    address: "100 Far St",
+    city: "Town",
+    state: "AZ",
+    zip: "85001",
+    status: "not-home",
+    disposition: "Not Home",
+    dispositionedAt: "2026-11-18T18:00:00.000Z",
+    leadType: "prospect",
+    source: "import",
+    solarCategory: "good",
+    createdAt: "2026-11-01T00:00:00.000Z",
+    dispositionHistory: [{
+      disposition: "Not Home",
+      timestamp: "2026-11-18T18:00:00.000Z",
+      userId: "other-1",
+      userName: "J.",
+      field: { eventId: "evt-1" },
+    }],
+    mobileSummary: true,
+    contactRedacted: true,
+  };
+  if (withOwnership) {
+    row.ownedByMe = false;
+    row.owners = [{ uid: "other-1", name: "J." }];
+    row.ownerSource = "territory";
+    row.inOtherUsersTerritory = true;
+  }
+  return row;
+}
+
+test("D1-9 a redacted door hides claim controls and a setter summary still shows Claim", () => {
+  const redacted = {
+    ...serverRedacted(true),
+    createdAt: new Date("2026-11-01T00:00:00.000Z"),
+    owners: [{ uid: "other-1", name: "J." }],
+  } as Lead;
+  delete (redacted as { claimedBy?: string }).claimedBy;
+  const markup = doorDetail(redacted, "closer", "closer-1");
+  assert.equal(showsClaim(markup), false);
+  assert.equal(showsUnclaim(markup), false);
+  assert.equal(markup.includes("Claimed by"), false);
+  assert.equal(markup.includes("Owner: J."), true);
+  assert.match(markup, /aria-label="NH — Not Home"/);
+  assert.equal(markup.replace(/&#x27;/g, "'").includes(REDACTED_DOOR_NOTICE), true);
+  const bare = { ...serverRedacted(false), createdAt: new Date("2026-11-01T00:00:00.000Z") } as Lead;
+  const quiet = doorDetail(bare, "closer", "closer-1");
+  assert.equal(quiet.includes("Owner:"), false);
+  assert.equal(quiet.includes("Claimed by"), false);
+  assert.equal(showsClaim(quiet), false);
+  const setterLead = {
+    id: "plain-1",
+    lat: INSIDE.lat,
+    lng: INSIDE.lng,
+    address: "1 Own St",
+    city: "Town",
+    state: "AZ",
+    zip: "85001",
+    status: "not-home",
+    name: "Plain Door",
+    createdAt: new Date("2026-11-01T00:00:00.000Z"),
+    mobileSummary: true,
+  } as Lead;
+  const setterMarkup = doorDetail(setterLead, "setter", "setter-1");
+  assert.equal(showsClaim(setterMarkup), true);
+  assert.equal(setterMarkup.includes("Claimed by"), false);
+});
+
+test("D1-10 the PR 199 redacted shape renders a pin with or without ownership keys", () => {
+  const closer = person("closer", "closer-1");
+  for (const withOwnership of [true, false]) {
+    const payload = serverRedacted(withOwnership);
+    assert.equal("expiredGoBack" in payload, false);
+    assert.equal("claimedBy" in payload, false);
+    assert.equal("name" in payload, false);
+    const rows = rowsForOwnership<Record<string, unknown>>("closer-1", { ownership: "territory", leads: [payload] });
+    const mapped = mapLeadDoc({ id: rows[0]?.id, data: () => rows[0] });
+    assert.equal(mapped.contactRedacted, true);
+    assert.equal(mapped.expiredGoBack, undefined);
+    const kept = knockMapPins([mapped], pinScopeFor(closer, [{ userId: "closer-1", polygon: SQUARE }]), closer);
+    assert.deepEqual(kept.map((lead) => lead.id), ["far-1"]);
+    const disposition = DEFAULT_DISPOSITIONS.find((row) => row.id === "not-home");
+    const style = fieldPinStyle(mapped, disposition);
+    assert.equal(style.exp, false);
+    const artwork = fieldPinArtwork(mapped, disposition, 16);
+    assert.equal(typeof artwork.url, "string");
+    assert.equal(artwork.style.exp, false);
+  }
+});
+
+test("D1-11 a newer redacted row replaces an older full row without reviving contact fields", () => {
+  fresh();
+  noteMobileLeadsMeta("closer-1", { ownership: "territory", popupExempt: false });
+  const older = {
+    id: "far-1",
+    lat: FAR.lat,
+    lng: FAR.lng,
+    address: "100 Far St",
+    city: "Town",
+    state: "AZ",
+    zip: "85001",
+    status: "not-home",
+    name: "Full Name",
+    phone: "555-0199",
+    email: "door@example.test",
+    notes: "full notes",
+    claimedBy: "other-1",
+    createdAt: new Date("2026-11-01T00:00:00.000Z"),
+    dispositionedAt: new Date("2026-11-01T12:00:00.000Z"),
+    ownedByMe: false,
+    owners: [{ uid: "other-1", name: "Full N." }],
+  } as Lead;
+  const newer = {
+    ...serverRedacted(true),
+    createdAt: new Date("2026-11-01T00:00:00.000Z"),
+    dispositionedAt: new Date("2026-11-18T18:00:00.000Z"),
+  } as Lead;
+  const [merged] = mergeLeadSnapshots([older], [newer]);
+  assert.equal(merged?.contactRedacted, true);
+  assert.equal("name" in (merged ?? {}), false);
+  assert.equal("phone" in (merged ?? {}), false);
+  assert.equal("email" in (merged ?? {}), false);
+  assert.equal("notes" in (merged ?? {}), false);
+  assert.equal(merged?.ownedByMe, false);
+});
+
+test("D1-12 a closer knock on another rep's redacted pin counts once", () => {
+  const at = Date.parse("2026-11-18T18:00:00.000Z");
+  const lead = {
+    ...serverRedacted(true),
+    createdAt: new Date("2026-11-01T00:00:00.000Z"),
+    dispositionedAt: new Date(at),
+    dispositionHistory: [{
+      disposition: "Not Home",
+      timestamp: new Date(at),
+      userId: "closer-1",
+      userName: "J.",
+    }],
+  } as Lead;
+  const ledger: KnockEvent[] = [{
+    key: `far-1|closer-1|not-home|${at}`,
+    leadId: "far-1",
+    userId: "closer-1",
+    at,
+    dispositionId: "not-home",
+  }];
+  assert.equal(countKnocks([lead], DEFAULT_DISPOSITIONS, { userId: "closer-1" }), 1);
+  assert.equal(countKnocks([lead], DEFAULT_DISPOSITIONS, { userId: "closer-1", ledger }), 1);
 });
 
 test("V1 and V2 release 14.26 build 170 matches and the diff stays off the server", () => {
