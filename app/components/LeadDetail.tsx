@@ -26,7 +26,10 @@ import { localParts } from '@/app/field/analysis';
 import { REDACTED_DOOR_NOTICE } from '@/app/field/closerScope';
 import { callerPopupExempt, ownershipBadge, pinIsMine, selectableDispositions, shouldWarnTerritory, territoryOwnershipOn, TERRITORY_WARNING } from '@/app/mobile/_lib/ownerCounts';
 
-import { DEFAULT_DISPOSITIONS } from '@/app/types/disposition';
+import { DEFAULT_DISPOSITIONS, EMPOWER_BUMP_DISPOSITION_ID } from '@/app/types/disposition';
+import EmpowerBumpForm from './EmpowerBumpForm';
+import { canOfferEmpowerBump, type EmpowerBumpPayload } from '@/app/empower/bumpLogic';
+import { deliverEmpowerBump, empowerNotice, finishEmpowerBump } from '@/app/empower/empowerBump';
 import { getLocation } from '@/app/utils/geolocation';
 import { distanceBetween } from 'geofire-common';
 
@@ -341,6 +344,8 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const [showAllStatuses, setShowAllStatuses] = useState(false);
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
+  const [showEmpowerBump, setShowEmpowerBump] = useState(false);
+  const empowerKnockSaved = useRef(false);
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
   const [pendingGoBackStatus, setPendingGoBackStatus] = useState('go-back');
   const [loadedDispositions, setDispositions] = useState<Disposition[]>(DEFAULT_DISPOSITIONS);
@@ -413,9 +418,21 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const currentDisposition = dispositions.find(d => d.id === lead.status);
   const CurrentIcon = currentDisposition ? ICON_MAP[currentDisposition.icon] || Circle : Circle;
 
+  const offerDisposition = (dispo: Disposition) => (
+    dispo.id === EMPOWER_BUMP_DISPOSITION_ID || dispo.specialBehavior === 'empower-bump'
+      ? canOfferEmpowerBump({ role: currentUser?.role, contactRedacted })
+      : true
+  );
+
+  // The same opener the Call Scheduling Manager button uses. Hot-only doors stay closed.
+  function openCallSchedulingManager() {
+    if (isHotOnlyLead(lead)) return;
+    setShowLeadEditor(true);
+  }
+
   // Filter dispositions for quick actions (exclude unclaimed/claimed, show door knock statuses)
   const quickActionDispositions = dispositions.filter(
-    d => d.id !== 'unclaimed' && d.id !== 'claimed' && d.countsAsDoorKnock
+    d => d.id !== 'unclaimed' && d.id !== 'claimed' && d.countsAsDoorKnock && offerDisposition(d)
   );
 
   // Notes stay a separate draft from the knock. A guard notice keeps the text and never undoes the disposition.
@@ -496,8 +513,14 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     
     // If scheduling manager (other types), show lead editor instead
     if (disposition?.specialBehavior === 'scheduling-manager') {
-      if (isHotOnlyLead(lead)) return;
-      setShowLeadEditor(true);
+      openCallSchedulingManager();
+      return;
+    }
+
+    if (disposition?.specialBehavior === 'empower-bump' || newStatus === EMPOWER_BUMP_DISPOSITION_ID) {
+      if (!canOfferEmpowerBump({ role: actor.role, contactRedacted })) return;
+      empowerKnockSaved.current = false;
+      setShowEmpowerBump(true);
       return;
     }
     
@@ -605,6 +628,52 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
       if (isProximityWarningCancelled(error)) return;
       if (DIRECT_MOBILE_WRITES && !isFieldValidation(error)) reportSilent(error);
       else setFieldMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleEmpowerSubmit = async (payload: EmpowerBumpPayload) => {
+    const actor = currentUser;
+    const signedInUid = auth?.currentUser?.uid;
+    if (!actor) return { status: 'signin' as const, message: 'Sign in again, then send.', attempted: false };
+    if (!canOfferEmpowerBump({ role: actor.role, contactRedacted })) {
+      return { status: 'invalid' as const, message: 'Empower Bump isn’t available on this door.', attempted: false };
+    }
+    setIsUpdating(true);
+    try {
+      const outcome = await finishEmpowerBump({
+        saveLocal: async () => {
+          if (empowerKnockSaved.current) return;
+          const disposition = dispositions.find((item) => item.id === EMPOWER_BUMP_DISPOSITION_ID || item.specialBehavior === 'empower-bump');
+          if (!disposition) throw Error('Reload your dispositions before saving.');
+          const at = new Date(payload.actedAt);
+          // GPS is not read here. deferGps lets the outbox attach a fix later.
+          await saveReportingPatch(knockPatch(lead, actor, signedInUid, disposition, at, {
+            disposition: disposition.name,
+          }), true);
+          empowerKnockSaved.current = true;
+          try { await saveDirtyNotes(at); } catch { /* The knock stands if notes need another look. */ }
+          onUpdate();
+        },
+        send: () => deliverEmpowerBump(payload, {
+          getToken: async (forceRefresh) => {
+            const current = auth?.currentUser;
+            if (!current) throw new Error('signed-out');
+            return current.getIdToken(forceRefresh);
+          },
+        }),
+        openScheduling: () => {
+          setShowEmpowerBump(false);
+          openCallSchedulingManager();
+        },
+      });
+      setFieldMessage(empowerNotice(outcome));
+      return outcome;
+    } catch (error) {
+      if (isProximityWarningCancelled(error)) throw error;
+      if (DIRECT_MOBILE_WRITES && !isFieldValidation(error)) reportSilent(error);
+      throw error;
     } finally {
       setIsUpdating(false);
     }
@@ -1035,7 +1104,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
                 </button>;
               })}
               {!isHotOnlyLead(lead) && <button type="button" aria-label="CSM — Call Scheduling Manager" title="Call Scheduling Manager"
-                onClick={() => setShowLeadEditor(true)} disabled={summaryOnly || isUpdating || actionsLoading}>
+                onClick={openCallSchedulingManager} disabled={summaryOnly || isUpdating || actionsLoading}>
                 <Phone size={18} />CSM
               </button>}
             </div>}
@@ -1109,7 +1178,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             <div className="mb-6">
               <h3 className="text-sm font-semibold text-[#2D3748] mb-3">All Dispositions</h3>
               <div className="space-y-2">
-                {dispositions.filter(dispo => (!contactRedacted && !unvisitedHome) || !['claimed', 'unclaimed'].includes(dispo.id)).map(dispo => {
+                {dispositions.filter(dispo => offerDisposition(dispo) && ((!contactRedacted && !unvisitedHome) || !['claimed', 'unclaimed'].includes(dispo.id))).map(dispo => {
                   const Icon = ICON_MAP[dispo.icon] || Circle;
                   return (
                     <button
@@ -1285,6 +1354,15 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           currentUserId={currentUser.id}
           onSave={handleObjectionSave}
           onClose={() => setShowObjectionTracker(false)}
+        />
+      )}
+
+      {showEmpowerBump && currentUser && canOfferEmpowerBump({ role: currentUser.role, contactRedacted }) && (
+        <EmpowerBumpForm
+          lead={lead}
+          town={homeowner?.municipality}
+          onClose={() => setShowEmpowerBump(false)}
+          onSubmit={handleEmpowerSubmit}
         />
       )}
 

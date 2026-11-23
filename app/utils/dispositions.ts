@@ -13,6 +13,7 @@ export type { Disposition } from '@/app/types/disposition';
 export {
   GO_BACK_DISPOSITION_ID,
   HOUSE_FOR_SALE_DISPOSITION_ID,
+  EMPOWER_BUMP_DISPOSITION_ID,
   KNOCK_STATUS_IDS,
   SCHEDULED_GO_BACK_STATUS_IDS,
   isKnockStatus,

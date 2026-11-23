@@ -1,4 +1,6 @@
 // Custom Disposition System
+export type DispositionSpecialBehavior = 'scheduling-manager' | 'empower-bump' | 'none';
+
 export interface Disposition {
   id: string;
   name: string;
@@ -7,7 +9,7 @@ export interface Disposition {
   countsAsDoorKnock: boolean; // Track for metrics
   order: number; // Display order
   isDefault: boolean; // Can't be deleted
-  specialBehavior?: 'scheduling-manager' | 'none'; // Custom actions
+  specialBehavior?: DispositionSpecialBehavior; // Custom actions
   createdAt: Date;
   updatedAt: Date;
 }
@@ -114,10 +116,23 @@ export const DEFAULT_DISPOSITIONS: Disposition[] = [
     createdAt: new Date(),
     updatedAt: new Date(),
   },
+  {
+    id: 'empower-bump',
+    name: 'Empower Bump',
+    color: '#14b8a6', // Teal — distinct from Go Back amber, House for Sale sky, and Not Home gray
+    icon: 'zap',
+    countsAsDoorKnock: true,
+    order: 9,
+    isDefault: true,
+    specialBehavior: 'empower-bump',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  },
 ];
 
 export const GO_BACK_DISPOSITION_ID = 'go-back';
 export const HOUSE_FOR_SALE_DISPOSITION_ID = 'house-for-sale';
+export const EMPOWER_BUMP_DISPOSITION_ID = 'empower-bump';
 
 /** Knock statuses that should remain visible even without strong solar data. */
 export const KNOCK_STATUS_IDS = [
@@ -132,6 +147,7 @@ export const KNOCK_STATUS_IDS = [
   'renter',
   GO_BACK_DISPOSITION_ID,
   HOUSE_FOR_SALE_DISPOSITION_ID,
+  EMPOWER_BUMP_DISPOSITION_ID,
 ] as const;
 
 /** Dispositions that schedule a return visit and appear on Go Backs. */

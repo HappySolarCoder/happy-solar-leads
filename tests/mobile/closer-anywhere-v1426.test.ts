@@ -651,16 +651,16 @@ test("D1-12 a closer knock on another rep's redacted pin counts once", () => {
   assert.equal(countKnocks([lead], DEFAULT_DISPOSITIONS, { userId: "closer-1", ledger }), 1);
 });
 
-test("V1 and V2 release 14.26 build 170 matches and the diff stays off the server", () => {
+test("V1 and V2 release 14.27 build 171 matches and the diff stays off the server", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
-  assert.equal(release.version, "14.26");
-  assert.equal(release.build, 170);
+  assert.equal(release.version, "14.27");
+  assert.equal(release.build, 171);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.26", "14.26"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["170", "170"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.27", "14.27"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["171", "171"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.26"/);
-  assert.match(gradle, /versionCode 170\b/);
+  assert.match(gradle, /versionName "14\.27"/);
+  assert.match(gradle, /versionCode 171\b/);
   const hash = createHash("sha256").update(read("app/utils/knockCount.ts")).digest("hex");
   assert.equal(hash, KNOCK_COUNT_SHA);
   const names = changedNames();
