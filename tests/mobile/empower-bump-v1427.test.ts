@@ -23,6 +23,7 @@ import {
   bandForIncome,
   buildEmpowerBumpPayload,
   canOfferEmpowerBump,
+  empowerContactPatch,
   comfortLabel,
   incomeTable,
   knownCounty,
@@ -37,9 +38,14 @@ import {
   EMPOWER_API_ORIGIN,
   EMPOWER_BUMP_PATH,
   EMPOWER_QUEUED_MESSAGE,
+  EMPOWER_OFFLINE_MESSAGE,
+  EMPOWER_PENDING_LABEL,
   deliverEmpowerBump,
+  empowerBumpPending,
   finishEmpowerBump,
+  flushQueuedEmpowerBumps,
   memoryEmpowerStorage,
+  resetEmpowerFlushForTests,
   schedulingFollowsBump,
   storedEmpowerState,
   type EmpowerOutcome,
@@ -290,6 +296,10 @@ test("the form shows the published helpers and does not offer household 11", () 
   assert.equal(markup.includes('value="11"'), false);
   assert.equal(markup.includes("St. Lawrence"), true);
   assert.equal(markup.includes("New York"), true);
+  assert.equal(markup.includes(ESTIMATE_NOTE), true);
+  assert.equal(markup.includes("Name, phone, and email are correct."), true);
+  assert.match(markup, /aria-labelledby="empower-assistance-legend"/);
+  assert.match(markup, /id="empower-assistance-none"/);
   assert.equal(markup.includes(CATEGORICAL_TIER1_NOTE), false);
   assert.match(markup, /<span>SSI \(Supplemental Security Income\)<\/span><\/label><p[^>]*>SSI is not Social Security Retirement or Disability\.<\/p>/);
 });
@@ -301,6 +311,7 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
   const storage = memoryEmpowerStorage();
   let posts = 0;
   const sent = await deliverEmpowerBump(payload, {
+    uid: "rep-1",
     storage,
     getToken: async () => "token",
     post: async (path, init) => {
@@ -315,9 +326,10 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
   assert.equal(posts, 1);
   assert.equal(sent.status, "sent");
   assert.equal(schedulingFollowsBump(sent), true);
-  assert.equal(storedEmpowerState("draft-send", storage), "sent");
+  assert.equal(storedEmpowerState("draft-send", storage, "rep-1"), "sent");
   posts = 0;
   const again = await deliverEmpowerBump(payload, {
+    uid: "rep-1",
     storage,
     getToken: async () => "token",
     post: async () => {
@@ -334,6 +346,7 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
     const queuedStorage = memoryEmpowerStorage();
     posts = 0;
     const queued = await deliverEmpowerBump({ ...payload, draftId: id }, {
+      uid: "rep-1",
       storage: queuedStorage,
       getToken: async () => "token",
       post: async () => {
@@ -346,12 +359,13 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
     assert.equal(queued.status === "queued" && queued.message, EMPOWER_QUEUED_MESSAGE);
     assert.equal(JSON.stringify(queued).includes(EMPOWER_AMBIGUOUS_MESSAGE), false);
     assert.equal(schedulingFollowsBump(queued), true);
-    assert.equal(storedEmpowerState(id, queuedStorage), "queued");
+    assert.equal(storedEmpowerState(id, queuedStorage, "rep-1"), "queued");
   }
 
   const forces: boolean[] = [];
   posts = 0;
   const refreshed = await deliverEmpowerBump({ ...payload, draftId: "draft-401" }, {
+    uid: "rep-1",
     storage: memoryEmpowerStorage(),
     getToken: async (force) => {
       forces.push(force);
@@ -376,6 +390,7 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
     const ambiguousStorage = memoryEmpowerStorage();
     posts = 0;
     const outcome = await deliverEmpowerBump({ ...payload, draftId: `draft-${status}` }, {
+      uid: "rep-1",
       storage: ambiguousStorage,
       getToken: async () => "token",
       post: async () => {
@@ -385,8 +400,9 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
     });
     assert.equal(posts, 1);
     assert.equal(outcome.status, "ambiguous");
-    assert.equal(storedEmpowerState(`draft-${status}`, ambiguousStorage), "ambiguous");
+    assert.equal(storedEmpowerState(`draft-${status}`, ambiguousStorage, "rep-1"), "ambiguous");
     const retry = await deliverEmpowerBump({ ...payload, draftId: `draft-${status}` }, {
+      uid: "rep-1",
       storage: ambiguousStorage,
       getToken: async () => "token",
       post: async () => {
@@ -401,6 +417,7 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
 
   posts = 0;
   const timedOut = await deliverEmpowerBump({ ...payload, draftId: "draft-timeout" }, {
+    uid: "rep-1",
     storage: memoryEmpowerStorage(),
     timeoutMs: 20,
     getToken: async () => "token",
@@ -414,6 +431,7 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
 
   posts = 0;
   const dropped = await deliverEmpowerBump({ ...payload, draftId: "draft-network" }, {
+    uid: "rep-1",
     storage: memoryEmpowerStorage(),
     getToken: async () => "token",
     post: async () => {
@@ -426,6 +444,7 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
 
   posts = 0;
   const signedOut = await deliverEmpowerBump({ ...payload, draftId: "draft-signed-out" }, {
+    uid: "rep-1",
     storage: memoryEmpowerStorage(),
     getToken: async () => {
       throw new Error("signed-out");
@@ -509,6 +528,194 @@ test("a finished bump opens the existing scheduling flow, including queued and a
   assert.equal(client.includes("notificationWebhook"), false);
   assert.match(client, /!\/webhook\/i\.test/);
   assert.equal(client.includes("console."), false);
+});
+
+test("queued bumps flush once for the signed-in rep, and ambiguous or rejected drafts do not", async () => {
+  resetEmpowerFlushForTests();
+  const payload = payloadOf(buildEmpowerBumpPayload(baseInput({ draftId: "draft-flush", email: "ada@example.test" })));
+  assert.deepEqual(empowerContactPatch(payload), { name: "Ada Lovelace", phone: "555-0100", email: "ada@example.test" });
+  assert.equal(empowerContactPatch({ name: "Ada", phone: "555" }).email, "");
+  const detail = read("app/components/LeadDetail.tsx");
+  const submit = detail.slice(detail.indexOf("const handleEmpowerSubmit"), detail.indexOf("// Handle saving notes"));
+  assert.match(submit, /empowerContactPatch/);
+  assert.match(submit, /saveReportingPatch\(contact, false\)/);
+  assert.match(detail, /EMPOWER_PENDING_LABEL/);
+  const sync = read("app/empower/EmpowerBumpSync.tsx");
+  const layout = read("app/layout.tsx");
+  assert.match(layout, /EmpowerBumpSync/);
+  assert.match(sync, /flushQueuedEmpowerBumps/);
+  assert.match(sync, /addEventListener\('online'/);
+  assert.match(sync, /visibilitychange/);
+  assert.match(sync, /appStateChange/);
+  assert.equal(read("app/field/useFieldData.ts").includes("flushQueuedEmpowerBumps"), false);
+
+  const storage = memoryEmpowerStorage();
+  let posts = 0;
+  const ids: string[] = [];
+  const offline = await deliverEmpowerBump(payload, {
+    uid: "rep-1",
+    storage,
+    online: () => false,
+    getToken: async () => "token",
+    post: async () => {
+      posts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(posts, 0);
+  assert.equal(offline.status, "queued");
+  assert.equal(offline.attempted, false);
+  assert.equal(offline.status === "queued" && offline.message, EMPOWER_OFFLINE_MESSAGE);
+  assert.equal(storedEmpowerState("draft-flush", storage, "rep-1"), "queued");
+  assert.equal(empowerBumpPending("rep-1", "door-1", storage), true);
+  assert.equal(empowerBumpPending("rep-2", "door-1", storage), false);
+
+  storage.setItem("raydar.empowerBump.queue.v1", JSON.stringify({
+    v: 1,
+    drafts: [{ draftId: "legacy", state: "queued", payload }],
+  }));
+  await flushQueuedEmpowerBumps({
+    uid: "rep-2",
+    storage,
+    online: () => true,
+    getToken: async () => "token",
+    post: async () => {
+      posts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(posts, 0);
+
+  const flushed = await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage,
+    online: () => true,
+    getToken: async () => "token",
+    post: async (_path, init) => {
+      posts += 1;
+      ids.push(JSON.parse(String(init.body)).draftId);
+      return jsonResponse(200, { ok: true });
+    },
+  });
+  assert.equal(flushed, 1);
+  assert.deepEqual(ids, ["draft-flush"]);
+  assert.equal(storedEmpowerState("draft-flush", storage, "rep-1"), "sent");
+  assert.equal(empowerBumpPending("rep-1", "door-1", storage), false);
+  await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage,
+    online: () => true,
+    getToken: async () => "token",
+    post: async () => {
+      posts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(posts, 1);
+
+  const held = memoryEmpowerStorage();
+  await deliverEmpowerBump({ ...payload, draftId: "draft-before" }, {
+    uid: "rep-1",
+    storage: held,
+    getToken: async () => "token",
+    post: async () => {
+      throw Object.assign(new Error("Failed to fetch"), { empowerPhase: "before-send" });
+    },
+  });
+  assert.equal(storedEmpowerState("draft-before", held, "rep-1"), "queued");
+  let resent = 0;
+  await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage: held,
+    online: () => true,
+    getToken: async () => "token",
+    post: async () => {
+      resent += 1;
+      return jsonResponse(404);
+    },
+  });
+  assert.equal(resent, 1);
+  assert.equal(storedEmpowerState("draft-before", held, "rep-1"), "queued");
+
+  const ambiguous = memoryEmpowerStorage();
+  await deliverEmpowerBump({ ...payload, draftId: "draft-drop" }, {
+    uid: "rep-1",
+    storage: ambiguous,
+    getToken: async () => "token",
+    post: async () => {
+      throw Object.assign(new Error("socket hang up"), { empowerPhase: "after-send" });
+    },
+  });
+  assert.equal(storedEmpowerState("draft-drop", ambiguous, "rep-1"), "ambiguous");
+  await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage: ambiguous,
+    online: () => true,
+    getToken: async () => "token",
+    post: async () => {
+      resent += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(resent, 1);
+
+  const conflict = memoryEmpowerStorage();
+  let conflictPosts = 0;
+  const rejected = await deliverEmpowerBump({ ...payload, draftId: "draft-409" }, {
+    uid: "rep-1",
+    storage: conflict,
+    getToken: async () => "token",
+    post: async () => {
+      conflictPosts += 1;
+      return jsonResponse(409, { error: "This draft is already in flight." });
+    },
+  });
+  assert.equal(conflictPosts, 1);
+  assert.equal(rejected.status, "invalid");
+  assert.equal(rejected.status === "invalid" && rejected.message, "This draft is already in flight.");
+  assert.equal(storedEmpowerState("draft-409", conflict, "rep-1"), "rejected");
+  await deliverEmpowerBump({ ...payload, draftId: "draft-409" }, {
+    uid: "rep-1",
+    storage: conflict,
+    getToken: async () => "token",
+    post: async () => {
+      conflictPosts += 1;
+      return jsonResponse(200);
+    },
+  });
+  await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage: conflict,
+    online: () => true,
+    getToken: async () => "token",
+    post: async () => {
+      conflictPosts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(conflictPosts, 1);
+  assert.equal(empowerBumpPending("rep-1", "door-1", conflict), false);
+
+  let refreshedPosts = 0;
+  const forbidden = await deliverEmpowerBump({ ...payload, draftId: "draft-403" }, {
+    uid: "rep-1",
+    storage: memoryEmpowerStorage(),
+    getToken: async (force) => (force ? "fresh" : "stale"),
+    post: async (_path, init) => {
+      refreshedPosts += 1;
+      const authorization = (init.headers as Record<string, string>).Authorization;
+      if (refreshedPosts === 1) {
+        assert.equal(authorization, "Bearer stale");
+        return jsonResponse(401);
+      }
+      assert.equal(authorization, "Bearer fresh");
+      return jsonResponse(403, { error: "Sign in again." });
+    },
+  });
+  assert.equal(refreshedPosts, 2);
+  assert.equal(forbidden.status, "signin");
+  assert.match(detail, /\{EMPOWER_PENDING_LABEL\}/);
+  assert.equal(EMPOWER_PENDING_LABEL, "Empower bump pending");
 });
 
 test("release 14.27 build 171 is the same number in the app, iOS, and Android", () => {

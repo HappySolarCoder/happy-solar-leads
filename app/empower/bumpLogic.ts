@@ -304,6 +304,19 @@ export type EmpowerBumpBuild =
   | { ok: true; payload: EmpowerBumpPayload }
   | { ok: false; message: string };
 
+/** Name, phone, and email written onto the local door, not only the office payload. */
+export function empowerContactPatch(payload: Pick<EmpowerBumpPayload, "name" | "phone" | "email">): {
+  name: string;
+  phone: string;
+  email: string;
+} {
+  return {
+    name: payload.name,
+    phone: payload.phone,
+    email: payload.email ?? "",
+  };
+}
+
 export function buildEmpowerBumpPayload(input: EmpowerBumpDraftInput, table = incomeTable()): EmpowerBumpBuild {
   const problems: string[] = [];
   const draftId = cleanText(input.draftId);
@@ -323,7 +336,7 @@ export function buildEmpowerBumpPayload(input: EmpowerBumpDraftInput, table = in
   const programs = normalizePrograms(input.assistancePrograms);
   const assistanceNone = input.assistanceNone === true;
 
-  if (!input.confirmedContact) problems.push("Confirm the name and phone");
+  if (!input.confirmedContact) problems.push("Confirm the name, phone, and email");
   if (!/^\S{1,80}$/.test(draftId)) problems.push("Draft id");
   if (!actedAt || !Number.isFinite(Date.parse(actedAt))) problems.push("Action time");
   if (!leadId || leadId.length > 120) problems.push("Lead");

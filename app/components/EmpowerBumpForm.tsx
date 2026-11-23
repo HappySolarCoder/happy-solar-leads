@@ -8,6 +8,7 @@ import {
   ASSISTANCE_PROGRAMS,
   CATEGORICAL_TIER1_NOTE,
   EMPOWER_MAX_HOUSEHOLD,
+  ESTIMATE_NOTE,
   HOUSEHOLD_LIMIT_HELPER,
   NOT_SURE_LABEL,
   NY_COUNTIES,
@@ -126,6 +127,7 @@ export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: Empow
           </button>
         </div>
         <div className="p-6 space-y-4">
+          <p className="text-sm text-[#4A5568]">{ESTIMATE_NOTE}</p>
           <div className="bg-[#F7FAFC] rounded-lg p-4">
             <p className="text-sm text-[#718096] mb-1">Door</p>
             <p className="font-medium text-[#2D3748]">{lead.address}</p>
@@ -186,12 +188,14 @@ export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: Empow
               {choices.map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
             </select>
             {categorical ? <p className="mt-2 text-sm font-semibold text-[#0F766E]" role="status">{CATEGORICAL_TIER1_NOTE}</p> : null}
+            {selectedBand === 'not_sure' ? <p className="mt-2 text-sm text-[#4A5568]">{ESTIMATE_NOTE}</p> : null}
           </label>
 
-          <fieldset>
-            <legend className="text-sm font-medium text-[#2D3748]">Government assistance</legend>
-            <label className="mt-2 flex items-start gap-2 text-sm text-[#2D3748]">
+          <fieldset aria-labelledby="empower-assistance-legend">
+            <legend id="empower-assistance-legend" className="text-sm font-medium text-[#2D3748]">Government assistance</legend>
+            <label htmlFor="empower-assistance-none" className="mt-2 flex items-start gap-2 text-sm text-[#2D3748]">
               <input
+                id="empower-assistance-none"
                 type="checkbox"
                 className="mt-1"
                 checked={assistanceNone}
@@ -205,10 +209,11 @@ export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: Empow
               />
               <span>None</span>
             </label>
-            {ASSISTANCE_PROGRAMS.map((label) => (
+            {ASSISTANCE_PROGRAMS.map((label, index) => (
               <div key={label} className="mt-2">
-                <label className="flex items-start gap-2 text-sm text-[#2D3748]">
+                <label htmlFor={`empower-assistance-${index}`} className="flex items-start gap-2 text-sm text-[#2D3748]">
                   <input
+                    id={`empower-assistance-${index}`}
                     type="checkbox"
                     className="mt-1"
                     checked={programs.includes(label)}
@@ -225,9 +230,9 @@ export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: Empow
             <p className="mt-2 text-sm text-[#4A5568]">{ASSISTANCE_HELPER}</p>
           </fieldset>
 
-          <label className="flex items-start gap-2 text-sm text-[#2D3748]">
-            <input type="checkbox" className="mt-1" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
-            <span>Name and phone are correct.</span>
+          <label htmlFor="empower-contact-confirmed" className="flex items-start gap-2 text-sm text-[#2D3748]">
+            <input id="empower-contact-confirmed" type="checkbox" className="mt-1" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+            <span>Name, phone, and email are correct.</span>
           </label>
 
           {dollarChoices.length === 1 && !categorical ? <p className="text-sm text-[#4A5568]">Choose household size and county to see estimated dollar bands. {NOT_SURE_LABEL} stays available.</p> : null}

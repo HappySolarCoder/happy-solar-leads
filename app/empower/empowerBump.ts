@@ -1,4 +1,5 @@
 import { apiFetch } from "@/app/utils/apiFetch";
+import { isDeviceOnline } from "@/app/utils/connectivity";
 import type { EmpowerBumpPayload } from "./bumpLogic";
 
 /** Boris's route. This client does not implement it. */
@@ -9,9 +10,13 @@ export const EMPOWER_AMBIGUOUS_MESSAGE =
   "Couldn't confirm the Empower bump was sent. Don't send it again until you check.";
 export const EMPOWER_QUEUED_MESSAGE =
   "Empower bump isn't available yet. Nothing was sent. This bump stays queued on the phone.";
+export const EMPOWER_OFFLINE_MESSAGE =
+  "Empower bump is saved on this phone. Nothing was sent yet. It will send when you're online.";
 export const EMPOWER_SIGN_IN_MESSAGE = "Sign in again, then send.";
+export const EMPOWER_PENDING_LABEL = "Empower bump pending";
+export const EMPOWER_BUMP_CHANGE = "raydar-empower-bump";
 
-const STORAGE_KEY = "raydar.empowerBump.queue.v1";
+const LEGACY_STORAGE_KEY = "raydar.empowerBump.queue.v1";
 const MAX_DRAFTS = 40;
 const DEFAULT_TIMEOUT_MS = 20_000;
 
@@ -25,24 +30,35 @@ export type EmpowerOutcome =
   | ({ status: "ambiguous"; message: string } & Attempted);
 
 export interface EmpowerSendDeps {
+  /** Signed-in rep. Drafts are stored only under this id. */
+  uid: string;
   getToken: (forceRefresh: boolean) => Promise<string>;
   post?: (path: string, init: RequestInit) => Promise<Response>;
   timeoutMs?: number;
   storage?: Pick<Storage, "getItem" | "setItem">;
+  /** False means the request cannot leave the phone. */
+  online?: () => boolean;
 }
 
-type DraftState = "queued" | "sent" | "ambiguous";
+type DraftState = "queued" | "sent" | "ambiguous" | "rejected";
 
 interface StoredDraft {
   draftId: string;
   state: DraftState;
   payload: EmpowerBumpPayload;
+  message?: string;
 }
 
+type Delivery =
+  | { kind: "timeout" }
+  | { kind: "error"; error: unknown }
+  | { kind: "response"; response: Response };
+
+const inflight = new Set<string>();
+
 /**
- * True when the office call was actually attempted. A saved door with no request
- * (signed out before the POST) does not open scheduling yet.
- * Queued (404/503) and ambiguous (timeout, 500, 502, network) both follow through.
+ * True when the office call was actually attempted.
+ * A save that never left the phone does not open scheduling yet.
  */
 export function schedulingFollowsBump(outcome: EmpowerOutcome): boolean {
   return outcome.attempted === true;
@@ -69,8 +85,10 @@ export async function finishEmpowerBump(input: {
   let outcome: EmpowerOutcome;
   try {
     outcome = await input.send();
-  } catch {
-    outcome = { status: "ambiguous", message: EMPOWER_AMBIGUOUS_MESSAGE, attempted: true };
+  } catch (error) {
+    outcome = requestNeverLeft(error)
+      ? offlineQueued()
+      : { status: "ambiguous", message: EMPOWER_AMBIGUOUS_MESSAGE, attempted: true };
   }
   if (schedulingFollowsBump(outcome)) {
     try {
@@ -83,13 +101,17 @@ export async function finishEmpowerBump(input: {
 }
 
 export function memoryEmpowerStorage(): Pick<Storage, "getItem" | "setItem"> {
-  let raw = "";
+  const rows = new Map<string, string>();
   return {
-    getItem: () => raw,
-    setItem: (_key, value) => {
-      raw = value;
+    getItem: (key) => rows.get(key) ?? null,
+    setItem: (key, value) => {
+      rows.set(key, value);
     },
   };
+}
+
+export function resetEmpowerFlushForTests(): void {
+  inflight.clear();
 }
 
 function browserStorage(): Pick<Storage, "getItem" | "setItem"> | undefined {
@@ -101,10 +123,14 @@ function browserStorage(): Pick<Storage, "getItem" | "setItem"> | undefined {
   }
 }
 
-function readDrafts(storage: Pick<Storage, "getItem" | "setItem"> | undefined): StoredDraft[] {
-  if (!storage) return [];
+function storageKey(uid: string): string {
+  return `${LEGACY_STORAGE_KEY}.${uid}`;
+}
+
+function readDrafts(storage: Pick<Storage, "getItem" | "setItem"> | undefined, uid: string): StoredDraft[] {
+  if (!storage || !uid) return [];
   try {
-    const raw = storage.getItem(STORAGE_KEY);
+    const raw = storage.getItem(storageKey(uid));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as { drafts?: StoredDraft[] };
     if (!parsed || !Array.isArray(parsed.drafts)) return [];
@@ -114,30 +140,55 @@ function readDrafts(storage: Pick<Storage, "getItem" | "setItem"> | undefined): 
   }
 }
 
-function writeDrafts(storage: Pick<Storage, "getItem" | "setItem"> | undefined, drafts: StoredDraft[]): void {
-  if (!storage) return;
+function notify(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(EMPOWER_BUMP_CHANGE));
+}
+
+function writeDrafts(
+  storage: Pick<Storage, "getItem" | "setItem"> | undefined,
+  uid: string,
+  drafts: StoredDraft[],
+): void {
+  if (!storage || !uid) return;
   const queued = drafts.filter((row) => row.state !== "sent");
   const sent = drafts.filter((row) => row.state === "sent");
   const room = MAX_DRAFTS - queued.length;
   const kept = room >= 0 ? [...queued, ...sent.slice(-room)] : queued.slice(-MAX_DRAFTS);
   try {
-    storage.setItem(STORAGE_KEY, JSON.stringify({ v: 1, drafts: kept }));
+    storage.setItem(storageKey(uid), JSON.stringify({ v: 1, drafts: kept }));
+    notify();
   } catch {
     // The door save stands even when the phone cannot store the office draft.
   }
 }
 
-function upsert(storage: Pick<Storage, "getItem" | "setItem"> | undefined, next: StoredDraft): void {
-  const drafts = readDrafts(storage).filter((row) => row.draftId !== next.draftId);
+function upsert(
+  storage: Pick<Storage, "getItem" | "setItem"> | undefined,
+  uid: string,
+  next: StoredDraft,
+): void {
+  const drafts = readDrafts(storage, uid).filter((row) => row.draftId !== next.draftId);
   drafts.push(next);
-  writeDrafts(storage, drafts);
+  writeDrafts(storage, uid, drafts);
 }
 
 export function storedEmpowerState(
   draftId: string,
   storage: Pick<Storage, "getItem" | "setItem"> | undefined,
+  uid: string,
 ): DraftState | null {
-  return readDrafts(storage).find((row) => row.draftId === draftId)?.state ?? null;
+  return readDrafts(storage, uid).find((row) => row.draftId === draftId)?.state ?? null;
+}
+
+/** Queued office calls for this rep and door. Ambiguous drafts are not pending. */
+export function empowerBumpPending(
+  uid: string | undefined,
+  leadId: string,
+  storage?: Pick<Storage, "getItem" | "setItem">,
+): boolean {
+  if (!uid || !leadId) return false;
+  return readDrafts(storage ?? browserStorage(), uid).some((row) => row.state === "queued" && row.payload.leadId === leadId);
 }
 
 function signin(attempted: boolean): EmpowerOutcome {
@@ -148,8 +199,23 @@ function ambiguous(): EmpowerOutcome {
   return { status: "ambiguous", message: EMPOWER_AMBIGUOUS_MESSAGE, attempted: true };
 }
 
-function queued(): EmpowerOutcome {
+function offlineQueued(): EmpowerOutcome {
+  return { status: "queued", message: EMPOWER_OFFLINE_MESSAGE, attempted: false };
+}
+
+function routeQueued(): EmpowerOutcome {
   return { status: "queued", message: EMPOWER_QUEUED_MESSAGE, attempted: true };
+}
+
+function deviceOnline(deps: EmpowerSendDeps): boolean {
+  if (deps.online) return deps.online() !== false;
+  // A missing onLine flag is not airplane mode. Only an explicit false stays on the phone.
+  return isDeviceOnline() !== false;
+}
+
+export function requestNeverLeft(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  return (error as { empowerPhase?: string }).empowerPhase === "before-send";
 }
 
 function safeServerError(status: number, body: unknown): string {
@@ -177,19 +243,15 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-async function outcomeForStatus(response: Response): Promise<EmpowerOutcome> {
+async function outcomeForStatus(response: Response, refreshed: boolean): Promise<EmpowerOutcome> {
   const status = response.status;
   if (status >= 200 && status < 300) return { status: "sent", attempted: true };
   if (status === 401) return signin(true);
-  if (status === 400) return { status: "invalid", message: safeServerError(status, await readJson(response)), attempted: true };
-  if (status === 404 || status === 503) return queued();
-  return ambiguous();
+  if (status === 403 && refreshed) return signin(true);
+  if (status === 404 || status === 503) return routeQueued();
+  if (status >= 500) return ambiguous();
+  return { status: "invalid", message: safeServerError(status, await readJson(response)), attempted: true };
 }
-
-type Delivery =
-  | { kind: "timeout" }
-  | { kind: "error" }
-  | { kind: "response"; response: Response };
 
 /** One POST. A timeout is not followed by another POST. */
 async function deliver(
@@ -197,6 +259,7 @@ async function deliver(
   payload: EmpowerBumpPayload,
   token: string,
   timeoutMs: number,
+  online: boolean,
 ): Promise<Delivery> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -207,37 +270,94 @@ async function deliver(
     }, timeoutMs);
   });
   const attempt = Promise.resolve()
-    .then(() => post(EMPOWER_BUMP_PATH, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    }))
+    .then(() => {
+      if (!online) {
+        throw Object.assign(new Error("offline"), { empowerPhase: "before-send" });
+      }
+      return post(EMPOWER_BUMP_PATH, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    })
     .then((response) => ({ kind: "response", response }) as Delivery)
-    .catch(() => ({ kind: "error" }) as Delivery);
+    .catch((error: unknown) => ({ kind: "error", error }) as Delivery);
   const winner = await Promise.race([attempt, timeout]);
   if (timer) clearTimeout(timer);
   return winner;
 }
 
+async function classify(delivery: Delivery, refreshed: boolean, online: boolean): Promise<EmpowerOutcome> {
+  if (delivery.kind === "timeout") return ambiguous();
+  if (delivery.kind === "error") {
+    if (!online || requestNeverLeft(delivery.error)) return offlineQueued();
+    return ambiguous();
+  }
+  return outcomeForStatus(delivery.response, refreshed);
+}
+
+function remember(
+  storage: Pick<Storage, "getItem" | "setItem"> | undefined,
+  uid: string,
+  payload: EmpowerBumpPayload,
+  outcome: EmpowerOutcome,
+): void {
+  if (outcome.status === "sent") {
+    upsert(storage, uid, { draftId: payload.draftId, state: "sent", payload });
+    return;
+  }
+  if (outcome.status === "ambiguous") {
+    upsert(storage, uid, { draftId: payload.draftId, state: "ambiguous", payload, message: outcome.message });
+    return;
+  }
+  if (outcome.status === "invalid") {
+    upsert(storage, uid, { draftId: payload.draftId, state: "rejected", payload, message: outcome.message });
+    return;
+  }
+  upsert(storage, uid, { draftId: payload.draftId, state: "queued", payload, message: outcome.status === "queued" ? outcome.message : undefined });
+}
+
 /**
- * Idempotent by draft id. The only automatic retry is one token refresh after 401.
- * 404 and 503 leave the draft queued. Timeout, 500, 502, and network errors are ambiguous
- * and are never retried, including by a later call with the same draft id.
+ * Idempotent by draft id. The only automatic retry inside one call is one token refresh after 401.
+ * 404 and 503, and a request that never left the phone, stay queued.
+ * Timeout, a drop after send, and a 5xx other than 503 are ambiguous and are never retried.
+ * 400 and 409 are terminal: shown once, not queued.
  */
 export async function deliverEmpowerBump(
   payload: EmpowerBumpPayload,
   deps: EmpowerSendDeps,
 ): Promise<EmpowerOutcome> {
-  const storage = deps.storage ?? browserStorage();
-  const existing = readDrafts(storage).find((row) => row.draftId === payload.draftId);
-  if (existing?.state === "sent") return { status: "sent", attempted: false };
-  if (existing?.state === "ambiguous") return ambiguousAttemptSkipped();
+  if (!deps.uid) return signin(false);
+  const lock = `${deps.uid}:${payload.draftId}`;
+  if (inflight.has(lock)) return { status: "queued", message: EMPOWER_QUEUED_MESSAGE, attempted: false };
+  inflight.add(lock);
+  try {
+    return await sendEmpowerBump(payload, deps);
+  } finally {
+    inflight.delete(lock);
+  }
+}
 
-  upsert(storage, { draftId: payload.draftId, state: "queued", payload });
+async function sendEmpowerBump(
+  payload: EmpowerBumpPayload,
+  deps: EmpowerSendDeps,
+): Promise<EmpowerOutcome> {
+  const storage = deps.storage ?? browserStorage();
+  const existing = readDrafts(storage, deps.uid).find((row) => row.draftId === payload.draftId);
+  if (existing?.state === "sent") return { status: "sent", attempted: false };
+  if (existing?.state === "ambiguous") return { status: "ambiguous", message: existing.message || EMPOWER_AMBIGUOUS_MESSAGE, attempted: false };
+  if (existing?.state === "rejected") {
+    return { status: "invalid", message: existing.message || "Empower bump was rejected.", attempted: false };
+  }
+
+  upsert(storage, deps.uid, { draftId: payload.draftId, state: "queued", payload });
+  const online = deviceOnline(deps);
+  if (!online) return offlineQueued();
+
   const post = deps.post ?? apiFetch;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -249,7 +369,7 @@ export async function deliverEmpowerBump(
   }
   if (!token) return signin(false);
 
-  const first = await deliver(post, payload, token, timeoutMs);
+  const first = await deliver(post, payload, token, timeoutMs, online);
   let outcome: EmpowerOutcome;
   if (first.kind === "response" && first.response.status === 401) {
     let refreshed: string;
@@ -257,43 +377,35 @@ export async function deliverEmpowerBump(
       refreshed = await deps.getToken(true);
     } catch {
       outcome = signin(true);
-      remember(storage, payload, outcome);
+      remember(storage, deps.uid, payload, outcome);
       return outcome;
     }
     if (!refreshed) {
       outcome = signin(true);
-      remember(storage, payload, outcome);
+      remember(storage, deps.uid, payload, outcome);
       return outcome;
     }
-    outcome = await finish(await deliver(post, payload, refreshed, timeoutMs));
+    const second = await deliver(post, payload, refreshed, timeoutMs, deviceOnline(deps));
+    outcome = await classify(second, true, deviceOnline(deps));
   } else {
-    outcome = await finish(first);
+    outcome = await classify(first, false, online);
   }
-  remember(storage, payload, outcome);
+  remember(storage, deps.uid, payload, outcome);
   return outcome;
 }
 
-function ambiguousAttemptSkipped(): EmpowerOutcome {
-  return { status: "ambiguous", message: EMPOWER_AMBIGUOUS_MESSAGE, attempted: false };
-}
-
-function remember(
-  storage: Pick<Storage, "getItem" | "setItem"> | undefined,
-  payload: EmpowerBumpPayload,
-  outcome: EmpowerOutcome,
-): void {
-  if (outcome.status === "sent") {
-    upsert(storage, { draftId: payload.draftId, state: "sent", payload });
-    return;
+/**
+ * Re-sends only queued drafts, once each. Ambiguous, rejected, and sent drafts are left alone.
+ * The draft id does not change, so the server can dedupe. Overlapping triggers share one in-flight lock.
+ */
+export async function flushQueuedEmpowerBumps(deps: EmpowerSendDeps): Promise<number> {
+  if (!deps.uid || !deviceOnline(deps)) return 0;
+  const storage = deps.storage ?? browserStorage();
+  const rows = readDrafts(storage, deps.uid).filter((row) => row.state === "queued");
+  let attempted = 0;
+  for (const row of rows) {
+    await deliverEmpowerBump(row.payload, deps);
+    attempted += 1;
   }
-  if (outcome.status === "ambiguous") {
-    upsert(storage, { draftId: payload.draftId, state: "ambiguous", payload });
-    return;
-  }
-  upsert(storage, { draftId: payload.draftId, state: "queued", payload });
-}
-
-async function finish(delivery: Delivery): Promise<EmpowerOutcome> {
-  if (delivery.kind !== "response") return ambiguous();
-  return outcomeForStatus(delivery.response);
+  return attempted;
 }

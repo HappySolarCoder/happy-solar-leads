@@ -28,8 +28,8 @@ import { callerPopupExempt, ownershipBadge, pinIsMine, selectableDispositions, s
 
 import { DEFAULT_DISPOSITIONS, EMPOWER_BUMP_DISPOSITION_ID } from '@/app/types/disposition';
 import EmpowerBumpForm from './EmpowerBumpForm';
-import { canOfferEmpowerBump, type EmpowerBumpPayload } from '@/app/empower/bumpLogic';
-import { deliverEmpowerBump, empowerNotice, finishEmpowerBump } from '@/app/empower/empowerBump';
+import { canOfferEmpowerBump, empowerContactPatch, type EmpowerBumpPayload } from '@/app/empower/bumpLogic';
+import { deliverEmpowerBump, EMPOWER_BUMP_CHANGE, EMPOWER_PENDING_LABEL, empowerBumpPending, empowerNotice, finishEmpowerBump } from '@/app/empower/empowerBump';
 import { getLocation } from '@/app/utils/geolocation';
 import { distanceBetween } from 'geofire-common';
 
@@ -346,6 +346,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [showEmpowerBump, setShowEmpowerBump] = useState(false);
   const empowerKnockSaved = useRef(false);
+  const [bumpPending, setBumpPending] = useState(false);
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
   const [pendingGoBackStatus, setPendingGoBackStatus] = useState('go-back');
   const [loadedDispositions, setDispositions] = useState<Disposition[]>(DEFAULT_DISPOSITIONS);
@@ -384,6 +385,13 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     }).catch(() => { if (active) setIsLoadingDispositions(false); });
     return () => { active = false; };
   }, [dispositionOptions]);
+  useEffect(() => {
+    const refresh = () => setBumpPending(empowerBumpPending(currentUser?.id, lead.id));
+    refresh();
+    if (typeof window === "undefined") return;
+    window.addEventListener(EMPOWER_BUMP_CHANGE, refresh);
+    return () => window.removeEventListener(EMPOWER_BUMP_CHANGE, refresh);
+  }, [currentUser?.id, lead.id]);
   useEffect(() => {
     if (currentUser?.role !== 'admin') return;
     let active = true;
@@ -648,15 +656,20 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           const disposition = dispositions.find((item) => item.id === EMPOWER_BUMP_DISPOSITION_ID || item.specialBehavior === 'empower-bump');
           if (!disposition) throw Error('Reload your dispositions before saving.');
           const at = new Date(payload.actedAt);
+          const contact = empowerContactPatch(payload);
           // GPS is not read here. deferGps lets the outbox attach a fix later.
           await saveReportingPatch(knockPatch(lead, actor, signedInUid, disposition, at, {
             disposition: disposition.name,
+            ...contact,
           }), true);
           empowerKnockSaved.current = true;
+          try { await saveReportingPatch(contact, false); } catch { /* The knock already holds the contact fields. */ }
           try { await saveDirtyNotes(at); } catch { /* The knock stands if notes need another look. */ }
           onUpdate();
         },
         send: () => deliverEmpowerBump(payload, {
+          uid: actor.id,
+          online: isDeviceOnline,
           getToken: async (forceRefresh) => {
             const current = auth?.currentUser;
             if (!current) throw new Error('signed-out');
@@ -1089,6 +1102,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           {/* Quick Actions */}
           <div className="mb-6">
             <h3 className="text-sm font-semibold text-[#2D3748] mb-3">Quick Actions</h3>
+            {bumpPending ? <p role="status" className="mb-3 text-sm font-semibold text-[#0F766E]">{EMPOWER_PENDING_LABEL}</p> : null}
             {actionsLoading && <p role="status" className="text-sm text-[#718096] mb-3">Loading actions. You can still read this lead and close the panel.</p>}
             {fieldMemory && <div className="rm-quick-actions" role="group" aria-label="Quick knock actions">
               {(['not-home', 'not-interested'] as const).map(id => {
