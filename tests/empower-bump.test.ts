@@ -795,3 +795,206 @@ describe('empower bump: no PII or secrets in logs', () => {
     }
   });
 });
+
+// ================================================================ Charles QA round (Nov 23)
+
+describe('QA change 1: only an OPEN Empower+ opp is updated; otherwise create', () => {
+  const closedOnly = (t: ReturnType<typeof harness>) => {
+    seedContact(t.ghl, { id: 'c1', phone: PHONE_E164 });
+    t.ghl.opps.push(
+      { id: 'opp-won', contactId: 'c1', pipelineId: EMPOWER_PIPELINE_ID, status: 'won', updatedAt: '2026-11-22T00:00:00Z', customFields: [] },
+      { id: 'opp-lost', contactId: 'c1', pipelineId: EMPOWER_PIPELINE_ID, status: 'lost', updatedAt: '2026-11-21T00:00:00Z', customFields: [] },
+      { id: 'opp-abandoned', contactId: 'c1', pipelineId: EMPOWER_PIPELINE_ID, status: 'abandoned', updatedAt: '2026-11-20T00:00:00Z', customFields: [] },
+    );
+  };
+
+  it('closed-only Empower+ opps: creates a new opp at Portal Creation Needed and never writes a closed one', async () => {
+    const t = harness();
+    closedOnly(t);
+    const result = await t.run(body());
+    assert.equal(result.status, 200);
+    assert.equal(result.body && 'outcome' in result.body && result.body.outcome, 'created');
+    assert.equal(t.ghl.count('POST', '/opportunities/'), 1);
+    assert.equal((t.ghl.oppWrite()?.body as Record<string, unknown>).pipelineStageId, EMPOWER_CREATE_STAGE_ID);
+    assert.equal(t.ghl.calls.some((c) => c.method === 'PUT' && c.path.startsWith('/opportunities/')), false);
+  });
+
+  it('open beats a more recently updated closed opp', async () => {
+    const t = harness();
+    closedOnly(t);
+    t.ghl.opps.push({ id: 'opp-open', contactId: 'c1', pipelineId: EMPOWER_PIPELINE_ID, status: 'open', updatedAt: '2026-01-01T00:00:00Z', customFields: [] });
+    const result = await t.run(body());
+    assert.equal(result.body && 'opportunityId' in result.body && result.body.opportunityId, 'opp-open');
+    assert.equal(t.ghl.count('POST', '/opportunities/'), 0);
+    assert.equal(t.ghl.oppWrite()?.path, '/opportunities/opp-open');
+  });
+
+  it('several open opps: picks the most recently updated open one', async () => {
+    const t = harness();
+    seedContact(t.ghl, { id: 'c1', phone: PHONE_E164 });
+    for (const [id, at] of [['opp-a', '2026-11-01T00:00:00Z'], ['opp-c', '2026-11-15T00:00:00Z'], ['opp-b', '2026-11-10T00:00:00Z']]) {
+      t.ghl.opps.push({ id, contactId: 'c1', pipelineId: EMPOWER_PIPELINE_ID, status: 'open', updatedAt: at, customFields: [] });
+    }
+    const result = await t.run(body());
+    assert.equal(result.body && 'opportunityId' in result.body && result.body.opportunityId, 'opp-c');
+    assert.equal(t.ghl.writes().filter((c) => c.path.startsWith('/opportunities/')).length, 1);
+  });
+
+  it('no Empower+ opp at all (existing contact): creates one', async () => {
+    const t = harness();
+    seedContact(t.ghl, { id: 'c1', phone: PHONE_E164 });
+    const result = await t.run(body());
+    assert.equal(result.body && 'outcome' in result.body && result.body.outcome, 'created');
+    assert.equal(t.ghl.count('POST', '/opportunities/'), 1);
+  });
+
+  it('an opp with no status is ambiguous: 502, no create, no update', async () => {
+    const t = harness();
+    seedContact(t.ghl, { id: 'c1', phone: PHONE_E164 });
+    t.ghl.opps.push({ id: 'opp-x', contactId: 'c1', pipelineId: EMPOWER_PIPELINE_ID, status: '', updatedAt: '2026-11-01T00:00:00Z', customFields: [] });
+    const result = await t.run(body());
+    assert.equal(result.status, 502);
+    assert.equal(t.ghl.writes().filter((c) => c.path.startsWith('/opportunities/')).length, 0);
+  });
+});
+
+describe('QA change 2: official Empower Tier write protection (contact and opp)', () => {
+  function seeded(contactTier: string | null, oppTier: string | null, optionalFields?: EmpowerBumpOptionalFields) {
+    const t = harness({ optionalFields });
+    seedContact(t.ghl, {
+      id: 'c1',
+      phone: PHONE_E164,
+      customFields: contactTier ? [{ id: GHL_FIELDS.contactEmpowerTier, value: contactTier }] : [],
+    });
+    t.ghl.opps.push({
+      id: 'opp-1',
+      contactId: 'c1',
+      pipelineId: EMPOWER_PIPELINE_ID,
+      status: 'open',
+      updatedAt: '2026-11-01T00:00:00Z',
+      customFields: oppTier ? [{ id: GHL_FIELDS.opportunityEmpowerTier, fieldValueString: oppTier }] : [],
+    });
+    return t;
+  }
+  const contactTier = (t: ReturnType<typeof harness>) => fieldValue(t.ghl.contactWrite(), GHL_FIELDS.contactEmpowerTier);
+  const oppTier = (t: ReturnType<typeof harness>) => fieldValue(t.ghl.oppWrite(), GHL_FIELDS.opportunityEmpowerTier);
+  const programs = { assistanceNone: false, assistancePrograms: [ASSISTANCE_PROGRAMS[0]] };
+
+  it('empty (existing contact + open opp): Tier 3 estimate writes Tier 3 on both', async () => {
+    const t = seeded(null, null);
+    assert.equal((await t.run(body({ estimatedBand: 'tier3' }))).status, 200);
+    assert.equal(contactTier(t), 'Tier 3');
+    assert.equal(oppTier(t), 'Tier 3');
+  });
+
+  it('empty (new contact + new opp): Tier 1 estimate writes Tier 1 on both', async () => {
+    const t = harness();
+    await t.run(body({ estimatedBand: 'tier1' }));
+    assert.equal(contactTier(t), 'Tier 1');
+    assert.equal(oppTier(t), 'Tier 1');
+  });
+
+  it('Tier 1 existing + Tier 3 estimate: never downgraded on either', async () => {
+    const t = seeded('Tier 1', 'Tier 1');
+    await t.run(body({ estimatedBand: 'tier3' }));
+    assert.equal(contactTier(t), undefined);
+    assert.equal(oppTier(t), undefined);
+    assert.match(t.ghl.note(), /Official Empower Tier left unchanged at Tier 1/);
+  });
+
+  it('Tier 1 existing + Tier 3 from an exact income: still not downgraded', async () => {
+    const t = seeded('Tier 1', 'Tier 1');
+    await t.run(body({ householdSize: 1, estimatedBand: 'tier1', annualHouseholdIncome: 50000 }));
+    assert.equal(contactTier(t), undefined);
+    assert.equal(oppTier(t), undefined);
+  });
+
+  it('Tier 3 existing + assistance: upgraded to Tier 1 on both', async () => {
+    const t = seeded('Tier 3', 'Tier 3');
+    await t.run(body({ estimatedBand: 'comfort_home', ...programs }));
+    assert.equal(contactTier(t), 'Tier 1');
+    assert.equal(oppTier(t), 'Tier 1');
+  });
+
+  it('Tier 1 existing + assistance: no redundant write', async () => {
+    const t = seeded('Tier 1', 'Tier 1');
+    await t.run(body(programs));
+    assert.equal(contactTier(t), undefined);
+    assert.equal(oppTier(t), undefined);
+  });
+
+  it('Tier 3 existing + non-assistance Tier 1 estimate: not overwritten on either', async () => {
+    const t = seeded('Tier 3', 'Tier 3');
+    await t.run(body({ estimatedBand: 'tier1' }));
+    assert.equal(contactTier(t), undefined);
+    assert.equal(oppTier(t), undefined);
+    assert.match(t.ghl.note(), /Official Empower Tier left unchanged at Tier 3/);
+  });
+
+  for (const band of ['comfort_home', 'not_sure'] as const) {
+    it(`${band} over empty: official tier not written on either; estimate goes to the band field and note`, async () => {
+      const t = seeded(null, null, { estimatedBandFieldId: 'bandFieldId01' });
+      await t.run(body({ estimatedBand: band }));
+      assert.equal(contactTier(t), undefined);
+      assert.equal(oppTier(t), undefined);
+      const label = band === 'comfort_home' ? 'Comfort Home (est.)' : 'Not sure';
+      assert.equal(fieldValue(t.ghl.contactWrite(), 'bandFieldId01'), label);
+      assert.ok(t.ghl.note().includes(`Estimated band: ${label}`));
+    });
+  }
+
+  it('contact and opp are judged separately (contact empty, opp Tier 1, Tier 3 estimate)', async () => {
+    const t = seeded(null, 'Tier 1');
+    await t.run(body({ estimatedBand: 'tier3' }));
+    assert.equal(contactTier(t), 'Tier 3');
+    assert.equal(oppTier(t), undefined);
+  });
+
+  it('a protected tier still records the estimate in the band field', async () => {
+    const t = seeded('Tier 1', 'Tier 1', { estimatedBandFieldId: 'bandFieldId01' });
+    await t.run(body({ estimatedBand: 'tier3' }));
+    assert.equal(fieldValue(t.ghl.contactWrite(), 'bandFieldId01'), 'Tier 3 (est.)');
+  });
+
+  it('unreadable matched contact is 502 (cannot see the current tier), no writes', async () => {
+    const t = harness();
+    seedContact(t.ghl, { id: 'c1', phone: PHONE_E164 });
+    t.ghl.failOn = { method: 'GET', pathPrefix: '/contacts/c1', status: 404 };
+    const result = await t.run(body());
+    assert.equal(result.status, 502);
+    assert.deepEqual(t.ghl.writes(), []);
+  });
+});
+
+describe('QA change 3: opp-id marker for ghl-sync', () => {
+  it('a bump-created opp gets empower_bump_opps_v1/{oppId} before the event and receipt', async () => {
+    const t = harness();
+    const result = await t.run(body());
+    const oppId = result.body && 'opportunityId' in result.body ? result.body.opportunityId : '';
+    const marker = t.ghlDb.docs.get(`empower_bump_opps_v1/${oppId}`)?.data;
+    assert.equal(marker?.opportunityId, oppId);
+    assert.equal(marker?.draftId, 'draft-0001-abcdef');
+    assert.deepEqual(Object.keys(marker ?? {}).sort(), ['contactId', 'createdAt', 'createdAtMs', 'draftId', 'opportunityId', 'source']);
+    const order = t.ghlDb.writes.filter((w) => w.startsWith('create'));
+    assert.deepEqual(order, [`create empower_bump_opps_v1/${oppId}`, 'create empower_bump_events_v1/draft-0001-abcdef']);
+    assert.equal(t.raydarDb.docs.get(`${EMPOWER_BUMP_RECEIPTS}/uid-rep-1_draft-0001-abcdef`)?.data.opportunityId, oppId);
+  });
+
+  it('an update of an existing opp writes no marker', async () => {
+    const t = harness();
+    seedContact(t.ghl, { id: 'c1', phone: PHONE_E164 });
+    t.ghl.opps.push({ id: 'opp-ghl', contactId: 'c1', pipelineId: EMPOWER_PIPELINE_ID, status: 'open', updatedAt: '2026-11-01T00:00:00Z', customFields: [] });
+    await t.run(body());
+    assert.equal([...t.ghlDb.docs.keys()].some((k) => k.startsWith('empower_bump_opps_v1/')), false);
+    assert.equal(t.ghlDb.docs.get(`${EMPOWER_BUMP_EVENTS}/draft-0001-abcdef`)?.data.opportunityId, 'opp-ghl');
+  });
+
+  it('marker write failure after the GHL create is 502 with no event and no receipt', async () => {
+    const t = harness();
+    t.ghlDb.failCreateIn.add('empower_bump_opps_v1');
+    const result = await t.run(body());
+    assert.equal(result.status, 502);
+    assert.equal(t.raydarDb.docs.size, 0);
+    assert.equal(t.ghlDb.docs.size, 0);
+  });
+});

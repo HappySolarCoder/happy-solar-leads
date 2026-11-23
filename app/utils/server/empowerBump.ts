@@ -14,7 +14,7 @@ import {
   buildContactNote,
   estimatedTierLabel,
   neutralizeMentions,
-  officialEmpowerTier,
+  officialTierToWrite,
   parseEmpowerBumpBody,
   resolveBand,
   shouldWriteEmpowerStatus,
@@ -23,7 +23,14 @@ import {
   type EmpowerBumpRequest,
   type ResolvedBand,
 } from './empowerBumpContract';
-import type { EmpowerGhlClient, GhlContact, GhlContactWrite, GhlCustomFieldWrite, GhlOpportunity } from './empowerBumpGhl';
+import {
+  GhlRequestError,
+  type EmpowerGhlClient,
+  type GhlContact,
+  type GhlContactWrite,
+  type GhlCustomFieldWrite,
+  type GhlOpportunity,
+} from './empowerBumpGhl';
 import type { EmpowerBumpEventStore, EmpowerBumpOutcome, EmpowerBumpReceiptStore } from './empowerBumpStore';
 import { HttpError, requireApprovedUser, type RequireApprovedUserDeps } from './requireApprovedUser';
 
@@ -106,6 +113,11 @@ export function empowerBumpRetryAfterSeconds(uid: string, now: number, store: Ra
   return Math.max(1, Math.ceil((EMPOWER_BUMP_WINDOW_MS - (now - oldest)) / 1000));
 }
 
+class MarkerWriteError extends Error {
+  operation = 'bump opp marker';
+  status = 0;
+}
+
 export class EmpowerBumpConflict extends Error {
   constructor(message: string) {
     super(message);
@@ -154,8 +166,8 @@ export function buildContactCustomFields(input: {
   if (!existing || shouldWriteEmpowerStatus(customFieldValue(existing, GHL_FIELDS.contactEmpowerStatus))) {
     fields.push({ id: GHL_FIELDS.contactEmpowerStatus, fieldValue: EMPOWER_STATUS_ON_CREATE });
   }
-  const official = officialEmpowerTier(resolved.band);
-  if (official) fields.push({ id: GHL_FIELDS.contactEmpowerTier, fieldValue: official });
+  const tier = officialTierToWrite(resolved, customFieldValue(existing, GHL_FIELDS.contactEmpowerTier));
+  if (tier) fields.push({ id: GHL_FIELDS.contactEmpowerTier, fieldValue: tier });
   if (optionalFields.estimatedBandFieldId && resolved.band) {
     fields.push({ id: optionalFields.estimatedBandFieldId, fieldValue: ESTIMATED_BAND_LABELS[resolved.band] });
   }
@@ -177,19 +189,29 @@ function opportunityNotesValue(opp: GhlOpportunity | null, note: string): string
   return `${existing}\n\n${note}`;
 }
 
-export function buildOpportunityCustomFields(resolved: ResolvedBand, notes: string | null): GhlCustomFieldWrite[] {
+/** `existing` is the opp being updated, or null for a create (tier currently empty). */
+export function buildOpportunityCustomFields(
+  resolved: ResolvedBand,
+  notes: string | null,
+  existing: GhlOpportunity | null,
+): GhlCustomFieldWrite[] {
   const fields: GhlCustomFieldWrite[] = [{ id: GHL_FIELDS.opportunityEmpower, fieldValue: 'Yes' }];
-  const official = officialEmpowerTier(resolved.band);
-  if (official) fields.push({ id: GHL_FIELDS.opportunityEmpowerTier, fieldValue: official });
+  const tier = officialTierToWrite(resolved, customFieldValue(existing, GHL_FIELDS.opportunityEmpowerTier));
+  if (tier) fields.push({ id: GHL_FIELDS.opportunityEmpowerTier, fieldValue: tier });
   if (notes) fields.push({ id: GHL_FIELDS.opportunityNotes, fieldValue: notes });
   return fields;
 }
 
-/** Most recently updated open opp; if none is open, the most recently updated one. */
+/**
+ * Most recently updated OPEN Empower+ opp, or null (=> create a new one).
+ * Closed opps (won/lost/abandoned) are never touched. A missing status is
+ * ambiguous: treating it as closed could create a duplicate of an open opp.
+ */
 export function pickEmpowerOpportunity(opps: GhlOpportunity[]): GhlOpportunity | null {
-  if (!opps.length) return null;
-  const byUpdated = [...opps].sort((a, b) => b.updatedAt - a.updatedAt);
-  return byUpdated.find((opp) => opp.status === 'open') ?? byUpdated[0];
+  if (opps.some((opp) => !opp.status)) throw new GhlRequestError('opportunity search', 200);
+  const open = opps.filter((opp) => opp.status === 'open');
+  if (!open.length) return null;
+  return [...open].sort((a, b) => b.updatedAt - a.updatedAt)[0];
 }
 
 export async function upsertEmpowerBumpInGhl(input: {
@@ -197,6 +219,7 @@ export async function upsertEmpowerBumpInGhl(input: {
   req: EmpowerBumpRequest;
   resolved: ResolvedBand;
   optionalFields: EmpowerBumpOptionalFields;
+  onOpportunityCreated?: (created: { opportunityId: string; contactId: string }) => Promise<void>;
 }): Promise<{ contactId: string; opportunityId: string; outcome: EmpowerBumpOutcome }> {
   const { ghl, req, resolved, optionalFields } = input;
 
@@ -214,7 +237,13 @@ export async function upsertEmpowerBumpInGhl(input: {
   const match = byPhone ?? byEmail;
 
   // 4. Contact create or update.
-  const existing: GhlContact | null = match ? ((await ghl.getContact(match.id)) ?? match) : null;
+  // The full record is needed to read the current tier and status. If it cannot
+  // be read, an empty-looking tier could be overwritten, so fail as ambiguous.
+  let existing: GhlContact | null = null;
+  if (match) {
+    existing = await ghl.getContact(match.id);
+    if (!existing) throw new GhlRequestError('contact read', 404);
+  }
   const fields = buildContactCustomFields({ req, resolved, existing, optionalFields });
   let contactId: string;
   if (match) {
@@ -224,12 +253,9 @@ export async function upsertEmpowerBumpInGhl(input: {
     contactId = await ghl.createContact({ ...contactFields(req), customFields: fields });
   }
 
-  const keptOfficialTier = resolved.band === 'comfort_home'
-    ? (() => {
-      const current = customFieldValue(existing, GHL_FIELDS.contactEmpowerTier);
-      return current === 'Tier 1' || current === 'Tier 3' ? current : null;
-    })()
-    : null;
+  const currentTier = customFieldValue(existing, GHL_FIELDS.contactEmpowerTier);
+  const tierWritten = fields.some((f) => f.id === GHL_FIELDS.contactEmpowerTier);
+  const keptOfficialTier = !tierWritten && (currentTier === 'Tier 1' || currentTier === 'Tier 3') ? currentTier : null;
   const note = buildContactNote(req, resolved, { keptOfficialTier });
   await ghl.addContactNote(contactId, note);
   if (optionalFields.tag) await ghl.addContactTags(contactId, [optionalFields.tag]);
@@ -239,7 +265,7 @@ export async function upsertEmpowerBumpInGhl(input: {
   const target = pickEmpowerOpportunity(opps);
   if (target) {
     await ghl.updateOpportunity(target.id, {
-      customFields: buildOpportunityCustomFields(resolved, opportunityNotesValue(target, note)),
+      customFields: buildOpportunityCustomFields(resolved, opportunityNotesValue(target, note), target),
     });
     return { contactId, opportunityId: target.id, outcome: 'updated' };
   }
@@ -247,8 +273,11 @@ export async function upsertEmpowerBumpInGhl(input: {
     name: req.name,
     contactId,
     pipelineStageId: EMPOWER_CREATE_STAGE_ID,
-    customFields: buildOpportunityCustomFields(resolved, note),
+    customFields: buildOpportunityCustomFields(resolved, note, null),
   });
+  // Record the new opp id for ghl-sync right away, before anything else, so
+  // its generic "Opportunity Created" check finds it (see docs/empower-bump.md).
+  await input.onOpportunityCreated?.({ opportunityId, contactId });
   return { contactId, opportunityId, outcome: 'created' };
 }
 
@@ -324,7 +353,21 @@ export async function handleEmpowerBump(input: {
 
   let ghlResult;
   try {
-    ghlResult = await upsertEmpowerBumpInGhl({ ghl: services.ghl, req, resolved, optionalFields: services.optionalFields });
+    ghlResult = await upsertEmpowerBumpInGhl({
+      ghl: services.ghl,
+      req,
+      resolved,
+      optionalFields: services.optionalFields,
+      onOpportunityCreated: async ({ opportunityId, contactId }) => {
+        try {
+          await services.events.markOpportunityCreated({ opportunityId, contactId, draftId: req.draftId }, now);
+        } catch {
+          // The opp exists in GHL; without the marker ghl-sync may post the
+          // generic "Opportunity Created" after its grace period. Ambiguous.
+          throw new MarkerWriteError();
+        }
+      },
+    });
   } catch (error) {
     await services.receipts.release(approved.uid, req.draftId).catch(() => {});
     if (error instanceof EmpowerBumpConflict) {

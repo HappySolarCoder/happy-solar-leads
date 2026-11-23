@@ -28,6 +28,38 @@ Existing `FIREBASE_SERVICE_ACCOUNT_JSON` / `GCP_PROJECT_ID` / `FIRESTORE_DATABAS
   name, town, repName, householdSize, estimatedTierLabel, assistanceYes, actedAt.
   No phone, email, address, or income.
 
+- `empower_bump_opps_v1/{opportunityId}` (GHL warehouse DB): create-only marker
+  `{opportunityId, contactId, draftId, createdAt}` written immediately after the bump
+  creates an Empower+ opp (before the note-free event and the receipt). ghl-sync skips
+  the generic "Opportunity Created" post only for opp ids with this marker. Updates of
+  an existing opp write no marker.
+
+## Opportunity selection
+
+Update the most recently updated **open** Empower+ opp (custom fields only, notes
+appended). No open Empower+ opp (none, or only won/lost/abandoned): create one at
+Portal Creation Needed. Closed opps are never written. An opp with no status in the
+search response is treated as ambiguous (502) rather than closed.
+
+## Official Empower Tier (contact and opp, judged separately)
+
+- Comfort Home, Not sure, or no band: never written.
+- Assistance programs (categorical Tier 1): written as Tier 1, including over Tier 3.
+- Any other estimate (client band or typed income): written only when the field is empty.
+- So Tier 1 is never downgraded, and a non-assistance estimate never overwrites a
+  non-empty tier. The estimate always goes to Empower Estimated Band (when its id is
+  set) and the contact note. A matched contact that cannot be read is a 502.
+
+## Race with ghl-sync
+
+GHL assigns the opp id on create, so the marker cannot exist before the opp does. The
+route writes it right after the create returns (milliseconds). ghl-sync closes the gap
+with a grace period: with the flag on, a new Empower+ opp with no marker that is
+younger than the grace period gets no generic post on that tick; the existing 6-hour
+replay posts "Opportunity Created" on a later tick once the grace has passed and there
+is still no marker. If the route fails after the create but before the marker (502),
+the opp is treated as GHL-created and gets the generic post after the grace period.
+
 ## Band
 
 Any assistance program -> Tier 1 (est.). An exact typed income is mapped with the

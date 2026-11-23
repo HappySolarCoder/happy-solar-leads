@@ -320,6 +320,31 @@ export function officialEmpowerTier(band: EstimatedBand | null): 'Tier 1' | 'Tie
   return null;
 }
 
+/**
+ * Official Empower Tier write rule (Charles QA, Nov 23 2026), applied to the
+ * contact and the opportunity separately:
+ * - Comfort Home, Not sure, or no band: never write.
+ * - Assistance programs (categorical Tier 1): write Tier 1, even over Tier 3.
+ * - Any other estimate: write only when the field is currently empty.
+ * So Tier 1 is never downgraded to Tier 3, and a non-assistance estimate never
+ * overwrites a non-empty official tier.
+ */
+export function officialTierToWrite(resolved: ResolvedBand, current: unknown): 'Tier 1' | 'Tier 3' | null {
+  const official = officialEmpowerTier(resolved.band);
+  if (!official) return null;
+  if (resolved.categorical && official === 'Tier 1') {
+    return current === 'Tier 1' ? null : 'Tier 1';
+  }
+  return isEmptyFieldValue(current) ? official : null;
+}
+
+export function isEmptyFieldValue(value: unknown): boolean {
+  if (value == null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
+}
+
 /** Discord label. No band at all shows as Not sure. */
 export function estimatedTierLabel(band: EstimatedBand | null): string {
   return band ? ESTIMATED_BAND_LABELS[band] : ESTIMATED_BAND_LABELS.not_sure;
@@ -338,7 +363,7 @@ export function buildContactNote(req: EmpowerBumpRequest, resolved: ResolvedBand
   if (req.annualHouseholdIncome !== undefined) {
     lines.push(`Annual household income (typed by rep): $${Math.round(req.annualHouseholdIncome).toLocaleString('en-US')}`);
   }
-  if (resolved.band === 'comfort_home' && options.keptOfficialTier) {
+  if (options.keptOfficialTier) {
     lines.push(`Official Empower Tier left unchanged at ${options.keptOfficialTier}.`);
   }
   return lines.join('\n');

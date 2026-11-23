@@ -7,6 +7,12 @@
 
 export const EMPOWER_BUMP_RECEIPTS = 'empowerBumpReceipts';
 export const EMPOWER_BUMP_EVENTS = 'empower_bump_events_v1';
+/**
+ * empower_bump_opps_v1/{opportunityId}: written right after the bump creates an
+ * Empower+ opp in GHL. ghl-sync skips the generic "Opportunity Created" post
+ * only for opp ids that have this marker.
+ */
+export const EMPOWER_BUMP_OPPS = 'empower_bump_opps_v1';
 /** An in-flight claim older than this is treated as abandoned (route maxDuration is 60s). */
 export const EMPOWER_BUMP_CLAIM_STALE_MS = 120_000;
 
@@ -140,6 +146,8 @@ export type EmpowerBumpEvent = {
 export type EmpowerBumpEventStore = {
   /** Create-only. Returns false when the event already exists (replay after a lost receipt). */
   createEvent: (event: EmpowerBumpEvent, nowMs: number) => Promise<boolean>;
+  /** Create-only marker keyed by the new opp id. Ids only, no PII. */
+  markOpportunityCreated: (input: { opportunityId: string; contactId: string; draftId: string }, nowMs: number) => Promise<void>;
 };
 
 export function createEventStore(db: FirestoreLike): EmpowerBumpEventStore {
@@ -157,6 +165,20 @@ export function createEventStore(db: FirestoreLike): EmpowerBumpEventStore {
       } catch (error) {
         if (isAlreadyExists(error)) return false;
         throw error;
+      }
+    },
+    async markOpportunityCreated({ opportunityId, contactId, draftId }, nowMs) {
+      try {
+        await db.collection(EMPOWER_BUMP_OPPS).doc(opportunityId).create({
+          opportunityId,
+          contactId,
+          draftId,
+          createdAt: new Date(nowMs),
+          createdAtMs: nowMs,
+          source: 'raydar-empower-bump',
+        });
+      } catch (error) {
+        if (!isAlreadyExists(error)) throw error;
       }
     },
   };
