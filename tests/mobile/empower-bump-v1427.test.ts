@@ -38,16 +38,20 @@ import {
   EMPOWER_API_ORIGIN,
   EMPOWER_BUMP_PATH,
   EMPOWER_QUEUED_MESSAGE,
+  EMPOWER_MIN_RETRY_MS,
   EMPOWER_OFFLINE_MESSAGE,
   EMPOWER_PENDING_LABEL,
+  EMPOWER_RATE_MESSAGE,
   deliverEmpowerBump,
   empowerBumpPending,
+  empowerNotice,
   finishEmpowerBump,
   flushQueuedEmpowerBumps,
   memoryEmpowerStorage,
   resetEmpowerFlushForTests,
   schedulingFollowsBump,
   storedEmpowerState,
+  subscribeEmpowerAuthFlush,
   type EmpowerOutcome,
 } from "../../app/empower/empowerBump";
 import type { Lead, User, UserRole } from "../../app/types";
@@ -70,10 +74,13 @@ function read(rel: string) {
   return readFileSync(path.join(root, rel), "utf8");
 }
 
-function jsonResponse(status: number, body?: unknown): Response {
+function jsonResponse(status: number, body?: unknown, headers?: Record<string, string>): Response {
   return new Response(body === undefined ? null : JSON.stringify(body), {
     status,
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers: {
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...headers,
+    },
   });
 }
 
@@ -110,7 +117,7 @@ function baseInput(patch: Record<string, unknown> = {}) {
     actedAt: "2026-11-23T19:00:00.000Z",
     leadId: "door-1",
     name: "Ada Lovelace",
-    phone: "555-0100",
+    phone: "555-555-0100",
     email: "",
     address: "10 Main St",
     city: "Buffalo",
@@ -533,8 +540,8 @@ test("a finished bump opens the existing scheduling flow, including queued and a
 test("queued bumps flush once for the signed-in rep, and ambiguous or rejected drafts do not", async () => {
   resetEmpowerFlushForTests();
   const payload = payloadOf(buildEmpowerBumpPayload(baseInput({ draftId: "draft-flush", email: "ada@example.test" })));
-  assert.deepEqual(empowerContactPatch(payload), { name: "Ada Lovelace", phone: "555-0100", email: "ada@example.test" });
-  assert.equal(empowerContactPatch({ name: "Ada", phone: "555" }).email, "");
+  assert.deepEqual(empowerContactPatch(payload), { name: "Ada Lovelace", phone: "555-555-0100", email: "ada@example.test" });
+  assert.equal("email" in empowerContactPatch({ name: "Ada", phone: "5555550100" }), false);
   const detail = read("app/components/LeadDetail.tsx");
   const submit = detail.slice(detail.indexOf("const handleEmpowerSubmit"), detail.indexOf("// Handle saving notes"));
   assert.match(submit, /empowerContactPatch/);
@@ -547,6 +554,9 @@ test("queued bumps flush once for the signed-in rep, and ambiguous or rejected d
   assert.match(sync, /addEventListener\('online'/);
   assert.match(sync, /visibilitychange/);
   assert.match(sync, /appStateChange/);
+  assert.match(sync, /onAuthStateChanged/);
+  assert.match(sync, /authStateReady/);
+  assert.match(sync, /subscribeEmpowerAuthFlush/);
   assert.equal(read("app/field/useFieldData.ts").includes("flushQueuedEmpowerBumps"), false);
 
   const storage = memoryEmpowerStorage();
@@ -716,6 +726,180 @@ test("queued bumps flush once for the signed-in rep, and ambiguous or rejected d
   assert.equal(forbidden.status, "signin");
   assert.match(detail, /\{EMPOWER_PENDING_LABEL\}/);
   assert.equal(EMPOWER_PENDING_LABEL, "Empower bump pending");
+});
+
+test("auth ready flushes a queued draft, 429 waits for Retry-After, and a short phone is rejected first", async () => {
+  resetEmpowerFlushForTests();
+  const payload = payloadOf(buildEmpowerBumpPayload(baseInput({ draftId: "draft-auth" })));
+  const shortPhone = buildEmpowerBumpPayload(baseInput({ phone: "555-0100" }));
+  assert.equal(shortPhone.ok, false);
+  if (!shortPhone.ok) assert.match(shortPhone.message, /at least 10 digits/);
+  const tenDigits = payloadOf(buildEmpowerBumpPayload(baseInput({ phone: "(555) 555-0100" })));
+  assert.equal(tenDigits.phone.replace(/\D/g, "").length >= 10, true);
+
+  const storage = memoryEmpowerStorage();
+  let posts = 0;
+  await deliverEmpowerBump(payload, {
+    uid: "rep-1",
+    storage,
+    online: () => false,
+    getToken: async () => "token",
+    post: async () => {
+      posts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(posts, 0);
+
+  let signedIn = 0;
+  let ready: () => void = () => {};
+  const readyPromise = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const listeners: Array<(uid: string | null) => void> = [];
+  const stop = subscribeEmpowerAuthFlush({
+    subscribe: (listener) => {
+      listeners.push(listener);
+      listener(null);
+      return () => {};
+    },
+    whenReady: () => readyPromise,
+    onSignedIn: () => {
+      signedIn += 1;
+    },
+  });
+  assert.equal(signedIn, 0);
+  ready();
+  await readyPromise;
+  await Promise.resolve();
+  assert.equal(signedIn, 1);
+  listeners[0]?.("rep-1");
+  assert.equal(signedIn, 2);
+  stop();
+
+  await flushQueuedEmpowerBumps({
+    uid: "",
+    storage,
+    online: () => true,
+    getToken: async () => "token",
+    post: async () => {
+      posts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(posts, 0);
+  await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage,
+    online: () => true,
+    now: () => 1_000,
+    getToken: async () => "token",
+    post: async (_path, init) => {
+      posts += 1;
+      const headers = init.headers as Record<string, string>;
+      assert.equal(headers["Idempotency-Key"], "draft-auth");
+      return jsonResponse(404);
+    },
+  });
+  assert.equal(posts, 1);
+  assert.equal(storedEmpowerState("draft-auth", storage, "rep-1"), "queued");
+  await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage,
+    online: () => true,
+    now: () => 1_000 + EMPOWER_MIN_RETRY_MS - 1,
+    getToken: async () => "token",
+    post: async () => {
+      posts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(posts, 1);
+  await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage,
+    online: () => true,
+    now: () => 1_000 + EMPOWER_MIN_RETRY_MS,
+    getToken: async () => "token",
+    post: async () => {
+      posts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(posts, 2);
+
+  const limited = memoryEmpowerStorage();
+  const started = 5_000_000;
+  const rate = await deliverEmpowerBump({ ...payload, draftId: "draft-429" }, {
+    uid: "rep-1",
+    storage: limited,
+    now: () => started,
+    getToken: async () => "token",
+    post: async () => jsonResponse(429, { error: "Slow down." }, { "Retry-After": "15" }),
+  });
+  assert.equal(rate.status, "queued");
+  assert.equal(rate.status === "queued" && rate.message, EMPOWER_RATE_MESSAGE);
+  assert.equal(storedEmpowerState("draft-429", limited, "rep-1"), "queued");
+  let ratePosts = 0;
+  await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage: limited,
+    online: () => true,
+    now: () => started + 14_000,
+    getToken: async () => "token",
+    post: async () => {
+      ratePosts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(ratePosts, 0);
+  await flushQueuedEmpowerBumps({
+    uid: "rep-1",
+    storage: limited,
+    online: () => true,
+    now: () => started + 15_000,
+    getToken: async () => "token",
+    post: async () => {
+      ratePosts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(ratePosts, 1);
+
+  const conflict = await deliverEmpowerBump({ ...payload, draftId: "draft-notice" }, {
+    uid: "rep-1",
+    storage: memoryEmpowerStorage(),
+    getToken: async () => "token",
+    post: async () => jsonResponse(409, { error: "This draft is already in flight." }),
+  });
+  assert.equal(conflict.status, "invalid");
+  assert.match(empowerNotice(conflict), /The door was saved\./);
+
+  const legacy = memoryEmpowerStorage();
+  const untouched = JSON.stringify({
+    v: 1,
+    drafts: [{ draftId: "stray", state: "queued", payload }],
+  });
+  legacy.setItem("raydar.empowerBump.queue.v1", untouched);
+  legacy.setItem("raydar.empowerBump.queue.v1.rep-9", JSON.stringify({
+    v: 1,
+    uid: "rep-9",
+    drafts: [{ draftId: "owned", state: "queued", payload: { ...payload, draftId: "owned" }, uid: "rep-9" }],
+  }));
+  let migrated = 0;
+  await flushQueuedEmpowerBumps({
+    uid: "rep-9",
+    storage: legacy,
+    online: () => true,
+    getToken: async () => "token",
+    post: async (_path, init) => {
+      migrated += 1;
+      assert.equal(JSON.parse(String(init.body)).draftId, "owned");
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(migrated, 1);
+  assert.equal(legacy.getItem("raydar.empowerBump.queue.v1"), untouched);
 });
 
 test("release 14.27 build 171 is the same number in the app, iOS, and Android", () => {

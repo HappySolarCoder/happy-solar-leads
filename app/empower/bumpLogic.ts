@@ -304,17 +304,18 @@ export type EmpowerBumpBuild =
   | { ok: true; payload: EmpowerBumpPayload }
   | { ok: false; message: string };
 
-/** Name, phone, and email written onto the local door, not only the office payload. */
+/** Name and phone written onto the local door. A blank email is left off so it does not wipe one. */
 export function empowerContactPatch(payload: Pick<EmpowerBumpPayload, "name" | "phone" | "email">): {
   name: string;
   phone: string;
-  email: string;
+  email?: string;
 } {
-  return {
+  const patch: { name: string; phone: string; email?: string } = {
     name: payload.name,
     phone: payload.phone,
-    email: payload.email ?? "",
   };
+  if (payload.email) patch.email = payload.email;
+  return patch;
 }
 
 export function buildEmpowerBumpPayload(input: EmpowerBumpDraftInput, table = incomeTable()): EmpowerBumpBuild {
@@ -341,7 +342,8 @@ export function buildEmpowerBumpPayload(input: EmpowerBumpDraftInput, table = in
   if (!actedAt || !Number.isFinite(Date.parse(actedAt))) problems.push("Action time");
   if (!leadId || leadId.length > 120) problems.push("Lead");
   if (name.length < 1 || name.length > 120) problems.push("Name (1–120 characters)");
-  if (phone.length < 1 || phone.length > 40) problems.push("Phone (1–40 characters)");
+  const phoneDigits = phone.replace(/\D/g, "");
+  if (phoneDigits.length < 10 || phone.length > 40) problems.push("Phone (at least 10 digits)");
   if (email.length > 120) problems.push("Email (120 characters or fewer)");
   if (address.length < 1 || address.length > 200) problems.push("Street address");
   if (city.length < 1 || city.length > 80) problems.push("City");

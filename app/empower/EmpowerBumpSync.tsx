@@ -2,10 +2,11 @@
 
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
+import { onAuthStateChanged } from 'firebase/auth';
 import { useEffect } from 'react';
 import { auth } from '@/app/utils/firebase';
 import { isDeviceOnline } from '@/app/utils/connectivity';
-import { flushQueuedEmpowerBumps } from './empowerBump';
+import { flushQueuedEmpowerBumps, subscribeEmpowerAuthFlush } from './empowerBump';
 
 /**
  * Same wake-ups as the field outbox: the phone comes online, the tab becomes
@@ -25,7 +26,7 @@ export default function EmpowerBumpSync() {
       }).catch((error) => console.warn('[raydar-sync]', (error as Error).message));
     };
     const wake = () => {
-      if (timer) return;
+      if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = undefined;
         flush();
@@ -42,9 +43,17 @@ export default function EmpowerBumpSync() {
           if (isActive) wake();
         })
       : null;
+    const stopAuth = subscribeEmpowerAuthFlush({
+      subscribe: (listener) => (
+        auth ? onAuthStateChanged(auth, (user) => listener(user?.uid ?? null)) : () => {}
+      ),
+      whenReady: () => (auth ? auth.authStateReady() : Promise.resolve()),
+      onSignedIn: wake,
+    });
     wake();
     return () => {
       if (timer) clearTimeout(timer);
+      stopAuth();
       window.removeEventListener('online', wake);
       window.removeEventListener('raydar-network-change', wake);
       document.removeEventListener('visibilitychange', onVisible);

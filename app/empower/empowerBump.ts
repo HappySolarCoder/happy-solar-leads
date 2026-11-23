@@ -15,10 +15,15 @@ export const EMPOWER_OFFLINE_MESSAGE =
 export const EMPOWER_SIGN_IN_MESSAGE = "Sign in again, then send.";
 export const EMPOWER_PENDING_LABEL = "Empower bump pending";
 export const EMPOWER_BUMP_CHANGE = "raydar-empower-bump";
+export const EMPOWER_RATE_MESSAGE =
+  "Too many Empower bumps just now. This one stays queued and will send later.";
+/** 404/503, and a 429 without Retry-After, wait at least this long before another POST. */
+export const EMPOWER_MIN_RETRY_MS = 60_000;
 
 const LEGACY_STORAGE_KEY = "raydar.empowerBump.queue.v1";
 const MAX_DRAFTS = 40;
 const DEFAULT_TIMEOUT_MS = 20_000;
+const MAX_RETRY_AFTER_SEC = 86_400;
 
 type Attempted = { attempted: boolean };
 
@@ -26,7 +31,7 @@ export type EmpowerOutcome =
   | ({ status: "sent" } & Attempted)
   | ({ status: "queued"; message: string } & Attempted)
   | ({ status: "signin"; message: string } & Attempted)
-  | ({ status: "invalid"; message: string } & Attempted)
+  | ({ status: "invalid"; message: string; conflict?: boolean } & Attempted)
   | ({ status: "ambiguous"; message: string } & Attempted);
 
 export interface EmpowerSendDeps {
@@ -38,6 +43,8 @@ export interface EmpowerSendDeps {
   storage?: Pick<Storage, "getItem" | "setItem">;
   /** False means the request cannot leave the phone. */
   online?: () => boolean;
+  /** Clock for Retry-After and the 404/503 backoff. */
+  now?: () => number;
 }
 
 type DraftState = "queued" | "sent" | "ambiguous" | "rejected";
@@ -47,6 +54,10 @@ interface StoredDraft {
   state: DraftState;
   payload: EmpowerBumpPayload;
   message?: string;
+  /** Do not POST this queued draft again until this time. */
+  nextAttemptAt?: number;
+  /** Set only when this row can be moved off the old unscoped key. */
+  uid?: string;
 }
 
 type Delivery =
@@ -66,7 +77,7 @@ export function schedulingFollowsBump(outcome: EmpowerOutcome): boolean {
 
 export function empowerNotice(outcome: EmpowerOutcome): string {
   if (outcome.status === "sent") return "Empower bump sent. The door was saved.";
-  if (outcome.status === "queued" || outcome.status === "ambiguous") {
+  if (outcome.status === "queued" || outcome.status === "ambiguous" || (outcome.status === "invalid" && outcome.conflict)) {
     return `${outcome.message} The door was saved.`;
   }
   return outcome.message;
@@ -125,6 +136,48 @@ function browserStorage(): Pick<Storage, "getItem" | "setItem"> | undefined {
 
 function storageKey(uid: string): string {
   return `${LEGACY_STORAGE_KEY}.${uid}`;
+}
+
+function clock(deps: EmpowerSendDeps): number {
+  return deps.now?.() ?? Date.now();
+}
+
+/** Move legacy rows onto this rep only when the stored record names them. The old key stays. */
+function migrateAttributedLegacy(
+  storage: Pick<Storage, "getItem" | "setItem"> | undefined,
+  uid: string,
+): void {
+  if (!storage || !uid) return;
+  const raw = storage.getItem(LEGACY_STORAGE_KEY);
+  if (!raw) return;
+  let parsed: { uid?: unknown; drafts?: unknown };
+  try {
+    parsed = JSON.parse(raw) as { uid?: unknown; drafts?: unknown };
+  } catch {
+    return;
+  }
+  if (!Array.isArray(parsed.drafts)) return;
+  const envelopeUid = typeof parsed.uid === "string" ? parsed.uid : undefined;
+  const mine: StoredDraft[] = [];
+  const rest: unknown[] = [];
+  for (const row of parsed.drafts) {
+    if (!row || typeof row !== "object") {
+      rest.push(row);
+      continue;
+    }
+    const record = row as StoredDraft;
+    const owner = typeof record.uid === "string" ? record.uid : envelopeUid;
+    if (owner === uid && typeof record.draftId === "string" && record.payload && record.state) mine.push(record);
+    else rest.push(row);
+  }
+  if (!mine.length) return;
+  const current = readDrafts(storage, uid);
+  const ids = new Set(current.map((row) => row.draftId));
+  for (const row of mine) {
+    if (!ids.has(row.draftId)) current.push(row);
+  }
+  writeDrafts(storage, uid, current);
+  storage.setItem(LEGACY_STORAGE_KEY, JSON.stringify({ ...parsed, drafts: rest }));
 }
 
 function readDrafts(storage: Pick<Storage, "getItem" | "setItem"> | undefined, uid: string): StoredDraft[] {
@@ -243,14 +296,41 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-async function outcomeForStatus(response: Response, refreshed: boolean): Promise<EmpowerOutcome> {
+function retryAfterMs(response: Response): number {
+  const raw = response.headers.get("retry-after");
+  if (raw != null && /^\d+$/.test(raw.trim())) {
+    const seconds = Number(raw.trim());
+    if (seconds >= 1 && seconds <= MAX_RETRY_AFTER_SEC) return seconds * 1000;
+  }
+  return EMPOWER_MIN_RETRY_MS;
+}
+
+async function outcomeForStatus(
+  response: Response,
+  refreshed: boolean,
+  now: number,
+): Promise<{ outcome: EmpowerOutcome; nextAttemptAt?: number }> {
   const status = response.status;
-  if (status >= 200 && status < 300) return { status: "sent", attempted: true };
-  if (status === 401) return signin(true);
-  if (status === 403 && refreshed) return signin(true);
-  if (status === 404 || status === 503) return routeQueued();
-  if (status >= 500) return ambiguous();
-  return { status: "invalid", message: safeServerError(status, await readJson(response)), attempted: true };
+  if (status >= 200 && status < 300) return { outcome: { status: "sent", attempted: true } };
+  if (status === 401) return { outcome: signin(true) };
+  if (status === 403 && refreshed) return { outcome: signin(true) };
+  if (status === 404 || status === 503) {
+    return { outcome: routeQueued(), nextAttemptAt: now + EMPOWER_MIN_RETRY_MS };
+  }
+  if (status === 429) {
+    return {
+      outcome: { status: "queued", message: EMPOWER_RATE_MESSAGE, attempted: true },
+      nextAttemptAt: now + retryAfterMs(response),
+    };
+  }
+  if (status >= 500) return { outcome: ambiguous() };
+  const invalid: EmpowerOutcome = {
+    status: "invalid",
+    message: safeServerError(status, await readJson(response)),
+    attempted: true,
+    ...(status === 409 ? { conflict: true } : {}),
+  };
+  return { outcome: invalid };
 }
 
 /** One POST. A timeout is not followed by another POST. */
@@ -279,6 +359,7 @@ async function deliver(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
+          "Idempotency-Key": payload.draftId,
         },
         body: JSON.stringify(payload),
         signal: controller.signal,
@@ -291,13 +372,18 @@ async function deliver(
   return winner;
 }
 
-async function classify(delivery: Delivery, refreshed: boolean, online: boolean): Promise<EmpowerOutcome> {
-  if (delivery.kind === "timeout") return ambiguous();
+async function classify(
+  delivery: Delivery,
+  refreshed: boolean,
+  online: boolean,
+  now: number,
+): Promise<{ outcome: EmpowerOutcome; nextAttemptAt?: number }> {
+  if (delivery.kind === "timeout") return { outcome: ambiguous() };
   if (delivery.kind === "error") {
-    if (!online || requestNeverLeft(delivery.error)) return offlineQueued();
-    return ambiguous();
+    if (!online || requestNeverLeft(delivery.error)) return { outcome: offlineQueued() };
+    return { outcome: ambiguous() };
   }
-  return outcomeForStatus(delivery.response, refreshed);
+  return outcomeForStatus(delivery.response, refreshed, now);
 }
 
 function remember(
@@ -305,20 +391,28 @@ function remember(
   uid: string,
   payload: EmpowerBumpPayload,
   outcome: EmpowerOutcome,
+  nextAttemptAt?: number,
 ): void {
   if (outcome.status === "sent") {
-    upsert(storage, uid, { draftId: payload.draftId, state: "sent", payload });
+    upsert(storage, uid, { draftId: payload.draftId, state: "sent", payload, uid });
     return;
   }
   if (outcome.status === "ambiguous") {
-    upsert(storage, uid, { draftId: payload.draftId, state: "ambiguous", payload, message: outcome.message });
+    upsert(storage, uid, { draftId: payload.draftId, state: "ambiguous", payload, message: outcome.message, uid });
     return;
   }
   if (outcome.status === "invalid") {
-    upsert(storage, uid, { draftId: payload.draftId, state: "rejected", payload, message: outcome.message });
+    upsert(storage, uid, { draftId: payload.draftId, state: "rejected", payload, message: outcome.message, uid });
     return;
   }
-  upsert(storage, uid, { draftId: payload.draftId, state: "queued", payload, message: outcome.status === "queued" ? outcome.message : undefined });
+  upsert(storage, uid, {
+    draftId: payload.draftId,
+    state: "queued",
+    payload,
+    uid,
+    message: outcome.status === "queued" ? outcome.message : undefined,
+    ...(nextAttemptAt != null ? { nextAttemptAt } : {}),
+  });
 }
 
 /**
@@ -347,6 +441,7 @@ async function sendEmpowerBump(
   deps: EmpowerSendDeps,
 ): Promise<EmpowerOutcome> {
   const storage = deps.storage ?? browserStorage();
+  migrateAttributedLegacy(storage, deps.uid);
   const existing = readDrafts(storage, deps.uid).find((row) => row.draftId === payload.draftId);
   if (existing?.state === "sent") return { status: "sent", attempted: false };
   if (existing?.state === "ambiguous") return { status: "ambiguous", message: existing.message || EMPOWER_AMBIGUOUS_MESSAGE, attempted: false };
@@ -369,29 +464,30 @@ async function sendEmpowerBump(
   }
   if (!token) return signin(false);
 
+  const now = clock(deps);
   const first = await deliver(post, payload, token, timeoutMs, online);
-  let outcome: EmpowerOutcome;
+  let classified: { outcome: EmpowerOutcome; nextAttemptAt?: number };
   if (first.kind === "response" && first.response.status === 401) {
     let refreshed: string;
     try {
       refreshed = await deps.getToken(true);
     } catch {
-      outcome = signin(true);
+      const outcome = signin(true);
       remember(storage, deps.uid, payload, outcome);
       return outcome;
     }
     if (!refreshed) {
-      outcome = signin(true);
+      const outcome = signin(true);
       remember(storage, deps.uid, payload, outcome);
       return outcome;
     }
     const second = await deliver(post, payload, refreshed, timeoutMs, deviceOnline(deps));
-    outcome = await classify(second, true, deviceOnline(deps));
+    classified = await classify(second, true, deviceOnline(deps), clock(deps));
   } else {
-    outcome = await classify(first, false, online);
+    classified = await classify(first, false, online, now);
   }
-  remember(storage, deps.uid, payload, outcome);
-  return outcome;
+  remember(storage, deps.uid, payload, classified.outcome, classified.nextAttemptAt);
+  return classified.outcome;
 }
 
 /**
@@ -401,11 +497,37 @@ async function sendEmpowerBump(
 export async function flushQueuedEmpowerBumps(deps: EmpowerSendDeps): Promise<number> {
   if (!deps.uid || !deviceOnline(deps)) return 0;
   const storage = deps.storage ?? browserStorage();
-  const rows = readDrafts(storage, deps.uid).filter((row) => row.state === "queued");
+  migrateAttributedLegacy(storage, deps.uid);
+  const now = clock(deps);
+  const rows = readDrafts(storage, deps.uid).filter((row) => (
+    row.state === "queued" && (row.nextAttemptAt == null || row.nextAttemptAt <= now)
+  ));
   let attempted = 0;
   for (const row of rows) {
     await deliverEmpowerBump(row.payload, deps);
     attempted += 1;
   }
   return attempted;
+}
+
+/**
+ * Cold start can wake before Firebase restores currentUser. Flush again when a
+ * uid is actually available, from onAuthStateChanged or authStateReady.
+ */
+export function subscribeEmpowerAuthFlush(deps: {
+  subscribe: (listener: (uid: string | null) => void) => () => void;
+  whenReady?: () => Promise<void>;
+  onSignedIn: () => void;
+}): () => void {
+  let stopped = false;
+  const stop = deps.subscribe((uid) => {
+    if (!stopped && uid) deps.onSignedIn();
+  });
+  void deps.whenReady?.().then(() => {
+    if (!stopped) deps.onSignedIn();
+  }).catch(() => {});
+  return () => {
+    stopped = true;
+    stop();
+  };
 }
