@@ -1,0 +1,173 @@
+# Build Raydar for iOS in the cloud and upload it to TestFlight (internal testing only).
+# It never submits for App Store review, never releases, and never changes App Store Connect metadata.
+#
+# Trigger it one of two ways:
+#   1. gh workflow run ios-testflight.yml --repo HappySolarCoder/happy-solar-leads -f ref=<mobile branch or SHA>
+#      (needs this file on the default branch; optional -f build_number=NNN)
+#   2. Push a tag named ios-testflight-* on a commit that contains this file:
+#      git tag ios-testflight-14.27-171 <sha> && git push origin ios-testflight-14.27-171
+#
+# Build number: the input if given, otherwise max(committed CURRENT_PROJECT_VERSION, highest build in
+# App Store Connect + 1). It is stamped at CI time only (xcodebuild override + the runner's copy of
+# release.json so the in-app label matches); nothing is committed.
+#
+# Repo secrets: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (App Store Connect API key, Admin role for
+# cloud-managed distribution signing) and RAYDAR_MOBILE_ENV_LOCAL (the mobile .env.local).
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or SHA to build (default is the ref this run starts from)'
+        required: false
+        default: ''
+      build_number:
+        description: 'CFBundleVersion override (default is max of committed and App Store Connect highest + 1)'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'ios-testflight-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    runs-on: macos-26
+    timeout-minutes: 75
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_PATH: ${{ runner.temp }}/asc/AuthKey.p8
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Stage secrets
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          RAYDAR_MOBILE_ENV_LOCAL: ${{ secrets.RAYDAR_MOBILE_ENV_LOCAL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 RAYDAR_MOBILE_ENV_LOCAL; do
+            if [ -z "${!name:-}" ]; then echo "::error::Repo secret $name is not set."; exit 1; fi
+          done
+          echo "::add-mask::$ASC_KEY_ID"
+          echo "::add-mask::$ASC_ISSUER_ID"
+          # Mask every value in the env file, line by line.
+          while IFS= read -r line; do
+            value="${line#*=}"
+            if [ -n "$value" ] && [ "$value" != "$line" ]; then echo "::add-mask::$value"; fi
+          done <<< "$RAYDAR_MOBILE_ENV_LOCAL"
+          mkdir -p "$(dirname "$ASC_KEY_PATH")"
+          printf '%s\n' "$ASC_KEY_P8" > "$ASC_KEY_PATH"
+          chmod 600 "$ASC_KEY_PATH"
+          printf '%s\n' "$RAYDAR_MOBILE_ENV_LOCAL" > .env.local
+          chmod 600 .env.local
+
+      - name: Xcode
+        run: xcodebuild -version
+
+      - name: Version and build number
+        id: version
+        env:
+          BUILD_INPUT: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          pbx=ios/App/App.xcodeproj/project.pbxproj
+          marketing="$(awk -F' = ' '/MARKETING_VERSION/ {gsub(/[; ]/, "", $2); print $2; exit}' "$pbx")"
+          committed="$(awk -F' = ' '/CURRENT_PROJECT_VERSION/ {gsub(/[; ]/, "", $2); print $2; exit}' "$pbx")"
+          team="$(node .github/scripts/asc-testflight.mjs team-id)"
+          echo "::add-mask::$team"
+          if [ -n "$BUILD_INPUT" ]; then
+            build="$BUILD_INPUT"
+          else
+            highest="$(node .github/scripts/asc-testflight.mjs max-build)"
+            build=$(( highest + 1 ))
+            if [ "$committed" -gt "$build" ]; then build="$committed"; fi
+          fi
+          case "$build" in ''|*[!0-9]*) echo "::error::Bad build number"; exit 1 ;; esac
+          echo "marketing=$marketing" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "team=$team" >> "$GITHUB_OUTPUT"
+          echo "### Raydar $marketing ($build) from $(git rev-parse --short HEAD) (committed build $committed)" >> "$GITHUB_STEP_SUMMARY"
+          # CI-only stamp so the bundled raydar-build.json matches CFBundleVersion. Not committed.
+          node -e 'const f="app/mobile/_lib/release.json",fs=require("fs"),r=JSON.parse(fs.readFileSync(f));if(r.version!==process.argv[1])throw new Error("release.json version "+r.version+" != pbxproj "+process.argv[1]);r.build=Number(process.argv[2]);fs.writeFileSync(f,JSON.stringify(r,null,2)+"\n")' "$marketing" "$build"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web bundle and sync iOS
+        env:
+          NEXT_PUBLIC_HOT_LEADS: '1'
+        run: |
+          set -euo pipefail
+          npm run mobile:build:ios
+          rm -f .env.local
+          npx --no-install cap sync ios
+          node scripts/mobile/check-bundle.mjs ios/App/App/public
+
+      - name: Archive (unsigned; export signs with cloud-managed distribution)
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Raydar.xcarchive" \
+            DEVELOPMENT_TEAM="${{ steps.version.outputs.team }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            > "$RUNNER_TEMP/archive.log" 2>&1 || { tail -150 "$RUNNER_TEMP/archive.log"; exit 1; }
+          tail -20 "$RUNNER_TEMP/archive.log"
+
+      - name: Sign and upload to App Store Connect
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>${{ steps.version.outputs.team }}</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Raydar.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            > "$RUNNER_TEMP/export.log" 2>&1 || { tail -150 "$RUNNER_TEMP/export.log"; exit 1; }
+          tail -30 "$RUNNER_TEMP/export.log"
+          grep -q 'EXPORT SUCCEEDED\|Upload succeeded\|Uploaded' "$RUNNER_TEMP/export.log"
+
+      - name: Wait for TestFlight processing
+        run: node .github/scripts/asc-testflight.mjs wait "${{ steps.version.outputs.marketing }}" "${{ steps.version.outputs.build }}" 45
+
+      - name: Clean up secrets
+        if: always()
+        run: rm -rf "$(dirname "$ASC_KEY_PATH")" .env.local "$RUNNER_TEMP/ExportOptions.plist"
