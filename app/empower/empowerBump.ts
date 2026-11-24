@@ -72,11 +72,12 @@ type Delivery =
 const inflight = new Set<string>();
 
 /**
- * True when the office call was actually attempted.
- * A save that never left the phone does not open scheduling yet.
+ * Call Scheduling Manager (tel:) is offered only after a confirmed office send.
+ * Queued and ambiguous outcomes keep their messages and do not show the button,
+ * because the office may not have the bump yet (or the send is unconfirmed).
  */
-export function schedulingFollowsBump(outcome: EmpowerOutcome): boolean {
-  return outcome.attempted === true;
+export function callButtonFollowsBump(outcome: EmpowerOutcome): boolean {
+  return outcome.status === "sent";
 }
 
 export function empowerNotice(outcome: EmpowerOutcome): string {
@@ -88,31 +89,21 @@ export function empowerNotice(outcome: EmpowerOutcome): string {
 }
 
 /**
- * Save the local knock first. Then make one office call. Then open scheduling.
- * Opening scheduling cannot roll the knock back, and an ambiguous call is not sent again.
+ * Save the local knock first, then make one office call.
+ * Do not open the Send Info / Call Scheduling Manager flow afterward.
  */
 export async function finishEmpowerBump(input: {
   saveLocal: () => Promise<void>;
   send: () => Promise<EmpowerOutcome>;
-  openScheduling: () => void;
 }): Promise<EmpowerOutcome> {
   await input.saveLocal();
-  let outcome: EmpowerOutcome;
   try {
-    outcome = await input.send();
+    return await input.send();
   } catch (error) {
-    outcome = requestNeverLeft(error)
+    return requestNeverLeft(error)
       ? offlineQueued()
       : { status: "ambiguous", message: EMPOWER_AMBIGUOUS_MESSAGE, attempted: true };
   }
-  if (schedulingFollowsBump(outcome)) {
-    try {
-      input.openScheduling();
-    } catch {
-      // The scheduling screen must not undo a bump that already saved.
-    }
-  }
-  return outcome;
 }
 
 export function memoryEmpowerStorage(): Pick<Storage, "getItem" | "setItem"> {

@@ -48,7 +48,7 @@ import {
   flushQueuedEmpowerBumps,
   memoryEmpowerStorage,
   resetEmpowerFlushForTests,
-  schedulingFollowsBump,
+  callButtonFollowsBump,
   storedEmpowerState,
   subscribeEmpowerAuthFlush,
   type EmpowerOutcome,
@@ -333,7 +333,7 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
   });
   assert.equal(posts, 1);
   assert.equal(sent.status, "sent");
-  assert.equal(schedulingFollowsBump(sent), true);
+  assert.equal(callButtonFollowsBump(sent), true);
   assert.equal(storedEmpowerState("draft-send", storage, "rep-1"), "sent");
   posts = 0;
   const again = await deliverEmpowerBump(payload, {
@@ -347,7 +347,8 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
   });
   assert.equal(posts, 0);
   assert.equal(again.status, "sent");
-  assert.equal(schedulingFollowsBump(again), false);
+  // Already confirmed sent: the call button still follows status, and no second office post is made.
+  assert.equal(callButtonFollowsBump(again), true);
 
   for (const status of [404, 503] as const) {
     const id = `draft-${status}`;
@@ -366,7 +367,7 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
     assert.equal(queued.status, "queued");
     assert.equal(queued.status === "queued" && queued.message, EMPOWER_QUEUED_MESSAGE);
     assert.equal(JSON.stringify(queued).includes(EMPOWER_AMBIGUOUS_MESSAGE), false);
-    assert.equal(schedulingFollowsBump(queued), true);
+    assert.equal(callButtonFollowsBump(queued), false);
     assert.equal(storedEmpowerState(id, queuedStorage, "rep-1"), "queued");
   }
 
@@ -420,7 +421,7 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
     });
     assert.equal(posts, 1);
     assert.equal(retry.status, "ambiguous");
-    assert.equal(schedulingFollowsBump(retry), false);
+    assert.equal(callButtonFollowsBump(retry), false);
   }
 
   posts = 0;
@@ -464,10 +465,10 @@ test("office send is idempotent, queues 404 and 503, and does not retry an ambig
   });
   assert.equal(posts, 0);
   assert.equal(signedOut.status, "signin");
-  assert.equal(schedulingFollowsBump(signedOut), false);
+  assert.equal(callButtonFollowsBump(signedOut), false);
 });
 
-test("a finished bump opens the existing scheduling flow, including queued and ambiguous results", async () => {
+test("a finished bump never opens the Send Info scheduling flow; only a confirmed send offers the tel: call button", async () => {
   const order: string[] = [];
   const queued = await finishEmpowerBump({
     saveLocal: async () => {
@@ -477,29 +478,33 @@ test("a finished bump opens the existing scheduling flow, including queued and a
       order.push("send");
       return { status: "queued", message: EMPOWER_QUEUED_MESSAGE, attempted: true };
     },
-    openScheduling: () => {
-      order.push("scheduling");
-    },
   });
-  assert.deepEqual(order, ["save", "send", "scheduling"]);
+  assert.deepEqual(order, ["save", "send"]);
   assert.equal(queued.status, "queued");
+  assert.equal(callButtonFollowsBump(queued), false);
 
   let sends = 0;
-  let opened = 0;
   const ambiguous = await finishEmpowerBump({
     saveLocal: async () => {},
     send: async () => {
       sends += 1;
       return { status: "ambiguous", message: EMPOWER_AMBIGUOUS_MESSAGE, attempted: true };
     },
-    openScheduling: () => {
-      opened += 1;
-      throw new Error("scheduling failed");
-    },
   });
   assert.equal(sends, 1);
-  assert.equal(opened, 1);
   assert.equal(ambiguous.status, "ambiguous");
+  assert.equal(callButtonFollowsBump(ambiguous), false);
+
+  const sent = await finishEmpowerBump({
+    saveLocal: async () => {},
+    send: async () => {
+      sends += 1;
+      return { status: "sent", attempted: true };
+    },
+  });
+  assert.equal(sends, 2);
+  assert.equal(sent.status, "sent");
+  assert.equal(callButtonFollowsBump(sent), true);
 
   let saved = 0;
   await assert.rejects(() => finishEmpowerBump({
@@ -511,21 +516,21 @@ test("a finished bump opens the existing scheduling flow, including queued and a
       sends += 1;
       return { status: "sent", attempted: true };
     },
-    openScheduling: () => {
-      opened += 1;
-    },
   }));
   assert.equal(saved, 1);
-  assert.equal(sends, 1);
-  assert.equal(opened, 1);
+  assert.equal(sends, 2);
 
   const detail = read("app/components/LeadDetail.tsx");
   const submit = detail.slice(detail.indexOf("const handleEmpowerSubmit"), detail.indexOf("// Handle saving notes"));
   assert.match(submit, /finishEmpowerBump/);
   assert.match(submit, /deliverEmpowerBump/);
-  assert.match(submit, /openCallSchedulingManager/);
-  assert.ok(submit.indexOf("saveLocal") < submit.indexOf("send:") && submit.indexOf("send:") < submit.indexOf("openScheduling"));
+  assert.match(submit, /setOfferSchedulingCall\(callButtonFollowsBump/);
+  assert.equal(submit.includes("openScheduling"), false);
+  assert.equal(submit.includes("openCallSchedulingManager"), false);
+  assert.ok(submit.indexOf("saveLocal") < submit.indexOf("send:"));
   assert.doesNotMatch(submit, /homeownerKnockGps|getLocation|sendSchedulingNotification/);
+  assert.match(detail, /offerSchedulingCall && !isHotOnlyLead\(lead\)/);
+  assert.match(detail, /<SchedulingManagerCallButton/);
   assert.match(detail, /onClick=\{openCallSchedulingManager\}/);
   assert.match(detail, /aria-label="CSM — Call Scheduling Manager"/);
   assert.equal(detail.includes("sendSchedulingNotification"), false);
@@ -536,7 +541,9 @@ test("a finished bump opens the existing scheduling flow, including queued and a
   assert.equal(client.includes("notificationWebhook"), false);
   assert.match(client, /!\/webhook\/i\.test/);
   assert.equal(client.includes("console."), false);
+  assert.equal(client.includes("openScheduling"), false);
 });
+
 
 test("queued bumps flush once for the signed-in rep, and ambiguous or rejected drafts do not", async () => {
   resetEmpowerFlushForTests();
@@ -903,16 +910,16 @@ test("auth ready flushes a queued draft, 429 waits for Retry-After, and a short 
   assert.equal(legacy.getItem("raydar.empowerBump.queue.v1"), untouched);
 });
 
-test("release 14.29 build 174 is the same number in the app, iOS, and Android", () => {
+test("release 14.30 build 175 is the same number in the app, iOS, and Android", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
-  assert.equal(release.version, "14.29");
-  assert.equal(release.build, 174);
+  assert.equal(release.version, "14.30");
+  assert.equal(release.build, 175);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.29", "14.29"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["174", "174"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.30", "14.30"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["175", "175"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.29"/);
-  assert.match(gradle, /versionCode 174\b/);
+  assert.match(gradle, /versionName "14\.30"/);
+  assert.match(gradle, /versionCode 175\b/);
   const hash = createHash("sha256").update(read("app/utils/knockCount.ts")).digest("hex");
   assert.equal(hash, KNOCK_COUNT_SHA);
 });
