@@ -529,18 +529,18 @@ test("resume requeues only owned_by_other, once an hour, per account, under the 
   assert.equal(send.indexOf("settleCountedOnly") < send.indexOf("acknowledgeMobileLead(actor"), true);
 });
 
-test("release 14.30 build 175 is wired and knockCount.ts is unchanged", () => {
+test("release 14.31 build 177 is wired and knockCount.ts is unchanged", () => {
   const hash = createHash("sha256").update(readFileSync(path.join(root, "app/utils/knockCount.ts"))).digest("hex");
   assert.equal(hash, "a00be3335708b5b54605b08f11bd37fb9fa5ada20e3c0cb428d57b58bf1dd226");
-  assert.equal(release.version, "14.30");
-  assert.equal(release.build, 175);
+  assert.equal(release.version, "14.31");
+  assert.equal(release.build, 177);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.30", "14.30"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["175", "175"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.31", "14.31"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["177", "177"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.30"/);
-  assert.match(gradle, /versionCode 175\b/);
-  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "175"/);
+  assert.match(gradle, /versionName "14\.31"/);
+  assert.match(gradle, /versionCode 177\b/);
+  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "177"/);
   for (const file of [
     "app/mobile/_lib/ownerCounts.ts",
     "app/field/useFieldData.ts",

@@ -690,6 +690,7 @@ test("queued bumps flush once for the signed-in rep, and ambiguous or rejected d
   });
   assert.equal(conflictPosts, 1);
   assert.equal(rejected.status, "invalid");
+  assert.equal(rejected.attempted, false);
   assert.equal(rejected.status === "invalid" && rejected.message, "This draft is already in flight.");
   assert.equal(storedEmpowerState("draft-409", conflict, "rep-1"), "rejected");
   await deliverEmpowerBump({ ...payload, draftId: "draft-409" }, {
@@ -910,16 +911,16 @@ test("auth ready flushes a queued draft, 429 waits for Retry-After, and a short 
   assert.equal(legacy.getItem("raydar.empowerBump.queue.v1"), untouched);
 });
 
-test("release 14.30 build 175 is the same number in the app, iOS, and Android", () => {
+test("release 14.31 build 177 is the same number in the app, iOS, and Android", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
-  assert.equal(release.version, "14.30");
-  assert.equal(release.build, 175);
+  assert.equal(release.version, "14.31");
+  assert.equal(release.build, 177);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.30", "14.30"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["175", "175"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.31", "14.31"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["177", "177"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.30"/);
-  assert.match(gradle, /versionCode 175\b/);
+  assert.match(gradle, /versionName "14\.31"/);
+  assert.match(gradle, /versionCode 177\b/);
   const hash = createHash("sha256").update(read("app/utils/knockCount.ts")).digest("hex");
   assert.equal(hash, KNOCK_COUNT_SHA);
 });

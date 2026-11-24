@@ -128,6 +128,12 @@ export default function EmpowerBumpForm({ lead, homeowner, town, onClose, onSubm
       const outcome = await onSubmit(built.payload);
       if (!mounted.current || outcome.attempted) return;
       setError(empowerNotice(outcome));
+      // Mint a new draft id only after a fresh 400 from the server, so a
+      // corrected save can POST again. Never mint on a replay, and never
+      // after a 409 (conflict stays on this draft and must not be sent twice).
+      if (outcome.status === "invalid" && outcome.fresh) {
+        draftId.current = crypto.randomUUID();
+      }
     } catch (caught) {
       if (!mounted.current || isProximityWarningCancelled(caught)) return;
       const message = caught instanceof Error ? caught.message : '';
