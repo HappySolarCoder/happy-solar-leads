@@ -9,7 +9,6 @@ import {
   CATEGORICAL_TIER1_NOTE,
   EMPOWER_MAX_HOUSEHOLD,
   ESTIMATE_NOTE,
-  HOUSEHOLD_LIMIT_HELPER,
   NOT_SURE_LABEL,
   NY_COUNTIES,
   SSI_HELPER,
@@ -17,6 +16,7 @@ import {
   buildEmpowerBumpPayload,
   knownCounty,
   programsForceTier1,
+  resolveEmpowerZip,
   type EmpowerBumpPayload,
   type EstimatedBand,
 } from '@/app/empower/bumpLogic';
@@ -32,7 +32,22 @@ interface EmpowerBumpFormProps {
     city?: string;
     state?: string;
     zip?: string;
+    postalCode?: string;
+    zipCode?: string;
+    zipcode?: string;
     county?: string;
+    homeowner?: {
+      mailingZip?: string;
+      address?: string;
+      addressNorm?: string;
+      state?: string;
+    };
+  };
+  homeowner?: {
+    mailingZip?: string;
+    address?: string;
+    addressNorm?: string;
+    state?: string;
   };
   town?: string;
   onClose: () => void;
@@ -41,7 +56,7 @@ interface EmpowerBumpFormProps {
 
 const fieldClass = 'w-full px-4 py-2 border border-[#E2E8F0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#14b8a6] focus:border-transparent';
 
-export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: EmpowerBumpFormProps) {
+export default function EmpowerBumpForm({ lead, homeowner, town, onClose, onSubmit }: EmpowerBumpFormProps) {
   const [name, setName] = useState(lead.name || '');
   const [phone, setPhone] = useState(lead.phone || '');
   const [email, setEmail] = useState(lead.email || '');
@@ -52,6 +67,12 @@ export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: Empow
     city: lead.city,
     town,
   }));
+  const derivedZip = resolveEmpowerZip({
+    ...lead,
+    homeowner: homeowner || lead.homeowner,
+  });
+  const [zip, setZip] = useState(derivedZip);
+  const zipNeedsEntry = !derivedZip;
   const [band, setBand] = useState<EstimatedBand | ''>('');
   const [programs, setPrograms] = useState<string[]>([]);
   const [assistanceNone, setAssistanceNone] = useState(false);
@@ -87,7 +108,7 @@ export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: Empow
       address: lead.address || '',
       city: lead.city || '',
       state: lead.state || '',
-      zip: lead.zip || '',
+      zip,
       town,
       county,
       householdSize: typeof householdSize === 'number' ? householdSize : 0,
@@ -131,7 +152,7 @@ export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: Empow
           <div className="bg-[#F7FAFC] rounded-lg p-4">
             <p className="text-sm text-[#718096] mb-1">Door</p>
             <p className="font-medium text-[#2D3748]">{lead.address}</p>
-            <p className="text-sm text-[#4A5568]">{[lead.city, lead.state, lead.zip].filter(Boolean).join(' ')}</p>
+            <p className="text-sm text-[#4A5568]">{[lead.city, lead.state, derivedZip || zip].filter(Boolean).join(' ')}</p>
           </div>
 
           <label className="block">
@@ -143,9 +164,16 @@ export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: Empow
             <input aria-label="Phone" className={`${fieldClass} mt-1`} value={phone} onChange={(event) => setPhone(event.target.value)} autoComplete="tel" inputMode="tel" />
           </label>
           <label className="block">
-            <span className="text-sm font-medium text-[#2D3748]">Email <span className="text-[#718096] text-xs">(optional)</span></span>
+            <span className="text-sm font-medium text-[#2D3748]">Email <span className="text-[#FF5F5A]">*</span></span>
             <input aria-label="Email" className={`${fieldClass} mt-1`} value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" inputMode="email" />
+            <p className="mt-1 text-sm font-semibold text-[#C53030]">(NO FAKE EMAILS)</p>
           </label>
+          {zipNeedsEntry ? (
+            <label className="block">
+              <span className="text-sm font-medium text-[#2D3748]">ZIP <span className="text-[#FF5F5A]">*</span></span>
+              <input aria-label="ZIP" className={`${fieldClass} mt-1`} value={zip} onChange={(event) => setZip(event.target.value)} autoComplete="postal-code" inputMode="numeric" />
+            </label>
+          ) : null}
 
           <label className="block">
             <span className="text-sm font-medium text-[#2D3748]">Household members <span className="text-[#FF5F5A]">*</span></span>
@@ -163,7 +191,6 @@ export default function EmpowerBumpForm({ lead, town, onClose, onSubmit }: Empow
                 <option key={size} value={size}>{size}</option>
               ))}
             </select>
-            <p className="mt-2 text-sm text-[#4A5568]">{HOUSEHOLD_LIMIT_HELPER}</p>
           </label>
 
           <label className="block">

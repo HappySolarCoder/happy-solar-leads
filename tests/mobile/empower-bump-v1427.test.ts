@@ -16,7 +16,6 @@ import {
   EMPOWER_BUMP_ID,
   EMPOWER_MAX_HOUSEHOLD,
   ESTIMATE_NOTE,
-  HOUSEHOLD_LIMIT_HELPER,
   NY_COUNTIES,
   SSI_HELPER,
   bandChoices,
@@ -118,7 +117,7 @@ function baseInput(patch: Record<string, unknown> = {}) {
     leadId: "door-1",
     name: "Ada Lovelace",
     phone: "555-555-0100",
-    email: "",
+    email: "ada@example.test",
     address: "10 Main St",
     city: "Buffalo",
     state: "ny",
@@ -214,13 +213,13 @@ test("income table matches the March 18, 2026 expansion and stops at household 1
   assert.equal(programsForceTier1([]), false);
 });
 
-test("the bump payload omits empty optionals and never sends a dollar amount", () => {
+test("the bump payload includes email, omits other empty optionals, and never sends a dollar amount", () => {
   const built = payloadOf(buildEmpowerBumpPayload(baseInput()));
   assert.equal(built.actedAt, "2026-11-23T19:00:00.000Z");
   assert.equal(built.state, "NY");
   assert.equal(built.estimatedBand, "tier1");
   assert.equal(built.assistanceNone, true);
-  assert.equal("email" in built, false);
+  assert.equal(built.email, "ada@example.test");
   assert.equal("town" in built, false);
   assert.equal("repName" in built, false);
   assert.equal("assistancePrograms" in built, false);
@@ -288,13 +287,15 @@ test("setters, closers, managers, and admins see Empower Bump, and a redacted pi
   assert.equal(redacted.includes("door@example.test"), false);
 });
 
-test("the form shows the published helpers and does not offer household 11", () => {
+test("the form shows the published helpers, requires email, and does not offer household 11", () => {
   const markup = renderToStaticMarkup(createElement(EmpowerBumpForm, {
     lead: door({ address: "10 Main St, Erie County" }),
     onClose: () => {},
     onSubmit: async (): Promise<EmpowerOutcome> => ({ status: "sent", attempted: true }),
   }));
-  assert.equal(markup.includes(HOUSEHOLD_LIMIT_HELPER), true);
+  assert.equal(markup.includes("NYSERDA has not published EmPower+ income limits for households of 11 or more"), false);
+  assert.equal(markup.includes("(NO FAKE EMAILS)"), true);
+  assert.equal(markup.includes("Email (optional)"), false);
   assert.equal(markup.includes(ASSISTANCE_HELPER), true);
   assert.equal(markup.includes(SSI_HELPER), true);
   assert.equal(markup.includes("Social Security Retirement or Disability"), true);
@@ -541,7 +542,7 @@ test("queued bumps flush once for the signed-in rep, and ambiguous or rejected d
   resetEmpowerFlushForTests();
   const payload = payloadOf(buildEmpowerBumpPayload(baseInput({ draftId: "draft-flush", email: "ada@example.test" })));
   assert.deepEqual(empowerContactPatch(payload), { name: "Ada Lovelace", phone: "555-555-0100", email: "ada@example.test" });
-  assert.equal("email" in empowerContactPatch({ name: "Ada", phone: "5555550100" }), false);
+  assert.deepEqual(empowerContactPatch({ name: "Ada", phone: "5555550100", email: "ada@example.test" }), { name: "Ada", phone: "5555550100", email: "ada@example.test" });
   const detail = read("app/components/LeadDetail.tsx");
   const submit = detail.slice(detail.indexOf("const handleEmpowerSubmit"), detail.indexOf("// Handle saving notes"));
   assert.match(submit, /empowerContactPatch/);
@@ -902,16 +903,16 @@ test("auth ready flushes a queued draft, 429 waits for Retry-After, and a short 
   assert.equal(legacy.getItem("raydar.empowerBump.queue.v1"), untouched);
 });
 
-test("release 14.27 build 172 is the same number in the app, iOS, and Android", () => {
+test("release 14.28 build 173 is the same number in the app, iOS, and Android", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
-  assert.equal(release.version, "14.27");
-  assert.equal(release.build, 172);
+  assert.equal(release.version, "14.28");
+  assert.equal(release.build, 173);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.27", "14.27"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["172", "172"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.28", "14.28"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["173", "173"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.27"/);
-  assert.match(gradle, /versionCode 172\b/);
+  assert.match(gradle, /versionName "14\.28"/);
+  assert.match(gradle, /versionCode 173\b/);
   const hash = createHash("sha256").update(read("app/utils/knockCount.ts")).digest("hex");
   assert.equal(hash, KNOCK_COUNT_SHA);
 });
