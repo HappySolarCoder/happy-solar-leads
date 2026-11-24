@@ -526,6 +526,14 @@ describe('empower bump: band math (Charles override: Comfort Home is strictly ab
       incomeSelectionLabel({ band: 'comfort_home', county: 'Erie', householdSize: 1 }),
       'Comfort Home (est.) — above $56,600',
     );
+    assert.equal(
+      incomeSelectionLabel({ band: 'tier1', county: 'Erie', householdSize: 1, categorical: true }),
+      'Tier 1 (assistance program)',
+    );
+    assert.doesNotMatch(
+      incomeSelectionLabel({ band: 'tier1', county: 'Erie', householdSize: 1, categorical: true }),
+      /\$/,
+    );
   });
 
   it('an exact typed income is mapped server-side; exactly at M stays Tier 3', async () => {
@@ -1158,12 +1166,17 @@ describe('ship: Discord destination is the scheduling-manager webhook', () => {
       'Address', 'Phone', 'Email',
     ]);
     const values = Object.fromEntries(posted.embeds[0].fields.map((f) => [f.name, f.value]));
-    const expectedIncome = incomeSelectionLabel({ band: 'tier1', county: 'Erie', householdSize: 3 });
+    const expectedIncome = incomeSelectionLabel({ band: 'tier1', county: 'Erie', householdSize: 3, categorical: true });
     assert.equal(values.Town, 'Buffalo');
     assert.equal(values.Rep, 'Riley Rep');
     assert.equal(values['Household size'], '3');
     assert.equal(values['Household income selection'], expectedIncome);
-    assert.match(expectedIncome, /^Tier 1 \(est\.\) — at or under \$/);
+    assert.equal(expectedIncome, 'Tier 1 (assistance program)');
+    assert.equal(values['Household income selection'].includes('$'), false);
+    const event = eventDoc(t);
+    assert.equal(event?.estimatedTierLabel, 'Tier 1 (est.)');
+    assert.equal(JSON.stringify(event).includes('$'), false);
+    assert.equal(JSON.stringify(event).includes('assistance program'), false);
     assert.equal(values['Government assistance'], 'Yes');
     assert.equal(values.Address, '123 Main St, Buffalo NY 14201');
     assert.equal(values.Phone, PHONE);
