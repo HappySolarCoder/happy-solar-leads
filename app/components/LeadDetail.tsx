@@ -29,7 +29,7 @@ import { callerPopupExempt, ownershipBadge, pinIsMine, selectableDispositions, s
 import { DEFAULT_DISPOSITIONS, EMPOWER_BUMP_DISPOSITION_ID } from '@/app/types/disposition';
 import EmpowerBumpForm from './EmpowerBumpForm';
 import { canOfferEmpowerBump, empowerContactPatch, type EmpowerBumpPayload } from '@/app/empower/bumpLogic';
-import { callButtonFollowsBump, deliverEmpowerBump, EMPOWER_BUMP_CHANGE, EMPOWER_PENDING_LABEL, empowerBumpPending, empowerNotice, finishEmpowerBump } from '@/app/empower/empowerBump';
+import { callButtonFollowsBump, deliverEmpowerBump, EMPOWER_BUMP_CHANGE, EMPOWER_PENDING_LABEL, empowerBumpPending, empowerNotice, finishEmpowerBump, formClosesAfterBump } from '@/app/empower/empowerBump';
 import SchedulingManagerCallButton from './SchedulingManagerCallButton';
 import { getLocation } from '@/app/utils/geolocation';
 import { distanceBetween } from 'geofire-common';
@@ -680,9 +680,11 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
           },
         }),
       });
-      setShowEmpowerBump(false);
-      setFieldMessage(empowerNotice(outcome));
-      setOfferSchedulingCall(callButtonFollowsBump(outcome));
+      if (formClosesAfterBump(outcome)) {
+        setShowEmpowerBump(false);
+        setFieldMessage(empowerNotice(outcome));
+        setOfferSchedulingCall(callButtonFollowsBump(outcome));
+      }
       return outcome;
     } catch (error) {
       if (isProximityWarningCancelled(error)) throw error;

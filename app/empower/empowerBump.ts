@@ -80,6 +80,18 @@ export function callButtonFollowsBump(outcome: EmpowerOutcome): boolean {
   return outcome.status === "sent";
 }
 
+/**
+ * Close the bump form only after the office call was actually attempted,
+ * or when a sign-in draft is already queued for an auth flush (today's
+ * queued-signin behavior: form closes, door shows "Sign in again, then send.").
+ * 400/409, a token timeout that never POSTed, and a request that never
+ * left the phone keep the form open so the inline error is visible.
+ */
+export function formClosesAfterBump(outcome: EmpowerOutcome): boolean {
+  if (outcome.status === "signin") return true;
+  return outcome.attempted === true;
+}
+
 export function empowerNotice(outcome: EmpowerOutcome): string {
   if (outcome.status === "sent") return "Empower bump sent. The door was saved.";
   if (outcome.status === "queued" || outcome.status === "ambiguous" || (outcome.status === "invalid" && outcome.conflict)) {
@@ -322,7 +334,9 @@ async function outcomeForStatus(
   const invalid: EmpowerOutcome = {
     status: "invalid",
     message: safeServerError(status, await readJson(response)),
-    attempted: true,
+    // The request reached the office, but the form must stay open so the
+    // rep can read the inline error and keep what they typed.
+    attempted: false,
     ...(status === 409 ? { conflict: true } : {}),
   };
   return { outcome: invalid };

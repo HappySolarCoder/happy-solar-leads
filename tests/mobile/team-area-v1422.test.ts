@@ -287,14 +287,14 @@ test("A4 the areas menu ignores an inside pointer and closes on an outside point
   assert.equal(items.match(/onAreaMode\?\.\(mode\)/g)?.length, 1);
 });
 
-test("release 14.30 build 175 is the same number in the app, iOS and Android", () => {
-  assert.equal(release.version, "14.30");
-  assert.equal(release.build, 175);
+test("release 14.31 build 176 is the same number in the app, iOS and Android", () => {
+  assert.equal(release.version, "14.31");
+  assert.equal(release.build, 176);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.30", "14.30"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["175", "175"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.31", "14.31"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["176", "176"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.30"/);
-  assert.match(gradle, /versionCode 175\b/);
-  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "175"/);
+  assert.match(gradle, /versionName "14\.31"/);
+  assert.match(gradle, /versionCode 176\b/);
+  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "176"/);
 });

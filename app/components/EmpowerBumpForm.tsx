@@ -128,6 +128,12 @@ export default function EmpowerBumpForm({ lead, homeowner, town, onClose, onSubm
       const outcome = await onSubmit(built.payload);
       if (!mounted.current || outcome.attempted) return;
       setError(empowerNotice(outcome));
+      // 400 is terminal for this draft id. Mint a new one so a corrected
+      // save can POST again without changing what the rep already typed.
+      // 409 stays on the same draft so it cannot be sent twice.
+      if (outcome.status === "invalid" && !outcome.conflict) {
+        draftId.current = crypto.randomUUID();
+      }
     } catch (caught) {
       if (!mounted.current || isProximityWarningCancelled(caught)) return;
       const message = caught instanceof Error ? caught.message : '';
