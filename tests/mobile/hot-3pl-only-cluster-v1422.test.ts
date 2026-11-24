@@ -513,19 +513,19 @@ test("T13 setters never call the overview and the production role set stays A", 
   assert.deepEqual(result.points, []);
 });
 
-test("T14 release 14.29 build 174 is the same number everywhere", () => {
+test("T14 release 14.30 build 175 is the same number everywhere", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
-  assert.equal(release.version, "14.29");
-  assert.equal(release.build, 174);
+  assert.equal(release.version, "14.30");
+  assert.equal(release.build, 175);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.29", "14.29"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["174", "174"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.30", "14.30"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["175", "175"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.29"/);
-  assert.match(gradle, /versionCode 174\b/);
-  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "174"/);
-  assert.match(read("tests/mobile/release-v1418.test.ts"), /build 174/);
-  assert.match(read("tests/mobile/hot-3pl-android-v1422.test.ts"), /release\.build, 174/);
+  assert.match(gradle, /versionName "14\.30"/);
+  assert.match(gradle, /versionCode 175\b/);
+  assert.match(read("tests/mobile/silent-sync-v1418.test.ts"), /X-Raydar-Build"\], "175"/);
+  assert.match(read("tests/mobile/release-v1418.test.ts"), /build 175/);
+  assert.match(read("tests/mobile/hot-3pl-android-v1422.test.ts"), /release\.build, 175/);
 });
 
 test("T15 knockCount.ts is unchanged and this change does not touch the server", () => {

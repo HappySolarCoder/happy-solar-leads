@@ -29,7 +29,8 @@ import { callerPopupExempt, ownershipBadge, pinIsMine, selectableDispositions, s
 import { DEFAULT_DISPOSITIONS, EMPOWER_BUMP_DISPOSITION_ID } from '@/app/types/disposition';
 import EmpowerBumpForm from './EmpowerBumpForm';
 import { canOfferEmpowerBump, empowerContactPatch, type EmpowerBumpPayload } from '@/app/empower/bumpLogic';
-import { deliverEmpowerBump, EMPOWER_BUMP_CHANGE, EMPOWER_PENDING_LABEL, empowerBumpPending, empowerNotice, finishEmpowerBump } from '@/app/empower/empowerBump';
+import { callButtonFollowsBump, deliverEmpowerBump, EMPOWER_BUMP_CHANGE, EMPOWER_PENDING_LABEL, empowerBumpPending, empowerNotice, finishEmpowerBump } from '@/app/empower/empowerBump';
+import SchedulingManagerCallButton from './SchedulingManagerCallButton';
 import { getLocation } from '@/app/utils/geolocation';
 import { distanceBetween } from 'geofire-common';
 
@@ -345,6 +346,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
   const [showObjectionTracker, setShowObjectionTracker] = useState(false);
   const [showLeadEditor, setShowLeadEditor] = useState(false);
   const [showEmpowerBump, setShowEmpowerBump] = useState(false);
+  const [offerSchedulingCall, setOfferSchedulingCall] = useState(false);
   const empowerKnockSaved = useRef(false);
   const [bumpPending, setBumpPending] = useState(false);
   const [showGoBackSchedule, setShowGoBackSchedule] = useState(false);
@@ -528,6 +530,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
     if (disposition?.specialBehavior === 'empower-bump' || newStatus === EMPOWER_BUMP_DISPOSITION_ID) {
       if (!canOfferEmpowerBump({ role: actor.role, contactRedacted })) return;
       empowerKnockSaved.current = false;
+      setOfferSchedulingCall(false);
       setShowEmpowerBump(true);
       return;
     }
@@ -676,12 +679,10 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             return current.getIdToken(forceRefresh);
           },
         }),
-        openScheduling: () => {
-          setShowEmpowerBump(false);
-          openCallSchedulingManager();
-        },
       });
+      setShowEmpowerBump(false);
       setFieldMessage(empowerNotice(outcome));
+      setOfferSchedulingCall(callButtonFollowsBump(outcome));
       return outcome;
     } catch (error) {
       if (isProximityWarningCancelled(error)) throw error;
@@ -1033,6 +1034,9 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
             <span>{fieldMessage}</span>
             {fieldMessage === AREA_BLOCK_MESSAGE && <button type="button" className="rf-plain" onClick={() => setFieldMessage('')}>Dismiss</button>}
           </p>}
+          {offerSchedulingCall && !isHotOnlyLead(lead) && (
+            <SchedulingManagerCallButton />
+          )}
           {fieldMemory && !summaryOnly && !isHotOnlyLead(lead) && <FieldDoorPanel lead={lead} draft={visit} onChange={setVisit} onHandoff={() => setShowLeadEditor(true)} />}
           {/* Contact Info */}
           {(lead.phone || lead.email) && (

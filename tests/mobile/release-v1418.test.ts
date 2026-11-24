@@ -6,18 +6,18 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-test("iOS and Android stay on release 14.29 build 174 together", () => {
+test("iOS and Android stay on release 14.30 build 175 together", () => {
   const release = JSON.parse(readFileSync(path.join(root, "app/mobile/_lib/release.json"), "utf8"));
-  assert.equal(release.version, "14.29");
-  assert.equal(release.build, 174);
+  assert.equal(release.version, "14.30");
+  assert.equal(release.build, 175);
   const project = readFileSync(path.join(root, "ios/App/App.xcodeproj/project.pbxproj"), "utf8");
   const versions = [...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]);
   const builds = [...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]);
-  assert.deepEqual(versions, ["14.29", "14.29"]);
-  assert.deepEqual(builds, ["174", "174"]);
+  assert.deepEqual(versions, ["14.30", "14.30"]);
+  assert.deepEqual(builds, ["175", "175"]);
   const gradle = readFileSync(path.join(root, "android/app/build.gradle"), "utf8");
-  assert.match(gradle, /versionName "14\.29"/);
-  assert.match(gradle, /versionCode 174\b/);
+  assert.match(gradle, /versionName "14\.30"/);
+  assert.match(gradle, /versionCode 175\b/);
 });
 
 test("iOS declares that the app does not use non-exempt encryption", () => {
