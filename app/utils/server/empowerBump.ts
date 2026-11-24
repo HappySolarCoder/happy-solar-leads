@@ -13,6 +13,7 @@ import {
   EMPOWER_STATUS_ON_CREATE,
   buildContactNote,
   estimatedTierLabel,
+  incomeSelectionLabel,
   neutralizeMentions,
   officialTierToWrite,
   parseEmpowerBumpBody,
@@ -34,6 +35,7 @@ import {
 import type { EmpowerBumpEvent, EmpowerBumpEventStore, EmpowerBumpOutcome, EmpowerBumpReceiptStore } from './empowerBumpStore';
 import {
   buildEmpowerBumpDiscordBody,
+  type EmpowerBumpDiscordDetails,
   type EmpowerBumpDiscordBody,
   type WebhookResolution,
 } from './empowerBumpDiscord';
@@ -425,7 +427,25 @@ export async function handleEmpowerBump(input: {
 
   log('ok', { outcome: ghlResult.outcome, band: resolved.band ?? 'none', categorical: resolved.categorical });
   // Discord never changes the response: GHL and the receipt are already done.
-  await deliverEmpowerBumpDiscord({ draftId: req.draftId, services, now, log });
+  await deliverEmpowerBumpDiscord({
+    draftId: req.draftId,
+    services,
+    now,
+    log,
+    discordDetails: {
+      phone: req.phone,
+      email: req.email,
+      address: req.address,
+      city: req.city,
+      state: req.state,
+      zip: req.zip,
+      incomeSelection: incomeSelectionLabel({
+        band: resolved.band,
+        county: req.county,
+        householdSize: req.householdSize,
+      }),
+    },
+  });
   return {
     status: 200,
     body: {
@@ -448,8 +468,10 @@ export async function deliverEmpowerBumpDiscord(input: {
   services: NonNullable<ReturnType<EmpowerBumpDeps['getServices']>>;
   now: number;
   log: EmpowerBumpLogger;
+  /** Used only for the Discord post. Not written to the event doc or logs. */
+  discordDetails?: EmpowerBumpDiscordDetails;
 }): Promise<'sent' | 'pending' | 'error' | 'skipped'> {
-  const { draftId, services, now, log } = input;
+  const { draftId, services, now, log, discordDetails } = input;
   try {
     const destination = await services.discord.resolveWebhook();
     if (destination.url === null) {
@@ -459,7 +481,7 @@ export async function deliverEmpowerBumpDiscord(input: {
     }
     const event = await services.events.claimDelivery(draftId, now);
     if (!event) return 'skipped';
-    const posted = await services.discord.post(destination.url, buildEmpowerBumpDiscordBody(event, now));
+    const posted = await services.discord.post(destination.url, buildEmpowerBumpDiscordBody(event, now, discordDetails));
     await services.events.markDelivery(draftId, {
       status: posted.ok ? 'sent' : 'error',
       responseStatus: posted.status,

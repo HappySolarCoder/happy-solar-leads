@@ -350,6 +350,33 @@ export function estimatedTierLabel(band: EstimatedBand | null): string {
   return band ? ESTIMATED_BAND_LABELS[band] : ESTIMATED_BAND_LABELS.not_sure;
 }
 
+/** Dollar amounts for published NYSERDA brackets. Not a raw household income. */
+export function formatEmpowerDollars(amount: number): string {
+  const digits = Math.trunc(Math.abs(amount)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${amount < 0 ? '-' : ''}$${digits}`;
+}
+
+/**
+ * The income choice the form shows: the estimated tier, plus the published
+ * dollar range when county and household size are known. Never a raw
+ * annualHouseholdIncome figure.
+ */
+export function incomeSelectionLabel(input: {
+  band: EstimatedBand | null;
+  county?: string;
+  householdSize?: number;
+}): string {
+  const base = estimatedTierLabel(input.band);
+  if (!input.band || input.band === 'not_sure' || !input.county || !input.householdSize) return base;
+  const limits = incomeLimitsFor(input.county, input.householdSize);
+  if (!limits) return base;
+  if (input.band === 'tier1') return `${base} — at or under ${formatEmpowerDollars(limits.tier1Limit)}`;
+  if (input.band === 'tier3') {
+    return `${base} — above ${formatEmpowerDollars(limits.tier1Limit)} and at or under ${formatEmpowerDollars(limits.tier3Cap)}`;
+  }
+  return `${base} — above ${formatEmpowerDollars(limits.tier3Cap)}`;
+}
+
 /** GHL-STORAGE-PROPOSAL.md §4. No phone, no email, no dollars unless an exact amount was typed. */
 export function buildContactNote(req: EmpowerBumpRequest, resolved: ResolvedBand, options: { keptOfficialTier?: string | null } = {}): string {
   const lines = [
