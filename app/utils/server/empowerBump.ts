@@ -443,6 +443,7 @@ export async function handleEmpowerBump(input: {
         band: resolved.band,
         county: req.county,
         householdSize: req.householdSize,
+        categorical: resolved.categorical,
       }),
     },
   });

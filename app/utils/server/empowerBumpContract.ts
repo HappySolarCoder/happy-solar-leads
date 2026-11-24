@@ -360,12 +360,16 @@ export function formatEmpowerDollars(amount: number): string {
  * The income choice the form shows: the estimated tier, plus the published
  * dollar range when county and household size are known. Never a raw
  * annualHouseholdIncome figure.
+ * When a government-assistance program forced Tier 1, the Discord post shows
+ * "Tier 1 (assistance program)" and does not include the published range.
  */
 export function incomeSelectionLabel(input: {
   band: EstimatedBand | null;
   county?: string;
   householdSize?: number;
+  categorical?: boolean;
 }): string {
+  if (input.categorical) return 'Tier 1 (assistance program)';
   const base = estimatedTierLabel(input.band);
   if (!input.band || input.band === 'not_sure' || !input.county || !input.householdSize) return base;
   const limits = incomeLimitsFor(input.county, input.householdSize);
