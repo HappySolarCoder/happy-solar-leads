@@ -2,8 +2,9 @@
 // - Receipts live in the Raydar database: empowerBumpReceipts/{uid}_{draftId}
 //   (server-only, default-deny in firestore.rules, one doc per draft, no list endpoint).
 // - Bump events live in the GHL warehouse database that ghl-sync reads:
-//   empower_bump_events_v1/{draftId}. Create-only; ghl-sync posts the
-//   "Empower Plus bump" Discord message from it (key bump:{draftId}).
+//   empower_bump_events_v1/{draftId}. Create-only; it is the once-per-draft
+//   dedupe and audit record for the "Empower Plus bump" Discord post, which this
+//   route sends to the scheduling-manager channel (empowerBumpDiscord.ts).
 
 export const EMPOWER_BUMP_RECEIPTS = 'empowerBumpReceipts';
 export const EMPOWER_BUMP_EVENTS = 'empower_bump_events_v1';
@@ -146,6 +147,18 @@ export type EmpowerBumpEvent = {
 export type EmpowerBumpEventStore = {
   /** Create-only. Returns false when the event already exists (replay after a lost receipt). */
   createEvent: (event: EmpowerBumpEvent, nowMs: number) => Promise<boolean>;
+  /**
+   * Atomically moves a pending event to "sending". Returns the event when this
+   * caller won the claim, null otherwise (already sent/sending/error, or missing).
+   */
+  claimDelivery: (draftId: string, nowMs: number) => Promise<EmpowerBumpEvent | null>;
+  /** Records the Discord outcome. Status codes and reasons only, never a URL. */
+  markDelivery: (draftId: string, update: {
+    status: 'pending' | 'sent' | 'error';
+    reason?: string;
+    responseStatus?: number;
+    source?: string;
+  }, nowMs: number) => Promise<void>;
   /** Create-only marker keyed by the new opp id. Ids only, no PII. */
   markOpportunityCreated: (input: { opportunityId: string; contactId: string; draftId: string }, nowMs: number) => Promise<void>;
 };
@@ -166,6 +179,25 @@ export function createEventStore(db: FirestoreLike): EmpowerBumpEventStore {
         if (isAlreadyExists(error)) return false;
         throw error;
       }
+    },
+    async claimDelivery(draftId, nowMs) {
+      const ref = db.collection(EMPOWER_BUMP_EVENTS).doc(draftId);
+      const snap = await ref.get();
+      const data = snap.data();
+      if (!snap.exists || !data || data.status !== 'pending' || snap.updateTime === undefined) return null;
+      try {
+        await ref.update({ status: 'sending', deliveryClaimedAtMs: nowMs }, { lastUpdateTime: snap.updateTime });
+      } catch {
+        return null;
+      }
+      return data as unknown as EmpowerBumpEvent;
+    },
+    async markDelivery(draftId, update, nowMs) {
+      const patch: Record<string, unknown> = { status: update.status, deliveryUpdatedAtMs: nowMs };
+      if (update.reason) patch.deliveryReason = update.reason;
+      if (update.responseStatus !== undefined) patch.deliveryResponseStatus = update.responseStatus;
+      if (update.source) patch.deliverySource = update.source;
+      await db.collection(EMPOWER_BUMP_EVENTS).doc(draftId).update(patch);
     },
     async markOpportunityCreated({ opportunityId, contactId, draftId }, nowMs) {
       try {

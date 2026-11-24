@@ -9,6 +9,7 @@ import {
   type EmpowerBumpOptionalFields,
 } from '../app/utils/server/empowerBump.ts';
 import {
+  ESTIMATED_BAND_LABELS,
   ASSISTANCE_PROGRAMS,
   EMPOWER_CREATE_STAGE_ID,
   EMPOWER_PIPELINE_ID,
@@ -20,6 +21,12 @@ import {
 } from '../app/utils/server/empowerBumpContract.ts';
 import { EMPOWER_INCOME_LIMITS } from '../app/utils/server/empowerIncomeLimits.ts';
 import { createGhlClient, type FetchLike } from '../app/utils/server/empowerBumpGhl.ts';
+import {
+  createEmpowerBumpDiscordPoster,
+  maskWebhookUrl,
+  resolveEmpowerBumpWebhook,
+  type DiscordFetch,
+} from '../app/utils/server/empowerBumpDiscord.ts';
 import {
   EMPOWER_BUMP_EVENTS,
   EMPOWER_BUMP_RECEIPTS,
@@ -232,7 +239,21 @@ function harness(overrides: {
   servicesMissing?: boolean;
   optionalFields?: EmpowerBumpOptionalFields;
   now?: () => number;
+  /** DISCORD_EMPOWER_BUMP_WEBHOOK_URL */
+  overrideWebhook?: string;
+  /** DISCORD_NOTIFICATION_WEBHOOK_URL (scheduling manager env) */
+  schedulingEnvWebhook?: string;
+  /** adminSettings/global.notificationWebhook */
+  storedSchedulingWebhook?: unknown;
+  discordStatus?: number;
 } = {}) {
+  const discordPosts: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const discordFetch: DiscordFetch = async (url, init) => {
+    assert.equal(init.redirect, 'error');
+    discordPosts.push({ url, body: JSON.parse(init.body) });
+    const status = overrides.discordStatus ?? 204;
+    return { ok: status < 400, status };
+  };
   const ghl = new FakeGhl();
   const raydarDb = new FakeFirestore();
   const ghlDb = new FakeFirestore();
@@ -252,6 +273,14 @@ function harness(overrides: {
       receipts: createReceiptStore(raydarDb),
       events: createEventStore(ghlDb),
       optionalFields: overrides.optionalFields ?? {},
+      discord: {
+        resolveWebhook: () => resolveEmpowerBumpWebhook({
+          overrideValue: overrides.overrideWebhook,
+          schedulingEnvValue: overrides.schedulingEnvWebhook,
+          readStoredSchedulingWebhook: async () => overrides.storedSchedulingWebhook ?? null,
+        }),
+        post: createEmpowerBumpDiscordPoster(discordFetch),
+      },
     }),
     now: overrides.now ?? (() => clock),
     rateLimitStore,
@@ -262,6 +291,7 @@ function harness(overrides: {
     raydarDb,
     ghlDb,
     logs,
+    discordPosts,
     advance: (ms: number) => { clock += ms; },
     run: (b: unknown, opts: { authorization?: string | null; idempotencyKey?: string | null } = {}) => handleEmpowerBump({
       authorization: opts.authorization === undefined ? 'Bearer good-token' : opts.authorization,
@@ -996,5 +1026,195 @@ describe('QA change 3: opp-id marker for ghl-sync', () => {
     assert.equal(result.status, 502);
     assert.equal(t.raydarDb.docs.size, 0);
     assert.equal(t.ghlDb.docs.size, 0);
+  });
+});
+
+// ================================================================ ship round: scheduling-manager destination
+
+// Obvious fakes. Never real webhook URLs.
+const OVERRIDE_HOOK = 'https://discord.com/api/webhooks/111111111111111111/fakeOverrideTokenForTests';
+const SCHEDULING_ENV_HOOK = 'https://discord.com/api/webhooks/222222222222222222/fakeSchedulingEnvTokenForTests';
+const SCHEDULING_STORED_HOOK = 'https://discord.com/api/webhooks/333333333333333333/fakeSchedulingStoredTokenForTests';
+const FMA_LIKE_HOOK = 'https://discord.com/api/webhooks/444444444444444444/fakeFmaOpportunityTokenForTests';
+const ALL_HOOKS = [OVERRIDE_HOOK, SCHEDULING_ENV_HOOK, SCHEDULING_STORED_HOOK, FMA_LIKE_HOOK];
+
+function eventDoc(t: ReturnType<typeof harness>, draftId = 'draft-0001-abcdef') {
+  return t.ghlDb.docs.get(`${EMPOWER_BUMP_EVENTS}/${draftId}`)?.data;
+}
+
+function assertNoWebhookLeak(t: ReturnType<typeof harness>, result: unknown) {
+  const haystack = [JSON.stringify(result), ...t.logs, ...consoleLines, JSON.stringify([...t.ghlDb.docs.values()]), JSON.stringify([...t.raydarDb.docs.values()])].join('\n');
+  for (const hook of ALL_HOOKS) {
+    assert.equal(haystack.includes(hook), false, `webhook leaked (${maskWebhookUrl(hook)})`);
+    assert.equal(haystack.includes(new URL(hook).pathname.split('/')[4]), false, 'webhook token leaked');
+  }
+}
+
+describe('ship: Discord destination is the scheduling-manager webhook', () => {
+  it('setting only (adminSettings/global.notificationWebhook): posts one Empower Plus bump there', async () => {
+    const t = harness({ storedSchedulingWebhook: SCHEDULING_STORED_HOOK });
+    const result = await t.run(body());
+    assert.equal(result.status, 200);
+    assert.equal(t.discordPosts.length, 1);
+    assert.equal(t.discordPosts[0].url, SCHEDULING_STORED_HOOK);
+    assert.equal(eventDoc(t)?.status, 'sent');
+    assert.equal(eventDoc(t)?.deliverySource, 'scheduling_manager');
+    assert.ok(t.logs.some((l) => l.startsWith('discord_sent {"source":"scheduling_manager"}')));
+    assertNoWebhookLeak(t, result);
+  });
+
+  it('scheduling env (DISCORD_NOTIFICATION_WEBHOOK_URL) wins over the stored setting, same as the scheduling route', async () => {
+    const t = harness({ schedulingEnvWebhook: SCHEDULING_ENV_HOOK, storedSchedulingWebhook: SCHEDULING_STORED_HOOK });
+    await t.run(body());
+    assert.deepEqual(t.discordPosts.map((p) => p.url), [SCHEDULING_ENV_HOOK]);
+  });
+
+  it('override (DISCORD_EMPOWER_BUMP_WEBHOOK_URL) wins when set', async () => {
+    const t = harness({ overrideWebhook: OVERRIDE_HOOK, schedulingEnvWebhook: SCHEDULING_ENV_HOOK, storedSchedulingWebhook: SCHEDULING_STORED_HOOK });
+    const result = await t.run(body());
+    assert.deepEqual(t.discordPosts.map((p) => p.url), [OVERRIDE_HOOK]);
+    assert.equal(eventDoc(t)?.deliverySource, 'override');
+    assertNoWebhookLeak(t, result);
+  });
+
+  it('neither configured: 200, no post, event stays pending, status-only warning', async () => {
+    const t = harness();
+    const result = await t.run(body());
+    assert.equal(result.status, 200);
+    assert.equal(t.discordPosts.length, 0);
+    assert.equal(eventDoc(t)?.status, 'pending');
+    assert.equal(eventDoc(t)?.deliveryReason, 'not_configured');
+    assert.ok(t.logs.includes('discord_pending {"reason":"not_configured"}'));
+  });
+
+  it('invalid override: no post and no fallback to the scheduling webhook', async () => {
+    for (const bad of ['https://example.com/api/webhooks/111111111111111111/fakeToken0001', 'http://discord.com/api/webhooks/111111111111111111/fakeToken0001', 'not a url']) {
+      const t = harness({ overrideWebhook: bad, storedSchedulingWebhook: SCHEDULING_STORED_HOOK });
+      const result = await t.run(body());
+      assert.equal(result.status, 200);
+      assert.equal(t.discordPosts.length, 0, bad);
+      assert.equal(eventDoc(t)?.status, 'pending');
+      assert.equal(eventDoc(t)?.deliveryReason, 'invalid_override');
+    }
+  });
+
+  it('invalid stored scheduling webhook: no post, pending', async () => {
+    const t = harness({ storedSchedulingWebhook: 'https://hooks.slack.com/services/T000/B000/fakeSlackToken' });
+    await t.run(body());
+    assert.equal(t.discordPosts.length, 0);
+    assert.equal(eventDoc(t)?.deliveryReason, 'invalid_scheduling_webhook');
+  });
+
+  it('no fallback to the FMA/opportunity webhook, even if it is in the environment', async () => {
+    const before = process.env.DISCORD_OPPORTUNITY_WEBHOOK_URL;
+    process.env.DISCORD_OPPORTUNITY_WEBHOOK_URL = FMA_LIKE_HOOK;
+    try {
+      const t = harness();
+      await t.run(body());
+      assert.equal(t.discordPosts.length, 0);
+      assert.equal(eventDoc(t)?.status, 'pending');
+    } finally {
+      if (before === undefined) delete process.env.DISCORD_OPPORTUNITY_WEBHOOK_URL;
+      else process.env.DISCORD_OPPORTUNITY_WEBHOOK_URL = before;
+    }
+    const src = await import('node:fs').then((fs) => [
+      fs.readFileSync(new URL('../app/utils/server/empowerBumpDiscord.ts', import.meta.url), 'utf8'),
+      fs.readFileSync(new URL('../app/api/empower-bump/route.ts', import.meta.url), 'utf8'),
+    ].join('\n'));
+    assert.equal(/process\.env\.DISCORD_OPPORTUNITY_WEBHOOK_URL|process\.env\.DISCORD_WEBHOOK_URL/.test(src), false);
+  });
+
+  it('embed: title/content Empower Plus bump, agreed fields only, no phone/email/income, mentions off', async () => {
+    const t = harness({ storedSchedulingWebhook: SCHEDULING_STORED_HOOK });
+    await t.run(body({ name: 'Jane @everyone <@123> Neighbor', annualHouseholdIncome: 95000, assistanceNone: false, assistancePrograms: [ASSISTANCE_PROGRAMS[0]] }));
+    const posted = t.discordPosts[0].body as {
+      content: string;
+      allowed_mentions: unknown;
+      embeds: Array<{ title: string; fields: Array<{ name: string; value: string }>; footer: { text: string } }>;
+    };
+    assert.equal(posted.content, 'Empower Plus bump');
+    assert.equal(posted.embeds[0].title, 'Empower Plus bump');
+    assert.deepEqual(posted.allowed_mentions, { parse: [] });
+    assert.deepEqual(posted.embeds[0].fields.map((f) => f.name), ['Customer', 'Town', 'Rep', 'Household size', 'Estimated tier', 'Government assistance']);
+    const values = Object.fromEntries(posted.embeds[0].fields.map((f) => [f.name, f.value]));
+    assert.equal(values.Town, 'Buffalo');
+    assert.equal(values.Rep, 'Riley Rep');
+    assert.equal(values['Household size'], '3');
+    assert.equal(values['Estimated tier'], 'Tier 1 (est.)');
+    assert.equal(values['Government assistance'], 'Yes');
+    assert.equal(values.Customer.includes('@everyone') || values.Customer.includes('<@'), false);
+    assert.match(posted.embeds[0].footer.text, /^Opportunity ID: opp-/);
+    const text = JSON.stringify(posted);
+    assert.equal(text.includes('Opportunity Created'), false);
+    assert.equal(text.includes('0100123') || text.includes(EMAIL) || text.includes('95000') || text.includes('$'), false);
+  });
+
+  it('replay of the same draft posts nothing; a new draft on the same opp posts again', async () => {
+    const t = harness({ storedSchedulingWebhook: SCHEDULING_STORED_HOOK });
+    await t.run(body());
+    await t.run(body());
+    assert.equal(t.discordPosts.length, 1);
+    await t.run(body({ draftId: 'draft-0002-abcdef' }));
+    assert.equal(t.discordPosts.length, 2);
+  });
+
+  it('Discord failure: still 200, event marked error, not retried on replay', async () => {
+    const t = harness({ storedSchedulingWebhook: SCHEDULING_STORED_HOOK, discordStatus: 500 });
+    const result = await t.run(body());
+    assert.equal(result.status, 200);
+    assert.equal(eventDoc(t)?.status, 'error');
+    assert.equal(eventDoc(t)?.deliveryResponseStatus, 500);
+    await t.run(body());
+    assert.equal(t.discordPosts.length, 1);
+  });
+
+  it('flag off: no webhook resolution and no post', async () => {
+    const t = harness({ enabled: false, storedSchedulingWebhook: SCHEDULING_STORED_HOOK });
+    assert.equal((await t.run(body())).status, 503);
+    assert.equal(t.discordPosts.length, 0);
+  });
+
+  it('the poster refuses a non-Discord URL without a network call', async () => {
+    let calls = 0;
+    const post = createEmpowerBumpDiscordPoster(async () => { calls += 1; return { ok: true, status: 204 }; });
+    const res = await post('https://example.com/api/webhooks/123456789012345678/fakeTokenForTests', {} as never);
+    assert.deepEqual(res, { ok: false, status: 0 });
+    assert.equal(calls, 0);
+  });
+
+  it('maskWebhookUrl never includes the token', () => {
+    const masked = maskWebhookUrl(SCHEDULING_STORED_HOOK);
+    assert.equal(masked.includes('fakeSchedulingStoredTokenForTests'), false);
+    assert.equal(masked.includes('333333333333333333'), false);
+  });
+});
+
+describe('ship: GHL option strings match the live fields exactly', () => {
+  // Read-only GET of the live field definitions, Nov 23 2026 (location MMKRDviKggXzlcHQTnvZ):
+  // XjggiTCTlHa4ru4LPBO8 Empower Estimated Band (SINGLE_OPTIONS),
+  // yU1QwUWE8XkBX1mNuSr5 Empower Government Assistance (MULTIPLE_OPTIONS).
+  it('Empower Estimated Band options', () => {
+    assert.deepEqual(Object.values(ESTIMATED_BAND_LABELS), ['Tier 1 (est.)', 'Tier 3 (est.)', 'Comfort Home (est.)', 'Not sure']);
+  });
+
+  it('Empower Government Assistance options', () => {
+    assert.deepEqual([...ASSISTANCE_PROGRAMS], [
+      'HEAP (Home Energy Assistance Program)',
+      'SNAP (Supplemental Nutrition Assistance Program/Food Stamps)/SNAP NYC',
+      'SSI (Supplemental Security Income)',
+      'TANF (Temporary Assistance for Needy Families)',
+      'Weatherization Assistance Program',
+      'Public Assistance',
+    ]);
+  });
+
+  it('with the ship ids configured, the exact option strings are written', async () => {
+    const t = harness({ optionalFields: { estimatedBandFieldId: 'XjggiTCTlHa4ru4LPBO8', assistanceFieldId: 'yU1QwUWE8XkBX1mNuSr5' } });
+    await t.run(body({ assistanceNone: false, assistancePrograms: [ASSISTANCE_PROGRAMS[1], ASSISTANCE_PROGRAMS[5]] }));
+    assert.equal(fieldValue(t.ghl.contactWrite(), 'XjggiTCTlHa4ru4LPBO8'), 'Tier 1 (est.)');
+    assert.deepEqual(fieldValue(t.ghl.contactWrite(), 'yU1QwUWE8XkBX1mNuSr5'), [ASSISTANCE_PROGRAMS[1], ASSISTANCE_PROGRAMS[5]]);
+    const none = harness({ optionalFields: { assistanceFieldId: 'yU1QwUWE8XkBX1mNuSr5' } });
+    await none.run(body());
+    assert.deepEqual(fieldValue(none.ghl.contactWrite(), 'yU1QwUWE8XkBX1mNuSr5'), [], 'None clears the multi-select');
   });
 });

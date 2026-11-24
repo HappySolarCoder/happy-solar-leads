@@ -31,7 +31,12 @@ import {
   type GhlCustomFieldWrite,
   type GhlOpportunity,
 } from './empowerBumpGhl';
-import type { EmpowerBumpEventStore, EmpowerBumpOutcome, EmpowerBumpReceiptStore } from './empowerBumpStore';
+import type { EmpowerBumpEvent, EmpowerBumpEventStore, EmpowerBumpOutcome, EmpowerBumpReceiptStore } from './empowerBumpStore';
+import {
+  buildEmpowerBumpDiscordBody,
+  type EmpowerBumpDiscordBody,
+  type WebhookResolution,
+} from './empowerBumpDiscord';
 import { HttpError, requireApprovedUser, type RequireApprovedUserDeps } from './requireApprovedUser';
 
 export const EMPOWER_BUMP_LIMIT = 8;
@@ -64,6 +69,10 @@ export type EmpowerBumpDeps = RequireApprovedUserDeps & {
     receipts: EmpowerBumpReceiptStore;
     events: EmpowerBumpEventStore;
     optionalFields: EmpowerBumpOptionalFields;
+    discord: {
+      resolveWebhook: () => Promise<WebhookResolution>;
+      post: (url: string, body: EmpowerBumpDiscordBody) => Promise<{ ok: boolean; status: number }>;
+    };
   } | null;
   now?: () => number;
   rateLimitStore?: RateLimitStore;
@@ -380,7 +389,7 @@ export async function handleEmpowerBump(input: {
 
   // 6. Bump event for ghl-sync (Discord), then the receipt, then 200.
   try {
-    await services.events.createEvent({
+    const event: EmpowerBumpEvent = {
       draftId: req.draftId,
       uid: approved.uid,
       leadId: req.leadId,
@@ -395,7 +404,8 @@ export async function handleEmpowerBump(input: {
       estimatedTierLabel: estimatedTierLabel(resolved.band),
       assistanceYes: req.assistancePrograms.length > 0,
       actedAt: req.actedAt,
-    }, now);
+    };
+    await services.events.createEvent(event, now);
     await services.receipts.complete({
       draftId: req.draftId,
       uid: approved.uid,
@@ -414,6 +424,8 @@ export async function handleEmpowerBump(input: {
   }
 
   log('ok', { outcome: ghlResult.outcome, band: resolved.band ?? 'none', categorical: resolved.categorical });
+  // Discord never changes the response: GHL and the receipt are already done.
+  await deliverEmpowerBumpDiscord({ draftId: req.draftId, services, now, log });
   return {
     status: 200,
     body: {
@@ -424,4 +436,43 @@ export async function handleEmpowerBump(input: {
       replay: false,
     },
   };
+}
+
+/**
+ * One "Empower Plus bump" post per draft. Only a still-pending event is posted,
+ * claimed atomically, so a replay or a concurrent resend posts nothing. A
+ * failed post is marked error and never retried. No webhook: stays pending.
+ */
+export async function deliverEmpowerBumpDiscord(input: {
+  draftId: string;
+  services: NonNullable<ReturnType<EmpowerBumpDeps['getServices']>>;
+  now: number;
+  log: EmpowerBumpLogger;
+}): Promise<'sent' | 'pending' | 'error' | 'skipped'> {
+  const { draftId, services, now, log } = input;
+  try {
+    const destination = await services.discord.resolveWebhook();
+    if (destination.url === null) {
+      await services.events.markDelivery(draftId, { status: 'pending', reason: destination.reason }, now).catch(() => {});
+      log('discord_pending', { reason: destination.reason });
+      return 'pending';
+    }
+    const event = await services.events.claimDelivery(draftId, now);
+    if (!event) return 'skipped';
+    const posted = await services.discord.post(destination.url, buildEmpowerBumpDiscordBody(event, now));
+    await services.events.markDelivery(draftId, {
+      status: posted.ok ? 'sent' : 'error',
+      responseStatus: posted.status,
+      source: destination.source,
+    }, now).catch(() => {});
+    if (posted.ok) {
+      log('discord_sent', { source: destination.source });
+      return 'sent';
+    }
+    log('discord_failed', { source: destination.source, status: posted.status });
+    return 'error';
+  } catch {
+    log('discord_failed', { status: 0 });
+    return 'error';
+  }
 }

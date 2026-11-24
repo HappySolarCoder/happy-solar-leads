@@ -3,6 +3,7 @@ import { adminAuth, adminDb } from '@/app/utils/firebase-admin';
 import { getGhlDb } from '@/app/utils/ghl-firestore';
 import { handleEmpowerBump, isEmpowerBumpEnabled } from '@/app/utils/server/empowerBump';
 import { createGhlClient } from '@/app/utils/server/empowerBumpGhl';
+import { createEmpowerBumpDiscordPoster, resolveEmpowerBumpWebhook } from '@/app/utils/server/empowerBumpDiscord';
 import { createEventStore, createReceiptStore, type FirestoreLike } from '@/app/utils/server/empowerBumpStore';
 
 export const runtime = 'nodejs';
@@ -35,6 +36,19 @@ function services() {
       assistanceFieldId: envId('EMPOWER_BUMP_GHL_ASSISTANCE_FIELD_ID'),
       tag: tag && tag.length <= 40 ? tag : undefined,
     },
+    discord: {
+      // Override (preview/test) wins; else the scheduling-manager webhook, read the
+      // same way as POST /api/notifications/discord. Never the FMA/opportunity webhook.
+      resolveWebhook: () => resolveEmpowerBumpWebhook({
+        overrideValue: process.env.DISCORD_EMPOWER_BUMP_WEBHOOK_URL,
+        schedulingEnvValue: process.env.DISCORD_NOTIFICATION_WEBHOOK_URL,
+        readStoredSchedulingWebhook: async () => {
+          const snap = await adminDb().collection('adminSettings').doc('global').get();
+          return snap.exists ? snap.get('notificationWebhook') : null;
+        },
+      }),
+      post: createEmpowerBumpDiscordPoster((url, init) => fetch(url, init)),
+    },
   };
 }
 
@@ -66,7 +80,10 @@ export async function POST(request: NextRequest) {
         },
         getServices: services,
         // Event names and counts only. Never the body, token, or GHL payloads.
-        log: (event, meta) => console.info(`[empower-bump] ${event}`, meta),
+        log: (event, meta) => {
+          const warn = event.endsWith('_failed') || event === 'discord_pending' || event === 'conflict';
+          (warn ? console.warn : console.info)(`[empower-bump] ${event}`, meta);
+        },
       },
     });
 
