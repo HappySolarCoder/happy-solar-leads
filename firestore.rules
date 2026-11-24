@@ -473,10 +473,27 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/territories/$(territoryId)).data.userId == uid();
     }
 
+    // Notes blank guard for direct client writes (Raydar 14.18 owner hole).
+    // A client write may not turn non-blank notes into '', whitespace, or null.
+    // Deliberate clears go through /api/field/dispo with clearNotes:true; that
+    // route writes with the Admin SDK, so these rules do not apply to it.
+    // Allowed: notes key removed (deleteField(), the explicit direct clear),
+    // old notes missing, null, or blank (editors that resend notes:'' on a lead
+    // with no notes), or new notes that are non-blank text (includes unchanged).
+    // No let bindings: in the emulator a let version pushed the #171 budget
+    // rows (manager/territory knocks) past the shared 1000-expression limit.
+    function notesNotBlanked() {
+      return !('notes' in request.resource.data)
+        || !(resource.data.get('notes', '') is string)
+        || resource.data.get('notes', '').trim() == ''
+        || (request.resource.data.notes is string && request.resource.data.notes.trim() != '');
+    }
+
     // Approved owners, including the demo, may edit a lead they already own
     // without changing claim, assignment, or territory.
     function ownerLeadUpdate() {
       return (leadIsClaimedByMe() || leadIsAssignedToMe() || leadIsManualByMe())
+        && notesNotBlanked()
         && unchangedOrMissing("claimedBy")
         && unchangedOrMissing("assignedTo")
         && unchangedOrMissing("territoryId")
