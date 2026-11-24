@@ -44,7 +44,6 @@ jobs:
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_PATH: ${{ runner.temp }}/asc/AuthKey.p8
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
@@ -75,7 +74,9 @@ jobs:
             value="${line#*=}"
             if [ -n "$value" ] && [ "$value" != "$line" ]; then echo "::add-mask::$value"; fi
           done <<< "$RAYDAR_MOBILE_ENV_LOCAL"
-          mkdir -p "$(dirname "$ASC_KEY_PATH")"
+          ASC_KEY_PATH="$RUNNER_TEMP/asc/AuthKey.p8"
+          echo "ASC_KEY_PATH=$ASC_KEY_PATH" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/asc"
           printf '%s\n' "$ASC_KEY_P8" > "$ASC_KEY_PATH"
           chmod 600 "$ASC_KEY_PATH"
           printf '%s\n' "$RAYDAR_MOBILE_ENV_LOCAL" > .env.local
@@ -170,4 +171,4 @@ jobs:
 
       - name: Clean up secrets
         if: always()
-        run: rm -rf "$(dirname "$ASC_KEY_PATH")" .env.local "$RUNNER_TEMP/ExportOptions.plist"
+        run: rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/ExportOptions.plist" .env.local
