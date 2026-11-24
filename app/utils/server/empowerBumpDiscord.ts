@@ -15,6 +15,18 @@ import { isDiscordWebhookUrl, resolveDiscordWebhookUrl } from './discordNotifica
 import { neutralizeMentions } from './empowerBumpContract';
 import type { EmpowerBumpEvent } from './empowerBumpStore';
 
+/** Contact fields for this Discord post only. Never written onto the event doc. */
+export type EmpowerBumpDiscordDetails = {
+  phone?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  /** Form bracket/tier label, already formatted. Not a raw dollar income. */
+  incomeSelection?: string;
+};
+
 export const EMPOWER_BUMP_TITLE = 'Empower Plus bump';
 export const EMPOWER_BUMP_COLOR = 0x2eb67d;
 const ESTIMATED_TIER_LABELS = new Set(['Tier 1 (est.)', 'Tier 3 (est.)', 'Comfort Home (est.)', 'Not sure']);
@@ -72,9 +84,25 @@ export type EmpowerBumpDiscordBody = {
   allowed_mentions: { parse: string[] };
 };
 
-/** Agreed fields only. No phone, email, address, or dollars. */
-export function buildEmpowerBumpDiscordBody(event: EmpowerBumpEvent, nowMs: number): EmpowerBumpDiscordBody {
-  const tier = ESTIMATED_TIER_LABELS.has(event.estimatedTierLabel) ? event.estimatedTierLabel : 'Not sure';
+/** Scheduling-manager post. Evan asked (via Charles, Nov 24 2026) that THIS post include address, phone, email, and the household income selection. Event docs and logs stay PII-free. */
+export function formatDiscordAddress(details?: EmpowerBumpDiscordDetails): string {
+  if (!details) return '';
+  const street = typeof details.address === 'string' ? details.address.trim() : '';
+  const city = typeof details.city === 'string' ? details.city.trim() : '';
+  const state = typeof details.state === 'string' ? details.state.trim() : '';
+  const zip = typeof details.zip === 'string' ? details.zip.trim() : '';
+  if (!street && !city && !zip) return '';
+  const rest = [city, state, zip].filter(Boolean).join(' ');
+  return [street, rest].filter(Boolean).join(', ');
+}
+
+export function buildEmpowerBumpDiscordBody(
+  event: EmpowerBumpEvent,
+  nowMs: number,
+  details: EmpowerBumpDiscordDetails = {},
+): EmpowerBumpDiscordBody {
+  const fallbackTier = ESTIMATED_TIER_LABELS.has(event.estimatedTierLabel) ? event.estimatedTierLabel : 'Not sure';
+  const income = clean(details.incomeSelection, 160, fallbackTier);
   const household = Number.isInteger(event.householdSize) && event.householdSize >= 1 && event.householdSize <= 10
     ? String(event.householdSize)
     : 'Unknown';
@@ -88,8 +116,11 @@ export function buildEmpowerBumpDiscordBody(event: EmpowerBumpEvent, nowMs: numb
         { name: 'Town', value: clean(event.town, 80, 'Unknown'), inline: true },
         { name: 'Rep', value: clean(event.repName, 80, 'Unknown Rep'), inline: true },
         { name: 'Household size', value: household, inline: true },
-        { name: 'Estimated tier', value: tier, inline: true },
+        { name: 'Household income selection', value: income, inline: true },
         { name: 'Government assistance', value: event.assistanceYes === true ? 'Yes' : 'No', inline: true },
+        { name: 'Address', value: clean(formatDiscordAddress(details), 200, 'Not provided'), inline: false },
+        { name: 'Phone', value: clean(details.phone, 40, 'Not provided'), inline: true },
+        { name: 'Email', value: clean(details.email, 120, 'Not provided'), inline: true },
       ],
       footer: { text: `Opportunity ID: ${clean(event.opportunityId, 64, '')}` },
       timestamp: new Date(nowMs).toISOString(),

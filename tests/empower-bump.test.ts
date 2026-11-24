@@ -16,6 +16,7 @@ import {
   GHL_FIELDS,
   bandForIncome,
   incomeLimitsFor,
+  incomeSelectionLabel,
   parseEmpowerBumpBody,
   resolveBand,
 } from '../app/utils/server/empowerBumpContract.ts';
@@ -508,6 +509,23 @@ describe('empower bump: band math (Charles override: Comfort Home is strictly ab
     assert.deepEqual(incomeLimitsFor('Onondaga', 1), { tier1Limit: 43500, tier3Cap: 58000 });
     assert.deepEqual(incomeLimitsFor('Erie', 4), { tier1Limit: 80160, tier3Cap: 106880 });
     assert.equal(incomeLimitsFor('Erie', 11), null);
+  });
+
+  it('incomeSelectionLabel uses the form bracket, including published dollar ranges, never a raw income', () => {
+    assert.equal(incomeSelectionLabel({ band: 'not_sure', county: 'Erie', householdSize: 1 }), 'Not sure');
+    assert.equal(incomeSelectionLabel({ band: 'tier1' }), 'Tier 1 (est.)');
+    assert.equal(
+      incomeSelectionLabel({ band: 'tier1', county: 'Erie', householdSize: 1 }),
+      'Tier 1 (est.) — at or under $42,450',
+    );
+    assert.equal(
+      incomeSelectionLabel({ band: 'tier3', county: 'Erie', householdSize: 1 }),
+      'Tier 3 (est.) — above $42,450 and at or under $56,600',
+    );
+    assert.equal(
+      incomeSelectionLabel({ band: 'comfort_home', county: 'Erie', householdSize: 1 }),
+      'Comfort Home (est.) — above $56,600',
+    );
   });
 
   it('an exact typed income is mapped server-side; exactly at M stays Tier 3', async () => {
@@ -1124,7 +1142,7 @@ describe('ship: Discord destination is the scheduling-manager webhook', () => {
     assert.equal(/process\.env\.DISCORD_OPPORTUNITY_WEBHOOK_URL|process\.env\.DISCORD_WEBHOOK_URL/.test(src), false);
   });
 
-  it('embed: title/content Empower Plus bump, agreed fields only, no phone/email/income, mentions off', async () => {
+  it('embed: title/content Empower Plus bump, includes address/phone/email and income selection, no raw income, mentions off', async () => {
     const t = harness({ storedSchedulingWebhook: SCHEDULING_STORED_HOOK });
     await t.run(body({ name: 'Jane @everyone <@123> Neighbor', annualHouseholdIncome: 95000, assistanceNone: false, assistancePrograms: [ASSISTANCE_PROGRAMS[0]] }));
     const posted = t.discordPosts[0].body as {
@@ -1135,18 +1153,41 @@ describe('ship: Discord destination is the scheduling-manager webhook', () => {
     assert.equal(posted.content, 'Empower Plus bump');
     assert.equal(posted.embeds[0].title, 'Empower Plus bump');
     assert.deepEqual(posted.allowed_mentions, { parse: [] });
-    assert.deepEqual(posted.embeds[0].fields.map((f) => f.name), ['Customer', 'Town', 'Rep', 'Household size', 'Estimated tier', 'Government assistance']);
+    assert.deepEqual(posted.embeds[0].fields.map((f) => f.name), [
+      'Customer', 'Town', 'Rep', 'Household size', 'Household income selection', 'Government assistance',
+      'Address', 'Phone', 'Email',
+    ]);
     const values = Object.fromEntries(posted.embeds[0].fields.map((f) => [f.name, f.value]));
+    const expectedIncome = incomeSelectionLabel({ band: 'tier1', county: 'Erie', householdSize: 3 });
     assert.equal(values.Town, 'Buffalo');
     assert.equal(values.Rep, 'Riley Rep');
     assert.equal(values['Household size'], '3');
-    assert.equal(values['Estimated tier'], 'Tier 1 (est.)');
+    assert.equal(values['Household income selection'], expectedIncome);
+    assert.match(expectedIncome, /^Tier 1 \(est\.\) — at or under \$/);
     assert.equal(values['Government assistance'], 'Yes');
+    assert.equal(values.Address, '123 Main St, Buffalo NY 14201');
+    assert.equal(values.Phone, PHONE);
+    assert.equal(values.Email, EMAIL);
     assert.equal(values.Customer.includes('@everyone') || values.Customer.includes('<@'), false);
     assert.match(posted.embeds[0].footer.text, /^Opportunity ID: opp-/);
     const text = JSON.stringify(posted);
     assert.equal(text.includes('Opportunity Created'), false);
-    assert.equal(text.includes('0100123') || text.includes(EMAIL) || text.includes('95000') || text.includes('$'), false);
+    assert.equal(text.includes('95000') || text.includes('95,000'), false, 'no raw annual income');
+    assert.equal(text.includes(PHONE), true);
+    assert.equal(text.includes(EMAIL), true);
+    assert.equal(text.includes('123 Main St'), true);
+  });
+
+  it('a request missing email and address still posts, with those fields marked not provided', async () => {
+    const t = harness({ storedSchedulingWebhook: SCHEDULING_STORED_HOOK });
+    const result = await t.run(body({ email: undefined, address: undefined, city: undefined, zip: undefined, town: 'Buffalo' }));
+    assert.equal(result.status, 200);
+    const posted = t.discordPosts[0].body as { embeds: Array<{ fields: Array<{ name: string; value: string }> }> };
+    const values = Object.fromEntries(posted.embeds[0].fields.map((f) => [f.name, f.value]));
+    assert.equal(values.Address, 'Not provided');
+    assert.equal(values.Email, 'Not provided');
+    assert.equal(values.Phone, PHONE);
+    assert.equal(values.Town, 'Buffalo');
   });
 
   it('replay of the same draft posts nothing; a new draft on the same opp posts again', async () => {
