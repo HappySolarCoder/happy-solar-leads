@@ -40,6 +40,11 @@ export type HomeTile = {
 export type View = ViewportBounds & { zoom: number; polygons?: PinScope };
 const str = (x: unknown, max = 200) =>
   typeof x === "string" ? x.slice(0, max) : "";
+const zipText = (x: unknown, max = 15) => {
+  if (typeof x === "string") return x.slice(0, max);
+  if (typeof x === "number" && Number.isFinite(x)) return String(Math.trunc(x)).slice(0, max);
+  return "";
+};
 export function parseHomeowner(
   id: string,
   x: Record<string, unknown>,
@@ -67,7 +72,7 @@ export function parseHomeowner(
       ? { suspectedRenter: x.suspectedRenter }
       : {}),
     mailingCity: str(x.mailingCity),
-    mailingZip: str(x.mailingZip, 15),
+    mailingZip: zipText(x.mailingZip, 15),
     propertyType: str(x.propertyType),
     ...(typeof x.marketValue === "number" &&
     Number.isFinite(x.marketValue) &&

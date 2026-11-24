@@ -8,9 +8,6 @@ export const EMPOWER_MAX_HOUSEHOLD = 10;
 
 export const ESTIMATE_NOTE = "Estimated, final tier set from income documents";
 
-export const HOUSEHOLD_LIMIT_HELPER =
-  "NYSERDA has not published EmPower+ income limits for households of 11 or more. If more than 10 people live there, leave this at 10 and pick Not sure for the band, unless a government-assistance program applies (that still estimates Tier 1).";
-
 export const ASSISTANCE_HELPER =
   "A household member over 18 who receives one of these, with an award letter or benefit statement from the last 12 months, is estimated as Tier 1. Final tier is set from income documents.";
 
@@ -264,7 +261,7 @@ export interface EmpowerBumpPayload {
   leadId: string;
   name: string;
   phone: string;
-  email?: string;
+  email: string;
   address: string;
   city: string;
   state: string;
@@ -304,18 +301,100 @@ export type EmpowerBumpBuild =
   | { ok: true; payload: EmpowerBumpPayload }
   | { ok: false; message: string };
 
-/** Name and phone written onto the local door. A blank email is left off so it does not wipe one. */
+/** Name, phone, and email written onto the local door. Email is required on a bump. */
 export function empowerContactPatch(payload: Pick<EmpowerBumpPayload, "name" | "phone" | "email">): {
   name: string;
   phone: string;
-  email?: string;
+  email: string;
 } {
-  const patch: { name: string; phone: string; email?: string } = {
-    name: payload.name,
-    phone: payload.phone,
-  };
-  if (payload.email) patch.email = payload.email;
-  return patch;
+  return { name: payload.name, phone: payload.phone, email: payload.email };
+}
+
+/** Same liberal check as the office route: something@domain.tld, no spaces, up to 120 characters. */
+export const EMPOWER_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
+
+export function normalizeEmpowerEmail(value: unknown): string {
+  return cleanText(value);
+}
+
+export function isValidEmpowerEmail(value: unknown): boolean {
+  const email = normalizeEmpowerEmail(value);
+  return email.length > 0 && email.length <= 120 && EMPOWER_EMAIL_PATTERN.test(email);
+}
+
+/** States whose USPS ZIP prefixes start with 0, so a short numeric value lost leading zeros. NY starts with 1 — do not pad those. */
+export const ZERO_PREFIX_ZIP_STATES = new Set(["CT", "MA", "ME", "NH", "NJ", "RI", "VT", "PR", "VI"]);
+
+function stateCode(value: unknown): string {
+  const text = cleanText(value).toUpperCase();
+  return /^[A-Z]{2}$/.test(text) ? text : "";
+}
+
+/** Normalize a ZIP or ZIP+4 into the office format (##### or #####-####). Empty if it cannot be used. */
+export function normalizeEmpowerZip(value: unknown, state?: unknown): string {
+  const raw = typeof value === "number" && Number.isFinite(value)
+    ? String(Math.trunc(value))
+    : cleanText(value).replace(/\s+/g, "");
+  if (!raw) return "";
+  if (/^\d{5}-\d{4}$/.test(raw)) return raw;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 9 && /^\d{9}$/.test(raw.replace(/-/g, ""))) {
+    return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+  }
+  if (digits.length === 5) return digits;
+  if (digits.length > 0 && digits.length < 5 && ZERO_PREFIX_ZIP_STATES.has(stateCode(state))) {
+    return digits.padStart(5, "0");
+  }
+  return "";
+}
+
+/** Pull a ZIP from an address or city/state line, avoiding a leading house number. */
+export function zipFromText(value: unknown, state?: unknown): string {
+  const text = typeof value === "number" && Number.isFinite(value) ? String(value) : String(value ?? "");
+  if (!text) return "";
+  const afterState = text.match(/\b([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?|\d{9})\b/);
+  if (afterState) return normalizeEmpowerZip(afterState[2], afterState[1]);
+  const atEnd = text.match(/(?:^|[\s,])(\d{5}(?:-\d{4})?|\d{9})\s*$/);
+  if (atEnd) return normalizeEmpowerZip(atEnd[1], state);
+  return "";
+}
+
+export type EmpowerZipSource = {
+  zip?: unknown;
+  postalCode?: unknown;
+  zipCode?: unknown;
+  zipcode?: unknown;
+  address?: unknown;
+  city?: unknown;
+  state?: unknown;
+  homeowner?: {
+    mailingZip?: unknown;
+    address?: unknown;
+    addressNorm?: unknown;
+    state?: unknown;
+  } | null;
+};
+
+/**
+ * ZIP for a bump, from lead or property data. Manual pins usually have lead.zip;
+ * unvisited homeowner pins keep lead.zip empty and store mailingZip / a ZIP in the address.
+ */
+export function resolveEmpowerZip(input: EmpowerZipSource): string {
+  const state = input.state ?? input.homeowner?.state;
+  for (const field of [input.zip, input.postalCode, input.zipCode, input.zipcode]) {
+    const zip = normalizeEmpowerZip(field, state);
+    if (zip) return zip;
+  }
+  for (const text of [
+    input.address,
+    [input.address, input.city, input.state].filter((part) => part != null && String(part).trim() !== "").join(", "),
+    input.homeowner?.address,
+    input.homeowner?.addressNorm,
+  ]) {
+    const zip = zipFromText(text, state);
+    if (zip) return zip;
+  }
+  return normalizeEmpowerZip(input.homeowner?.mailingZip, state);
 }
 
 export function buildEmpowerBumpPayload(input: EmpowerBumpDraftInput, table = incomeTable()): EmpowerBumpBuild {
@@ -325,13 +404,12 @@ export function buildEmpowerBumpPayload(input: EmpowerBumpDraftInput, table = in
   const leadId = cleanText(input.leadId);
   const name = cleanText(input.name);
   const phone = cleanText(input.phone);
-  const email = cleanText(input.email);
+  const email = normalizeEmpowerEmail(input.email);
   const address = cleanText(input.address);
   const city = cleanText(input.city);
   const state = cleanText(input.state).toUpperCase();
   const town = cleanText(input.town);
-  const zipStripped = cleanText(input.zip).replace(/\s+/g, "");
-  const zip = /^\d{9}$/.test(zipStripped) ? `${zipStripped.slice(0, 5)}-${zipStripped.slice(5)}` : zipStripped;
+  const zip = normalizeEmpowerZip(input.zip, state);
   const county = canonicalCounty(input.county);
   const householdSize = input.householdSize;
   const programs = normalizePrograms(input.assistancePrograms);
@@ -344,7 +422,7 @@ export function buildEmpowerBumpPayload(input: EmpowerBumpDraftInput, table = in
   if (name.length < 1 || name.length > 120) problems.push("Name (1–120 characters)");
   const phoneDigits = phone.replace(/\D/g, "");
   if (phoneDigits.length < 10 || phone.length > 40) problems.push("Phone (at least 10 digits)");
-  if (email.length > 120) problems.push("Email (120 characters or fewer)");
+  if (!isValidEmpowerEmail(email)) problems.push("Email (a real address, like name@domain.com)");
   if (address.length < 1 || address.length > 200) problems.push("Street address");
   if (city.length < 1 || city.length > 80) problems.push("City");
   if (!/^[A-Z]{2}$/.test(state)) problems.push("State (2 letters)");
@@ -378,6 +456,7 @@ export function buildEmpowerBumpPayload(input: EmpowerBumpDraftInput, table = in
     leadId,
     name,
     phone,
+    email,
     address,
     city,
     state,
@@ -386,7 +465,6 @@ export function buildEmpowerBumpPayload(input: EmpowerBumpDraftInput, table = in
     estimatedBand: selected,
     assistanceNone: assistanceNone && programs !== "invalid" && programs.length === 0,
   };
-  if (email) payload.email = email;
   if (town) payload.town = town;
   if (county) payload.county = county;
   if (programs !== "invalid" && programs.length > 0) payload.assistancePrograms = programs;

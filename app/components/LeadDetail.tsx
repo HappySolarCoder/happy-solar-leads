@@ -1374,6 +1374,7 @@ function LeadDetailContent({ lead, relatedLeads, currentUser, onClose, onUpdate,
       {showEmpowerBump && currentUser && canOfferEmpowerBump({ role: currentUser.role, contactRedacted }) && (
         <EmpowerBumpForm
           lead={lead}
+          homeowner={homeowner || lead.homeowner}
           town={homeowner?.municipality}
           onClose={() => setShowEmpowerBump(false)}
           onSubmit={handleEmpowerSubmit}
