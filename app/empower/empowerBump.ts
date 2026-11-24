@@ -22,7 +22,9 @@ export const EMPOWER_MIN_RETRY_MS = 60_000;
 
 const LEGACY_STORAGE_KEY = "raydar.empowerBump.queue.v1";
 const MAX_DRAFTS = 40;
-const DEFAULT_TIMEOUT_MS = 20_000;
+export const EMPOWER_REQUEST_TIMEOUT_MS = 20_000;
+export const EMPOWER_TOKEN_TIMEOUT_MS = 8_000;
+const DEFAULT_TIMEOUT_MS = EMPOWER_REQUEST_TIMEOUT_MS;
 const MAX_RETRY_AFTER_SEC = 86_400;
 
 type Attempted = { attempted: boolean };
@@ -45,6 +47,8 @@ export interface EmpowerSendDeps {
   online?: () => boolean;
   /** Clock for Retry-After and the 404/503 backoff. */
   now?: () => number;
+  /** Bound for getToken. The office POST timeout is separate. */
+  tokenTimeoutMs?: number;
 }
 
 type DraftState = "queued" | "sent" | "ambiguous" | "rejected";
@@ -436,6 +440,25 @@ export async function deliverEmpowerBump(
   }
 }
 
+async function readToken(
+  getToken: (forceRefresh: boolean) => Promise<string>,
+  forceRefresh: boolean,
+  timeoutMs: number,
+): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const token = await Promise.race([
+      getToken(forceRefresh),
+      new Promise<string>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("token-timeout")), timeoutMs);
+      }),
+    ]);
+    return token;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function sendEmpowerBump(
   payload: EmpowerBumpPayload,
   deps: EmpowerSendDeps,
@@ -455,10 +478,11 @@ async function sendEmpowerBump(
 
   const post = deps.post ?? apiFetch;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const tokenTimeoutMs = deps.tokenTimeoutMs ?? EMPOWER_TOKEN_TIMEOUT_MS;
 
   let token: string;
   try {
-    token = await deps.getToken(false);
+    token = await readToken(deps.getToken, false, tokenTimeoutMs);
   } catch {
     return signin(false);
   }
@@ -470,7 +494,7 @@ async function sendEmpowerBump(
   if (first.kind === "response" && first.response.status === 401) {
     let refreshed: string;
     try {
-      refreshed = await deps.getToken(true);
+      refreshed = await readToken(deps.getToken, true, tokenTimeoutMs);
     } catch {
       const outcome = signin(true);
       remember(storage, deps.uid, payload, outcome);
