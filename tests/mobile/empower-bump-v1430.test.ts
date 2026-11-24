@@ -23,16 +23,16 @@ function outcome(status: EmpowerOutcome["status"], attempted = true): EmpowerOut
   return { status, message: status, attempted };
 }
 
-test("release 14.31 build 176 is the same number in the app, iOS, and Android", () => {
+test("release 14.31 build 177 is the same number in the app, iOS, and Android", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
   assert.equal(release.version, "14.31");
-  assert.equal(release.build, 176);
+  assert.equal(release.build, 177);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
   assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((m) => m[1]), ["14.31", "14.31"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((m) => m[1]), ["176", "176"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((m) => m[1]), ["177", "177"]);
   const gradle = read("android/app/build.gradle");
   assert.match(gradle, /versionName "14\.31"/);
-  assert.match(gradle, /versionCode 176\b/);
+  assert.match(gradle, /versionCode 177\b/);
 });
 
 test("the client already sends address, phone, email, estimatedBand, county and household size, and does not add a new income key", () => {

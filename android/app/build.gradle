@@ -7,7 +7,7 @@ android {
         applicationId "com.happyslr.raydar.next"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 176
+        versionCode 177
         versionName "14.31"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

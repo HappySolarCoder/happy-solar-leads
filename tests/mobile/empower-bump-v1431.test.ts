@@ -51,16 +51,16 @@ function payload(patch: Partial<EmpowerBumpPayload> = {}): EmpowerBumpPayload {
   };
 }
 
-test("release 14.31 build 176 is the same number in the app, iOS, and Android", () => {
+test("release 14.31 build 177 is the same number in the app, iOS, and Android", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
   assert.equal(release.version, "14.31");
-  assert.equal(release.build, 176);
+  assert.equal(release.build, 177);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
   assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((m) => m[1]), ["14.31", "14.31"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((m) => m[1]), ["176", "176"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((m) => m[1]), ["177", "177"]);
   const gradle = read("android/app/build.gradle");
   assert.match(gradle, /versionName "14\.31"/);
-  assert.match(gradle, /versionCode 176\b/);
+  assert.match(gradle, /versionCode 177\b/);
 });
 
 test("the form closes only when the office call was attempted, and also after a queued sign-in draft", () => {
@@ -73,6 +73,7 @@ test("the form closes only when the office call was attempted, and also after a 
   const conflict: EmpowerOutcome = { status: "invalid", message: "This draft is already in flight.", attempted: false, conflict: true };
   const tokenHang: EmpowerOutcome = { status: "signin", message: EMPOWER_SIGN_IN_MESSAGE, attempted: false };
   const after401: EmpowerOutcome = { status: "signin", message: EMPOWER_SIGN_IN_MESSAGE, attempted: true };
+  const first403: EmpowerOutcome = { status: "signin", message: EMPOWER_SIGN_IN_MESSAGE, attempted: true };
 
   assert.equal(formClosesAfterBump(sent), true);
   assert.equal(callButtonFollowsBump(sent), true);
@@ -95,7 +96,9 @@ test("the form closes only when the office call was attempted, and also after a 
   // Queued sign-in drafts keep today's close + door notice; the draft still flushes after auth.
   assert.equal(formClosesAfterBump(tokenHang), true);
   assert.equal(formClosesAfterBump(after401), true);
+  assert.equal(formClosesAfterBump(first403), true);
   assert.equal(callButtonFollowsBump(tokenHang), false);
+  assert.equal(callButtonFollowsBump(first403), false);
 });
 
 test("a 400 or 409 rejection is terminal, does not close the form, and does not auto-retry", async () => {
@@ -131,6 +134,9 @@ test("a 400 or 409 rejection is terminal, does not close the form, and does not 
   assert.equal(again.status, "invalid");
   assert.equal(again.attempted, false);
   assert.equal(again.status === "invalid" && again.message, "Invalid ZIP code.");
+  assert.equal(again.status === "invalid" && again.fresh, undefined);
+  assert.equal(again.status === "invalid" && again.replayed, true);
+  assert.equal(rejected.status === "invalid" && rejected.fresh, true);
 
   const conflictStore = memoryEmpowerStorage();
   let conflictPosts = 0;
@@ -148,7 +154,7 @@ test("a 400 or 409 rejection is terminal, does not close the form, and does not 
   assert.equal(conflict.status === "invalid" && conflict.conflict, true);
   assert.equal(formClosesAfterBump(conflict), false);
   assert.equal(storedEmpowerState("draft-409", conflictStore, "rep-1"), "rejected");
-  await deliverEmpowerBump(payload({ draftId: "draft-409" }), {
+  const replay = await deliverEmpowerBump(payload({ draftId: "draft-409" }), {
     uid: "rep-1",
     storage: conflictStore,
     getToken: async () => "token",
@@ -157,6 +163,22 @@ test("a 400 or 409 rejection is terminal, does not close the form, and does not 
       return jsonResponse(200);
     },
   });
+  assert.equal(replay.status, "invalid");
+  assert.equal(replay.attempted, false);
+  assert.equal(replay.status === "invalid" && replay.conflict, true);
+  assert.equal(replay.status === "invalid" && replay.replayed, true);
+  assert.equal(replay.status === "invalid" && replay.fresh, undefined);
+  const third = await deliverEmpowerBump(payload({ draftId: "draft-409" }), {
+    uid: "rep-1",
+    storage: conflictStore,
+    getToken: async () => "token",
+    post: async () => {
+      conflictPosts += 1;
+      return jsonResponse(200);
+    },
+  });
+  assert.equal(third.status === "invalid" && third.conflict, true);
+  assert.equal(third.status === "invalid" && third.replayed, true);
   assert.equal(conflictPosts, 1);
 });
 
@@ -212,6 +234,29 @@ test("queued 404/503/429 and an ambiguous timeout still close the form; a token 
   assert.equal(storedEmpowerState("draft-token", tokenStore, "rep-1"), "queued");
 });
 
+test("a first 403 is a terminal sign-in, queued for auth flush, and does not mint or stay invalid", async () => {
+  const storage = memoryEmpowerStorage();
+  let posts = 0;
+  const first = await deliverEmpowerBump(payload({ draftId: "draft-403-first" }), {
+    uid: "rep-1",
+    storage,
+    getToken: async (force) => {
+      if (force) throw new Error("must not refresh on a first 403");
+      return "token";
+    },
+    post: async () => {
+      posts += 1;
+      return jsonResponse(403, { error: "Forbidden." });
+    },
+  });
+  assert.equal(first.status, "signin");
+  assert.equal(first.attempted, true);
+  assert.equal(formClosesAfterBump(first), true);
+  assert.equal(callButtonFollowsBump(first), false);
+  assert.equal(storedEmpowerState("draft-403-first", storage, "rep-1"), "queued");
+  assert.equal(posts, 1);
+});
+
 test("LeadDetail closes the bump form only through formClosesAfterBump, and the form shows inline errors when it stays open", () => {
   const detail = read("app/components/LeadDetail.tsx");
   const submit = detail.slice(detail.indexOf("const handleEmpowerSubmit"), detail.indexOf("// Handle saving notes"));
@@ -223,7 +268,7 @@ test("LeadDetail closes the bump form only through formClosesAfterBump, and the 
   const form = read("app/components/EmpowerBumpForm.tsx");
   assert.match(form, /if \(!mounted\.current \|\| outcome\.attempted\) return;/);
   assert.match(form, /setError\(empowerNotice\(outcome\)\)/);
-  assert.match(form, /outcome\.status === "invalid" && !outcome\.conflict/);
+  assert.match(form, /outcome\.status === "invalid" && outcome\.fresh/);
   assert.match(form, /draftId\.current = crypto\.randomUUID\(\)/);
 });
 
@@ -276,7 +321,7 @@ test("a 400 rejection keeps the typed fields and shows the server error inline",
       onClose: () => {},
       onSubmit: async (body: EmpowerBumpPayload) => {
         drafts.push(body.draftId);
-        return { status: "invalid", message: "Invalid ZIP code.", attempted: false } satisfies EmpowerOutcome;
+        return { status: "invalid", message: "Invalid ZIP code.", attempted: false, fresh: true } satisfies EmpowerOutcome;
       },
     }));
   });
@@ -321,4 +366,210 @@ test("a 400 rejection keeps the typed fields and shows the server error inline",
   assert.equal(drafts.length, 2);
   assert.notEqual(drafts[0], drafts[1]);
   await act(() => root.unmount());
+});
+
+
+type FormSession = {
+  drafts: string[];
+  outcomes: EmpowerOutcome[];
+  tap: () => Promise<{ open: boolean; outcome: EmpowerOutcome | null }>;
+  unmount: () => Promise<void>;
+};
+
+async function mountFormSession(
+  respond: (body: EmpowerBumpPayload) => Promise<EmpowerOutcome>,
+): Promise<FormSession> {
+  const { act, createElement, createRoot, EmpowerBumpForm } = await loadForm();
+  const host = document.createElement("div");
+  document.body.replaceChildren(host);
+  const root = createRoot(host);
+  const drafts: string[] = [];
+  const outcomes: EmpowerOutcome[] = [];
+  let open = true;
+
+  const lead = {
+    id: "door-1",
+    name: "Ada Lovelace",
+    phone: "5555550100",
+    email: "ada@example.test",
+    address: "10 Main St",
+    city: "Buffalo",
+    state: "NY",
+    zip: "14201",
+    county: "Erie",
+  };
+
+  const render = async () => {
+    await act(() => {
+      root.render(open
+        ? createElement(EmpowerBumpForm, {
+          lead,
+          onClose: () => {},
+          onSubmit: async (body: EmpowerBumpPayload) => {
+            drafts.push(body.draftId);
+            const outcome = await respond(body);
+            outcomes.push(outcome);
+            return outcome;
+          },
+        })
+        : createElement("div", { id: "door" }));
+    });
+  };
+
+  await render();
+  const size = document.querySelector('select[aria-label="Household members"]');
+  const none = [...document.querySelectorAll("label")].find((label) => label.textContent?.trim() === "None");
+  const confirm = document.getElementById("empower-contact-confirmed");
+  assert.ok(size instanceof window.HTMLSelectElement);
+  assert.ok(none);
+  assert.ok(confirm instanceof window.HTMLInputElement);
+  await act(() => {
+    size.value = "1";
+    size.dispatchEvent(new Event("change", { bubbles: true }));
+    none.querySelector("input")?.click();
+    confirm.click();
+  });
+
+  return {
+    drafts,
+    outcomes,
+    async tap() {
+      if (!open) return { open: false, outcome: null };
+      const save = [...document.querySelectorAll("button")].find((button) => /Save Empower Bump|Saving/.test(button.textContent || ""));
+      assert.ok(save instanceof window.HTMLButtonElement, document.body.textContent || "");
+      const before = outcomes.length;
+      await act(() => { save.click(); });
+      const start = Date.now();
+      while (outcomes.length === before && Date.now() - start < 3000) {
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15)); });
+      }
+      const outcome = outcomes[outcomes.length - 1] ?? null;
+      assert.equal(outcomes.length, before + 1, document.body.textContent || "no outcome");
+      if (outcome && formClosesAfterBump(outcome)) {
+        open = false;
+        await render();
+      }
+      return { open, outcome };
+    },
+    async unmount() {
+      await act(() => root.unmount());
+    },
+  };
+}
+
+test("a 409 then two more taps sends exactly one draft id and one POST", async () => {
+  const storage = memoryEmpowerStorage();
+  let httpPosts = 0;
+  const session = await mountFormSession((body) => deliverEmpowerBump(body, {
+    uid: "rep-1",
+    storage,
+    getToken: async () => "token",
+    post: async () => {
+      httpPosts += 1;
+      return jsonResponse(409, { error: "This bump is already being sent. Check again in a minute." });
+    },
+  }));
+  const first = await session.tap();
+  assert.equal(first.open, true);
+  assert.equal(first.outcome?.status, "invalid");
+  assert.equal(first.outcome && first.outcome.status === "invalid" && first.outcome.conflict, true);
+  const second = await session.tap();
+  assert.equal(second.open, true);
+  assert.equal(second.outcome && second.outcome.status === "invalid" && second.outcome.conflict, true);
+  assert.equal(second.outcome && second.outcome.status === "invalid" && second.outcome.replayed, true);
+  const third = await session.tap();
+  assert.equal(third.open, true);
+  assert.equal(third.outcome && third.outcome.status === "invalid" && third.outcome.conflict, true);
+  assert.equal(httpPosts, 1);
+  assert.equal(new Set(session.drafts).size, 1);
+  assert.equal(session.drafts.length, 3);
+  await session.unmount();
+});
+
+test("a 403 then repeated taps gives no new ids and at most the one original POST", async () => {
+  const storage = memoryEmpowerStorage();
+  let httpPosts = 0;
+  const session = await mountFormSession((body) => deliverEmpowerBump(body, {
+    uid: "rep-1",
+    storage,
+    getToken: async (force) => {
+      if (force) throw new Error("must not refresh on a first 403");
+      return "token";
+    },
+    post: async () => {
+      httpPosts += 1;
+      return jsonResponse(403, { error: "Forbidden." });
+    },
+  }));
+  const first = await session.tap();
+  assert.equal(first.outcome?.status, "signin");
+  assert.equal(first.open, false);
+  const second = await session.tap();
+  const third = await session.tap();
+  assert.equal(second.open, false);
+  assert.equal(third.open, false);
+  assert.equal(second.outcome, null);
+  assert.equal(httpPosts, 1);
+  assert.equal(new Set(session.drafts).size, 1);
+  assert.equal(session.drafts.length, 1);
+  await session.unmount();
+});
+
+test("for each outcome, repeated taps cause at most the expected POSTs and never mint a terminal draft", async () => {
+  const cases: Array<{
+    name: string;
+    status: number | "offline" | "tokenhang";
+    taps: number;
+    expectedPosts: number;
+    expectedIds: number;
+    closes: boolean;
+  }> = [
+    { name: "sent", status: 200, taps: 3, expectedPosts: 1, expectedIds: 1, closes: true },
+    { name: "400", status: 400, taps: 3, expectedPosts: 3, expectedIds: 3, closes: false },
+    { name: "409", status: 409, taps: 3, expectedPosts: 1, expectedIds: 1, closes: false },
+    { name: "403", status: 403, taps: 3, expectedPosts: 1, expectedIds: 1, closes: true },
+    { name: "401", status: 401, taps: 3, expectedPosts: 2, expectedIds: 1, closes: true },
+    { name: "404", status: 404, taps: 3, expectedPosts: 1, expectedIds: 1, closes: true },
+    { name: "503", status: 503, taps: 3, expectedPosts: 1, expectedIds: 1, closes: true },
+    { name: "429", status: 429, taps: 3, expectedPosts: 1, expectedIds: 1, closes: true },
+    { name: "500", status: 500, taps: 3, expectedPosts: 1, expectedIds: 1, closes: true },
+    { name: "offline", status: "offline", taps: 3, expectedPosts: 0, expectedIds: 1, closes: false },
+    { name: "tokenhang", status: "tokenhang", taps: 3, expectedPosts: 0, expectedIds: 1, closes: true },
+  ];
+
+  for (const row of cases) {
+    const storage = memoryEmpowerStorage();
+    let httpPosts = 0;
+    const session = await mountFormSession((body) => deliverEmpowerBump(body, {
+      uid: "rep-1",
+      storage,
+      online: () => row.status !== "offline",
+      tokenTimeoutMs: row.status === "tokenhang" ? 20 : undefined,
+      getToken: row.status === "tokenhang"
+        ? () => new Promise(() => {})
+        : async (force) => (force ? "fresh" : "stale"),
+      post: async (_path, init) => {
+        httpPosts += 1;
+        const authorization = (init.headers as Record<string, string> | undefined)?.Authorization;
+        if (row.status === 401 && authorization === "Bearer stale") return jsonResponse(401);
+        if (row.status === 401 && authorization === "Bearer fresh") return jsonResponse(401);
+        if (typeof row.status === "number") {
+          return new Response(JSON.stringify({ error: "stub" }), {
+            status: row.status,
+            headers: { "content-type": "application/json", ...(row.status === 429 ? { "retry-after": "30" } : {}) },
+          });
+        }
+        throw new Error("should not POST");
+      },
+    }));
+    let lastOpen = true;
+    for (let i = 0; i < row.taps; i += 1) {
+      const result = await session.tap();
+      lastOpen = result.open;
+    }
+    assert.equal(lastOpen, !row.closes, `${row.name} open`);
+    assert.equal(httpPosts, row.expectedPosts, `${row.name} posts`);
+    assert.equal(new Set(session.drafts).size, row.expectedIds, `${row.name} ids`);
+    await session.unmount();
+  }
 });

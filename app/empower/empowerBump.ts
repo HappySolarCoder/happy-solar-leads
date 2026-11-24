@@ -33,7 +33,7 @@ export type EmpowerOutcome =
   | ({ status: "sent" } & Attempted)
   | ({ status: "queued"; message: string } & Attempted)
   | ({ status: "signin"; message: string } & Attempted)
-  | ({ status: "invalid"; message: string; conflict?: boolean } & Attempted)
+  | ({ status: "invalid"; message: string; conflict?: boolean; fresh?: boolean; replayed?: boolean } & Attempted)
   | ({ status: "ambiguous"; message: string } & Attempted);
 
 export interface EmpowerSendDeps {
@@ -62,6 +62,8 @@ interface StoredDraft {
   nextAttemptAt?: number;
   /** Set only when this row can be moved off the old unscoped key. */
   uid?: string;
+  /** Persisted so a 409 replay still returns conflict:true and cannot mint a new draft id. */
+  conflict?: boolean;
 }
 
 type Delivery =
@@ -81,11 +83,12 @@ export function callButtonFollowsBump(outcome: EmpowerOutcome): boolean {
 }
 
 /**
- * Close the bump form only after the office call was actually attempted,
- * or when a sign-in draft is already queued for an auth flush (today's
- * queued-signin behavior: form closes, door shows "Sign in again, then send.").
- * 400/409, a token timeout that never POSTed, and a request that never
- * left the phone keep the form open so the inline error is visible.
+ * Close the bump form after a confirmed send, a queued 404/503/429,
+ * an ambiguous timeout, or any sign-in outcome — including a token
+ * timeout that never POSTed, a 401, and a 403. Those sign-in drafts
+ * stay queued for the auth flush; the door shows "Sign in again, then send."
+ * A 400/409 rejection and a request that never left the phone keep the
+ * form open so the inline error is visible.
  */
 export function formClosesAfterBump(outcome: EmpowerOutcome): boolean {
   if (outcome.status === "signin") return true;
@@ -319,8 +322,7 @@ async function outcomeForStatus(
 ): Promise<{ outcome: EmpowerOutcome; nextAttemptAt?: number }> {
   const status = response.status;
   if (status >= 200 && status < 300) return { outcome: { status: "sent", attempted: true } };
-  if (status === 401) return { outcome: signin(true) };
-  if (status === 403 && refreshed) return { outcome: signin(true) };
+  if (status === 401 || status === 403) return { outcome: signin(true) };
   if (status === 404 || status === 503) {
     return { outcome: routeQueued(), nextAttemptAt: now + EMPOWER_MIN_RETRY_MS };
   }
@@ -331,15 +333,16 @@ async function outcomeForStatus(
     };
   }
   if (status >= 500) return { outcome: ambiguous() };
-  const invalid: EmpowerOutcome = {
-    status: "invalid",
-    message: safeServerError(status, await readJson(response)),
-    // The request reached the office, but the form must stay open so the
-    // rep can read the inline error and keep what they typed.
-    attempted: false,
-    ...(status === 409 ? { conflict: true } : {}),
-  };
-  return { outcome: invalid };
+  const message = safeServerError(status, await readJson(response));
+  // The request reached the office, but the form must stay open so the
+  // rep can read the inline error and keep what they typed.
+  if (status === 409) {
+    return { outcome: { status: "invalid", message, attempted: false, conflict: true } };
+  }
+  if (status === 400) {
+    return { outcome: { status: "invalid", message, attempted: false, fresh: true } };
+  }
+  return { outcome: { status: "invalid", message, attempted: false } };
 }
 
 /** One POST. A timeout is not followed by another POST. */
@@ -411,7 +414,14 @@ function remember(
     return;
   }
   if (outcome.status === "invalid") {
-    upsert(storage, uid, { draftId: payload.draftId, state: "rejected", payload, message: outcome.message, uid });
+    upsert(storage, uid, {
+      draftId: payload.draftId,
+      state: "rejected",
+      payload,
+      message: outcome.message,
+      uid,
+      ...(outcome.conflict ? { conflict: true } : {}),
+    });
     return;
   }
   upsert(storage, uid, {
@@ -425,7 +435,7 @@ function remember(
 }
 
 /**
- * Idempotent by draft id. The only automatic retry inside one call is one token refresh after 401.
+ * Idempotent by draft id. The only automatic retry inside one call is one token refresh after 401. A 403 is a terminal sign-in (no refresh, no second POST).
  * 404 and 503, and a request that never left the phone, stay queued.
  * Timeout, a drop after send, and a 5xx other than 503 are ambiguous and are never retried.
  * 400 and 409 are terminal: shown once, not queued.
@@ -474,7 +484,13 @@ async function sendEmpowerBump(
   if (existing?.state === "sent") return { status: "sent", attempted: false };
   if (existing?.state === "ambiguous") return { status: "ambiguous", message: existing.message || EMPOWER_AMBIGUOUS_MESSAGE, attempted: false };
   if (existing?.state === "rejected") {
-    return { status: "invalid", message: existing.message || "Empower bump was rejected.", attempted: false };
+    return {
+      status: "invalid",
+      message: existing.message || "Empower bump was rejected.",
+      attempted: false,
+      replayed: true,
+      ...(existing.conflict ? { conflict: true } : {}),
+    };
   }
 
   upsert(storage, deps.uid, { draftId: payload.draftId, state: "queued", payload });
