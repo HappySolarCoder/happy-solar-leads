@@ -903,16 +903,16 @@ test("auth ready flushes a queued draft, 429 waits for Retry-After, and a short 
   assert.equal(legacy.getItem("raydar.empowerBump.queue.v1"), untouched);
 });
 
-test("release 14.28 build 173 is the same number in the app, iOS, and Android", () => {
+test("release 14.29 build 174 is the same number in the app, iOS, and Android", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
-  assert.equal(release.version, "14.28");
-  assert.equal(release.build, 173);
+  assert.equal(release.version, "14.29");
+  assert.equal(release.build, 174);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
-  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.28", "14.28"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["173", "173"]);
+  assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.29", "14.29"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["174", "174"]);
   const gradle = read("android/app/build.gradle");
-  assert.match(gradle, /versionName "14\.28"/);
-  assert.match(gradle, /versionCode 173\b/);
+  assert.match(gradle, /versionName "14\.29"/);
+  assert.match(gradle, /versionCode 174\b/);
   const hash = createHash("sha256").update(read("app/utils/knockCount.ts")).digest("hex");
   assert.equal(hash, KNOCK_COUNT_SHA);
 });
