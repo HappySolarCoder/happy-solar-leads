@@ -902,16 +902,16 @@ test("auth ready flushes a queued draft, 429 waits for Retry-After, and a short 
   assert.equal(legacy.getItem("raydar.empowerBump.queue.v1"), untouched);
 });
 
-test("release 14.27 build 171 is the same number in the app, iOS, and Android", () => {
+test("release 14.27 build 172 is the same number in the app, iOS, and Android", () => {
   const release = JSON.parse(read("app/mobile/_lib/release.json"));
   assert.equal(release.version, "14.27");
-  assert.equal(release.build, 171);
+  assert.equal(release.build, 172);
   const project = read("ios/App/App.xcodeproj/project.pbxproj");
   assert.deepEqual([...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]), ["14.27", "14.27"]);
-  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["171", "171"]);
+  assert.deepEqual([...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]), ["172", "172"]);
   const gradle = read("android/app/build.gradle");
   assert.match(gradle, /versionName "14\.27"/);
-  assert.match(gradle, /versionCode 171\b/);
+  assert.match(gradle, /versionCode 172\b/);
   const hash = createHash("sha256").update(read("app/utils/knockCount.ts")).digest("hex");
   assert.equal(hash, KNOCK_COUNT_SHA);
 });

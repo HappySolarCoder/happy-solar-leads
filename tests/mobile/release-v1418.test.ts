@@ -6,18 +6,18 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-test("iOS and Android stay on release 14.27 build 171 together", () => {
+test("iOS and Android stay on release 14.27 build 172 together", () => {
   const release = JSON.parse(readFileSync(path.join(root, "app/mobile/_lib/release.json"), "utf8"));
   assert.equal(release.version, "14.27");
-  assert.equal(release.build, 171);
+  assert.equal(release.build, 172);
   const project = readFileSync(path.join(root, "ios/App/App.xcodeproj/project.pbxproj"), "utf8");
   const versions = [...project.matchAll(/MARKETING_VERSION = ([0-9.]+);/g)].map((match) => match[1]);
   const builds = [...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((match) => match[1]);
   assert.deepEqual(versions, ["14.27", "14.27"]);
-  assert.deepEqual(builds, ["171", "171"]);
+  assert.deepEqual(builds, ["172", "172"]);
   const gradle = readFileSync(path.join(root, "android/app/build.gradle"), "utf8");
   assert.match(gradle, /versionName "14\.27"/);
-  assert.match(gradle, /versionCode 171\b/);
+  assert.match(gradle, /versionCode 172\b/);
 });
 
 test("iOS declares that the app does not use non-exempt encryption", () => {
