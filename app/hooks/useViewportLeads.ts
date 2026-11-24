@@ -16,6 +16,10 @@ type Saved = {at:number;value:Value;cursor:Cursor;fetched:Lead[]};
 const EMPTY:Value={leads:[],loading:false,error:'',partial:false};
 const cache = new Map<string,Saved>();
 const MAX_RETAINED = 6000;
+
+/** Hidden for now. The load-more prompt never dismissed on field devices and sat above the door panel. Automatic two-page viewport reads are unchanged. */
+export const SHOW_LOAD_MORE_PINS = false;
+
 export function useViewportLeads(user:User|null, view:View|null, polygons:PinScope, ready:boolean) {
   const uid=user?.id, role=user?.role;
   const scope=JSON.stringify([uid,role,polygons]);

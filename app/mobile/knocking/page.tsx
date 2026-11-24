@@ -39,7 +39,7 @@ const HomeownerKnockDetail = dynamic(() => import('@/app/homeowners/KnockDetail'
 import { useGeolocation, calculateDistance, formatDistance } from '@/app/hooks/useGeolocation';
 import { ensureUserColors } from '@/app/utils/userColors';
 import LocationPermissionGuard from '@/app/components/LocationPermissionGuard';
-import { useViewportLeads } from "@/app/hooks/useViewportLeads";
+import { SHOW_LOAD_MORE_PINS, useViewportLeads } from "@/app/hooks/useViewportLeads";
 import { useHotLeads } from "@/app/hooks/useHotLeads";
 import { useHotOverview } from "@/app/hooks/useHotOverview";
 import { hotLeadFilterVisible, hotOnlyLayers, readHotFilter, writeHotFilter, HOT_FILTER_BADGE, HOT_LEAD_MIN_ZOOM, type HotPinFilter } from "@/app/hotLeads/filter";
@@ -992,7 +992,7 @@ export default function KnockingPage() {
           {viewportPins.loading && <div className="rm-map-loading" role="status">Loading nearby pins…</div>}
           {viewportPins.error && <div className="rm-map-loading" role="status">{viewportPins.error} <button onClick={viewportPins.retry}>Retry pins</button></div>}
           {hotLeadParkNotice(field.drafts) && <div className="rm-map-loading" role="status">{hotLeadParkNotice(field.drafts)}</div>}
-          {viewportPins.partial && !viewportPins.loading && !viewportPins.error && <div className="rm-map-loading" role="status">More knock records are available here. <button onClick={viewportPins.loadMore}>Load more pins</button> or zoom closer.</div>}
+          {SHOW_LOAD_MORE_PINS && viewportPins.partial && !viewportPins.loading && !viewportPins.error && <div className="rm-map-loading" role="status">More knock records are available here. <button onClick={viewportPins.loadMore}>Load more pins</button> or zoom closer.</div>}
           <button type="button" className={`rm-map-locate${gpsError ? ' is-warning' : ''}`} aria-label="Center map on my location"
             title={gpsError ? 'Location unavailable — enable location access' : 'Center map on my location'}
             aria-busy={gpsLoading} onClick={() => {

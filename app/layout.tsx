@@ -4,6 +4,7 @@ import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
 import "@fontsource/inter/700.css";
 import NativeRuntime from "./components/NativeRuntime";
+import EmpowerBumpSync from "./empower/EmpowerBumpSync";
 import "./globals.css";
 import "./native-brand.css";
 import InstallPrompt from './components/InstallPrompt';
@@ -47,6 +48,7 @@ export default function RootLayout({
       >
         <div className="native-viewport">
           <NativeRuntime />
+          <EmpowerBumpSync />
           <ServiceWorkerRegister />
           <InstallPrompt />
           {children}

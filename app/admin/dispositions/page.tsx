@@ -25,7 +25,7 @@ import {
   updateDispositionOrderAsync,
   generateDispositionId 
 } from '@/app/utils/dispositions';
-import { Disposition, AVAILABLE_ICONS, DISPOSITION_COLORS } from '@/app/types/disposition';
+import { Disposition, AVAILABLE_ICONS, DISPOSITION_COLORS, type DispositionSpecialBehavior } from '@/app/types/disposition';
 
 // Icon map for rendering
 const ICON_MAP: Record<string, any> = {
@@ -70,7 +70,7 @@ export default function DispositionsPage() {
     color: '#3B82F6',
     icon: 'circle',
     countsAsDoorKnock: true,
-    specialBehavior: 'none' as 'scheduling-manager' | 'none',
+    specialBehavior: 'none' as DispositionSpecialBehavior,
   });
 
   useEffect(() => {
@@ -467,6 +467,7 @@ export default function DispositionsPage() {
                   >
                     <option value="none">None (Standard disposition)</option>
                     <option value="scheduling-manager">Scheduling Manager (Edit lead + call)</option>
+                    <option value="empower-bump">Empower Bump</option>
                   </select>
                   {formData.specialBehavior === 'scheduling-manager' && (
                     <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
